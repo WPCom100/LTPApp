@@ -6,8 +6,6 @@ window.LTPApp = function() {
   var route = window.LTPRouter.useRoute();
   var activeModule = route.module;
   var usePersistentState = window.LTP_STATE.usePersistentState;
-  var loadState = window.LTP_STATE.loadState;
-  var saveState = window.LTP_STATE.saveState;
 
   var [sidebarOpen, setSidebarOpen] = useState(true);
   var [globalSearch, setGlobalSearch] = useState("");
@@ -17,24 +15,31 @@ window.LTPApp = function() {
   var searchRef = useRef(null);
 
   // ── Persistent state (single source of truth for the entire app) ─────────────
+  // Each hook returns [value, setValue, ready]. ready flips to true once the
+  // initial API fetch resolves; we gate first render on all-ready below so
+  // nothing tries to read/write data before the server responds.
   // CRM
-  var [companies, setCompanies] = usePersistentState("companies", window.LTP_DATA_COMPANIES);
-  var [contacts,  setContacts]  = usePersistentState("contacts",  window.LTP_DATA_CONTACTS);
-  var [projects,  setProjects]  = usePersistentState("projects",  window.LTP_DATA_PROJECTS);
+  var [companies, setCompanies, companiesReady] = usePersistentState("companies", window.LTP_DATA_COMPANIES);
+  var [contacts,  setContacts,  contactsReady]  = usePersistentState("contacts",  window.LTP_DATA_CONTACTS);
+  var [projects,  setProjects,  projectsReady]  = usePersistentState("projects",  window.LTP_DATA_PROJECTS);
   // Rentals
-  var [equipment,   setEquipment]   = usePersistentState("equipment",   window.LTP_DATA_EQUIPMENT);
-  var [allocations, setAllocations] = usePersistentState("allocations", window.LTP_DATA_ALLOCATIONS);
-  var [containers,  setContainers]  = usePersistentState("containers",  window.LTP_DATA_CONTAINERS);
-  var [kits,        setKits]        = usePersistentState("kits",        window.LTP_DATA_KITS);
+  var [equipment,   setEquipment,   equipmentReady]   = usePersistentState("equipment",   window.LTP_DATA_EQUIPMENT);
+  var [allocations, setAllocations, allocationsReady] = usePersistentState("allocations", window.LTP_DATA_ALLOCATIONS);
+  var [containers,  setContainers,  containersReady]  = usePersistentState("containers",  window.LTP_DATA_CONTAINERS);
+  var [kits,        setKits,        kitsReady]        = usePersistentState("kits",        window.LTP_DATA_KITS);
   // Quotes + catalogs
-  var [quotes,   setQuotes]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
-  var [products, setProducts] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
-  var [services, setServices] = usePersistentState("services", window.LTP_DATA_SERVICES);
+  var [quotes,   setQuotes,   quotesReady]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
+  var [products, setProducts, productsReady] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
+  var [services, setServices, servicesReady] = usePersistentState("services", window.LTP_DATA_SERVICES);
   // Invoices
-  var [invoices, setInvoices] = usePersistentState("invoices", window.LTP_DATA_INVOICES);
-  // Labor
+  var [invoices, setInvoices, invoicesReady] = usePersistentState("invoices", window.LTP_DATA_INVOICES);
   // Settings
-  var [settings, setSettings] = usePersistentState("settings", window.LTP_DATA_SETTINGS);
+  var [settings, setSettings, settingsReady] = usePersistentState("settings", window.LTP_DATA_SETTINGS);
+
+  var allReady = companiesReady && contactsReady && projectsReady
+              && equipmentReady && allocationsReady && containersReady && kitsReady
+              && quotesReady && productsReady && servicesReady
+              && invoicesReady && settingsReady;
 
   // Expose settings globals for activity logging and prints
   window.LTP_CURRENT_USER = settings.userName || "User";
@@ -53,39 +58,33 @@ window.LTPApp = function() {
     window.LTP_STATUS_COLORS[key] = bfh(tc[key]);
   });
 
-  // Quote ID counter — monotonic, never reuses IDs (even after deletes).
-  var counterRef = useRef(null);
-  if (counterRef.current === null) {
-    var stored = loadState("quotes_next_id", null);
-    if (stored != null) {
-      counterRef.current = stored;
-    } else {
-      var maxId = Math.max.apply(null, (quotes || []).map(function(q) { return q.id; }).concat([0]));
-      counterRef.current = maxId + 1;
-    }
-  }
+  // Quote / Invoice ID counters — derived from max(entity.id) + 1, kept in a
+  // ref so successive calls within the same render advance correctly. We
+  // lose "monotonic across deletes" (a deleted highest-id can be reused);
+  // acceptable for solo use, and the user already lost that on every DB reset.
+  var counterRef = useRef(0);
+  useEffect(function() {
+    var maxId = (quotes || []).reduce(function(m, q) {
+      return typeof q.id === "number" ? Math.max(m, q.id) : m;
+    }, 0);
+    if (counterRef.current <= maxId) counterRef.current = maxId + 1;
+  }, [quotes]);
   function getNextQuoteId() {
     var id = counterRef.current;
     counterRef.current = id + 1;
-    saveState("quotes_next_id", counterRef.current);
     return id;
   }
 
-  // Invoice ID counter — same pattern as quotes
-  var invCounterRef = useRef(null);
-  if (invCounterRef.current === null) {
-    var storedInv = loadState("invoices_next_id", null);
-    if (storedInv != null) {
-      invCounterRef.current = storedInv;
-    } else {
-      var maxInvId = Math.max.apply(null, (invoices || []).map(function(i) { return typeof i.id === "number" ? i.id : 0; }).concat([0]));
-      invCounterRef.current = maxInvId + 1;
-    }
-  }
+  var invCounterRef = useRef(0);
+  useEffect(function() {
+    var maxInvId = (invoices || []).reduce(function(m, i) {
+      return typeof i.id === "number" ? Math.max(m, i.id) : m;
+    }, 0);
+    if (invCounterRef.current <= maxInvId) invCounterRef.current = maxInvId + 1;
+  }, [invoices]);
   function getNextInvoiceId() {
     var id = invCounterRef.current;
     invCounterRef.current = id + 1;
-    saveState("invoices_next_id", invCounterRef.current);
     return id;
   }
 
@@ -251,6 +250,12 @@ window.LTPApp = function() {
   var isQuoteBuilder = (route.module === "quotes" && (route.id !== null || route.action === "new"))
     || (route.module === "invoices" && (route.id !== null || route.action === "new"))
     || (route.module === "projects" && route.id !== null && route.action === "schedule");
+
+  // Loading gate — block first render until every API fetch has resolved.
+  // Hooks above always run; we only short-circuit the render output here.
+  if (!allReady) {
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…");
+  }
 
   return h("div", { style: { display: "flex", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },

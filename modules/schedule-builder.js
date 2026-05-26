@@ -117,10 +117,6 @@
 
     // ── Actions ──────────────────────────────────────────────────────────────
     function save() {
-      if (window.__LTP_STALE_KEYS && window.__LTP_STALE_KEYS.projects) {
-        if (!window.confirm("Project data was modified in another tab. Saving will overwrite those changes. Continue?")) return;
-        window.__LTP_STALE_KEYS.projects = false;
-      }
       var changes = computeSchedChanges(cleanRef.current, draft);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Schedule saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");

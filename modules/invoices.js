@@ -669,10 +669,6 @@
     }
 
     function save() {
-      if (window.__LTP_STALE_KEYS && window.__LTP_STALE_KEYS.invoices) {
-        if (!window.confirm("Invoice data was modified in another tab. Saving will overwrite those changes. Continue?")) return;
-        window.__LTP_STALE_KEYS.invoices = false;
-      }
       // Date sanity checks
       if (draft.dueDate && draft.invoiceDate && draft.dueDate < draft.invoiceDate) {
         showAlert("Invalid Dates", "Due date (" + fmt(draft.dueDate) + ") is before the invoice date (" + fmt(draft.invoiceDate) + "). Please fix before saving.");

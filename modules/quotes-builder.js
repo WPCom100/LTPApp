@@ -974,11 +974,6 @@
     }
 
     function save() {
-      // Check for cross-tab modifications
-      if (window.__LTP_STALE_KEYS && window.__LTP_STALE_KEYS.quotes) {
-        if (!window.confirm("Quote data was modified in another tab. Saving will overwrite those changes. Continue?")) return;
-        window.__LTP_STALE_KEYS.quotes = false;
-      }
       if (draft.clientType === "company" && !draft.companyId) {
         showAlert("Missing Information", "Please select a company before saving.");
         return;

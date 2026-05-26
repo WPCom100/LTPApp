@@ -312,47 +312,6 @@
         )
       ),
 
-      // ── Data Management ────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Data Management"),
-        h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap" } },
-          h("button", { onClick: function() {
-            setDlg({ title: "Reset All Data", message: "This will permanently erase ALL data and restore defaults. This includes all projects, contacts, quotes, invoices, and settings. This cannot be undone.", variant: "danger", confirmLabel: "Reset Everything",
-              onConfirm: function() {
-                Object.keys(localStorage).filter(function(k) { return k.startsWith("ltp_"); }).forEach(function(k) { localStorage.removeItem(k); });
-                location.reload();
-              } });
-          }, style: { background: "transparent", border: "1px solid " + B.danger, borderRadius: "6px", padding: "8px 16px", color: B.danger, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, "Reset All Data to Defaults"),
-          h("button", { onClick: function() {
-            var data = {};
-            Object.keys(localStorage).filter(function(k) { return k.startsWith("ltp_"); }).forEach(function(k) { data[k] = localStorage.getItem(k); });
-            var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-            var a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "ltp-backup-" + new Date().toISOString().substring(0, 10) + ".json"; a.click();
-          }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 16px", color: B.textSec, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, "Export Data Backup"),
-          h("button", { onClick: function() {
-            var input = document.createElement("input"); input.type = "file"; input.accept = ".json";
-            input.onchange = function(e) {
-              var file = e.target.files[0]; if (!file) return;
-              var reader = new FileReader();
-              reader.onload = function(ev) {
-                try {
-                  var data = JSON.parse(ev.target.result);
-                  var keys = Object.keys(data).filter(function(k) { return k.startsWith("ltp_"); });
-                  if (keys.length === 0) { alert("No valid LTP data found in this file."); return; }
-                  setDlg({ title: "Restore Backup", message: "This will replace all current data with " + keys.length + " items from the backup file (" + file.name + "). Current data will be overwritten. Continue?", variant: "danger", confirmLabel: "Restore Backup",
-                    onConfirm: function() {
-                      keys.forEach(function(k) { localStorage.setItem(k, data[k]); });
-                      location.reload();
-                    } });
-                } catch(err) { alert("Invalid backup file: " + err.message); }
-              };
-              reader.readAsText(file);
-            };
-            input.click();
-          }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 16px", color: B.accent, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, "Restore from Backup")
-        )
-      ),
-
       // Confirmation dialogs
       // ── Error Log ──────────────────────────────────────────────────────────
       h("div", { style: sectionStyle },

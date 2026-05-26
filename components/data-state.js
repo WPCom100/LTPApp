@@ -1,25 +1,37 @@
-// LTP Persistent State — API-backed with localStorage cache.
+// LTP Persistent State — pure API-backed.
 //
-// Lifecycle for each persisted slice (companies, quotes, settings, counters…):
-//   1. useState() seeds synchronously from localStorage so the first render
-//      is instant — no spinner, no flash of empty data.
-//   2. On mount, fetch /api/{key} once. If the server has content, replace
-//      local state with the server's (server is source of truth). If the
-//      server is empty AND we have local data, bootstrap-upload the local
-//      slice so the server adopts what's in the browser.
-//   3. Every subsequent setValue() schedules a debounced sync. Entity arrays
-//      diff old vs new by id → PUT for upserts, DELETE for removals.
-//      Settings and counters PUT their whole payload.
-//   4. localStorage is mirrored on every change so reloads stay instant and
-//      offline edits don't blow away while the network is down.
+// One hook per persisted slice. On mount, fetches /api/{key} once. On every
+// subsequent change, debounces (~400ms) and syncs to the API — entity arrays
+// diff by id and send per-row PUT/DELETE; settings and counters PUT the
+// whole payload.
+//
+// No localStorage. No offline cache. No bootstrap-upload. The server is the
+// only source of truth, and failures surface loudly via console.error +
+// window.LTP_API_ERRORS so they can't be missed.
+//
+// Return shape: [value, setValue, ready]. Existing 2-element destructures
+// in app.js continue to work; the third element is the first-fetch latch
+// used by the loading gate.
 (function() {
   var API_PREFIX = "/api/";
   var DEBOUNCE_MS = 400;
 
+  // Keys backed by /api/{key} as an array of {id, ...} rows
+  var ENTITY_KEYS = {
+    companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
+    equipment: 1, products: 1, services: 1,
+    allocations: 1, containers: 1, kits: 1,
+  };
+
+  function classify(key) {
+    if (ENTITY_KEYS[key]) return "entity";
+    if (key === "settings") return "settings";
+    return "unknown";
+  }
+
   // Authenticated fetch wrapper — injects Authorization: Bearer header from
-  // window.LTP_API_KEY (set by /config.js, served by the FastAPI backend
-  // before this script runs). If the key is empty (local dev), no header
-  // is added and the backend lets requests through unauthenticated.
+  // window.LTP_API_KEY (set by /config.js). If unset (local dev), no header
+  // is added and the backend allows the request through.
   function apiFetch(url, opts) {
     opts = opts || {};
     var headers = Object.assign({}, opts.headers || {});
@@ -28,77 +40,56 @@
     return fetch(url, Object.assign({}, opts, { headers: headers }));
   }
 
-  // Keys backed by /api/{key} as an array of {id, ...} rows
-  var ENTITY_KEYS = {
-    companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
-    equipment: 1, products: 1, services: 1,
-    allocations: 1, containers: 1, kits: 1,
-  };
-  // Keys backed by /api/counters/{key} as a single integer
-  var COUNTER_KEYS = { quotes_next_id: 1, invoices_next_id: 1 };
-
-  function classify(key) {
-    if (ENTITY_KEYS[key]) return "entity";
-    if (COUNTER_KEYS[key]) return "counter";
-    if (key === "settings") return "settings";
-    return "local";
+  // ── Error visibility ───────────────────────────────────────────────────
+  // Every sync failure pushes onto a ring buffer so the user can inspect
+  // recent failures from the console (window.LTP_API_ERRORS) without
+  // hunting through DevTools' Network tab.
+  if (!window.LTP_API_ERRORS) window.LTP_API_ERRORS = [];
+  function recordError(label, info) {
+    var entry = Object.assign({ at: new Date().toISOString(), label: label }, info || {});
+    console.error("[LTP] sync error:", label, entry);
+    window.LTP_API_ERRORS.push(entry);
+    if (window.LTP_API_ERRORS.length > 50) window.LTP_API_ERRORS.shift();
   }
 
-  function emptyBaseline(key) {
-    var k = classify(key);
-    if (k === "entity") return [];
-    if (k === "settings") return {};
-    if (k === "counter") return null;
-    return null;
+  function checkResponse(label, resp) {
+    if (resp.ok) return resp;
+    return resp.text().then(function(body) {
+      recordError(label, { status: resp.status, body: (body || "").slice(0, 300) });
+      throw new Error(label + " failed: " + resp.status);
+    });
   }
 
-  function hasContent(key, value) {
-    var k = classify(key);
-    if (k === "entity")   return Array.isArray(value) && value.length > 0;
-    if (k === "settings") return value && typeof value === "object" && Object.keys(value).length > 0;
-    if (k === "counter")  return typeof value === "number";
-    return false;
-  }
-
-  function loadState(key, fallback) {
-    try {
-      var d = localStorage.getItem("ltp_" + key);
-      return d ? JSON.parse(d) : fallback;
-    } catch (e) {
-      return fallback;
-    }
-  }
-
-  function saveState(key, val) {
-    try { localStorage.setItem("ltp_" + key, JSON.stringify(val)); } catch (e) {}
-  }
-
-  // ── Network helpers ─────────────────────────────────────────────────────
-
-  function fetchInitial(key) {
-    var kind = classify(key);
-    if (kind === "local") return Promise.resolve(null);
-    var url = (kind === "entity")   ? API_PREFIX + key
-            : (kind === "settings") ? API_PREFIX + "settings"
-            :                         API_PREFIX + "counters/" + key;
-    return apiFetch(url).then(function(r) {
-      if (!r.ok) return null;
-      return r.json();
-    }).then(function(data) {
-      if (data == null) return null;
-      if (kind === "counter") return (data.value == null) ? null : data.value;
-      return data;
-    }).catch(function() { return null; });
-  }
-
-  function jsonReq(url, method, body) {
+  function jsonReq(label, url, method, body) {
     var opts = { method: method };
     if (body !== undefined) {
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify(body);
     }
-    return apiFetch(url, opts);
+    return apiFetch(url, opts).then(function(r) { return checkResponse(label, r); });
   }
+
+  // ── Initial fetch ───────────────────────────────────────────────────────
+
+  function fetchInitial(key) {
+    var kind = classify(key);
+    if (kind === "unknown") return Promise.resolve(null);
+    var url = (kind === "entity") ? API_PREFIX + key : API_PREFIX + "settings";
+    return apiFetch(url).then(function(r) {
+      if (!r.ok) {
+        return r.text().then(function(body) {
+          recordError("GET " + url, { status: r.status, body: (body || "").slice(0, 300) });
+          return null;
+        });
+      }
+      return r.json();
+    }).catch(function(e) {
+      recordError("GET " + url, { error: String(e) });
+      return null;
+    });
+  }
+
+  // ── Sync (per-row diff for entities; whole-blob PUT for settings) ──────
 
   function syncEntity(key, prev, next) {
     var prevList = Array.isArray(prev) ? prev : [];
@@ -109,30 +100,28 @@
     var requests = [];
     Object.keys(prevById).forEach(function(id) {
       if (!(id in nextById)) {
-        requests.push(jsonReq(API_PREFIX + key + "/" + id, "DELETE"));
+        requests.push(jsonReq("DELETE " + key + "/" + id, API_PREFIX + key + "/" + id, "DELETE"));
       }
     });
     Object.keys(nextById).forEach(function(id) {
       var item = nextById[id];
       var p = prevById[id];
       if (!p || JSON.stringify(p) !== JSON.stringify(item)) {
-        requests.push(jsonReq(API_PREFIX + key + "/" + id, "PUT", item));
+        requests.push(jsonReq("PUT " + key + "/" + id, API_PREFIX + key + "/" + id, "PUT", item));
       }
     });
-    return Promise.all(requests).catch(function(e) {
-      console.warn("[LTP] sync failed for " + key, e);
-    });
+    return Promise.all(requests.map(function(p) {
+      return p.catch(function() { /* already logged in checkResponse */ });
+    }));
   }
 
   function syncToServer(key, prev, next) {
     var kind = classify(key);
-    if (kind === "entity")   return syncEntity(key, prev, next);
-    if (kind === "settings") return jsonReq(API_PREFIX + "settings", "PUT", next).catch(function(e) {
-      console.warn("[LTP] sync failed for settings", e);
-    });
-    if (kind === "counter")  return jsonReq(API_PREFIX + "counters/" + key, "PUT", { value: next }).catch(function(e) {
-      console.warn("[LTP] sync failed for counter " + key, e);
-    });
+    if (kind === "entity") return syncEntity(key, prev, next);
+    if (kind === "settings") {
+      return jsonReq("PUT settings", API_PREFIX + "settings", "PUT", next)
+        .catch(function() { /* already logged */ });
+    }
     return Promise.resolve();
   }
 
@@ -143,72 +132,63 @@
     var useEffect = React.useEffect;
     var useRef    = React.useRef;
 
-    var pair = useState(function() { return loadState(key, fallback); });
+    var pair = useState(fallback);
     var value = pair[0], setValue = pair[1];
+    var readyPair = useState(false);
+    var ready = readyPair[0], setReady = readyPair[1];
 
-    // hydratedRef: gates outbound syncs until the initial fetch (and any
-    // bootstrap upload) has resolved. Prevents premature DELETE-everything.
+    // hydratedRef: gates outbound syncs until the initial fetch resolves.
+    // Without this, the first setValue triggered by adopting server state
+    // would echo right back out as a sync.
     var hydratedRef     = useRef(false);
-    var prevSyncedRef   = useRef(loadState(key, fallback));
+    var prevSyncedRef   = useRef(fallback);
     var debounceRef     = useRef(null);
     var skipNextSyncRef = useRef(true);   // initial render → no sync
-    var latestValueRef  = useRef(value);  // always points at the freshest state
+    var latestValueRef  = useRef(value);
 
-    // Keep latestValueRef in sync with the most recent value.
-    // Without this, the bootstrap closure would upload stale data if the
-    // user typed something between mount and the fetch resolving.
     latestValueRef.current = value;
 
     // One-shot hydration on mount
     useEffect(function() {
-      if (classify(key) === "local") {
+      if (classify(key) === "unknown") {
+        prevSyncedRef.current = value;
         hydratedRef.current = true;
+        setReady(true);
         return;
       }
       var cancelled = false;
       fetchInitial(key).then(function(serverValue) {
         if (cancelled) return;
-        var serverHasData = serverValue !== null && hasContent(key, serverValue);
-        if (serverHasData) {
-          prevSyncedRef.current = serverValue;
-          skipNextSyncRef.current = true;  // adoption isn't a user change
-          setValue(serverValue);
-          saveState(key, serverValue);
-          hydratedRef.current = true;
-          return;
-        }
-        // Server has nothing — bootstrap from local using whatever's freshest.
-        var baseline = emptyBaseline(key);
-        var seedSnapshot = latestValueRef.current;
-        prevSyncedRef.current = baseline;
-        if (hasContent(key, seedSnapshot)) {
-          syncToServer(key, baseline, seedSnapshot).then(function() {
-            if (cancelled) return;
-            prevSyncedRef.current = seedSnapshot;
-            hydratedRef.current = true;
-            // Sync any edits the user made during the bootstrap window
-            var current = latestValueRef.current;
-            if (JSON.stringify(current) !== JSON.stringify(seedSnapshot)) {
-              prevSyncedRef.current = current;
-              syncToServer(key, seedSnapshot, current);
-            }
-          });
+        var adopted;
+        if (key === "settings") {
+          // Merge: client defaults (from data/settings.js) provide tag
+          // colors / crew options / etc. when the server's settings blob
+          // is empty or sparse. Server values win on overlapping keys.
+          adopted = Object.assign({}, fallback || {}, serverValue || {});
+        } else if (Array.isArray(serverValue)) {
+          adopted = serverValue;
         } else {
-          hydratedRef.current = true;
+          // Fetch failed (null) or non-array — keep fallback so the UI
+          // renders something. The error already went to recordError().
+          adopted = fallback;
         }
+        prevSyncedRef.current = adopted;
+        skipNextSyncRef.current = true;  // adoption isn't a user change
+        setValue(adopted);
+        hydratedRef.current = true;
+        setReady(true);
       });
       return function() { cancelled = true; };
     }, []);
 
-    // Mirror to localStorage + debounced API sync on every change
+    // Debounced sync on every value change
     useEffect(function() {
-      saveState(key, value);
       if (skipNextSyncRef.current) {
         skipNextSyncRef.current = false;
         return;
       }
       if (!hydratedRef.current) return;
-      if (classify(key) === "local") return;
+      if (classify(key) === "unknown") return;
 
       if (debounceRef.current) clearTimeout(debounceRef.current);
       var snapshot = value;
@@ -219,48 +199,10 @@
       }, DEBOUNCE_MS);
     }, [value]);
 
-    // Cross-tab stale-flag (preserved from the localStorage-only impl)
-    useEffect(function() {
-      function onStorage(e) {
-        if (e.key === "ltp_" + key) {
-          if (!window.__LTP_STALE_KEYS) window.__LTP_STALE_KEYS = {};
-          window.__LTP_STALE_KEYS[key] = true;
-        }
-      }
-      window.addEventListener("storage", onStorage);
-      return function() { window.removeEventListener("storage", onStorage); };
-    }, [key]);
-
-    return [value, setValue];
-  }
-
-  // ── Manual seed migration (one-shot from console / settings UI) ─────────
-  // Dumps every "ltp_*" key from localStorage to POST /api/sync, replacing
-  // the server's state with the browser's. Useful when first connecting an
-  // existing localStorage-only client to the backend.
-  function migrateFromLocal() {
-    var payload = {};
-    Object.keys(ENTITY_KEYS).forEach(function(k) {
-      payload[k] = loadState(k, []);
-    });
-    payload.settings = loadState("settings", {});
-    payload.counters = {};
-    Object.keys(COUNTER_KEYS).forEach(function(k) {
-      var v = loadState(k, null);
-      if (typeof v === "number") payload.counters[k] = v;
-    });
-    return apiFetch(API_PREFIX + "sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).then(function(r) { return r.json(); });
+    return [value, setValue, ready];
   }
 
   window.LTP_STATE = {
-    loadState: loadState,
-    saveState: saveState,
     usePersistentState: usePersistentState,
-    migrateFromLocal: migrateFromLocal,
-    classify: classify,
   };
 })();
