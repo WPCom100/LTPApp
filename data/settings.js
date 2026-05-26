@@ -1,26 +1,30 @@
-// Company Settings — branding, contact info, defaults
+// App-wide defaults. Personal/company info is intentionally blank — users
+// fill it in through the Settings UI. What's kept here are values the app's
+// rendering or business logic relies on (tag colors, crew role options,
+// payment terms, generic email templates).
 window.LTP_DATA_SETTINGS = {
-  // Company Info
-  companyName: "Luminary Technology & Productions",
-  companyShort: "LTP",
-  tagline: "Technical Production & Lighting Design",
-  userName: "Landry Strickland",
-  phone: "(214) 555-0100",
-  email: "info@luminarytp.com",
-  website: "www.luminarytp.com",
+  // Company Info — fill in via Settings UI
+  companyName: "",
+  companyShort: "",
+  tagline: "",
+  userName: "",
+  phone: "",
+  email: "",
+  website: "",
 
   // Address
-  street: "1234 Main Street",
-  suite: "Suite 200",
-  city: "Dallas",
-  state: "TX",
-  zip: "75201",
+  street: "",
+  suite: "",
+  city: "",
+  state: "",
+  zip: "",
 
-  // Branding
+  // Branding — orange is just a starter accent; users can change in Settings
   accentColor: "#E8731A",
   logoUrl: "",
 
-  // Tag & Badge Colors — single hex per tag, app auto-generates bg/border
+  // Tag & Badge Colors — single hex per tag, app auto-generates bg/border.
+  // Removing these would leave every status/tag pill in the UI with no color.
   tagColors: {
     // Departments
     Lighting: "#F5A623", Audio: "#3B82F6", Video: "#E74C3C", Stage: "#9B59B6", Rigging: "#E8731A", Production: "#4CAF50",
@@ -38,26 +42,27 @@ window.LTP_DATA_SETTINGS = {
     invoiced: "#E8731A", booked: "#F5A623", cancelled: "#888888",
   },
 
-  // Crew Options
+  // Crew Options — drive role/department dropdowns
   crewRoleOptions: ["L1", "L2", "L3", "LD", "A1", "A2", "A3", "V1", "V2", "SH", "SM", "F1", "F2", "RIG", "PM", "TD", "PA"],
   crewDepartmentOptions: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"],
 
-  // Defaults
-  defaultPaymentTerms: 30, // Net 30
-  taxRate: 0, // percentage, 0 = no tax
+  // Business Defaults
+  defaultPaymentTerms: 30,        // Net 30
+  taxRate: 0,                     // percentage
+  defaultQuoteValidity: 30,       // days
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
-  defaultQuoteValidity: 30, // days
 
-  // Email
-  emailFrom: "info@luminarytp.com",
-  emailReplyTo: "info@luminarytp.com",
-  emailSignature: "Thank you for your business.\n\nLuminary Technology & Productions\n(214) 555-0100\nwww.luminarytp.com",
+  // Email — fill in via Settings UI
+  emailFrom: "",
+  emailReplyTo: "",
+  emailSignature: "",
 
-  // Email Templates — use {{variable}} for dynamic content
+  // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
   //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}},
-  //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}}
+  //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
+  //            {{quoteValidity}}
   emailTemplates: {
     quoteSent: {
       label: "Quote Sent",

@@ -33,5 +33,12 @@ async def get_db():
 
 
 async def init_db():
+    """Create tables on startup. Set LTP_RESET_DB=true in the environment to
+    drop everything first — one-shot, intended for schema rewrites where the
+    existing data is disposable. Unset the var (or set to false) after the
+    next deploy so subsequent restarts don't keep wiping the database."""
+    reset = os.environ.get("LTP_RESET_DB", "").lower() in ("1", "true", "yes")
     async with engine.begin() as conn:
+        if reset:
+            await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
