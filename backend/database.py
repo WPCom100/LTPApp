@@ -36,9 +36,29 @@ async def init_db():
     """Create tables on startup. Set LTP_RESET_DB=true in the environment to
     drop everything first — one-shot, intended for schema rewrites where the
     existing data is disposable. Unset the var (or set to false) after the
-    next deploy so subsequent restarts don't keep wiping the database."""
-    reset = os.environ.get("LTP_RESET_DB", "").lower() in ("1", "true", "yes")
+    next deploy so subsequent restarts don't keep wiping the database.
+
+    On Postgres, the reset does DROP SCHEMA public CASCADE so it wipes EVERY
+    table including orphans from prior schemas — Base.metadata.drop_all
+    alone only knows about tables in the current models, so a stale table
+    from an earlier deploy with a different name would survive."""
+    from sqlalchemy import text
+
+    raw = os.environ.get("LTP_RESET_DB", "")
+    reset = raw.strip().lower() in ("1", "true", "yes")
+    # Loud startup log — visible in Railway's deploy logs so you can confirm
+    # the reset actually ran. The repr() shows trailing whitespace etc.
+    print(f"[LTP] init_db: LTP_RESET_DB={raw!r} -> reset={reset}", flush=True)
+
     async with engine.begin() as conn:
+        dialect = conn.dialect.name
         if reset:
-            await conn.run_sync(Base.metadata.drop_all)
+            if dialect == "postgresql":
+                print("[LTP] DROP SCHEMA public CASCADE (nuclear reset)", flush=True)
+                await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+                await conn.execute(text("CREATE SCHEMA public"))
+            else:
+                print("[LTP] drop_all (sqlite/other)", flush=True)
+                await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        print(f"[LTP] tables ready ({dialect}): {sorted(Base.metadata.tables.keys())}", flush=True)
