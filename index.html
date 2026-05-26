@@ -20,6 +20,10 @@
 <body>
   <div id="root"></div>
 
+  <!-- Runtime config (API key) — served dynamically by FastAPI. Must load
+       before data-state.js so the fetch wrapper picks up window.LTP_API_KEY. -->
+  <script src="/config.js"></script>
+
   <!-- React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>

@@ -16,6 +16,18 @@
   var API_PREFIX = "/api/";
   var DEBOUNCE_MS = 400;
 
+  // Authenticated fetch wrapper — injects Authorization: Bearer header from
+  // window.LTP_API_KEY (set by /config.js, served by the FastAPI backend
+  // before this script runs). If the key is empty (local dev), no header
+  // is added and the backend lets requests through unauthenticated.
+  function apiFetch(url, opts) {
+    opts = opts || {};
+    var headers = Object.assign({}, opts.headers || {});
+    var key = window.LTP_API_KEY;
+    if (key) headers["Authorization"] = "Bearer " + key;
+    return fetch(url, Object.assign({}, opts, { headers: headers }));
+  }
+
   // Keys backed by /api/{key} as an array of {id, ...} rows
   var ENTITY_KEYS = {
     companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
@@ -69,7 +81,7 @@
     var url = (kind === "entity")   ? API_PREFIX + key
             : (kind === "settings") ? API_PREFIX + "settings"
             :                         API_PREFIX + "counters/" + key;
-    return fetch(url).then(function(r) {
+    return apiFetch(url).then(function(r) {
       if (!r.ok) return null;
       return r.json();
     }).then(function(data) {
@@ -85,7 +97,7 @@
       opts.headers = { "Content-Type": "application/json" };
       opts.body = JSON.stringify(body);
     }
-    return fetch(url, opts);
+    return apiFetch(url, opts);
   }
 
   function syncEntity(key, prev, next) {
@@ -237,7 +249,7 @@
       var v = loadState(k, null);
       if (typeof v === "number") payload.counters[k] = v;
     });
-    return fetch(API_PREFIX + "sync", {
+    return apiFetch(API_PREFIX + "sync", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),

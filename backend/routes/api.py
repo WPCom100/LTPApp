@@ -1,10 +1,32 @@
-from fastapi import APIRouter, Depends, HTTPException
+import os
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from backend.database import get_db
 from backend import models
 
-router = APIRouter(prefix="/api")
+
+async def require_api_key(authorization: Optional[str] = Header(None)):
+    """Stopgap shared-secret auth. Compares Authorization: Bearer <key>
+    against the LTP_API_KEY env var. If no env var is set, auth is disabled
+    (intended for local dev) — a startup-time warning would go in main.py.
+    Replace with proper session/OAuth once Google login lands."""
+    expected = os.environ.get("LTP_API_KEY", "")
+    if not expected:
+        return  # auth disabled
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing API key")
+    token = authorization[len("Bearer "):].strip()
+    # Constant-time compare to avoid leaking length/contents via timing
+    import hmac
+    if not hmac.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+
+# Router-level dependency: applies to every /api/* route, including ones
+# registered later via add_api_route() in the CRUD factory below.
+router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
