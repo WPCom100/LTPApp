@@ -54,6 +54,18 @@ async def init_db():
         dialect = conn.dialect.name
         if reset:
             if dialect == "postgresql":
+                # Railway does rolling deploys: the old container is still
+                # alive holding pool connections when the new one starts, and
+                # those connections block our exclusive lock on the schema.
+                # Forcibly terminate every OTHER backend on this database so
+                # DROP SCHEMA can acquire its lock. Without this, the reset
+                # hangs indefinitely waiting for the old instance.
+                print("[LTP] terminating other backends on this database", flush=True)
+                killed = await conn.execute(text(
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND pid <> pg_backend_pid()"
+                ))
+                print(f"[LTP] terminated {killed.rowcount} backend(s)", flush=True)
                 print("[LTP] DROP SCHEMA public CASCADE (nuclear reset)", flush=True)
                 await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
                 await conn.execute(text("CREATE SCHEMA public"))

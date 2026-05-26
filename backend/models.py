@@ -55,7 +55,9 @@ class Project(Base):
     start_date = Column(String(10), default="")
     end_date = Column(String(10), default="")
     venue = Column(String(255), default="")
-    budget = Column(Float, default=0)
+    # budget is a category breakdown: {lighting, labor, rentals, misc} — not a scalar.
+    # See modules/crm-projects.js:270 where the form saves the object literal.
+    budget = Column(JSON, default=dict)
     contact_ids = Column(JSON, default=list)
     notes = Column(JSON, default=list)        # array of {id, date, author, text, linkedMeetingId}
     meetings = Column(JSON, default=list)
