@@ -1,0 +1,372 @@
+// Main App Shell — owns all persistent state. Modules receive live state via props.
+window.LTPApp = function() {
+  var B = window.LTP_THEME, MODULES = window.LTP_MODULES;
+  var h = React.createElement, useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
+  var nav = window.LTPRouter.navigate;
+  var route = window.LTPRouter.useRoute();
+  var activeModule = route.module;
+  var usePersistentState = window.LTP_STATE.usePersistentState;
+  var loadState = window.LTP_STATE.loadState;
+  var saveState = window.LTP_STATE.saveState;
+
+  var [sidebarOpen, setSidebarOpen] = useState(true);
+  var [globalSearch, setGlobalSearch] = useState("");
+  var [searchOpen, setSearchOpen] = useState(false);
+  var [searchResults, setSearchResults] = useState([]);
+  var clockRef = useRef(null);
+  var searchRef = useRef(null);
+
+  // ── Persistent state (single source of truth for the entire app) ─────────────
+  // CRM
+  var [companies, setCompanies] = usePersistentState("companies", window.LTP_DATA_COMPANIES);
+  var [contacts,  setContacts]  = usePersistentState("contacts",  window.LTP_DATA_CONTACTS);
+  var [projects,  setProjects]  = usePersistentState("projects",  window.LTP_DATA_PROJECTS);
+  // Rentals
+  var [equipment,   setEquipment]   = usePersistentState("equipment",   window.LTP_DATA_EQUIPMENT);
+  var [allocations, setAllocations] = usePersistentState("allocations", window.LTP_DATA_ALLOCATIONS);
+  var [containers,  setContainers]  = usePersistentState("containers",  window.LTP_DATA_CONTAINERS);
+  var [kits,        setKits]        = usePersistentState("kits",        window.LTP_DATA_KITS);
+  // Quotes + catalogs
+  var [quotes,   setQuotes]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
+  var [products, setProducts] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
+  var [services, setServices] = usePersistentState("services", window.LTP_DATA_SERVICES);
+  // Invoices
+  var [invoices, setInvoices] = usePersistentState("invoices", window.LTP_DATA_INVOICES);
+  // Labor
+  // Settings
+  var [settings, setSettings] = usePersistentState("settings", window.LTP_DATA_SETTINGS);
+
+  // Expose settings globals for activity logging and prints
+  window.LTP_CURRENT_USER = settings.userName || "User";
+  window.LTP_COMPANY_NAME = settings.companyName || "LTP";
+  window.LTP_COMPANY_SHORT = settings.companyShort || "LTP";
+  window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
+  window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
+  window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
+  window.LTP_TAX_RATE = settings.taxRate || 0;
+
+  // Rebuild tag/badge colors from settings
+  window.LTP_TAG_COLORS = settings.tagColors || {};
+  var tc = window.LTP_TAG_COLORS;
+  var bfh = window.LTP_badgeFromHex;
+  Object.keys(tc).forEach(function(key) {
+    window.LTP_STATUS_COLORS[key] = bfh(tc[key]);
+  });
+
+  // Quote ID counter — monotonic, never reuses IDs (even after deletes).
+  var counterRef = useRef(null);
+  if (counterRef.current === null) {
+    var stored = loadState("quotes_next_id", null);
+    if (stored != null) {
+      counterRef.current = stored;
+    } else {
+      var maxId = Math.max.apply(null, (quotes || []).map(function(q) { return q.id; }).concat([0]));
+      counterRef.current = maxId + 1;
+    }
+  }
+  function getNextQuoteId() {
+    var id = counterRef.current;
+    counterRef.current = id + 1;
+    saveState("quotes_next_id", counterRef.current);
+    return id;
+  }
+
+  // Invoice ID counter — same pattern as quotes
+  var invCounterRef = useRef(null);
+  if (invCounterRef.current === null) {
+    var storedInv = loadState("invoices_next_id", null);
+    if (storedInv != null) {
+      invCounterRef.current = storedInv;
+    } else {
+      var maxInvId = Math.max.apply(null, (invoices || []).map(function(i) { return typeof i.id === "number" ? i.id : 0; }).concat([0]));
+      invCounterRef.current = maxInvId + 1;
+    }
+  }
+  function getNextInvoiceId() {
+    var id = invCounterRef.current;
+    invCounterRef.current = id + 1;
+    saveState("invoices_next_id", invCounterRef.current);
+    return id;
+  }
+
+  useEffect(function() {
+    function tick() {
+      if (clockRef.current) {
+        var now = new Date();
+        clockRef.current.textContent = now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + " \u00b7 " + now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+      }
+    }
+    tick();
+    var t = setInterval(tick, 60000);
+    return function() { clearInterval(t); };
+  }, []);
+
+  useEffect(function() {
+    if (!searchOpen) return;
+    function handler(e) { if (searchRef.current && !searchRef.current.contains(e.target)) { setSearchOpen(false); } }
+    document.addEventListener("mousedown", handler);
+    return function() { document.removeEventListener("mousedown", handler); };
+  }, [searchOpen]);
+
+  useEffect(function() {
+    var q = globalSearch.trim().toLowerCase();
+    if (!q) { setSearchResults([]); return; }
+    var results = [];
+
+    companies.forEach(function(c) {
+      if (c.name.toLowerCase().indexOf(q) !== -1 || (c.address || "").toLowerCase().indexOf(q) !== -1) {
+        results.push({ type: "Company", label: c.name, sub: c.address || ((c.isClient ? "Client" : "") + (c.isVendor ? " Vendor" : "")).trim(), module: "crm",
+          action: function(id) { return function() { nav("crm/companies/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(c.id) });
+      }
+    });
+
+    contacts.forEach(function(c) {
+      var full = (c.firstName + " " + c.lastName).toLowerCase();
+      var co = companies.find(function(x) { return c.companyIds && c.companyIds.includes(x.id); });
+      var coName = co ? co.name.toLowerCase() : "";
+      if (full.indexOf(q) !== -1 || (c.email || "").toLowerCase().indexOf(q) !== -1 || (c.phone || "").toLowerCase().indexOf(q) !== -1 || coName.indexOf(q) !== -1) {
+        results.push({ type: "Contact", label: c.firstName + " " + c.lastName, sub: c.role + (co ? " \u00b7 " + co.name : ""), module: "crm",
+          action: function(id) { return function() { nav("crm/contacts/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(c.id) });
+      }
+    });
+
+    projects.forEach(function(p) {
+      var co = companies.find(function(x) { return x.id === p.companyId; });
+      if (p.name.toLowerCase().indexOf(q) !== -1 || (co && co.name.toLowerCase().indexOf(q) !== -1)) {
+        results.push({ type: "Project", label: p.name, sub: (co ? co.name + " \u00b7 " : "") + p.category + " \u00b7 " + p.status, module: "projects",
+          action: function(id) { return function() { nav("projects/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(p.id) });
+      }
+    });
+
+    // Quotes — uses live state so newly-created quotes are searchable
+    quotes.forEach(function(qt) {
+      var co = companies.find(function(c) { return c.id === qt.companyId; });
+      var proj = projects.find(function(p) { return p.id === qt.projectId; });
+      var contact = qt.clientContactId ? contacts.find(function(c) { return c.id === qt.clientContactId; }) : null;
+      var clientName = (qt.clientType === "contact" || (!qt.companyId && contact))
+        ? (contact ? contact.firstName + " " + contact.lastName : "")
+        : (co ? co.name : "");
+      var name = proj ? proj.name : (qt.customName || "");
+      var ref = window.LTP_QUOTE_REF ? window.LTP_QUOTE_REF(qt) : ("Q-" + qt.id);
+      var hay = (ref + " " + clientName + " " + name).toLowerCase();
+      if (hay.indexOf(q) !== -1) {
+        results.push({ type: "Quote", label: ref, sub: (clientName ? clientName + " \u00b7 " : "") + name + " \u00b7 " + qt.status, module: "quotes",
+          action: function(id) { return function() { nav("quotes/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(qt.id) });
+      }
+    });
+
+    // Equipment — live state, so user-added equipment is findable
+    equipment.forEach(function(eq) {
+      if (eq.name.toLowerCase().indexOf(q) !== -1 || eq.category.toLowerCase().indexOf(q) !== -1 || (eq.manufacturer || "").toLowerCase().indexOf(q) !== -1 || (eq.model || "").toLowerCase().indexOf(q) !== -1) {
+        results.push({ type: "Equipment", label: eq.name, sub: eq.category + (eq.subcategory ? " \u00b7 " + eq.subcategory : "") + " \u00b7 $" + (eq.rates && eq.rates.threeDay ? eq.rates.threeDay : 0) + "/3-day", module: "rentals",
+          action: function(id) { return function() { nav("rentals/equipment/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(eq.id) });
+      }
+    });
+
+    // Products — quote catalog sale items
+    products.forEach(function(p) {
+      if (p.name.toLowerCase().indexOf(q) !== -1 || (p.category || "").toLowerCase().indexOf(q) !== -1) {
+        results.push({ type: "Product", label: p.name, sub: p.category + " \u00b7 $" + p.unitPrice + "/" + p.unit, module: "quotes",
+          action: function() { nav("quotes/products"); setSearchOpen(false); setGlobalSearch(""); } });
+      }
+    });
+
+    // Services — labor rate card
+    services.forEach(function(s) {
+      var hay = (s.role + " " + s.description + " " + s.department).toLowerCase();
+      if (hay.indexOf(q) !== -1) {
+        results.push({ type: "Service", label: s.role + " \u2014 " + s.description, sub: s.department + " \u00b7 $" + s.dayRate + "/day", module: "quotes",
+          action: function() { nav("quotes/services"); setSearchOpen(false); setGlobalSearch(""); } });
+      }
+    });
+
+    // Invoices
+    (invoices || []).forEach(function(inv) {
+      var ref = window.LTP_INVOICE_REF(inv);
+      var comp = inv.companyId ? ((companies || []).find(function(c) { return c.id === inv.companyId; }) || {}).name || "" : "";
+      var proj = inv.projectId ? ((projects || []).find(function(p) { return p.id === inv.projectId; }) || {}).name || "" : "";
+      var t = window.LTP_INVOICE_TOTALS(inv);
+      if ((ref + " " + comp + " " + proj).toLowerCase().indexOf(q) !== -1) {
+        results.push({ type: "Invoice", label: ref, sub: comp + " \u00b7 " + proj + " \u00b7 $" + Math.round(t.total).toLocaleString() + " \u00b7 " + window.LTP_displayStatus(inv), module: "invoices",
+          action: function() { nav("invoices/" + inv.id); setSearchOpen(false); setGlobalSearch(""); } });
+      }
+    });
+
+    // Crew members
+    contacts.filter(function(c) { return c.isCrew; }).forEach(function(c) {
+      var full = (c.firstName + " " + c.lastName + " " + (c.crewRoles || []).join(" ") + " " + (c.crewNotes || "")).toLowerCase();
+      if (full.indexOf(q) !== -1) {
+        results.push({ type: "Crew", label: c.firstName + " " + c.lastName, sub: (c.crewRoles || []).join(", ") + " \u00b7 " + (c.crewStatus || "active"), module: "labor",
+          action: function() { nav("labor"); setSearchOpen(false); setGlobalSearch(""); } });
+      }
+    });
+
+    setSearchResults(results.slice(0, 12));
+  }, [globalSearch, companies, contacts, projects, quotes, equipment, products, services, invoices]);
+
+  function renderModule() {
+    switch (activeModule) {
+      case "dashboard": return h(window.LTPErrorBoundary, { name: "Dashboard" }, h(window.DashboardView, { companies: companies, projects: projects, quotes: quotes, equipment: equipment, invoices: invoices, contacts: contacts, services: services, settings: settings }));
+      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services }));
+      case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, invoices: invoices, setInvoices: setInvoices, route: route }));
+      case "calendar":  return h(window.LTPErrorBoundary, { name: "Calendar" }, h(window.CalendarView,  { projects: projects }));
+      case "rentals":   return h(window.LTPErrorBoundary, { name: "Rentals" }, h(window.RentalsView,   {
+        companies: companies, projects: projects, route: route,
+        equipment: equipment,     setEquipment: setEquipment,
+        allocations: allocations, setAllocations: setAllocations,
+        containers: containers,   setContainers: setContainers,
+        kits: kits,               setKits: setKits,
+      }));
+      case "quotes":    return h(window.LTPErrorBoundary, { name: "Quotes" }, h(window.QuotesView,    {
+        companies: companies, contacts: contacts, projects: projects, setProjects: setProjects, route: route,
+        quotes: quotes,     setQuotes: setQuotes,
+        products: products, setProducts: setProducts,
+        services: services, setServices: setServices,
+        equipment: equipment, allocations: allocations,
+        getNextQuoteId: getNextQuoteId,
+        invoices: invoices, setInvoices: setInvoices,
+        getNextInvoiceId: getNextInvoiceId,
+        settings: settings,
+      }));
+      case "invoices":  return h(window.LTPErrorBoundary, { name: "Invoices" }, h(window.InvoicesView, {
+        invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
+        companies: companies, contacts: contacts, projects: projects,
+        quotes: quotes, setQuotes: setQuotes, route: route,
+        equipment: equipment, products: products, services: services, allocations: allocations,
+        settings: settings,
+      }));
+      case "labor":     return h(window.LTPErrorBoundary, { name: "Labor" }, h(window.LaborView, {
+        contacts: contacts, setContacts: setContacts,
+        projects: projects, setProjects: setProjects,
+        services: services, quotes: quotes, companies: companies, settings: settings,
+      }));
+      case "settings":  return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings }));
+      default: nav("dashboard"); return null;
+    }
+  }
+
+  var typeColors = { Company: B.accent, Contact: B.success, Project: B.info, Invoice: B.warn, Quote: B.warn, Equipment: B.textSec, Product: B.success, Service: B.info, Crew: B.info };
+
+  // Detect when we're in the full-screen quote builder — hides topbar to maximize space
+  var isQuoteBuilder = (route.module === "quotes" && (route.id !== null || route.action === "new"))
+    || (route.module === "invoices" && (route.id !== null || route.action === "new"))
+    || (route.module === "projects" && route.id !== null && route.action === "schedule");
+
+  return h("div", { style: { display: "flex", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
+    h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
+      h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
+        h("div", { style: { width: 30, height: 30, background: B.accent, borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#000", flexShrink: 0 } }, "LTP"),
+        sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE"))
+      ),
+      h("nav", { style: { flex: 1, padding: "10px 6px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" } },
+        MODULES.map(function(m) {
+          var isActive = activeModule === m.id;
+          var rows = [
+            h("button", { key: m.id, onClick: function() { nav(m.id); },
+              style: { display: "flex", alignItems: "center", gap: 10, padding: sidebarOpen ? "9px 11px" : "9px 0", justifyContent: sidebarOpen ? "flex-start" : "center", background: isActive ? B.raised : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: isActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%" } },
+              h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+                window.LTP_NAV_ICON(m.id, 18, isActive ? B.accent : B.textMut)),
+              sidebarOpen && h("span", { style: { fontSize: "12px", fontWeight: isActive ? 600 : 400, color: isActive ? B.text : B.textSec, whiteSpace: "nowrap" } }, m.label))
+          ];
+
+          // CRM sub-nav
+          if (sidebarOpen && m.id === "crm") {
+            var crmSubs = [
+              { path: "crm/companies", label: "Companies" },
+              { path: "crm/contacts",  label: "Contacts"  },
+            ];
+            crmSubs.forEach(function(sub) {
+              var subActive = route.module === "crm" && (route.sub === sub.path.split("/")[1] || (!route.sub && sub.path === "crm/companies"));
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+                style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
+                h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
+            });
+          }
+
+          // Rentals sub-nav
+          if (sidebarOpen && m.id === "rentals") {
+            var rentalSubs = [
+              { path: "rentals", label: "Availability Checker" },
+              { path: "rentals/equipment",  label: "Equipment List"       },
+              { path: "rentals/containers", label: "Containers List"      },
+              { path: "rentals/kits",       label: "Kits & Packages"      },
+            ];
+            rentalSubs.forEach(function(sub) {
+              var subActive = sub.path === "rentals"
+                ? (route.module === "rentals" && !route.sub)
+                : sub.path === "rentals/equipment"
+                  ? (route.module === "rentals" && route.sub === "equipment")
+                  : sub.path === "rentals/containers"
+                    ? (route.module === "rentals" && route.sub === "containers")
+                    : (route.module === "rentals" && route.sub === "kits");
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+                style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
+                h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
+            });
+          }
+
+          // Quotes sub-nav
+          if (sidebarOpen && m.id === "quotes") {
+            var quotesSubs = [
+              { path: "quotes", label: "Quotes"   },
+              { path: "quotes/products", label: "Products" },
+              { path: "quotes/services", label: "Services" },
+            ];
+            quotesSubs.forEach(function(sub) {
+              var subActive = sub.path === "quotes"
+                ? (route.module === "quotes" && (!route.sub || route.sub !== "products" && route.sub !== "services"))
+                : sub.path === "quotes/products"
+                  ? (route.module === "quotes" && route.sub === "products")
+                  : (route.module === "quotes" && route.sub === "services");
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+                style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
+                h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
+            });
+          }
+
+          return rows;
+        })
+      ),
+      sidebarOpen && h("div", { style: { padding: "12px 16px", borderTop: "1px solid " + B.border, fontSize: "9px", color: B.textMut } }, (settings.companyShort || "LTP") + " Business Suite v1.0")
+    ),
+    h("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } },
+      // Topbar — hidden when in quote builder (builder has its own sticky header)
+      isQuoteBuilder ? null :
+      h("div", { style: { height: 52, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 22px", background: B.surface, flexShrink: 0 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+          h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" } },
+            window.LTP_NAV_ICON(activeModule, 18, B.accent)),
+          h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.textSec } }, (MODULES.find(function(m) { return m.id === activeModule; }) || {}).label)),
+        h("div", { ref: searchRef, style: { position: "relative", flex: 1, maxWidth: 720, margin: "0 24px" } },
+          h("div", { style: { position: "relative" } },
+            h("span", { style: { position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: "13px", color: B.textMut, pointerEvents: "none" } }, "\uD83D\uDD0D"),
+            h("input", { type: "text", value: globalSearch, placeholder: "Search companies, contacts, projects, invoices\u2026",
+              onChange: function(e) { setGlobalSearch(e.target.value); setSearchOpen(true); },
+              onFocus: function() { if (globalSearch) setSearchOpen(true); },
+              style: { width: "100%", background: B.raised, border: "1px solid " + (searchOpen && globalSearch ? B.accent : B.border), borderRadius: "6px", padding: "6px 12px 6px 30px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" } })
+          ),
+          searchOpen && globalSearch && h("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 2000, overflow: "hidden", maxHeight: 400, overflowY: "auto" } },
+            searchResults.length === 0
+              ? h("div", { style: { padding: "14px 16px", fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, "No results found.")
+              : searchResults.map(function(r, i) {
+                  var tc = typeColors[r.type] || B.textMut;
+                  return h("div", { key: i, onClick: r.action, style: { display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", cursor: "pointer", borderBottom: i < searchResults.length - 1 ? "1px solid " + B.border : "none", transition: "background 0.1s" },
+                    onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+                    onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
+                    h("span", { style: { fontSize: "9px", fontWeight: 700, color: tc, background: tc + "18", border: "1px solid " + tc + "44", padding: "2px 6px", borderRadius: "3px", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" } }, r.type),
+                    h("div", { style: { flex: 1, minWidth: 0 } },
+                      h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, r.label),
+                      h("div", { style: { fontSize: "11px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, r.sub)),
+                    h("span", { style: { fontSize: "10px", color: B.textMut } }, r.module)
+                  );
+                })
+          )
+        ),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
+          h("span", { ref: clockRef, style: { fontSize: "11px", color: B.textMut } }),
+          h("div", { style: { width: 28, height: 28, background: B.accent, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "#000" } }, "LT"))
+      ),
+      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 0" : "22px" } }, renderModule())
+    )
+  );
+};

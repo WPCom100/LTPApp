@@ -1,0 +1,327 @@
+// Projects Module — top-level view (formerly nested under CRM)
+window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, invoices, setInvoices, route }) {
+  var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
+  var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
+  var nav = window.LTPRouter.navigate;
+
+  // URL shapes:
+  //   #/projects                  list
+  //   #/projects/new              create form
+  //   #/projects/7                detail (opens on Overview)
+  //   #/projects/7/schedule       full-screen schedule builder
+  //   #/projects/7/edit           edit form
+  var urlId     = route.id     || null;
+  var urlAction = route.action || null;
+
+  // Full-screen schedule builder
+  if (urlId && urlAction === "schedule") {
+    var schedProject = projects.find(function(p) { return p.id === urlId; });
+    if (schedProject) {
+      return h(window.ScheduleBuilder, {
+        project: schedProject, projects: projects, setProjects: setProjects,
+        contacts: contacts, setContacts: setContacts, services: services,
+        companies: companies,
+        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
+      });
+    }
+  }
+
+  var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1 };
+  var urlTab = (urlId && PROJECT_TABS[urlAction]) ? urlAction : null;
+
+  // URL-derived state
+  var editProjectId     = (urlId && urlAction === "edit") ? urlId : null;
+  var selectedProjectId = (urlId && urlAction !== "edit") ? urlId : null;
+  var showAddProject    = (!urlId && urlAction === "new");
+
+  function setSelectedProjectId(id, tab) {
+    if (!id) return nav("projects");
+    nav("projects/" + id + (tab ? "/" + tab : ""));
+  }
+
+  var [projectFilter,   setProjectFilter]   = useState("all");
+  var [searchQuery,     setSearchQuery]     = useState("");
+  var [sortMode,        setSortMode]        = useState("date-asc");
+  var [showCompleted,   setShowCompleted]   = useState(false);
+  var [showAddMeeting,  setShowAddMeeting]  = useState(null);
+  var [showAddNote,     setShowAddNote]     = useState(null);
+  var [viewNote,        setViewNote]        = useState(null);
+  var [editNote,        setEditNote]        = useState(null);
+  var [deleteConfirm,   setDeleteConfirm]   = useState(null);
+  var [deleteWizard,    setDeleteWizard]    = useState(null); // { projectId, name, steps completed tracking }
+
+  var selectedProject = selectedProjectId ? projects.find(function(p) { return p.id === selectedProjectId; }) : null;
+
+  // ctx for CRMProjectDetail/Form + CRMAddMeeting + CRMAddNote + CRMNoteViewer/Editor.
+  // Keep in sync with ctx.* references in those files.
+  // projectOpenTab is URL-derived (see urlTab above). setProjectOpenTab is a no-op
+  // because in-modal tab clicks use local state in crm-projects.js and do not nav.
+  var ctx = {
+    companies: companies,
+    contacts:  contacts,
+    projects:  projects, setProjects: setProjects,
+    quotes: quotes || [],
+    services: services || [],
+    invoices: invoices || [],
+    selectedProject: selectedProject,
+    setSelectedProjectId: setSelectedProjectId,
+    setEditProjectId: function(id) {
+      id ? nav("projects/" + id + "/edit") : nav("projects/" + (selectedProjectId || ""));
+    },
+    projectOpenTab: urlTab, setProjectOpenTab: function() {},
+    showAddMeeting: showAddMeeting, setShowAddMeeting: setShowAddMeeting,
+    showAddNote:    showAddNote,    setShowAddNote:    setShowAddNote,
+    viewNote:       viewNote,       setViewNote:       setViewNote,
+    editNote:       editNote,       setEditNote:       setEditNote,
+    setSelectedCompanyId: function(id) { id ? nav("crm/companies/" + id) : nav("crm/companies"); },
+    setEditContactId: function(id) { id ? nav("crm/contacts/" + id) : nav("crm/contacts"); },
+    setDeleteConfirm: setDeleteConfirm,
+  };
+
+  function handleDelete(dc) {
+    if (dc.type === "project") {
+      var projQuotes = (quotes || []).filter(function(q) { return q.projectId === dc.id; });
+      var projInvoices = (invoices || []).filter(function(i) { return i.projectId === dc.id; });
+      var proj = projects.find(function(p) { return p.id === dc.id; });
+      var crewPositions = [];
+      if (proj && proj.schedule) {
+        proj.schedule.forEach(function(s) {
+          (s.positions || []).forEach(function(p) {
+            if (p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed")) {
+              var cm = contacts.find(function(c) { return c.id === p.crewId; });
+              crewPositions.push({ crewName: cm ? cm.firstName + " " + cm.lastName : "Unknown", status: p.status });
+            }
+          });
+        });
+      }
+
+      if (projQuotes.length > 0 || projInvoices.length > 0 || crewPositions.length > 0) {
+        setDeleteConfirm(null);
+        setDeleteWizard({ projectId: dc.id, name: dc.name, crewReleased: false, quotesHandled: false, invoicesHandled: false,
+          crewPositions: crewPositions, projQuotes: projQuotes, projInvoices: projInvoices });
+        return;
+      }
+      setProjects(function(p) { return p.filter(function(x) { return x.id !== dc.id; }); });
+      if (selectedProjectId === dc.id) nav("projects");
+    }
+    setDeleteConfirm(null);
+  }
+
+  function wizardReleaseCrew() {
+    if (!deleteWizard) return;
+    setProjects(function(prev) {
+      return prev.map(function(p) {
+        if (p.id !== deleteWizard.projectId) return p;
+        return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+            if (pos.crewId && (pos.status === "requested" || pos.status === "accepted" || pos.status === "confirmed")) {
+              return Object.assign({}, pos, { status: "open", crewId: null });
+            }
+            return pos;
+          })});
+        })});
+      });
+    });
+    setDeleteWizard(Object.assign({}, deleteWizard, { crewReleased: true }));
+  }
+
+  function wizardUnlinkQuotes() {
+    if (!deleteWizard) return;
+    setQuotes(function(prev) {
+      return prev.map(function(q) {
+        if (q.projectId !== deleteWizard.projectId) return q;
+        return Object.assign({}, q, { projectId: null });
+      });
+    });
+    setDeleteWizard(Object.assign({}, deleteWizard, { quotesHandled: true }));
+  }
+
+  function wizardDeleteQuotes() {
+    if (!deleteWizard) return;
+    var qIds = deleteWizard.projQuotes.map(function(q) { return q.id; });
+    setQuotes(function(prev) { return prev.filter(function(q) { return qIds.indexOf(q.id) === -1; }); });
+    setDeleteWizard(Object.assign({}, deleteWizard, { quotesHandled: true }));
+  }
+
+  function wizardUnlinkInvoices() {
+    if (!deleteWizard) return;
+    setInvoices(function(prev) {
+      return prev.map(function(i) {
+        if (i.projectId !== deleteWizard.projectId) return i;
+        return Object.assign({}, i, { projectId: null });
+      });
+    });
+    setDeleteWizard(Object.assign({}, deleteWizard, { invoicesHandled: true }));
+  }
+
+  function wizardFinalDelete() {
+    if (!deleteWizard) return;
+    setProjects(function(p) { return p.filter(function(x) { return x.id !== deleteWizard.projectId; }); });
+    if (selectedProjectId === deleteWizard.projectId) nav("projects");
+    setDeleteWizard(null);
+  }
+
+  var q = searchQuery.toLowerCase();
+
+  var fp = projects.filter(function(p) {
+    if (!showCompleted && p.status === "completed") return false;
+    if (projectFilter !== "all" && p.category !== projectFilter) return false;
+    var comp = companies.find(function(c) { return c.id === p.companyId; });
+    if (q && p.name.toLowerCase().indexOf(q) === -1 && (comp ? comp.name : "").toLowerCase().indexOf(q) === -1) return false;
+    return true;
+  }).sort(function(a, b) {
+    if (sortMode === "date-asc")  return a.startDate > b.startDate ?  1 : -1;
+    if (sortMode === "date-desc") return b.startDate > a.startDate ?  1 : -1;
+    if (sortMode === "za")        return b.name.localeCompare(a.name);
+    return a.name.localeCompare(b.name);
+  });
+
+  var searchBar = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search...",
+    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 180 } });
+
+  function sortBtns() {
+    var opts = [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "date-asc", l: "Date \u2191" }, { k: "date-desc", l: "Date \u2193" }];
+    return h("div", { style: { display: "flex", gap: 4 } }, opts.map(function(o) {
+      return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
+        style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
+    }));
+  }
+
+  return h("div", null,
+    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px", fontFamily: "'Playfair Display', Georgia, serif" } }, "Projects"),
+
+    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
+      h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        ["all"].concat(CATS).map(function(f) {
+          return h("button", { key: f, onClick: function() { setProjectFilter(f); },
+            style: { background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? "#000" : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, f === "all" ? "All" : f);
+        })
+      ),
+      h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
+    ),
+    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" } },
+      h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+        searchBar,
+        h("button", { onClick: function() { setShowCompleted(!showCompleted); },
+          style: { background: showCompleted ? B.accent : B.raised, color: showCompleted ? "#000" : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+          showCompleted ? "✓ Showing Completed" : "Show Completed")
+      ),
+      sortBtns()),
+
+    fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
+    h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      fp.map(function(p) {
+        var comp = companies.find(function(c) { return c.id === p.companyId; });
+        var tot  = Object.values(p.budget).reduce(function(a, b) { return a + b; }, 0);
+        return h("div", { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
+          style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", borderLeft: "3px solid " + CAT_COLORS[p.category] },
+          onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; e.currentTarget.style.borderLeft = "3px solid " + CAT_COLORS[p.category]; },
+          onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border;          e.currentTarget.style.borderLeft = "3px solid " + CAT_COLORS[p.category]; } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
+            h("div", null,
+              h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
+              h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name : "") + " \u00b7 " + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
+            h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+              h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
+              h(window.Badge, { status: CAT_KEYS[p.category] }),
+              h(window.Badge, { status: p.status }))),
+          h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
+            h("span", null, p.notes.length + " notes"),
+            h("span", null, p.schedule.length + " schedule"),
+            h("span", null, p.meetings.length + " meetings")));
+      })
+    ),
+
+    // ── Modals ────────────────────────────────────────────────────────────────
+    selectedProject && !editProjectId && h(window.CRMProjectDetail, { ctx: ctx }),
+
+    showAddProject && h(window.CRMProjectForm, { ctx: ctx, initial: null,
+      onClose: function() { nav("projects"); },
+      onSave: function(d) {
+        var newId = Math.max.apply(null, projects.map(function(x) { return x.id; }).concat([0])) + 1;
+        setProjects(function(p) { return p.concat([Object.assign({ id: newId, notes: [], meetings: [] }, d, { schedule: d.schedule || [] })]); });
+        nav("projects/" + newId);
+      }}),
+
+    editProjectId && h(window.CRMProjectForm, { ctx: ctx, initial: projects.find(function(p) { return p.id === editProjectId; }),
+      onClose: function() { ctx.setEditProjectId(null); },
+      onSave: function(d) {
+        setProjects(function(p) { return p.map(function(x) { return x.id === editProjectId ? Object.assign({}, x, d, { schedule: d.schedule || x.schedule }) : x; }); });
+        nav("projects/" + editProjectId);
+      }}),
+
+    showAddMeeting && h(window.CRMAddMeeting, { ctx: ctx }),
+    showAddNote    && h(window.CRMAddNote,    { ctx: ctx }),
+    viewNote       && h(window.CRMNoteViewer, { ctx: ctx }),
+    editNote       && h(window.CRMNoteEditor, { ctx: ctx }),
+    deleteConfirm  && h(window.ConfirmDeleteDialog, { deleteConfirm: deleteConfirm, onCancel: function() { setDeleteConfirm(null); }, onConfirm: handleDelete }),
+
+    // Guided project deletion wizard
+    deleteWizard && function() {
+      var w = deleteWizard;
+      var hasCrew = w.crewPositions.length > 0;
+      var hasQuotes = w.projQuotes.length > 0;
+      var hasInvoices = w.projInvoices.length > 0;
+      var crewDone = !hasCrew || w.crewReleased;
+      var quotesDone = !hasQuotes || w.quotesHandled;
+      var invoicesDone = !hasInvoices || w.invoicesHandled;
+      var allDone = crewDone && quotesDone && invoicesDone;
+
+      var stepStyle = function(done) { return { background: done ? B.success + "11" : B.raised, border: "1px solid " + (done ? B.success + "44" : B.border), borderRadius: "8px", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }; };
+      var checkmark = h("span", { style: { fontSize: "14px", color: B.success, fontWeight: 700 } }, "\u2713");
+
+      return h(window.LTPModal, { title: "Delete \"" + w.name + "\"", onClose: function() { setDeleteWizard(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 16, lineHeight: 1.5 } },
+          "This project has linked data. Complete or skip each step before deleting."),
+
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 } },
+          // Step 1: Crew
+          hasCrew && h("div", { style: stepStyle(w.crewReleased) },
+            h("div", null,
+              h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, w.crewReleased ? "\u2713 Crew released" : "Active Crew Assignments"),
+              h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                w.crewReleased
+                  ? w.crewPositions.length + " crew member" + (w.crewPositions.length > 1 ? "s" : "") + " released from positions"
+                  : w.crewPositions.map(function(c) { return c.crewName + " (" + c.status + ")"; }).slice(0, 4).join(", ") + (w.crewPositions.length > 4 ? "..." : ""))),
+            w.crewReleased ? checkmark : h("div", { style: { display: "flex", gap: 6 } },
+              h(window.Btn, { small: true, variant: "danger", onClick: wizardReleaseCrew }, "Release All & Notify"))
+          ),
+
+          // Step 2: Quotes
+          hasQuotes && h("div", { style: stepStyle(w.quotesHandled) },
+            h("div", null,
+              h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, w.quotesHandled ? "\u2713 Quotes handled" : w.projQuotes.length + " Linked Quote" + (w.projQuotes.length > 1 ? "s" : "")),
+              h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                w.quotesHandled
+                  ? "Quotes have been processed"
+                  : w.projQuotes.map(function(q) { return window.LTP_QUOTE_REF(q) + " (" + q.status + ")"; }).join(", "))),
+            w.quotesHandled ? checkmark : h("div", { style: { display: "flex", gap: 6 } },
+              h(window.Btn, { small: true, variant: "ghost", onClick: wizardUnlinkQuotes }, "Unlink"),
+              h(window.Btn, { small: true, variant: "danger", onClick: wizardDeleteQuotes }, "Delete Quotes"))
+          ),
+
+          // Step 3: Invoices
+          hasInvoices && h("div", { style: stepStyle(w.invoicesHandled) },
+            h("div", null,
+              h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, w.invoicesHandled ? "\u2713 Invoices unlinked" : w.projInvoices.length + " Linked Invoice" + (w.projInvoices.length > 1 ? "s" : "")),
+              h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                w.invoicesHandled
+                  ? "Invoices preserved and unlinked from project"
+                  : w.projInvoices.map(function(i) { return window.LTP_INVOICE_REF(i) + " (" + window.LTP_displayStatus(i) + ")"; }).join(", "))),
+            w.invoicesHandled ? checkmark : h(window.Btn, { small: true, variant: "ghost", onClick: wizardUnlinkInvoices }, "Unlink Invoices")
+          )
+        ),
+
+        // Final delete
+        h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+          h("div", { style: { fontSize: "11px", color: allDone ? B.textSec : B.textMut } },
+            allDone ? "All steps completed. Ready to delete." : "Complete the steps above to proceed."),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setDeleteWizard(null); } }, "Cancel"),
+            h(window.Btn, { variant: "danger", onClick: allDone ? wizardFinalDelete : undefined,
+              style: allDone ? {} : { opacity: 0.4, cursor: "not-allowed" } }, "Delete Project"))
+        )
+      );
+    }()
+  );
+};

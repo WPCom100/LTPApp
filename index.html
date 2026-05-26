@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LTP Business Suite</title>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #555; }
+    select option { background: #1a1a1a; color: #fff; }
+    [contenteditable]:empty:before { content: attr(data-placeholder); color: #666; }
+    blockquote { border-left: 3px solid #E8731A; padding-left: 12px; margin: 8px 0; color: #aaa; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+
+  <!-- 1. Router (must be first — seeds hash and exposes LTPRouter) -->
+  <script src="router.js"></script>
+
+  <!-- 2. Theme & Config -->
+  <script src="theme.js"></script>
+
+  <!-- 2. Data -->
+  <script src="data/companies.js"></script>
+  <script src="data/contacts.js"></script>
+  <script src="data/projects.js"></script>
+  <script src="data/equipment.js"></script>
+  <script src="data/quotes.js"></script>
+  <script src="data/products.js"></script>
+  <script src="data/services.js"></script>
+  <script src="data/invoices.js"></script>
+  <script src="data/labor.js"></script>
+  <script src="data/settings.js"></script>
+  <script src="data/allocations.js"></script>
+  <script src="data/containers.js"></script>
+  <script src="data/kits.js"></script>
+
+  <!-- 3. Shared Components -->
+  <script src="components/data-state.js"></script>
+  <script src="components/ui.js"></script>
+  <script src="components/search-select.js"></script>
+  <script src="components/rich-text-editor.js"></script>
+  <script src="components/schedule-editor.js"></script>
+  <script src="components/confirm-delete.js"></script>
+  <script src="components/confirm-dialog.js"></script>
+  <script src="components/error-boundary.js"></script>
+
+  <!-- 4. CRM Sub-modules (order: leaf components first, shell last) -->
+  <script src="modules/calendar-grid.js"></script>
+  <script src="modules/crm-notes.js"></script>
+  <script src="modules/crm-meetings.js"></script>
+  <script src="modules/crm-contacts.js"></script>
+  <script src="modules/crm-companies.js"></script>
+  <script src="modules/crm-projects.js"></script>
+  <script src="modules/crm-shell.js"></script>
+
+  <!-- 5. Other Modules -->
+  <script src="modules/dashboard.js"></script>
+  <!-- 5. Rentals sub-modules (utils first, shell last) -->
+  <script src="modules/rentals-utils.js"></script>
+  <script src="modules/rentals-maintenance.js"></script>
+  <script src="modules/rentals-allocations.js"></script>
+  <script src="modules/rentals-equipment.js"></script>
+  <script src="modules/rentals-availability.js"></script>
+  <script src="modules/rentals-inventory.js"></script>
+  <script src="modules/rentals-containers.js"></script>
+  <script src="modules/rentals-kits.js"></script>
+  <script src="modules/rentals-shell.js"></script>
+  <!-- 6. Quotes sub-modules (list first — exports totals helpers used by builder — shell last) -->
+  <script src="modules/quotes-list.js"></script>
+  <script src="modules/quotes-builder.js"></script>
+  <script src="modules/quotes-products.js"></script>
+  <script src="modules/quotes-services.js"></script>
+  <script src="modules/quotes-shell.js"></script>
+  <script src="modules/invoices.js"></script>
+  <script src="modules/labor.js"></script>
+  <script src="modules/settings.js"></script>
+  <script src="modules/schedule-builder.js"></script>
+  <script src="modules/projects.js"></script>
+  <script src="modules/calendar.js"></script>
+
+  <!-- 6. App Shell -->
+  <script src="app.js"></script>
+
+  <!-- Mount -->
+  <script>
+    var root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(React.createElement(window.LTPApp));
+  </script>
+</body>
+</html>
