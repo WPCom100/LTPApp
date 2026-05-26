@@ -252,12 +252,18 @@ window.LTPApp = function() {
     || (route.module === "projects" && route.id !== null && route.action === "schedule");
 
   // Loading gate — block first render until every API fetch has resolved.
-  // Hooks above always run; we only short-circuit the render output here.
+  // Hooks above always run; we only short-circuit the main render here.
+  // Error toasts mount alongside in a Fragment so failures during hydration
+  // (e.g. wrong API key) still surface immediately.
   if (!allReady) {
-    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…");
+    return h(React.Fragment, null,
+      h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…"),
+      h(window.LTPErrorToasts)
+    );
   }
 
-  return h("div", { style: { display: "flex", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
+  return h(React.Fragment, null,
+   h("div", { style: { display: "flex", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
       h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
         h("div", { style: { width: 30, height: 30, background: B.accent, borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#000", flexShrink: 0 } }, "LTP"),
@@ -373,5 +379,7 @@ window.LTPApp = function() {
       ),
       h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 0" : "22px" } }, renderModule())
     )
+   ),
+   h(window.LTPErrorToasts)
   );
 };

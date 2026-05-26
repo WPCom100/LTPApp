@@ -50,6 +50,12 @@
     console.error("[LTP] sync error:", label, entry);
     window.LTP_API_ERRORS.push(entry);
     if (window.LTP_API_ERRORS.length > 50) window.LTP_API_ERRORS.shift();
+    // Dispatch a DOM event so the UI (components/error-toasts.js) can show
+    // a toast. Wrapped in try/catch in case a very old browser lacks
+    // CustomEvent — the console log + ring buffer still capture the error.
+    try {
+      window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: entry }));
+    } catch (e) { /* CustomEvent unsupported — silently skip */ }
   }
 
   function checkResponse(label, resp) {
