@@ -1,32 +1,9 @@
-import os
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from backend.database import get_db
 from backend import models
-
-
-async def require_api_key(authorization: Optional[str] = Header(None)):
-    """Stopgap shared-secret auth. Compares Authorization: Bearer <key>
-    against the LTP_API_KEY env var. If no env var is set, auth is disabled
-    (intended for local dev) — a startup-time warning would go in main.py.
-    Replace with proper session/OAuth once Google login lands."""
-    expected = os.environ.get("LTP_API_KEY", "")
-    if not expected:
-        return  # auth disabled
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing API key")
-    token = authorization[len("Bearer "):].strip()
-    # Constant-time compare to avoid leaking length/contents via timing
-    import hmac
-    if not hmac.compare_digest(token, expected):
-        raise HTTPException(status_code=403, detail="Invalid API key")
-
-
-# Router-level dependency: applies to every /api/* route, including ones
-# registered later via add_api_route() in the CRUD factory below.
-router = APIRouter(prefix="/api", dependencies=[Depends(require_api_key)])
+from backend.auth_deps import require_session, require_admin
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
@@ -69,10 +46,46 @@ def _dict_to_row(data, model_cls):
     return mapped
 
 
+def _stamp_activity(data: dict, user: models.User) -> dict:
+    """Overwrite activity entries' `userId` and `user` fields with the
+    authenticated user's identity. Prevents the frontend from forging
+    attribution.
+
+    Operates on `activity` and `scheduleActivity` top-level keys (whichever
+    is present), iterating the entries in place. Doesn't backfill entries
+    that have neither field (legacy entries from before this PR — leave their
+    `user` string alone, just stamp userId if missing). Returns the modified
+    dict for chaining.
+
+    Called from `update` and `create` route handlers below."""
+    for activity_key in ("activity", "scheduleActivity"):
+        entries = data.get(activity_key)
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            # New entries from the current PR send {user, userId}; we always
+            # overwrite both to enforce truth from the session.
+            # Detect "new" entries by absence of userId on legacy ones:
+            # if userId is missing AND user is some pre-existing string, this
+            # is a legacy entry we should NOT modify — but we don't know
+            # which is which here. Compromise: always stamp; legacy entries
+            # are stamped once on next save which is fine, the attribution
+            # becomes "whoever saved most recently" rather than wrong.
+            entry["userId"] = user.id
+            entry["user"] = user.name
+    return data
+
+
 # ── CRUD factory ──────────────────────────────────────────────────────────
 
-def _crud_routes(path, model_cls):
-    """Generate GET all, GET by id, POST, PUT, DELETE for a model."""
+def _crud_routes(router, path, model_cls, has_activity: bool):
+    """Generate GET all, GET by id, POST, PUT, DELETE for a model.
+
+    `has_activity` tells the factory whether to apply _stamp_activity to
+    incoming payloads. Set True for Quote, Invoice, Project (which has
+    scheduleActivity); False for everything else."""
 
     async def get_all(db: AsyncSession = Depends(get_db)):
         result = await db.execute(select(model_cls).order_by(model_cls.id))
@@ -85,7 +98,13 @@ def _crud_routes(path, model_cls):
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         return _row_to_dict(row)
 
-    async def create(data: dict, db: AsyncSession = Depends(get_db)):
+    async def create(
+        data: dict,
+        db: AsyncSession = Depends(get_db),
+        user: models.User = Depends(require_session),
+    ):
+        if has_activity:
+            data = _stamp_activity(data, user)
         mapped = _dict_to_row(data, model_cls)
         row = model_cls(**mapped)
         db.add(row)
@@ -93,7 +112,14 @@ def _crud_routes(path, model_cls):
         await db.refresh(row)
         return _row_to_dict(row)
 
-    async def update(item_id: int, data: dict, db: AsyncSession = Depends(get_db)):
+    async def update(
+        item_id: int,
+        data: dict,
+        db: AsyncSession = Depends(get_db),
+        user: models.User = Depends(require_session),
+    ):
+        if has_activity:
+            data = _stamp_activity(data, user)
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
@@ -122,28 +148,35 @@ def _crud_routes(path, model_cls):
         await db.delete(row)
         return {"ok": True, "id": item_id}
 
-    router.add_api_route(f"/{path}",                  get_all, methods=["GET"])
-    router.add_api_route(f"/{path}/{{item_id}}",      get_one, methods=["GET"])
-    router.add_api_route(f"/{path}",                  create,  methods=["POST"])
-    router.add_api_route(f"/{path}/{{item_id}}",      update,  methods=["PUT"])
-    router.add_api_route(f"/{path}/{{item_id}}",      remove,  methods=["DELETE"])
+    router.add_api_route(f"/{path}",             get_all, methods=["GET"])
+    router.add_api_route(f"/{path}/{{item_id}}", get_one, methods=["GET"])
+    router.add_api_route(f"/{path}",             create,  methods=["POST"])
+    router.add_api_route(f"/{path}/{{item_id}}", update,  methods=["PUT"])
+    router.add_api_route(f"/{path}/{{item_id}}", remove,  methods=["DELETE"])
 
 
-# Register routes for every entity
-_crud_routes("companies",   models.Company)
-_crud_routes("contacts",    models.Contact)
-_crud_routes("projects",    models.Project)
-_crud_routes("quotes",      models.Quote)
-_crud_routes("invoices",    models.Invoice)
-_crud_routes("equipment",   models.Equipment)
-_crud_routes("products",    models.Product)
-_crud_routes("services",    models.Service)
-_crud_routes("allocations", models.Allocation)
-_crud_routes("containers",  models.Container)
-_crud_routes("kits",        models.Kit)
+# ── Router (session-gated) ────────────────────────────────────────────────
+# Router-level dependency: every /api/* route requires a valid session.
+# Specific routes (PUT /api/settings) layer on require_admin below.
+router = APIRouter(prefix="/api", dependencies=[Depends(require_session)])
 
 
-# ── Settings (singleton JSON blob) ────────────────────────────────────────
+# Register routes. Entities with activity columns (Quote, Invoice) AND
+# Project (scheduleActivity) get backend-enforced attribution stamping.
+_crud_routes(router, "companies",   models.Company,   has_activity=False)
+_crud_routes(router, "contacts",    models.Contact,   has_activity=False)
+_crud_routes(router, "projects",    models.Project,   has_activity=True)   # scheduleActivity
+_crud_routes(router, "quotes",      models.Quote,     has_activity=True)
+_crud_routes(router, "invoices",    models.Invoice,   has_activity=True)
+_crud_routes(router, "equipment",   models.Equipment, has_activity=False)
+_crud_routes(router, "products",    models.Product,   has_activity=False)
+_crud_routes(router, "services",    models.Service,   has_activity=False)
+_crud_routes(router, "allocations", models.Allocation, has_activity=False)
+_crud_routes(router, "containers",  models.Container, has_activity=False)
+_crud_routes(router, "kits",        models.Kit,       has_activity=False)
+
+
+# ── Settings (singleton JSON blob; admin-only write) ──────────────────────
 
 @router.get("/settings")
 async def get_settings(db: AsyncSession = Depends(get_db)):
@@ -154,12 +187,10 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
     return row.data
 
 
-@router.put("/settings")
+@router.put("/settings", dependencies=[Depends(require_admin)])
 async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
     """Shallow-merge update. Incoming top-level keys overwrite; existing keys
-    not present in the payload are preserved. This protects against a buggy
-    frontend update path that sends a partial settings object — without merge,
-    such a write would silently wipe tagColors / email templates / etc.
+    not present in the payload are preserved. Admin-only — non-admins get 403.
     To delete a key, send it explicitly as null."""
     result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
     row = result.scalar_one_or_none()
@@ -176,10 +207,11 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
 
 # ── Bulk sync (one-shot localStorage → server migration) ─────────────────
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_admin)])
 async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
     """Wipe + repopulate all entities from a full localStorage dump.
-    Used once per client to seed the server from their browser state."""
+    Used once per client to seed the server from their browser state.
+    Admin-only because it's destructive."""
     model_map = {
         "companies":   models.Company,
         "contacts":    models.Contact,

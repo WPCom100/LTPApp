@@ -1,5 +1,62 @@
-// Main App Shell — owns all persistent state. Modules receive live state via props.
+// ── Outer auth gate ─────────────────────────────────────────────────────────
+// Picks what to render based on window.LTP_AUTH_USER (set by components/auth.js):
+//   undefined → auth check in flight; show "Loading…"
+//   null      → not signed in; show sign-in screen
+//   {…}       → signed in; render LTPSignedInApp (the real app)
+// The split matters because LTPSignedInApp's hooks fire fetches to /api/* on
+// mount; we must NOT render it for unauthenticated users (would loop on 401s).
 window.LTPApp = function() {
+  var h = React.createElement;
+  var B = window.LTP_THEME;
+  var useState = React.useState;
+  var useEffect = React.useEffect;
+
+  // Re-render when auth.js publishes the result.
+  var pair = useState(window.LTP_AUTH_USER);
+  var authUser = pair[0], setAuthUser = pair[1];
+  useEffect(function() {
+    function onReady() { setAuthUser(window.LTP_AUTH_USER); }
+    window.addEventListener("ltp-auth-ready", onReady);
+    return function() { window.removeEventListener("ltp-auth-ready", onReady); };
+  }, []);
+
+  if (authUser === undefined) {
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…");
+  }
+  if (authUser === null) {
+    return h(LTPSignInScreen);
+  }
+  return h(LTPSignedInApp, { authUser: authUser });
+};
+
+
+// ── Sign-in screen for unauthenticated users ────────────────────────────────
+function LTPSignInScreen() {
+  var h = React.createElement;
+  var B = window.LTP_THEME;
+  return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" } },
+    h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: "40px 48px", maxWidth: 380, width: "90%", textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" } },
+      h("div", { style: { width: 44, height: 44, background: B.accent, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: "#000", margin: "0 auto 18px" } }, "LTP"),
+      h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.text, marginBottom: 6 } }, "LTP Business Suite"),
+      h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 28, lineHeight: 1.5 } }, "Sign in with your Google account to continue."),
+      h("a", { href: "/auth/login",
+        style: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#fff", color: "#1f1f1f", border: "1px solid #dadce0", borderRadius: "6px", padding: "10px 24px", fontSize: "13px", fontWeight: 600, textDecoration: "none", fontFamily: "inherit", cursor: "pointer", minWidth: 220 } },
+        // Inline Google "G" mark
+        h("svg", { width: 18, height: 18, viewBox: "0 0 48 48" },
+          h("path", { fill: "#4285F4", d: "M45.12 24.5c0-1.56-.14-3.06-.4-4.5H24v8.51h11.84c-.51 2.75-2.06 5.08-4.39 6.64v5.52h7.11c4.16-3.83 6.56-9.47 6.56-16.17z" }),
+          h("path", { fill: "#34A853", d: "M24 46c5.94 0 10.92-1.97 14.56-5.33l-7.11-5.52c-1.97 1.32-4.49 2.1-7.45 2.1-5.73 0-10.58-3.87-12.31-9.07H4.34v5.7C7.96 41.07 15.4 46 24 46z" }),
+          h("path", { fill: "#FBBC05", d: "M11.69 28.18c-.44-1.32-.69-2.73-.69-4.18s.25-2.86.69-4.18v-5.7H4.34C2.85 17.09 2 20.45 2 24c0 3.55.85 6.91 2.34 9.88l7.35-5.7z" }),
+          h("path", { fill: "#EA4335", d: "M24 10.75c3.23 0 6.13 1.11 8.41 3.29l6.31-6.31C34.91 4.18 29.93 2 24 2 15.4 2 7.96 6.93 4.34 14.12l7.35 5.7C13.42 14.62 18.27 10.75 24 10.75z" })
+        ),
+        "Sign in with Google"
+      )
+    )
+  );
+}
+
+
+// Main App Shell — owns all persistent state. Modules receive live state via props.
+function LTPSignedInApp(props) {
   var B = window.LTP_THEME, MODULES = window.LTP_MODULES;
   var h = React.createElement, useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
   var nav = window.LTPRouter.navigate;
@@ -41,8 +98,15 @@ window.LTPApp = function() {
               && quotesReady && productsReady && servicesReady
               && invoicesReady && settingsReady;
 
-  // Expose settings globals for activity logging and prints
-  window.LTP_CURRENT_USER = settings.userName || "User";
+  var isAdmin = props.authUser.role === "admin";
+
+  // Expose globals for activity logging and prints. LTP_CURRENT_USER feeds
+  // every "user" field in activity entries (quotes-builder.js, invoices.js,
+  // schedule-builder.js, labor.js, crm-notes.js). Backend overwrites the
+  // value in _stamp_activity, but sending it locally keeps the optimistic UI
+  // consistent until the next refresh.
+  window.LTP_CURRENT_USER = props.authUser.name || props.authUser.email || "User";
+  window.LTP_CURRENT_USER_ID = props.authUser.id;
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_COMPANY_SHORT = settings.companyShort || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
@@ -246,7 +310,9 @@ window.LTPApp = function() {
         projects: projects, setProjects: setProjects,
         services: services, quotes: quotes, companies: companies, settings: settings,
       }));
-      case "settings":  return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings }));
+      case "settings":
+        if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
+        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings }));
       default: nav("dashboard"); return null;
     }
   }
@@ -277,7 +343,12 @@ window.LTPApp = function() {
         sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE"))
       ),
       h("nav", { style: { flex: 1, padding: "10px 6px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" } },
-        MODULES.map(function(m) {
+        MODULES.filter(function(m) {
+          // Hide Settings link from non-admins — they can't load the module
+          // either (renderModule short-circuits to permission-denied) so
+          // having the nav item would be a dead end.
+          return !(m.id === "settings" && !isAdmin);
+        }).map(function(m) {
           var isActive = activeModule === m.id;
           var rows = [
             h("button", { key: m.id, onClick: function() { nav(m.id); },
@@ -382,11 +453,99 @@ window.LTPApp = function() {
         ),
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("span", { ref: clockRef, style: { fontSize: "11px", color: B.textMut } }),
-          h("div", { style: { width: 28, height: 28, background: B.accent, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "10px", fontWeight: 700, color: "#000" } }, "LT"))
+          h(LTPUserMenu, { user: props.authUser }))
       ),
       h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 0" : "22px" } }, renderModule())
     )
    ),
    h(window.LTPErrorToasts)
   );
-};
+}
+
+
+// ── User menu: avatar + dropdown with email + sign-out ─────────────────────
+function LTPUserMenu(props) {
+  var h = React.createElement;
+  var useState = React.useState;
+  var useRef = React.useRef;
+  var useEffect = React.useEffect;
+  var B = window.LTP_THEME;
+  var user = props.user;
+
+  var openPair = useState(false);
+  var open = openPair[0], setOpen = openPair[1];
+  var errPair = useState(false);
+  var imgFailed = errPair[0], setImgFailed = errPair[1];
+  var rootRef = useRef(null);
+
+  // Close on outside click — same pattern as the search dropdown above.
+  useEffect(function() {
+    if (!open) return;
+    function handler(e) {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handler);
+    return function() { document.removeEventListener("mousedown", handler); };
+  }, [open]);
+
+  // Initials fallback when Google's picture URL 404s (they expire) or the
+  // user has no picture set. Two-letter from name preferred, else email.
+  var initials = "";
+  if (user.name) {
+    var parts = user.name.trim().split(/\s+/);
+    initials = (parts[0] || "").charAt(0) + (parts.length > 1 ? parts[parts.length - 1].charAt(0) : "");
+  } else if (user.email) {
+    initials = user.email.charAt(0);
+  }
+  initials = initials.toUpperCase() || "U";
+
+  var avatarInner;
+  if (user.pictureUrl && !imgFailed) {
+    avatarInner = h("img", {
+      src: user.pictureUrl,
+      alt: "",
+      referrerPolicy: "no-referrer",
+      onError: function() { setImgFailed(true); },
+      style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
+    });
+  } else {
+    avatarInner = h("span", { style: { fontSize: "10px", fontWeight: 700, color: "#000" } }, initials);
+  }
+
+  return h("div", { ref: rootRef, style: { position: "relative" } },
+    h("button", {
+      onClick: function() { setOpen(!open); },
+      "aria-label": "User menu",
+      style: { width: 28, height: 28, background: B.accent, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", border: "none", padding: 0, overflow: "hidden", cursor: "pointer" },
+    }, avatarInner),
+    open && h("div", {
+      style: { position: "absolute", top: "calc(100% + 6px)", right: 0, minWidth: 220, background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 2500, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", overflow: "hidden" }
+    },
+      h("div", { style: { padding: "12px 14px", borderBottom: "1px solid " + B.border } },
+        h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, user.name || "—"),
+        h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, user.email),
+        h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 6, textTransform: "uppercase", letterSpacing: "0.06em" } }, user.role)
+      ),
+      h("button", {
+        onClick: function() { setOpen(false); window.LTP_AUTH.logout(); },
+        style: { display: "block", width: "100%", background: "transparent", border: "none", padding: "10px 14px", textAlign: "left", fontSize: "12px", color: B.text, cursor: "pointer", fontFamily: "inherit" },
+        onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+        onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; },
+      }, "Sign out")
+    )
+  );
+}
+
+
+// ── Permission-denied inline card (used by renderModule for admin-gated modules) ─
+function LTPPermissionDenied(props) {
+  var h = React.createElement;
+  var B = window.LTP_THEME;
+  return h("div", { style: { background: (B.danger || "#e74c3c") + "08", border: "1px solid " + (B.danger || "#e74c3c") + "33", borderRadius: "8px", padding: "24px 28px", maxWidth: 520, margin: "20px auto" } },
+    h("div", { style: { display: "flex", alignItems: "center", gap: 12, marginBottom: 8 } },
+      h("div", { style: { width: 28, height: 28, borderRadius: "50%", background: (B.danger || "#e74c3c") + "22", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+        h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.danger || "#e74c3c" } }, "!")),
+      h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text || "#fff" } }, (props.what || "This area") + " is admin-only")),
+    h("div", { style: { fontSize: "11px", color: B.textMut || "#888", lineHeight: 1.5, paddingLeft: 40 } }, "Your account doesn't have permission to access this. Ask an admin to promote your role if you need access.")
+  );
+}

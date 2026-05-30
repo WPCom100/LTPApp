@@ -54,16 +54,13 @@
           h(window.LTPInput, { label: "Company Name", value: draft.companyName || "", onChange: function(v) { set("companyName", v); } }),
           h(window.LTPInput, { label: "Short Name", value: draft.companyShort || "", onChange: function(v) { set("companyShort", v); }, placeholder: "e.g. LTP" })
         ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
-          h(window.LTPInput, { label: "Your Name (for activity logging)", value: draft.userName || "", onChange: function(v) { set("userName", v); }, placeholder: "e.g. Landry Strickland" }),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr", gap: 12, marginTop: 12 } },
           h(window.LTPInput, { label: "Tagline", value: draft.tagline || "", onChange: function(v) { set("tagline", v); }, placeholder: "e.g. Technical Production & Lighting Design" })
         ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 12 } },
-          h(window.LTPInput, { label: "Phone", value: draft.phone || "", onChange: function(v) { set("phone", v); },
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+          h(window.LTPInput, { label: "Company Phone", value: draft.phone || "", onChange: function(v) { set("phone", v); },
             validate: function(v) { return v && !window.LTP_isValidPhone(v) ? "Enter a valid phone" : null; },
             onBlur: function() { if (draft.phone) set("phone", window.LTP_formatPhone(draft.phone)); } }),
-          h(window.LTPInput, { label: "Email", value: draft.email || "", onChange: function(v) { set("email", v); }, type: "email",
-            validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } }),
           h(window.LTPInput, { label: "Website", value: draft.website || "", onChange: function(v) { set("website", v); } })
         )
       ),
@@ -248,11 +245,6 @@
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } }),
           h(window.LTPInput, { label: "Reply-To Email", value: draft.emailReplyTo || "", onChange: function(v) { set("emailReplyTo", v); }, type: "email",
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } })
-        ),
-        h("div", { style: { marginTop: 12 } },
-          h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Email Signature"),
-          h("textarea", { value: draft.emailSignature || "", onChange: function(e) { set("emailSignature", e.target.value); },
-            style: { width: "100%", minHeight: 80, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical" } })
         )
       ),
 

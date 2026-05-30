@@ -29,15 +29,13 @@
     return "unknown";
   }
 
-  // Authenticated fetch wrapper — injects Authorization: Bearer header from
-  // window.LTP_API_KEY (set by /config.js). If unset (local dev), no header
-  // is added and the backend allows the request through.
+  // Cookie-authenticated fetch wrapper. Every API call sends the session
+  // cookie (`ltp_session`, set by /auth/callback on the backend) via
+  // `credentials: "include"`. If the cookie is missing or expired, the
+  // backend returns 401 and checkResponse() bounces the user to /auth/login.
   function apiFetch(url, opts) {
     opts = opts || {};
-    var headers = Object.assign({}, opts.headers || {});
-    var key = window.LTP_API_KEY;
-    if (key) headers["Authorization"] = "Bearer " + key;
-    return fetch(url, Object.assign({}, opts, { headers: headers }));
+    return fetch(url, Object.assign({}, opts, { credentials: "include" }));
   }
 
   // ── Error visibility ───────────────────────────────────────────────────
@@ -60,6 +58,15 @@
 
   function checkResponse(label, resp) {
     if (resp.ok) return resp;
+    // 401 means our session is gone (expired, revoked, or the user logged
+    // out in another tab). Bounce to /auth/login so they can re-auth instead
+    // of letting the page keep firing failing PUTs.
+    if (resp.status === 401) {
+      window.location.href = "/auth/login";
+      // Throw so the calling .then chain unwinds; we don't want to keep
+      // pretending the request is in flight while the page navigates away.
+      throw new Error(label + " unauthorized — redirecting to login");
+    }
     return resp.text().then(function(body) {
       recordError(label, { status: resp.status, body: (body || "").slice(0, 300) });
       throw new Error(label + " failed: " + resp.status);
@@ -88,6 +95,13 @@
     if (kind === "unknown") return Promise.resolve(null);
     var url = (kind === "entity") ? API_PREFIX + key : API_PREFIX + "settings";
     return apiFetch(url).then(function(r) {
+      if (r.status === 401) {
+        // Session is gone. Bounce to login; the redirect supersedes any
+        // further loading. Return null so the calling chain doesn't try to
+        // populate React state with garbage in the meantime.
+        window.location.href = "/auth/login";
+        return null;
+      }
       if (!r.ok) {
         return r.text().then(function(body) {
           recordError("GET " + url, { status: r.status, body: (body || "").slice(0, 300) });

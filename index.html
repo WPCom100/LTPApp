@@ -28,7 +28,9 @@
        ones have already run, so the wrong order = silent breakage.
 
        Groups (top to bottom):
-         0. Runtime config — injects window.LTP_API_KEY before fetch is wrapped.
+         0. Auth check — fires GET /auth/me and sets window.LTP_AUTH_USER.
+            Must load before everything else so other scripts can read auth
+            state during their own bootstrap.
          1. React (CDN UMD) — every component below uses React.createElement.
          2. Router — owns the hash and exposes window.LTPRouter; modules call it.
          3. Theme + cross-cutting utilities — color tokens, status enums, lookup
@@ -38,7 +40,7 @@
             components/data-state.js (the hook merges its defaults at hydration).
          5. Shared components — UI primitives, the persistence hook, dialogs,
             error UI. data-state.js is the persistence chokepoint; it depends
-            on /config.js (window.LTP_API_KEY) and theme.js.
+            on the ltp_session cookie (set by /auth/callback) and theme.js.
          6. Feature modules — each shell pulls in its sub-modules. Within a
             shell group, leaves load first and the shell loads last.
             quotes-list.js exports totals helpers consumed by quotes-builder.js
@@ -51,8 +53,8 @@
        above. If something errors on load, that's almost always the cause.
        ════════════════════════════════════════════════════════════════════ -->
 
-  <!-- 0. Runtime config (API key) — served dynamically by FastAPI -->
-  <script src="/config.js"></script>
+  <!-- 0. Auth check — fires GET /auth/me; populates window.LTP_AUTH_USER -->
+  <script src="components/auth.js"></script>
 
   <!-- 1. React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
@@ -82,7 +84,8 @@
   <script src="data/kits.js"></script>
 
   <!-- 5. Shared components.
-       data-state.js: depends on window.LTP_API_KEY (from /config.js).
+       data-state.js: depends on the ltp_session cookie (set by /auth/callback);
+         every fetch uses credentials:"include".
        helpers.js + status-enums.js: zero deps; loaded early so every
          component and module below can use window.LTP_HELPERS / LTP_STATUS.
        ui.js, *-dialog.js: read window.LTP_THEME.

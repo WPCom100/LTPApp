@@ -1,25 +1,24 @@
-// App-wide defaults. Personal/company info is intentionally blank — users
-// fill it in through the Settings UI. What's kept here are values the app's
-// rendering or business logic relies on (tag colors, crew role options,
-// payment terms, generic email templates).
+// App-wide defaults. Personal identity (name, email, phone, picture) is
+// sourced from Google via /auth/me and stored on the User row — NOT here.
+// What stays in this blob is COMPANY-level config (name, tagline, address,
+// branding, business defaults) plus app-rendering needs (tag colors, crew
+// dropdowns, email templates). All admin-edited, shared across all users.
 window.LTP_DATA_SETTINGS = {
-  // Company Info — fill in via Settings UI
+  // Company Info — admin-edited via Settings UI
   companyName: "",
   companyShort: "",
   tagline: "",
-  userName: "",
-  phone: "",
-  email: "",
+  phone: "",     // company main line, not personal
   website: "",
 
-  // Address
+  // Address (company HQ)
   street: "",
   suite: "",
   city: "",
   state: "",
   zip: "",
 
-  // Branding — orange is just a starter accent; users can change in Settings
+  // Branding — orange is just a starter accent; admins can change in Settings
   accentColor: "#E8731A",
   logoUrl: "",
 
@@ -53,10 +52,10 @@ window.LTP_DATA_SETTINGS = {
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
 
-  // Email — fill in via Settings UI
+  // Email — company-level outbound config (admin-edited).
+  // Personal per-user signatures can come later via a user_preferences column.
   emailFrom: "",
   emailReplyTo: "",
-  emailSignature: "",
 
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},

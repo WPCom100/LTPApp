@@ -318,3 +318,36 @@ class Settings(Base):
     id = Column(Integer, primary_key=True, default=1)
     data = Column(JSON, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class User(Base):
+    """An app user. Identity (`name`, `email`, `picture_url`) is sourced from
+    Google and refreshed on every login — never edited inside the app. The
+    `google_sub` column is Google's stable subject identifier; we key off it
+    instead of email so a user changing their primary email keeps the same
+    row. `role` ∈ {member, admin}. The first user ever created gets admin;
+    everyone after gets member."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    google_sub = Column(String(100), unique=True, nullable=False, index=True)  # Google's `sub` claim
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    name = Column(String(255), nullable=False, default="")
+    picture_url = Column(Text, default="")
+    role = Column(String(20), default="member", nullable=False)                # {member, admin}
+    last_login = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Session(Base):
+    """An active login session. The primary key IS the opaque cookie value —
+    a 64-char URL-safe token. Each request looks up the cookie value here to
+    find the User. Sessions live ~30 days; expired rows are filtered out at
+    read time (a sweeper job can purge them later). Deleting a row revokes
+    the session immediately (used for logout and future admin actions)."""
+    __tablename__ = "sessions"
+
+    id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
