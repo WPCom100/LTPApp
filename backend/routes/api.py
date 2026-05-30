@@ -47,34 +47,44 @@ def _dict_to_row(data, model_cls):
 
 
 def _stamp_activity(data: dict, user: models.User) -> dict:
-    """Overwrite activity entries' `userId` and `user` fields with the
-    authenticated user's identity. Prevents the frontend from forging
-    attribution.
+    """Overwrite client-supplied attribution fields with the authenticated
+    user's identity. Prevents a (compromised or malicious) frontend from
+    forging "who did what" records.
 
-    Operates on `activity` and `scheduleActivity` top-level keys (whichever
-    is present), iterating the entries in place. Doesn't backfill entries
-    that have neither field (legacy entries from before this PR — leave their
-    `user` string alone, just stamp userId if missing). Returns the modified
-    dict for chaining.
+    Walks three keys, all of which are dated event lists with an attribution
+    field that the client formerly trusted but the server now enforces:
+      - `activity`           Quote.activity, Invoice.activity (and any future
+                             entity with the same shape). Entries:
+                             {id, date, time, type, message, user, userId, changes}
+                             We stamp user + userId.
+      - `scheduleActivity`   Project.scheduleActivity. Same shape, same stamping.
+      - `notes`              Project.notes (list of {id, date, author, text,
+                             linkedMeetingId}). We stamp author + authorId.
+                             Skipped harmlessly when the entity's `notes` is
+                             a plain string (Quote.notes, Invoice.notes,
+                             Equipment.notes, etc. — those are Text columns).
 
-    Called from `update` and `create` route handlers below."""
-    for activity_key in ("activity", "scheduleActivity"):
-        entries = data.get(activity_key)
+    Always stamps (doesn't try to detect legacy entries) — the net effect is
+    that the most recent save attributes its OWN actor, which is correct.
+    Returns the dict for chaining."""
+    for key in ("activity", "scheduleActivity"):
+        entries = data.get(key)
         if not isinstance(entries, list):
             continue
         for entry in entries:
-            if not isinstance(entry, dict):
-                continue
-            # New entries from the current PR send {user, userId}; we always
-            # overwrite both to enforce truth from the session.
-            # Detect "new" entries by absence of userId on legacy ones:
-            # if userId is missing AND user is some pre-existing string, this
-            # is a legacy entry we should NOT modify — but we don't know
-            # which is which here. Compromise: always stamp; legacy entries
-            # are stamped once on next save which is fine, the attribution
-            # becomes "whoever saved most recently" rather than wrong.
-            entry["userId"] = user.id
-            entry["user"] = user.name
+            if isinstance(entry, dict):
+                entry["userId"] = user.id
+                entry["user"] = user.name
+    notes = data.get("notes")
+    if isinstance(notes, list):
+        for entry in notes:
+            # Only stamp entries that look like attribution-bearing notes
+            # (have an `author` key). Defensive: prevents accidentally adding
+            # author fields to some other entity's "notes" array if one is
+            # introduced later with a different shape.
+            if isinstance(entry, dict) and "author" in entry:
+                entry["author"] = user.name
+                entry["authorId"] = user.id   # future-proof; frontend ignores extras
     return data
 
 

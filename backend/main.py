@@ -8,6 +8,7 @@ from authlib.integrations.starlette_client import OAuth
 from backend.database import init_db
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
+from backend.rate_limit import RateLimitMiddleware
 
 
 @asynccontextmanager
@@ -188,14 +189,17 @@ class SecurityHeadersMiddleware:
 
 
 # Add middlewares. ORDER MATTERS: Starlette processes them outer-first on
-# the way IN and inner-first on the way OUT. Last-added = outermost. We want:
-#   1. Security headers wrap the OUTGOING response (so they go on every reply,
-#      including ones rejected by inner middleware).
-#   2. Payload limit on the INCOMING request (so it can reject before
-#      anything below buffers the body).
-#   3. SessionMiddleware further in (only reads cookies, never the body).
-# Therefore add order: Session, then Payload, then Security headers.
+# the way IN and inner-first on the way OUT. Last-added = outermost. We want
+# this execution order on incoming requests:
+#   1. SecurityHeaders   — wraps EVERY response (including rejections below)
+#   2. RateLimit         — reject /auth/* floods before they hit OAuth
+#   3. PayloadSizeLimit  — reject oversize bodies before SessionMiddleware
+#                          tries to read cookies (cookies are small; body isn't)
+#   4. SessionMiddleware — Authlib's signed state cookie
+#   5. (routes)
+# Therefore add in reverse order (innermost first):
 app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=MAX_PAYLOAD_BYTES)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
 
 
