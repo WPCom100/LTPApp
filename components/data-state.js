@@ -102,6 +102,14 @@
   }
 
   // ── Sync (per-row diff for entities; whole-blob PUT for settings) ──────
+  //
+  // Sync functions resolve to a boolean: true iff EVERY request succeeded.
+  // The caller (the debounced change-effect) uses this to decide whether to
+  // advance prevSyncedRef. If we advanced unconditionally, items that failed
+  // to PUT would be missing from the next diff baseline — the change would
+  // be silently dropped from the server forever. Instead: leave prev alone
+  // on partial failure, so the next user edit re-diffs from the OLD baseline
+  // and retries the failed rows automatically.
 
   function syncEntity(key, prev, next) {
     var prevList = Array.isArray(prev) ? prev : [];
@@ -122,9 +130,14 @@
         requests.push(jsonReq("PUT " + key + "/" + id, API_PREFIX + key + "/" + id, "PUT", item));
       }
     });
+    if (requests.length === 0) return Promise.resolve(true);
+    // Each request resolves to true on success, false on failure. The errors
+    // were already logged via checkResponse → recordError → toast.
     return Promise.all(requests.map(function(p) {
-      return p.catch(function() { /* already logged in checkResponse */ });
-    }));
+      return p.then(function() { return true; }, function() { return false; });
+    })).then(function(outcomes) {
+      return outcomes.every(function(ok) { return ok; });
+    });
   }
 
   function syncToServer(key, prev, next) {
@@ -132,9 +145,9 @@
     if (kind === "entity") return syncEntity(key, prev, next);
     if (kind === "settings") {
       return jsonReq("PUT settings", API_PREFIX + "settings", "PUT", next)
-        .catch(function() { /* already logged */ });
+        .then(function() { return true; }, function() { return false; });
     }
-    return Promise.resolve();
+    return Promise.resolve(true);  // unknown keys are no-op syncs, treated as success
   }
 
   // ── React hook ──────────────────────────────────────────────────────────
@@ -160,9 +173,15 @@
     //      lift even if the API is down (the user sees fallback + error toast).
     //
     //   2. `prevSyncedRef.current` mirrors what the server has, AS OF the
-    //      last completed sync. The change-effect diffs current value against
-    //      this to compute PUT/DELETE. If this drifts (e.g. you setValue
-    //      without updating it), the next sync sends wrong deltas.
+    //      last fully-successful sync. The change-effect diffs current value
+    //      against this to compute PUT/DELETE. If ANY request in a batch
+    //      fails, we deliberately DO NOT advance prevSyncedRef — that way
+    //      the next user edit re-diffs from the old baseline and retries the
+    //      failed rows. Trade-off: a persistent server-side error (e.g. a
+    //      validation 422 on one bad row) will re-toast on every edit until
+    //      the user fixes the bad row. Acceptable; the alternative is silent
+    //      data loss, which is worse. If you change this drift logic, see
+    //      syncEntity/syncToServer below — they're the source of truth.
     //
     //   3. `skipNextSyncRef.current === true` means the NEXT change-effect
     //      run is server-driven (adoption), not user-driven, so we must NOT
@@ -184,7 +203,14 @@
 
     latestValueRef.current = value;
 
-    // One-shot hydration on mount
+    // One-shot hydration on mount.
+    //
+    // Belt-and-suspenders: the entire body is wrapped so that hydratedRef and
+    // setReady ALWAYS fire, even if something unexpected throws inside the
+    // adoption logic. The loading gate in app.js depends on `ready` going true
+    // — a stuck gate would freeze the app on a blank "Loading…" screen with
+    // no recovery. fetchInitial() is already guaranteed to resolve (see its
+    // comment), so the .then runs; the try/catch is for code-bug protection.
     useEffect(function() {
       if (classify(key) === "unknown") {
         prevSyncedRef.current = value;
@@ -195,29 +221,41 @@
       var cancelled = false;
       fetchInitial(key).then(function(serverValue) {
         if (cancelled) return;
-        var adopted;
-        if (key === "settings") {
-          // Merge: client defaults (from data/settings.js) provide tag
-          // colors / crew options / etc. when the server's settings blob
-          // is empty or sparse. Server values win on overlapping keys.
-          adopted = Object.assign({}, fallback || {}, serverValue || {});
-        } else if (Array.isArray(serverValue)) {
-          adopted = serverValue;
-        } else {
-          // Fetch failed (null) or non-array — keep fallback so the UI
-          // renders something. The error already went to recordError().
-          adopted = fallback;
+        try {
+          var adopted;
+          if (key === "settings") {
+            // Merge: client defaults (from data/settings.js) provide tag
+            // colors / crew options / etc. when the server's settings blob
+            // is empty or sparse. Server values win on overlapping keys.
+            adopted = Object.assign({}, fallback || {}, serverValue || {});
+          } else if (Array.isArray(serverValue)) {
+            adopted = serverValue;
+          } else {
+            // Fetch failed (null) or non-array — keep fallback so the UI
+            // renders something. The error already went to recordError().
+            adopted = fallback;
+          }
+          prevSyncedRef.current = adopted;
+          skipNextSyncRef.current = true;  // adoption isn't a user change
+          setValue(adopted);
+        } catch (e) {
+          recordError("hydrate " + key, { error: String(e) });
+        } finally {
+          // ALWAYS lift the loading gate. If we threw above, the user sees
+          // an empty fallback + error toast, which is better than a frozen
+          // splash screen.
+          hydratedRef.current = true;
+          setReady(true);
         }
-        prevSyncedRef.current = adopted;
-        skipNextSyncRef.current = true;  // adoption isn't a user change
-        setValue(adopted);
-        hydratedRef.current = true;
-        setReady(true);
       });
       return function() { cancelled = true; };
     }, []);
 
-    // Debounced sync on every value change
+    // Debounced sync on every value change.
+    //
+    // prevSyncedRef advances ONLY on a fully-successful sync. If anything
+    // fails, the next change-effect run re-diffs from the old baseline and
+    // retries the failed rows. See invariant #2 above.
     useEffect(function() {
       if (skipNextSyncRef.current) {
         skipNextSyncRef.current = false;
@@ -230,8 +268,11 @@
       var snapshot = value;
       debounceRef.current = setTimeout(function() {
         var prev = prevSyncedRef.current;
-        prevSyncedRef.current = snapshot;
-        syncToServer(key, prev, snapshot);
+        syncToServer(key, prev, snapshot).then(function(allSucceeded) {
+          if (allSucceeded) prevSyncedRef.current = snapshot;
+          // On failure, leave prevSyncedRef alone — the next user edit's
+          // diff will include the failed rows again and try once more.
+        });
       }, DEBOUNCE_MS);
     }, [value]);
 
