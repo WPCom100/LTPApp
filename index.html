@@ -41,12 +41,15 @@
          5. Shared components — UI primitives, the persistence hook, dialogs,
             error UI. data-state.js is the persistence chokepoint; it depends
             on the ltp_session cookie (set by /auth/callback) and theme.js.
+            DOMPurify (CDN) + sanitize.js MUST load before rich-text-editor.js
+            (which calls window.LTP_SANITIZE on every keystroke).
          6. Feature modules — each shell pulls in its sub-modules. Within a
             shell group, leaves load first and the shell loads last.
             quotes-list.js exports totals helpers consumed by quotes-builder.js
             and modules/invoices.js, so list MUST precede those two.
-         7. App shell — wires the whole tree together. Must load last.
-         8. Mount — kicks React into the DOM.
+         7. App shell — wires the whole tree together.
+         8. Mount — separate file (mount.js) NOT inline, so CSP's script-src
+            doesn't need 'unsafe-inline'. Must load after app.js.
 
        When adding a new file: figure out which group it belongs to, drop it
        at the END of that group, and confirm anything it reads is loaded
@@ -56,9 +59,15 @@
   <!-- 0. Auth check — fires GET /auth/me; populates window.LTP_AUTH_USER -->
   <script src="components/auth.js"></script>
 
-  <!-- 1. React -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <!-- 1. React (production UMD). SRI hashes pinned to v18.2.0; if you bump
+       the version, recompute with:
+         curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"
+          integrity="sha384-tMH8h3BGESGckSAVGZ82T9n90ztNXxvdwvdM6UoR56cYcf+0iGXBliJ29D+wZ/x8"
+          crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"
+          integrity="sha384-bm7MnzvK++ykSwVJ2tynSE5TRdN+xL418osEVF2DE/L/gfWHj91J2Sphe582B1Bh"
+          crossorigin="anonymous"></script>
 
   <!-- 2. Router (seeds hash, exposes window.LTPRouter) -->
   <script src="router.js"></script>
@@ -84,12 +93,22 @@
   <script src="data/kits.js"></script>
 
   <!-- 5. Shared components.
+       DOMPurify: external HTML sanitizer used by sanitize.js. MUST load
+         before sanitize.js and before any component that calls
+         window.LTP_SANITIZE.html (in particular rich-text-editor.js).
+       sanitize.js: wraps DOMPurify with a strict allowlist; single source of
+         truth for what HTML reaches the DOM. Used at every save AND every
+         dangerouslySetInnerHTML site to prevent stored XSS from notes.
        data-state.js: depends on the ltp_session cookie (set by /auth/callback);
          every fetch uses credentials:"include".
        helpers.js + status-enums.js: zero deps; loaded early so every
          component and module below can use window.LTP_HELPERS / LTP_STATUS.
        ui.js, *-dialog.js: read window.LTP_THEME.
        error-toasts.js: listens to "ltp-api-error" CustomEvents dispatched by data-state.js. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js"
+          integrity="sha384-qJNkHwhlYywDHfyoEe1np+1lYvX/8x+3gHCKFhSSBMQyCFlvFnn+zXmaebXl21rV"
+          crossorigin="anonymous"></script>
+  <script src="components/sanitize.js"></script>
   <script src="components/helpers.js"></script>
   <script src="components/status-enums.js"></script>
   <script src="components/data-state.js"></script>
@@ -142,13 +161,12 @@
   <script src="modules/projects.js"></script>
   <script src="modules/calendar.js"></script>
 
-  <!-- 7. App shell — wires everything; must load last -->
+  <!-- 7. App shell — wires everything -->
   <script src="app.js"></script>
 
-  <!-- Mount -->
-  <script>
-    var root = ReactDOM.createRoot(document.getElementById("root"));
-    root.render(React.createElement(window.LTPApp));
-  </script>
+  <!-- 8. Mount — kept in its own file (not inline) so the CSP header in
+       backend/main.py can use `script-src 'self'` without `'unsafe-inline'`.
+       MUST load after app.js. -->
+  <script src="mount.js"></script>
 </body>
 </html>

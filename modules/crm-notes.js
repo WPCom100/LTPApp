@@ -2,8 +2,25 @@
 (function() {
   var B = window.LTP_THEME, h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
 
-  // Strip HTML for plain text copy
+  // Capture the sanitizer at module load. Closure-bound so the print-window
+  // popup (which runs in its own Document) can still access it via the
+  // parent's scope. NEVER write user-controlled HTML to the DOM without
+  // running it through purify().
+  var purify = function(s) { return window.LTP_SANITIZE.html(s); };
+
+  // Strip HTML for plain text copy. innerHTML write here is safe — we never
+  // read .innerHTML back, only .textContent, and the div is detached. The
+  // browser doesn't execute scripts inserted via innerHTML on a detached node.
   function stripHtml(html) { var tmp = document.createElement("div"); tmp.innerHTML = html; return tmp.textContent || tmp.innerText || ""; }
+
+  // Escape a string for safe use inside an HTML attribute or text node when
+  // we're writing to document.write (a print window) where React isn't doing
+  // it for us. Used for project name + author + date in print headers.
+  function escAttr(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
 
   // Add Note Modal (rich text + optional meeting link)
   window.CRMAddNote = function({ ctx }) {
@@ -54,10 +71,16 @@
     }
     function printNote() {
       var w = window.open("", "_blank");
+      // Sanitize note body; escape header fields (plain-text-only attrs/text).
+      var safeBody = purify(note.text);
+      var safeName = escAttr(project.name || "");
+      var safeAuthor = escAttr(note.author);
+      var safeDate = escAttr(fmt(note.date));
+      var safeMeetingSuffix = linkedMeeting ? " | Meeting: " + escAttr(linkedMeeting.title) : "";
       w.document.write("<html><head><title>Note</title><style>body{font-family:sans-serif;padding:40px;max-width:700px;margin:auto;}h2{margin:0 0 4px;}p.meta{color:#666;font-size:13px;margin:0 0 16px;}.content{font-size:14px;line-height:1.7;}</style></head><body>");
-      w.document.write("<h2>" + (project.name || "") + "</h2>");
-      w.document.write("<p class='meta'>" + note.author + " \u2014 " + fmt(note.date) + (linkedMeeting ? " | Meeting: " + linkedMeeting.title : "") + "</p>");
-      w.document.write("<div class='content'>" + note.text + "</div>");
+      w.document.write("<h2>" + safeName + "</h2>");
+      w.document.write("<p class='meta'>" + safeAuthor + " \u2014 " + safeDate + safeMeetingSuffix + "</p>");
+      w.document.write("<div class='content'>" + safeBody + "</div>");
       w.document.write("</body></html>");
       w.document.close(); w.print();
     }
@@ -75,7 +98,7 @@
         )
       ),
       linkedMeeting && h("div", { style: { fontSize: "11px", color: B.info, marginBottom: 10, padding: "6px 10px", background: B.infoBg, borderRadius: "4px", border: "1px solid " + B.infoBd } }, "Linked to meeting: " + linkedMeeting.title + " (" + fmt(linkedMeeting.date) + ")"),
-      h("div", { style: { fontSize: "13px", color: B.textSec, lineHeight: 1.6, padding: "12px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent }, dangerouslySetInnerHTML: { __html: note.text } })
+      h("div", { style: { fontSize: "13px", color: B.textSec, lineHeight: 1.6, padding: "12px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent }, dangerouslySetInnerHTML: { __html: purify(note.text) } })
     );
   };
 
@@ -132,10 +155,11 @@
   window.CRMPrintAllNotes = function(project) {
     if (!project || !project.notes.length) return;
     var w = window.open("", "_blank");
-    w.document.write("<html><head><title>" + project.name + " Notes</title><style>body{font-family:sans-serif;padding:40px;max-width:700px;margin:auto;}h1{font-size:20px;margin:0 0 24px;}.note{margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid #ddd;}.meta{color:#666;font-size:13px;margin:0 0 8px;}.content{font-size:14px;line-height:1.7;}</style></head><body>");
-    w.document.write("<h1>" + project.name + " \u2014 Notes</h1>");
+    var safeProjectName = escAttr(project.name);
+    w.document.write("<html><head><title>" + safeProjectName + " Notes</title><style>body{font-family:sans-serif;padding:40px;max-width:700px;margin:auto;}h1{font-size:20px;margin:0 0 24px;}.note{margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid #ddd;}.meta{color:#666;font-size:13px;margin:0 0 8px;}.content{font-size:14px;line-height:1.7;}</style></head><body>");
+    w.document.write("<h1>" + safeProjectName + " \u2014 Notes</h1>");
     project.notes.forEach(function(n) {
-      w.document.write("<div class='note'><p class='meta'>" + n.author + " \u2014 " + fmt(n.date) + "</p><div class='content'>" + n.text + "</div></div>");
+      w.document.write("<div class='note'><p class='meta'>" + escAttr(n.author) + " \u2014 " + escAttr(fmt(n.date)) + "</p><div class='content'>" + purify(n.text) + "</div></div>");
     });
     w.document.write("</body></html>");
     w.document.close(); w.print();

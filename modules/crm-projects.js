@@ -2,6 +2,10 @@
 (function() {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate, calc = window.LTP_calcDuration, ft = window.LTP_formatTime;
+  // Sanitize all note HTML before render — closure-bound at module load.
+  // The editor sanitizes on save too; this is defense in depth (defends
+  // against legacy rows + any save-path bypass).
+  var purify = function(s) { return window.LTP_SANITIZE.html(s); };
 
   // Private — schedule tab with draft state + validated save
   function ScheduleTab({ project, company, ctx }) {
@@ -89,7 +93,7 @@
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 8px", textTransform: "uppercase" } }, "Upcoming Meetings"),
         upcomingMeetings.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, upcomingMeetings.map(function(m) { return h("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.info } }, h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees")), m.meetLink && h("a", { href: m.meetLink, target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600 } }, "Join \u2197")); })) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No upcoming meetings."),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 8px", textTransform: "uppercase" } }, "Recent Notes"),
-        recentNotes.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, recentNotes.map(function(n) { return h("div", { key: n.id, onClick: function() { onNoteClick(n.id); }, style: { background: B.raised, borderRadius: "6px", padding: "10px 12px", borderLeft: "3px solid " + B.accent, cursor: "pointer", transition: "all 0.15s" }, onMouseOver: function(e) { e.currentTarget.style.background = B.surface; }, onMouseOut: function(e) { e.currentTarget.style.background = B.raised; } }, h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4 } }, h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.accent } }, n.author), h("span", { style: { fontSize: "10px", color: B.textMut } }, fmt(n.date))), h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.4, maxHeight: 60, overflow: "hidden" }, dangerouslySetInnerHTML: { __html: n.text } })); })) : h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, "No notes yet.")
+        recentNotes.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } }, recentNotes.map(function(n) { return h("div", { key: n.id, onClick: function() { onNoteClick(n.id); }, style: { background: B.raised, borderRadius: "6px", padding: "10px 12px", borderLeft: "3px solid " + B.accent, cursor: "pointer", transition: "all 0.15s" }, onMouseOver: function(e) { e.currentTarget.style.background = B.surface; }, onMouseOut: function(e) { e.currentTarget.style.background = B.raised; } }, h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4 } }, h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.accent } }, n.author), h("span", { style: { fontSize: "10px", color: B.textMut } }, fmt(n.date))), h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.4, maxHeight: 60, overflow: "hidden" }, dangerouslySetInnerHTML: { __html: purify(n.text) } })); })) : h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, "No notes yet.")
       ),
 
       // NOTES TAB — click to view, not edit
@@ -110,7 +114,7 @@
               ),
               h("span", { style: { fontSize: "11px", color: B.textMut } }, fmt(n.date))
             ),
-            h("div", { style: { fontSize: "13px", color: B.textSec, lineHeight: 1.5, maxHeight: 80, overflow: "hidden" }, dangerouslySetInnerHTML: { __html: n.text } })
+            h("div", { style: { fontSize: "13px", color: B.textSec, lineHeight: 1.5, maxHeight: 80, overflow: "hidden" }, dangerouslySetInnerHTML: { __html: purify(n.text) } })
           );
         }))
       ),
