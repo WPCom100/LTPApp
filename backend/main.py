@@ -134,7 +134,18 @@ _CSP = (
     "script-src 'self' https://cdnjs.cloudflare.com; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "
-    "img-src 'self' data: https://*.googleusercontent.com; "
+    # img-src: allow any HTTPS image, not just Google avatars. Reasoning:
+    #   1. Google's profile-picture URLs come from multiple hosts
+    #      (lh3.googleusercontent.com mostly, but also lh4/lh5/lh6/bare-host
+    #      depending on account type). A wildcard over googleusercontent.com
+    #      misses the bare host; explicitly listing every variant is brittle.
+    #   2. Settings.logoUrl is user-configurable — could be any HTTPS URL.
+    #   3. <img> elements don't execute code; loading from an arbitrary HTTPS
+    #      origin only reveals the user's IP and a "this app is in use" signal
+    #      to whoever owns the image. The XSS path that would let an attacker
+    #      inject <img> is already blocked by DOMPurify in sanitize.js.
+    # data: is also allowed for inline/embedded images (logo pasted as base64).
+    "img-src 'self' data: https:; "
     "connect-src 'self'; "
     "object-src 'none'; "
     "base-uri 'self'; "
