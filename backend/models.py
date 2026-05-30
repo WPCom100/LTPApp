@@ -225,17 +225,6 @@ class Kit(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
-class Counter(Base):
-    """Monotonic ID generators (quotes_next_id, invoices_next_id, etc.)
-    The frontend assigns IDs locally and syncs the high-water mark here so a
-    fresh client session keeps numbering monotonically."""
-    __tablename__ = "counters"
-
-    key = Column(String(50), primary_key=True)
-    value = Column(Integer, nullable=False, default=1)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-
-
 class Settings(Base):
     __tablename__ = "settings"
 

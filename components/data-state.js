@@ -77,6 +77,12 @@
 
   // ── Initial fetch ───────────────────────────────────────────────────────
 
+  // Always resolves (never rejects). Returns the parsed JSON on 2xx, or null
+  // on any failure (non-2xx HTTP, network error, JSON parse error). Failures
+  // are surfaced via recordError() → toast + console + LTP_API_ERRORS, so the
+  // caller can treat a null return as "no server data, keep fallback".
+  // This contract is what guarantees the loading gate eventually lifts even
+  // when the backend is down — callers don't need their own error handling.
   function fetchInitial(key) {
     var kind = classify(key);
     if (kind === "unknown") return Promise.resolve(null);
@@ -143,9 +149,33 @@
     var readyPair = useState(false);
     var ready = readyPair[0], setReady = readyPair[1];
 
-    // hydratedRef: gates outbound syncs until the initial fetch resolves.
-    // Without this, the first setValue triggered by adopting server state
-    // would echo right back out as a sync.
+    // ── Ref dance — read this before changing anything below ──────────────
+    //
+    // INVARIANTS the change-effect relies on:
+    //   1. `hydratedRef.current === true`  ⇔  initial fetch has settled.
+    //      It flips true on EVERY exit path of fetchInitial().then(...)
+    //      including failure — we never get stuck in "not ready". See
+    //      fetchInitial() above: it catches/swallows all errors and resolves
+    //      with null. The loading gate in app.js is therefore guaranteed to
+    //      lift even if the API is down (the user sees fallback + error toast).
+    //
+    //   2. `prevSyncedRef.current` mirrors what the server has, AS OF the
+    //      last completed sync. The change-effect diffs current value against
+    //      this to compute PUT/DELETE. If this drifts (e.g. you setValue
+    //      without updating it), the next sync sends wrong deltas.
+    //
+    //   3. `skipNextSyncRef.current === true` means the NEXT change-effect
+    //      run is server-driven (adoption), not user-driven, so we must NOT
+    //      echo it back as a sync. Set to true at mount and whenever the
+    //      mount effect calls setValue(serverValue). The change-effect
+    //      consumes (and resets) the flag exactly once per occurrence.
+    //
+    //   4. `latestValueRef.current` always points at the freshest state, even
+    //      inside async closures captured at mount time. Use this, not the
+    //      `value` closed over from render, when reading inside a .then().
+    //
+    // If you add a new code path that calls setValue, decide: is it user
+    // input (sync it) or server adoption (set skipNextSyncRef = true first)?
     var hydratedRef     = useRef(false);
     var prevSyncedRef   = useRef(fallback);
     var debounceRef     = useRef(null);

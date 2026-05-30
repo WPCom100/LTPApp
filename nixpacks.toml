@@ -1,10 +1,12 @@
 providers = ["python"]
 
+# No build phase needed — backend/main.py serves the frontend directly from
+# the project root (see backend/main.py:_resolve_static). Earlier versions
+# copied files into a `frontend/` directory via build.sh; that's no longer
+# necessary and build.sh has been removed.
+
 [phases.install]
 cmds = ["python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"]
-
-[phases.build]
-cmds = [". /opt/venv/bin/activate && bash build.sh"]
 
 [start]
 cmd = ". /opt/venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"

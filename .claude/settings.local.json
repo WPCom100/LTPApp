@@ -5,7 +5,9 @@
       "Bash(node -e ' *)",
       "PowerShell(node -e \"const fs=require\\('fs'\\);const code=fs.readFileSync\\('components/data-state.js','utf8'\\);try{new Function\\(code\\);console.log\\('data-state.js parses OK'\\);}catch\\(e\\){console.error\\('Parse error:',e.message\\);process.exit\\(1\\);}\")",
       "Bash(pip install *)",
-      "Bash(python -c ' *)"
+      "Bash(python -c ' *)",
+      "PowerShell(Get-ChildItem -Path \"c:\\\\Users\\\\LDesk\\\\Desktop\\\\LTPApp\" -Recurse -File | Select-Object -ExpandProperty FullName | Where-Object { $_ -match '\\\\.\\(html|js\\)$' } | head -30)",
+      "Bash(python)"
     ]
   }
 }

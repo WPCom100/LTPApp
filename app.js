@@ -112,6 +112,11 @@ window.LTPApp = function() {
     if (!q) { setSearchResults([]); return; }
     var results = [];
 
+    // findById / contactName come from components/helpers.js \u2014 prefer these
+    // over inline list.find / string-concat patterns in new code.
+    var findById    = window.LTP_HELPERS.findById;
+    var contactName = window.LTP_HELPERS.contactName;
+
     companies.forEach(function(c) {
       if (c.name.toLowerCase().indexOf(q) !== -1 || (c.address || "").toLowerCase().indexOf(q) !== -1) {
         results.push({ type: "Company", label: c.name, sub: c.address || ((c.isClient ? "Client" : "") + (c.isVendor ? " Vendor" : "")).trim(), module: "crm",
@@ -120,17 +125,19 @@ window.LTPApp = function() {
     });
 
     contacts.forEach(function(c) {
-      var full = (c.firstName + " " + c.lastName).toLowerCase();
+      var full = contactName(c).toLowerCase();
+      // NOTE: this is a containment check (companyIds includes x.id), not an
+      // id lookup \u2014 findById doesn't fit here. Leave as-is.
       var co = companies.find(function(x) { return c.companyIds && c.companyIds.includes(x.id); });
       var coName = co ? co.name.toLowerCase() : "";
       if (full.indexOf(q) !== -1 || (c.email || "").toLowerCase().indexOf(q) !== -1 || (c.phone || "").toLowerCase().indexOf(q) !== -1 || coName.indexOf(q) !== -1) {
-        results.push({ type: "Contact", label: c.firstName + " " + c.lastName, sub: c.role + (co ? " \u00b7 " + co.name : ""), module: "crm",
+        results.push({ type: "Contact", label: contactName(c), sub: c.role + (co ? " \u00b7 " + co.name : ""), module: "crm",
           action: function(id) { return function() { nav("crm/contacts/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(c.id) });
       }
     });
 
     projects.forEach(function(p) {
-      var co = companies.find(function(x) { return x.id === p.companyId; });
+      var co = findById(companies, p.companyId);
       if (p.name.toLowerCase().indexOf(q) !== -1 || (co && co.name.toLowerCase().indexOf(q) !== -1)) {
         results.push({ type: "Project", label: p.name, sub: (co ? co.name + " \u00b7 " : "") + p.category + " \u00b7 " + p.status, module: "projects",
           action: function(id) { return function() { nav("projects/" + id); setSearchOpen(false); setGlobalSearch(""); }; }(p.id) });
@@ -139,11 +146,11 @@ window.LTPApp = function() {
 
     // Quotes — uses live state so newly-created quotes are searchable
     quotes.forEach(function(qt) {
-      var co = companies.find(function(c) { return c.id === qt.companyId; });
-      var proj = projects.find(function(p) { return p.id === qt.projectId; });
-      var contact = qt.clientContactId ? contacts.find(function(c) { return c.id === qt.clientContactId; }) : null;
+      var co      = findById(companies, qt.companyId);
+      var proj    = findById(projects,  qt.projectId);
+      var contact = findById(contacts,  qt.clientContactId);
       var clientName = (qt.clientType === "contact" || (!qt.companyId && contact))
-        ? (contact ? contact.firstName + " " + contact.lastName : "")
+        ? contactName(contact)
         : (co ? co.name : "");
       var name = proj ? proj.name : (qt.customName || "");
       var ref = window.LTP_QUOTE_REF ? window.LTP_QUOTE_REF(qt) : ("Q-" + qt.id);
@@ -182,8 +189,8 @@ window.LTPApp = function() {
     // Invoices
     (invoices || []).forEach(function(inv) {
       var ref = window.LTP_INVOICE_REF(inv);
-      var comp = inv.companyId ? ((companies || []).find(function(c) { return c.id === inv.companyId; }) || {}).name || "" : "";
-      var proj = inv.projectId ? ((projects || []).find(function(p) { return p.id === inv.projectId; }) || {}).name || "" : "";
+      var comp = (findById(companies, inv.companyId) || {}).name || "";
+      var proj = (findById(projects,  inv.projectId) || {}).name || "";
       var t = window.LTP_INVOICE_TOTALS(inv);
       if ((ref + " " + comp + " " + proj).toLowerCase().indexOf(q) !== -1) {
         results.push({ type: "Invoice", label: ref, sub: comp + " \u00b7 " + proj + " \u00b7 $" + Math.round(t.total).toLocaleString() + " \u00b7 " + window.LTP_displayStatus(inv), module: "invoices",
@@ -193,9 +200,9 @@ window.LTPApp = function() {
 
     // Crew members
     contacts.filter(function(c) { return c.isCrew; }).forEach(function(c) {
-      var full = (c.firstName + " " + c.lastName + " " + (c.crewRoles || []).join(" ") + " " + (c.crewNotes || "")).toLowerCase();
+      var full = (contactName(c) + " " + (c.crewRoles || []).join(" ") + " " + (c.crewNotes || "")).toLowerCase();
       if (full.indexOf(q) !== -1) {
-        results.push({ type: "Crew", label: c.firstName + " " + c.lastName, sub: (c.crewRoles || []).join(", ") + " \u00b7 " + (c.crewStatus || "active"), module: "labor",
+        results.push({ type: "Crew", label: contactName(c), sub: (c.crewRoles || []).join(", ") + " \u00b7 " + (c.crewStatus || "active"), module: "labor",
           action: function() { nav("labor"); setSearchOpen(false); setGlobalSearch(""); } });
       }
     });

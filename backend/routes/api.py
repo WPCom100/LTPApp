@@ -174,30 +174,6 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
     return row.data
 
 
-# ── Counters (monotonic ID generators) ────────────────────────────────────
-
-@router.get("/counters/{key}")
-async def get_counter(key: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(models.Counter).where(models.Counter.key == key))
-    row = result.scalar_one_or_none()
-    return {"key": key, "value": row.value if row else None}
-
-
-@router.put("/counters/{key}")
-async def update_counter(key: str, payload: dict, db: AsyncSession = Depends(get_db)):
-    value = int(payload.get("value", 1))
-    result = await db.execute(select(models.Counter).where(models.Counter.key == key))
-    row = result.scalar_one_or_none()
-    if not row:
-        row = models.Counter(key=key, value=value)
-        db.add(row)
-    else:
-        # Counter is monotonic — never go backwards
-        row.value = max(row.value, value)
-    await db.flush()
-    return {"key": key, "value": row.value}
-
-
 # ── Bulk sync (one-shot localStorage → server migration) ─────────────────
 
 @router.post("/sync")
@@ -236,16 +212,5 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
         else:
             row.data = payload["settings"]
         counts["settings"] = 1
-
-    if "counters" in payload and isinstance(payload["counters"], dict):
-        for key, value in payload["counters"].items():
-            result = await db.execute(select(models.Counter).where(models.Counter.key == key))
-            row = result.scalar_one_or_none()
-            v = int(value)
-            if not row:
-                db.add(models.Counter(key=key, value=v))
-            else:
-                row.value = max(row.value, v)
-        counts["counters"] = len(payload["counters"])
 
     return {"synced": counts}

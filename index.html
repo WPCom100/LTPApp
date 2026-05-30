@@ -20,21 +20,53 @@
 <body>
   <div id="root"></div>
 
-  <!-- Runtime config (API key) — served dynamically by FastAPI. Must load
-       before data-state.js so the fetch wrapper picks up window.LTP_API_KEY. -->
+  <!-- ════════════════════════════════════════════════════════════════════
+       SCRIPT LOAD ORDER — DO NOT REORDER WITHOUT READING THIS
+
+       There's no bundler. Every script below executes immediately and
+       attaches its public API to `window`. Later scripts assume earlier
+       ones have already run, so the wrong order = silent breakage.
+
+       Groups (top to bottom):
+         0. Runtime config — injects window.LTP_API_KEY before fetch is wrapped.
+         1. React (CDN UMD) — every component below uses React.createElement.
+         2. Router — owns the hash and exposes window.LTPRouter; modules call it.
+         3. Theme + cross-cutting utilities — color tokens, status enums, lookup
+            helpers; everything below reads from window.LTP_THEME / LTP_STATUS / LTP_HELPERS.
+         4. Data fallbacks — populate window.LTP_DATA_* used as initial state
+            fallbacks in usePersistentState. data/settings.js MUST come before
+            components/data-state.js (the hook merges its defaults at hydration).
+         5. Shared components — UI primitives, the persistence hook, dialogs,
+            error UI. data-state.js is the persistence chokepoint; it depends
+            on /config.js (window.LTP_API_KEY) and theme.js.
+         6. Feature modules — each shell pulls in its sub-modules. Within a
+            shell group, leaves load first and the shell loads last.
+            quotes-list.js exports totals helpers consumed by quotes-builder.js
+            and modules/invoices.js, so list MUST precede those two.
+         7. App shell — wires the whole tree together. Must load last.
+         8. Mount — kicks React into the DOM.
+
+       When adding a new file: figure out which group it belongs to, drop it
+       at the END of that group, and confirm anything it reads is loaded
+       above. If something errors on load, that's almost always the cause.
+       ════════════════════════════════════════════════════════════════════ -->
+
+  <!-- 0. Runtime config (API key) — served dynamically by FastAPI -->
   <script src="/config.js"></script>
 
-  <!-- React -->
+  <!-- 1. React -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
 
-  <!-- 1. Router (must be first — seeds hash and exposes LTPRouter) -->
+  <!-- 2. Router (seeds hash, exposes window.LTPRouter) -->
   <script src="router.js"></script>
 
-  <!-- 2. Theme & Config -->
+  <!-- 3. Theme + cross-cutting utilities -->
   <script src="theme.js"></script>
 
-  <!-- 2. Data -->
+  <!-- 4. Data fallbacks — used as usePersistentState fallback arguments.
+       Mostly empty post-migration; data/settings.js still ships UI defaults
+       (tagColors, crewRoleOptions, email templates) merged in by the hook. -->
   <script src="data/companies.js"></script>
   <script src="data/contacts.js"></script>
   <script src="data/projects.js"></script>
@@ -49,7 +81,14 @@
   <script src="data/containers.js"></script>
   <script src="data/kits.js"></script>
 
-  <!-- 3. Shared Components -->
+  <!-- 5. Shared components.
+       data-state.js: depends on window.LTP_API_KEY (from /config.js).
+       helpers.js + status-enums.js: zero deps; loaded early so every
+         component and module below can use window.LTP_HELPERS / LTP_STATUS.
+       ui.js, *-dialog.js: read window.LTP_THEME.
+       error-toasts.js: listens to "ltp-api-error" CustomEvents dispatched by data-state.js. -->
+  <script src="components/helpers.js"></script>
+  <script src="components/status-enums.js"></script>
   <script src="components/data-state.js"></script>
   <script src="components/ui.js"></script>
   <script src="components/search-select.js"></script>
@@ -60,7 +99,7 @@
   <script src="components/error-boundary.js"></script>
   <script src="components/error-toasts.js"></script>
 
-  <!-- 4. CRM Sub-modules (order: leaf components first, shell last) -->
+  <!-- 6a. CRM sub-modules (leaves first, shell last) -->
   <script src="modules/calendar-grid.js"></script>
   <script src="modules/crm-notes.js"></script>
   <script src="modules/crm-meetings.js"></script>
@@ -69,9 +108,10 @@
   <script src="modules/crm-projects.js"></script>
   <script src="modules/crm-shell.js"></script>
 
-  <!-- 5. Other Modules -->
+  <!-- 6b. Dashboard -->
   <script src="modules/dashboard.js"></script>
-  <!-- 5. Rentals sub-modules (utils first, shell last) -->
+
+  <!-- 6c. Rentals sub-modules (utils first, shell last) -->
   <script src="modules/rentals-utils.js"></script>
   <script src="modules/rentals-maintenance.js"></script>
   <script src="modules/rentals-allocations.js"></script>
@@ -81,12 +121,17 @@
   <script src="modules/rentals-containers.js"></script>
   <script src="modules/rentals-kits.js"></script>
   <script src="modules/rentals-shell.js"></script>
-  <!-- 6. Quotes sub-modules (list first — exports totals helpers used by builder — shell last) -->
+
+  <!-- 6d. Quotes sub-modules.
+       quotes-list.js MUST load before quotes-builder.js and invoices.js
+       because it exports the totals helpers both consume (LTP_QUOTE_TOTALS, etc.). -->
   <script src="modules/quotes-list.js"></script>
   <script src="modules/quotes-builder.js"></script>
   <script src="modules/quotes-products.js"></script>
   <script src="modules/quotes-services.js"></script>
   <script src="modules/quotes-shell.js"></script>
+
+  <!-- 6e. Remaining feature modules -->
   <script src="modules/invoices.js"></script>
   <script src="modules/labor.js"></script>
   <script src="modules/settings.js"></script>
@@ -94,7 +139,7 @@
   <script src="modules/projects.js"></script>
   <script src="modules/calendar.js"></script>
 
-  <!-- 6. App Shell -->
+  <!-- 7. App shell — wires everything; must load last -->
   <script src="app.js"></script>
 
   <!-- Mount -->
