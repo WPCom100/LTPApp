@@ -5,3 +5,5 @@ frontend/
 *.zip
 node_modules/
 .venv/
+*.local.json 
+.claude/settings.local.json
