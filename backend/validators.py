@@ -1,0 +1,230 @@
+"""Server-side input validation for entity writes.
+
+What this catches:
+  - Status / category / state strings that aren't in the known set
+    (typo defense + protection against malicious clients sending forged
+    enum values that break frontend filters and analytics).
+  - Date strings that aren't ISO YYYY-MM-DD.
+  - Numeric fields that should be non-negative (prices, qty, weight).
+  - String fields that exceed the underlying column's char limit
+    (would either truncate or throw a DB error at flush time — we'd
+    rather fail with a clear 400 here).
+
+What it deliberately does NOT catch:
+  - Nested JSON structure validation (Quote.sections[i].items[j].qty
+    being non-negative, Project.budget.lighting being numeric, etc.).
+    That's a much bigger surface; revisit when needed.
+  - Cross-field consistency (e.g. clientType="company" implies
+    companyId != null). Frontend enforces this; defer.
+  - Foreign-key validity. Postgres enforces FK constraints at INSERT.
+    A bogus companyId surfaces as a 500 IntegrityError, which is good
+    enough as a "wrong reference" signal for now.
+
+Enum sets MUST stay in sync with [components/status-enums.js]. If you
+add a value there, add it here too (or vice versa). Tests would catch
+divergence eventually but a stricter design would generate one from
+the other; current scale doesn't justify the build step.
+"""
+from datetime import datetime
+from fastapi import HTTPException
+
+
+# ── Enum sets (mirror of components/status-enums.js) ───────────────────────
+
+ENUMS = {
+    "quote_status":     {"draft", "sent", "accepted", "declined", "converted"},
+    "invoice_status":   {"draft", "sent", "partial", "paid", "overdue"},
+    "project_status":   {"upcoming", "in-progress", "completed", "cancelled"},
+    "project_category": {"rental", "labor", "service", "full-production"},
+    "client_type":      {"company", "contact"},
+    "allocation_state": {"reserved", "allocated", "checked-out", "returned", "under-maintenance"},
+    "crew_status":      {"active", "inactive"},
+    "company_status":   {"active", "inactive", "prospect"},
+    "equipment_status": {"available", "rented", "under-maintenance"},
+}
+
+
+# ── Validator factories ────────────────────────────────────────────────────
+# Every validator follows the same contract: receives a raw value, returns
+# silently on success, raises ValueError(<short reason>) on failure. The
+# caller (validate()) catches and converts to HTTPException(400).
+
+def _enum(name):
+    """Reject anything not in ENUMS[name]. Empty string and None are allowed
+    (treat as "unset" — many entities have nullable status during draft)."""
+    allowed = ENUMS[name]
+    def check(value):
+        if value is None or value == "":
+            return
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
+        if value not in allowed:
+            raise ValueError(f"must be one of: {sorted(allowed)}")
+    return check
+
+
+def _iso_date(value):
+    """Reject anything that isn't ISO YYYY-MM-DD or empty. strptime catches
+    both format AND value errors (e.g. month 13, day 32) — a regex would let
+    those through."""
+    if value is None or value == "":
+        return
+    if not isinstance(value, str):
+        raise ValueError("must be a string")
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("must be ISO YYYY-MM-DD")
+
+
+def _nonneg_number(value):
+    """Reject negative or non-numeric values. None and empty string pass
+    through (some fields are optional)."""
+    if value is None or value == "":
+        return
+    # bool is a subclass of int in Python; reject explicitly to catch
+    # frontend mistakes that send True/False where a number is expected.
+    if isinstance(value, bool):
+        raise ValueError("must be a number, not a boolean")
+    if not isinstance(value, (int, float)):
+        raise ValueError("must be a number")
+    if value < 0:
+        raise ValueError("must be non-negative")
+
+
+def _str_max(maxlen):
+    """Reject strings longer than maxlen characters. Length caps match the
+    underlying column's declared size; sending more would either truncate or
+    error at DB flush. Better to fail with a clear field-level 400."""
+    def check(value):
+        if value is None:
+            return
+        if not isinstance(value, str):
+            raise ValueError("must be a string")
+        if len(value) > maxlen:
+            raise ValueError(f"must be at most {maxlen} characters (got {len(value)})")
+    return check
+
+
+# ── Per-entity rules ──────────────────────────────────────────────────────
+# Lazy-loaded so we can import models without import cycles. Keyed by the
+# model CLASS (not name) — passed directly from the CRUD factory.
+
+_RULES = None
+
+
+def _build_rules():
+    """Build the {model_cls: {field: validator}} map. Called once on first
+    use of validate() to avoid forcing models to be imported at module load
+    time (would create a circular dep with backend/__init__.py)."""
+    from backend import models
+    return {
+        models.Company: {
+            "name":    _str_max(255),
+            "status":  _enum("company_status"),
+            "website": _str_max(255),
+        },
+        models.Contact: {
+            "firstName":  _str_max(100),
+            "lastName":   _str_max(100),
+            "email":      _str_max(255),
+            "phone":      _str_max(50),
+            "role":       _str_max(100),
+            "crewStatus": _enum("crew_status"),
+        },
+        models.Project: {
+            "name":      _str_max(255),
+            "category":  _enum("project_category"),
+            "status":    _enum("project_status"),
+            "startDate": _iso_date,
+            "endDate":   _iso_date,
+            "venue":     _str_max(255),
+        },
+        models.Quote: {
+            "clientType":      _enum("client_type"),
+            "status":          _enum("quote_status"),
+            "sentDate":        _iso_date,
+            "customStartDate": _iso_date,
+            "customEndDate":   _iso_date,
+            "customName":      _str_max(255),
+        },
+        models.Invoice: {
+            "clientType":  _enum("client_type"),
+            "status":      _enum("invoice_status"),
+            "invoiceDate": _iso_date,
+            "dueDate":     _iso_date,
+            "sentDate":    _iso_date,
+            "paidDate":    _iso_date,
+        },
+        models.Equipment: {
+            "name":        _str_max(255),
+            "category":    _str_max(100),
+            "subcategory": _str_max(100),
+            "status":      _enum("equipment_status"),
+            "weight":      _nonneg_number,
+        },
+        models.Product: {
+            "name":      _str_max(255),
+            "category":  _str_max(100),
+            "unit":      _str_max(50),
+            "unitPrice": _nonneg_number,
+            "cost":      _nonneg_number,
+        },
+        models.Service: {
+            "role":        _str_max(20),
+            "description": _str_max(255),
+            "department":  _str_max(50),
+            "dayRate":     _nonneg_number,
+            "halfDay":     _nonneg_number,
+            "hourlyRate":  _nonneg_number,
+            "otRate":      _nonneg_number,
+            "dayCost":     _nonneg_number,
+            "halfDayCost": _nonneg_number,
+            "hourlyCost":  _nonneg_number,
+            "otCost":      _nonneg_number,
+        },
+        models.Allocation: {
+            "state":     _enum("allocation_state"),
+            "qty":       _nonneg_number,
+            "startDate": _iso_date,
+            "endDate":   _iso_date,
+        },
+        models.Container: {
+            "name":        _str_max(255),
+            "type":        _str_max(100),
+            "weightEmpty": _nonneg_number,
+            "rentalRate":  _nonneg_number,
+        },
+        models.Kit: {
+            "name":     _str_max(255),
+            "category": _str_max(100),
+        },
+    }
+
+
+def validate(model_cls, data: dict) -> None:
+    """Apply validators for the given entity to incoming request data.
+
+    Only checks fields present in `data`; missing/unset fields are fine (they
+    keep their existing DB value on update, or take the column default on
+    insert). Fields not listed in _RULES are passed through (filtering by
+    column-name happens later in _dict_to_row).
+
+    Raises HTTPException(400, detail={field, reason}) on the FIRST failure
+    — fail-fast keeps error messages actionable. Validate one field at a
+    time, fix, retry."""
+    global _RULES
+    if _RULES is None:
+        _RULES = _build_rules()
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail="request body must be a JSON object")
+    rules = _RULES.get(model_cls, {})
+    for field, check in rules.items():
+        if field in data:
+            try:
+                check(data[field])
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"field": field, "reason": str(e)},
+                )

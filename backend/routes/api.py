@@ -4,6 +4,7 @@ from sqlalchemy import select, delete
 from backend.database import get_db
 from backend import models
 from backend.auth_deps import require_session, require_admin
+from backend.validators import validate
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
@@ -113,6 +114,29 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         db: AsyncSession = Depends(get_db),
         user: models.User = Depends(require_session),
     ):
+        # 1. Validate client-supplied id (always first; cheap; fails before
+        # any DB work or activity stamping).
+        client_id = data.get("id")
+        if client_id is not None:
+            if isinstance(client_id, bool) or not isinstance(client_id, int) or client_id < 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"field": "id", "reason": "must be a positive integer"},
+                )
+            # 2. Reject duplicate id with 409 — the frontend's recovery is to
+            # fall back to PUT (treat as an update). Without this check we'd
+            # surface a generic IntegrityError as a 500.
+            existing = await db.execute(
+                select(model_cls.id).where(model_cls.id == client_id)
+            )
+            if existing.scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{path} {client_id} already exists",
+                )
+        # 3. Field-level validation BEFORE _stamp_activity so we don't mutate
+        # the payload if we're about to reject it.
+        validate(model_cls, data)
         if has_activity:
             data = _stamp_activity(data, user)
         mapped = _dict_to_row(data, model_cls)
@@ -128,20 +152,25 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         db: AsyncSession = Depends(get_db),
         user: models.User = Depends(require_session),
     ):
+        # If the body supplies an id, it must match the URL id. Prevents
+        # subtle bugs where the frontend updates state for one row but PUTs
+        # to another — the server would silently apply the body's fields to
+        # the URL's row.
+        body_id = data.get("id")
+        if body_id is not None and body_id != item_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": "id", "reason": "body id must match URL id"},
+            )
+        validate(model_cls, data)
         if has_activity:
             data = _stamp_activity(data, user)
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
-            # Upsert: PUT with unknown id creates. Lets the frontend send PUTs
-            # without worrying about whether a row was created previously.
-            mapped = _dict_to_row(data, model_cls)
-            mapped["id"] = item_id
-            row = model_cls(**mapped)
-            db.add(row)
-            await db.flush()
-            await db.refresh(row)
-            return _row_to_dict(row)
+            # Proper REST: PUT to nonexistent id is 404. New rows go through
+            # POST. The frontend's syncEntity routes accordingly.
+            raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         mapped = _dict_to_row(data, model_cls)
         for key, val in mapped.items():
             if key != "id":

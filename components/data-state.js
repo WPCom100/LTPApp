@@ -63,13 +63,18 @@
     // of letting the page keep firing failing PUTs.
     if (resp.status === 401) {
       window.location.href = "/auth/login";
-      // Throw so the calling .then chain unwinds; we don't want to keep
-      // pretending the request is in flight while the page navigates away.
-      throw new Error(label + " unauthorized — redirecting to login");
+      var unauth = new Error(label + " unauthorized — redirecting to login");
+      unauth.status = 401;
+      throw unauth;
     }
     return resp.text().then(function(body) {
       recordError(label, { status: resp.status, body: (body || "").slice(0, 300) });
-      throw new Error(label + " failed: " + resp.status);
+      // Attach the status to the error so callers can react to specific
+      // codes (e.g. 409 on POST → fall back to PUT). Avoids string-parsing
+      // err.message which is brittle.
+      var e = new Error(label + " failed: " + resp.status);
+      e.status = resp.status;
+      throw e;
     });
   }
 
@@ -132,15 +137,37 @@
     prevList.forEach(function(x) { if (x && x.id != null) prevById[x.id] = x; });
     nextList.forEach(function(x) { if (x && x.id != null) nextById[x.id] = x; });
     var requests = [];
+    // Deletes
     Object.keys(prevById).forEach(function(id) {
       if (!(id in nextById)) {
         requests.push(jsonReq("DELETE " + key + "/" + id, API_PREFIX + key + "/" + id, "DELETE"));
       }
     });
+    // Creates + updates — split on whether the id was already in the prior
+    // diff baseline. New items use POST (server validates id uniqueness;
+    // returns 409 on collision). Existing items use PUT. Proper REST shape;
+    // prevents PUT-with-unknown-id from silently creating rows across the
+    // entire ID space.
     Object.keys(nextById).forEach(function(id) {
       var item = nextById[id];
       var p = prevById[id];
-      if (!p || JSON.stringify(p) !== JSON.stringify(item)) {
+      if (!p) {
+        // New item — POST. If the server already has this id (two tabs
+        // assigned the same one, or a previous sync succeeded but the
+        // local prev baseline didn't advance), it returns 409. Fall back
+        // to PUT in that case so we don't loop forever on the same row.
+        var postLabel = "POST " + key + "/" + id;
+        requests.push(
+          jsonReq(postLabel, API_PREFIX + key, "POST", item).catch(function(err) {
+            if (err && err.status === 409) {
+              // The row exists on the server; re-route as an update.
+              return jsonReq("PUT " + key + "/" + id + " (after 409)",
+                             API_PREFIX + key + "/" + id, "PUT", item);
+            }
+            throw err;
+          })
+        );
+      } else if (JSON.stringify(p) !== JSON.stringify(item)) {
         requests.push(jsonReq("PUT " + key + "/" + id, API_PREFIX + key + "/" + id, "PUT", item));
       }
     });

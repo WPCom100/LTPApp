@@ -1,20 +1,77 @@
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, Response
+from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
-from backend.database import init_db
+from backend import models
+from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
 from backend.rate_limit import RateLimitMiddleware
 
 
+# ── Session sweeper ────────────────────────────────────────────────────────
+# Expired sessions are filtered out at auth check-time but never deleted, so
+# the table grows unbounded. This background task wakes hourly, deletes any
+# row past expires_at, and logs the count if non-zero. Hourly is plenty for
+# any realistic scale; tune via LTP_SESSION_SWEEP_INTERVAL_SECONDS.
+SESSION_SWEEP_INTERVAL = int(os.environ.get("LTP_SESSION_SWEEP_INTERVAL_SECONDS", "3600"))
+
+
+async def _sweep_expired_sessions_once() -> int:
+    """Delete every session whose expires_at is in the past. Returns the
+    rowcount deleted (0 if none). Uses ORM-level delete() so rowcount works
+    consistently across SQLite and Postgres dialects."""
+    async with async_session() as db:
+        result = await db.execute(
+            delete(models.Session).where(models.Session.expires_at < datetime.now(timezone.utc))
+        )
+        await db.commit()
+        # Some dialect drivers return -1 if rowcount isn't supported; treat
+        # those as "we don't know, assume 0 for logging purposes".
+        rc = result.rowcount
+        return rc if rc and rc > 0 else 0
+
+
+async def _session_sweeper_loop():
+    """Long-running background task started by lifespan(). Each iteration:
+    sweep once, sleep. Exceptions inside the body are caught and logged so
+    one transient DB blip doesn't permanently kill the sweeper."""
+    while True:
+        try:
+            deleted = await _sweep_expired_sessions_once()
+            if deleted:
+                print(f"[LTP] sweeper: deleted {deleted} expired session(s)", flush=True)
+        except asyncio.CancelledError:
+            raise  # propagate shutdown signal
+        except Exception as e:
+            print(f"[LTP] sweeper error (will retry next interval): {e}", flush=True)
+        try:
+            await asyncio.sleep(SESSION_SWEEP_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
-    yield
+    sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
+    try:
+        yield
+    finally:
+        # Graceful shutdown: cancel, then await so the task actually finishes
+        # its current iteration (asyncio.Task.cancel() alone just sets a flag).
+        sweeper.cancel()
+        try:
+            await sweeper
+        except (asyncio.CancelledError, Exception):
+            # Swallow CancelledError (expected); log any unexpected error.
+            pass
 
 
 app = FastAPI(title="LTP Business Suite", version="2.0.0", lifespan=lifespan)
