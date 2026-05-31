@@ -139,6 +139,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         validate(model_cls, data)
         if has_activity:
             data = _stamp_activity(data, user)
+        # Mint share_token for entities that have one (Quote, Invoice) if the
+        # client didn't supply one. This is the credential the public client
+        # view uses — generated lazily on creation so it's available the
+        # moment the entity exists, but never overwritten if already set
+        # (i.e. on a /sync re-import we preserve the existing token).
+        if "share_token" in {c.name for c in model_cls.__table__.columns}:
+            if not data.get("shareToken") and not data.get("share_token"):
+                import secrets as _secrets
+                data["shareToken"] = _secrets.token_urlsafe(32)
         mapped = _dict_to_row(data, model_cls)
         row = model_cls(**mapped)
         db.add(row)

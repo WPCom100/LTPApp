@@ -1,15 +1,27 @@
 // ── Outer auth gate ─────────────────────────────────────────────────────────
-// Picks what to render based on window.LTP_AUTH_USER (set by components/auth.js):
-//   undefined → auth check in flight; show "Loading…"
-//   null      → not signed in; show sign-in screen
-//   {…}       → signed in; render LTPSignedInApp (the real app)
-// The split matters because LTPSignedInApp's hooks fire fetches to /api/* on
-// mount; we must NOT render it for unauthenticated users (would loop on 401s).
+// Picks what to render based on the route AND window.LTP_AUTH_USER:
+//   route.module === "view"  → public client view; render LTPClientView with
+//                              NO auth gate (the share token is the credential)
+//   authUser === undefined   → auth check in flight; show "Loading…"
+//   authUser === null        → not signed in; show sign-in screen
+//   authUser === {…}         → signed in; render LTPSignedInApp (the real app)
+//
+// The view-route check comes FIRST because the client doesn't have an LTP
+// session — falling through to the sign-in screen would block them from
+// seeing the quote they were invited to review. components/auth.js skips
+// the /auth/me call for #view/ routes so authUser stays null indefinitely
+// (which we'd otherwise treat as "show sign-in").
 window.LTPApp = function() {
   var h = React.createElement;
   var B = window.LTP_THEME;
   var useState = React.useState;
   var useEffect = React.useEffect;
+  var route = window.LTPRouter.useRoute();
+
+  // Public client view bypasses auth entirely. Token is the credential.
+  if (route.module === "view") {
+    return h(window.LTPClientView, { route: route });
+  }
 
   // Re-render when auth.js publishes the result.
   var pair = useState(window.LTP_AUTH_USER);

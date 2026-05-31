@@ -66,22 +66,22 @@ window.LTP_DATA_SETTINGS = {
     quoteSent: {
       label: "Quote Sent",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\nView, accept, or decline online: {{viewUrl}}\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
     },
     quoteFollowUp: {
       label: "Quote Follow-Up",
       subject: "Following up: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\nYou can view, accept, or decline online here: {{viewUrl}}\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
     },
     invoiceSent: {
       label: "Invoice Sent",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\nView online: {{viewUrl}}\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
     },
     invoiceReminder: {
       label: "Payment Reminder",
       subject: "Payment Reminder: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\nView online: {{viewUrl}}\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
     },
     paymentReceipt: {
       label: "Payment Receipt",

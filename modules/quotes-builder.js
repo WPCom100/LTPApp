@@ -1112,7 +1112,14 @@
       var s = settings || {};
       var templateKey = draft.status === "draft" ? "quoteSent" : "quoteFollowUp";
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
-      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(totals.total).toLocaleString(), quoteValidity: String(s.defaultQuoteValidity || 30), signature: s.emailSignature || "" };
+      // viewUrl: public client-view link for this quote, included in the
+      // emailed template so the recipient can view + accept/decline online.
+      // Empty if the quote was never saved (no share_token yet) — the
+      // executeSend below validates and prompts to save first.
+      var viewUrl = draft.shareToken
+        ? (window.location.origin + "/#/view/quote/" + draft.shareToken)
+        : "";
+      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(totals.total).toLocaleString(), quoteValidity: String(s.defaultQuoteValidity || 30), signature: s.emailSignature || "", viewUrl: viewUrl };
       setSendEmail(email);
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
       setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{signature}}", vars));
@@ -1502,6 +1509,15 @@
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
             generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
           ),
+          // Preview the client-facing view in a new tab (?preview=1 disables
+          // accept/decline so the LTP user can't accidentally finalize).
+          draft.id != null && draft.shareToken && h("a", {
+              href: "#/view/quote/" + draft.shareToken + "?preview=1",
+              target: "_blank",
+              rel: "noopener",
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
+            "\ud83d\udc41 Preview"
+          ),
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
@@ -1774,10 +1790,11 @@
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {
-                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent };
+                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent, client_accepted: B.success, client_declined: B.danger };
                 var tc = typeColors[a.type] || B.textMut;
                 var hasChanges = a.changes && a.changes.length > 0;
                 var isPdf = a.type === "pdf_generated" && a.pdfToken;
+                var isClientAction = (a.type === "client_accepted" || a.type === "client_declined");
                 // PDF entries get a click-to-download instead of details-modal behavior
                 var rowOnClick = isPdf
                   ? undefined  // the inner link handles its own click
@@ -1798,8 +1815,23 @@
                         download: a.pdfFilename || "quote.pdf",
                         onClick: function(e) { e.stopPropagation(); },
                         style: { fontSize: "10px", color: B.accent, fontWeight: 600, textDecoration: "none", border: "1px solid " + B.accent, borderRadius: "4px", padding: "1px 6px" }
-                      }, "\u2193 Download")
+                      }, "\u2193 Download"),
+                      // Client accepted/declined entries: surface the comment
+                      // (if any) and a "View signature" link (accept-only) that
+                      // opens the signature in a tiny popup window.
+                      isClientAction && a.signatureDataUrl && h("button", {
+                        type: "button",
+                        onClick: function(e) {
+                          e.stopPropagation();
+                          var w = window.open("", "_blank", "width=420,height=240");
+                          if (w) {
+                            w.document.write('<title>Signature \u2014 ' + (a.user || "client") + '</title><body style="margin:0;background:#fff;display:flex;align-items:center;justify-content:center;height:100vh"><img src="' + a.signatureDataUrl + '" alt="signature" style="max-width:100%;max-height:100%"></body>');
+                          }
+                        },
+                        style: { fontSize: "10px", color: B.accent, fontWeight: 600, background: "transparent", border: "1px solid " + B.accent, borderRadius: "4px", padding: "1px 6px", cursor: "pointer", fontFamily: "inherit" }
+                      }, "View signature")
                     ),
+                    isClientAction && a.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 2 } }, "\u201c" + a.comment + "\u201d"),
                     h("div", { style: { fontSize: "9px", color: B.textMut } },
                       (a.user || "") + (a.user && a.date ? " \u00b7 " : "") + (a.date ? window.LTP_formatDate(a.date) : "") + (a.time ? " " + window.LTP_formatTime(a.time) : ""))
                   )

@@ -108,6 +108,12 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js"
           integrity="sha384-qJNkHwhlYywDHfyoEe1np+1lYvX/8x+3gHCKFhSSBMQyCFlvFnn+zXmaebXl21rV"
           crossorigin="anonymous"></script>
+  <!-- signature_pad — exposes window.SignaturePad. Only used by
+       modules/client-view.js for the client accept-quote signature canvas;
+       loaded globally so the SPA's lazy modules don't have to dynamic-import. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/signature_pad/5.0.4/signature_pad.umd.min.js"
+          integrity="sha384-sAvQstqOmAfqxD54T2ZBU8/E8IQJJuNT4hEHwUULkoBRze+eTQ7tZNcXEA5yPzhE"
+          crossorigin="anonymous"></script>
   <script src="components/sanitize.js"></script>
   <script src="components/helpers.js"></script>
   <script src="components/status-enums.js"></script>
@@ -160,6 +166,9 @@
   <script src="modules/schedule-builder.js"></script>
   <script src="modules/projects.js"></script>
   <script src="modules/calendar.js"></script>
+  <!-- Public client view — rendered by app.js's outer LTPApp when the URL
+       starts with #/view/. Loaded here so app.js can reference window.LTPClientView. -->
+  <script src="modules/client-view.js"></script>
 
   <!-- 7. App shell — wires everything -->
   <script src="app.js"></script>

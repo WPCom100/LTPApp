@@ -13,6 +13,7 @@ from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
+from backend.routes.view import view_router
 from backend.rate_limit import RateLimitMiddleware
 
 
@@ -332,6 +333,10 @@ app.include_router(api_router)
 # intentionally bypasses session auth — the token is the credential.
 app.include_router(api_pdf_router)
 app.include_router(public_pdf_router)
+# Public client-view: token-only, no session. Lives under /api/view/* so the
+# existing catch-all early-return (api/ prefix) covers it; we don't need a
+# separate prefix exclusion.
+app.include_router(view_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────

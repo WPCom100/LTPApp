@@ -33,133 +33,18 @@ from backend import models
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
+from backend.routes._shared import (
+    quote_dict as _quote_dict,
+    invoice_dict as _invoice_dict,
+    load_related as _load_related,
+    load_settings as _load_settings,
+)
 
 
 # Two routers — one for the session-gated POST endpoints (attaches to /api/*
 # style auth), and one for the public token GET endpoint (no auth).
 api_pdf_router = APIRouter(prefix="/api", tags=["pdf"], dependencies=[Depends(require_session)])
 public_pdf_router = APIRouter(prefix="/pdf", tags=["pdf"])
-
-
-# ── Helpers ────────────────────────────────────────────────────────────────
-
-def _row_to_dict(row, columns) -> dict:
-    """Quick column copy without the camelCase conversion. The PDF generator
-    accepts snake_case or camelCase indifferently for most fields; we
-    upgrade-translate a few key date/name fields below."""
-    d = {}
-    if row is None:
-        return d
-    for col in columns:
-        d[col] = getattr(row, col, None)
-    return d
-
-
-def _quote_dict(q: models.Quote) -> dict:
-    """Convert a Quote row into the dict shape generate_pdf expects (camelCase
-    matching the frontend / JSON column naming)."""
-    if q is None:
-        return {}
-    return {
-        "id": q.id,
-        "clientType": q.client_type,
-        "companyId": q.company_id,
-        "clientContactId": q.client_contact_id,
-        "projectId": q.project_id,
-        "status": q.status,
-        "sentDate": q.sent_date,
-        "customStartDate": q.custom_start_date,
-        "customEndDate": q.custom_end_date,
-        "customName": q.custom_name,
-        "globalDiscount": q.global_discount or {},
-        "sections": q.sections or [],
-        "notes": q.notes,
-        "activity": q.activity or [],
-        # `createdDate` not in our model — the generator falls back to created_at
-        "createdDate": q.created_at.isoformat()[:10] if q.created_at else "",
-    }
-
-
-def _invoice_dict(inv: models.Invoice) -> dict:
-    if inv is None:
-        return {}
-    return {
-        "id": inv.id,
-        "clientType": inv.client_type,
-        "companyId": inv.company_id,
-        "clientContactId": inv.client_contact_id,
-        "projectId": inv.project_id,
-        "quoteId": inv.quote_id,
-        "status": inv.status,
-        "invoiceDate": inv.invoice_date,
-        "dueDate": inv.due_date,
-        "sentDate": inv.sent_date,
-        "paidDate": inv.paid_date,
-        "globalDiscount": inv.global_discount or {},
-        "sections": inv.sections or [],
-        "notes": inv.notes,
-        "payments": inv.payments or [],
-        "activity": inv.activity or [],
-        "createdDate": inv.created_at.isoformat()[:10] if inv.created_at else "",
-    }
-
-
-def _company_dict(c: models.Company) -> dict:
-    if c is None:
-        return {}
-    return {"id": c.id, "name": c.name, "address": c.address, "website": c.website, "logo": c.logo}
-
-
-def _contact_dict(c: models.Contact) -> dict:
-    if c is None:
-        return {}
-    return {
-        "id": c.id,
-        "firstName": c.first_name,
-        "lastName": c.last_name,
-        "email": c.email,
-        "phone": c.phone,
-        "role": c.role,
-    }
-
-
-def _project_dict(p: models.Project) -> dict:
-    if p is None:
-        return {}
-    return {
-        "id": p.id,
-        "name": p.name,
-        "category": p.category,
-        "status": p.status,
-        "startDate": p.start_date,
-        "endDate": p.end_date,
-        "venue": p.venue,
-    }
-
-
-async def _load_related(db: AsyncSession, company_id, contact_id, project_id):
-    """Fetch related Company/Contact/Project rows in parallel-ish (one query
-    each). Returns (company, contact, project) dicts."""
-    company = contact = project = None
-    if company_id is not None:
-        r = await db.execute(select(models.Company).where(models.Company.id == company_id))
-        company = r.scalar_one_or_none()
-    if contact_id is not None:
-        r = await db.execute(select(models.Contact).where(models.Contact.id == contact_id))
-        contact = r.scalar_one_or_none()
-    if project_id is not None:
-        r = await db.execute(select(models.Project).where(models.Project.id == project_id))
-        project = r.scalar_one_or_none()
-    return _company_dict(company), _contact_dict(contact), _project_dict(project)
-
-
-async def _load_settings(db: AsyncSession) -> dict:
-    """Singleton Settings row (id=1). Returns the JSON `data` blob or {}."""
-    r = await db.execute(select(models.Settings).where(models.Settings.id == 1))
-    row = r.scalar_one_or_none()
-    if not row:
-        return {}
-    return row.data or {}
 
 
 def _safe_filename(stem: str) -> str:

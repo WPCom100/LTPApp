@@ -24,26 +24,44 @@
     } catch (e) { /* CustomEvent unsupported in very old browsers */ }
   }
 
-  fetch("/auth/me", { credentials: "include" })
-    .then(function(r) {
-      if (r.status === 401) return null;
-      if (!r.ok) {
-        console.error("[LTP] /auth/me unexpected status:", r.status);
-        return null;
-      }
-      return r.json();
-    })
-    .then(function(data) {
-      window.LTP_AUTH_USER = data;  // either user object or null
-      dispatchReady();
-    })
-    .catch(function(e) {
-      console.error("[LTP] /auth/me failed:", e);
-      // Network error → treat as not signed in so user sees the login screen
-      // rather than a stuck loading state. They can retry by reloading.
-      window.LTP_AUTH_USER = null;
-      dispatchReady();
-    });
+  // Public client-view routes (#view/quote/<token>, #view/invoice/<token>)
+  // are intentionally unauthenticated — the share_token is the credential.
+  // Don't fire /auth/me on those: it'd 401, costing a round-trip and
+  // (more importantly) data-state.js would see a 401 and bounce to
+  // /auth/login, breaking the public page for the actual client.
+  var hash = (window.location.hash || "").replace(/^#\/?/, "");
+  if (hash.indexOf("view/") === 0) {
+    window.LTP_AUTH_USER = null;
+    // Defer so listeners attached later this tick still see the event.
+    setTimeout(dispatchReady, 0);
+    // Skip the /auth/me fetch entirely.
+  } else {
+    fireAuthCheck();
+  }
+
+  function fireAuthCheck() {
+    fetch("/auth/me", { credentials: "include" })
+      .then(function(r) {
+        if (r.status === 401) return null;
+        if (!r.ok) {
+          console.error("[LTP] /auth/me unexpected status:", r.status);
+          return null;
+        }
+        return r.json();
+      })
+      .then(function(data) {
+        window.LTP_AUTH_USER = data;  // either user object or null
+        dispatchReady();
+      })
+      .catch(function(e) {
+        console.error("[LTP] /auth/me failed:", e);
+        // Network error → treat as not signed in so the user sees the
+        // sign-in screen rather than a stuck loading state. They can
+        // retry by reloading.
+        window.LTP_AUTH_USER = null;
+        dispatchReady();
+      });
+  }
 
   window.LTP_AUTH = {
     getCurrentUser: function() {

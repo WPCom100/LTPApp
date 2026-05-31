@@ -509,7 +509,12 @@
       var s = settings || {};
       var templateKey = isDraft ? "invoiceSent" : (window.LTP_isOverdue(draft) ? "invoiceReminder" : "invoiceSent");
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
-      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(t.total).toLocaleString(), dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt", signature: s.emailSignature || "" };
+      // viewUrl: public client-view link for this invoice. Empty until the
+      // invoice has been saved (and therefore has a shareToken).
+      var viewUrl = draft.shareToken
+        ? (window.location.origin + "/#/view/invoice/" + draft.shareToken)
+        : "";
+      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(t.total).toLocaleString(), dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt", signature: s.emailSignature || "", viewUrl: viewUrl };
       setSendEmail(email);
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
       setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nTotal: {{total}}\nDue: {{dueDate}}\n\n{{signature}}", vars));
@@ -876,6 +881,15 @@
               disabled: generatingPdf,
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
             generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
+          ),
+          // Preview the read-only client view (?preview=1 is UX-only;
+          // invoice view has no actions anyway, but stay consistent with quotes).
+          draft.id != null && draft.shareToken && h("a", {
+              href: "#/view/invoice/" + draft.shareToken + "?preview=1",
+              target: "_blank",
+              rel: "noopener",
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
+            "\ud83d\udc41 Preview"
           ),
           // Recall to draft (any non-draft invoice)
           !isDraft && h("button", { onClick: recallToDraft,

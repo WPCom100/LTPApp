@@ -128,6 +128,11 @@ class Quote(Base):
                                                         #   equipmentId|serviceId|productId: int|null }
     notes = Column(Text, default="")                    # free-form text shown on the printed quote
     activity = Column(JSON, default=list)               # list[{id: str, date: str, time: str, type: str, user: str, message: str, changes: list[{cat, detail}]|null}]
+    # Opaque public-view credential. Minted server-side on POST (entity
+    # creation); see backend/routes/api.py create(). Same security model as
+    # PdfArchive.token — anyone with the token can hit /api/view/{token}.
+    # Used for client preview, accept/decline, and the live PDF download.
+    share_token = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -158,6 +163,9 @@ class Invoice(Base):
     notes = Column(Text, default="")
     payments = Column(JSON, default=list)               # list[{id: str, date: str, amount: float, method: str, reference: str, notes: str}]
     activity = Column(JSON, default=list)               # same shape as Quote.activity
+    # Public-view credential. View-only (no accept/decline on invoices).
+    # Same shape + security model as Quote.share_token; minted on POST.
+    share_token = Column(String(64), nullable=True, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
