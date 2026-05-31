@@ -146,7 +146,12 @@ _CSP = (
     #      inject <img> is already blocked by DOMPurify in sanitize.js.
     # data: is also allowed for inline/embedded images (logo pasted as base64).
     "img-src 'self' data: https:; "
-    "connect-src 'self'; "
+    # connect-src governs fetch/XHR AND source-map fetches DevTools makes for
+    # external scripts. Allowing cdnjs here prevents the console-error noise
+    # when DevTools tries to grab .map files for the React/DOMPurify scripts.
+    # Production behavior is identical either way (browsers don't fetch maps
+    # unless DevTools is open).
+    "connect-src 'self' https://cdnjs.cloudflare.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
     "form-action 'self' https://accounts.google.com; "
