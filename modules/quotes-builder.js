@@ -1201,7 +1201,9 @@
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "status", user: (window.LTP_CURRENT_USER || "User"), message: "Quote recalled to draft" + (draft.status === "accepted" ? " (delivery/invoiced quantities cleared)" : ""),
  changes: [{ cat: "Status", detail: draft.status + " \u2192 draft" }] };
-          var updated = Object.assign({}, draft, { status: "draft", sections: clearedSections, activity: (draft.activity || []).concat([actEntry]) });
+          var recallPatch = { status: "draft", sections: clearedSections, activity: (draft.activity || []).concat([actEntry]) };
+          if (!draft.shareToken) recallPatch.shareToken = window.LTP_genShareToken();
+          var updated = Object.assign({}, draft, recallPatch);
           setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
           setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false); setDlg(null);
         }
@@ -1380,6 +1382,7 @@
         if (data.discountNote) creationChanges.push({ cat: "Discount", detail: data.discountNote });
         var newInvoice = {
           id: targetId, quoteId: draft.id,
+          shareToken: window.LTP_genShareToken(),
           clientType: draft.clientType, companyId: draft.companyId, clientContactId: draft.clientContactId,
           projectId: draft.projectId, customName: "", status: "draft",
           invoiceDate: today, createdDate: today, sentDate: null,

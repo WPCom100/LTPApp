@@ -738,9 +738,38 @@
       var saveMsg = "Invoice saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
 
-      // Process pending rollbacks — reduce invoicedQty on source quote items
-      if (pendingRollbacks.current.length > 0 && draft.quoteId && setQuotes) {
-        var rollbacks = pendingRollbacks.current.slice();
+      // Process rollbacks — reduce invoicedQty on source quote items.
+      // Two sources contribute: explicit deletes (pendingRollbacks, pushed by
+      // deleteItem) and qty decreases (diffed against the last-saved snapshot
+      // in cleanRef). Both shrink what's "currently invoiced" against the
+      // source quote line.
+      var rollbacks = pendingRollbacks.current.slice();
+      var cleanSnap = cleanRef.current || {};
+      if (draft.quoteId && Array.isArray(cleanSnap.sections)) {
+        var cleanLinkedItems = {};
+        cleanSnap.sections.forEach(function(sec) {
+          (sec.items || []).forEach(function(it) {
+            if (it.type !== "note" && it.sourceItemId) cleanLinkedItems[it.id] = it;
+          });
+        });
+        var draftLinkedItems = {};
+        (draft.sections || []).forEach(function(sec) {
+          (sec.items || []).forEach(function(it) {
+            if (it.type !== "note" && it.sourceItemId) draftLinkedItems[it.id] = it;
+          });
+        });
+        Object.keys(cleanLinkedItems).forEach(function(itemId) {
+          // Deletes are already covered by pendingRollbacks; skip here to avoid double-counting.
+          if (!(itemId in draftLinkedItems)) return;
+          var oldQty = Number(cleanLinkedItems[itemId].qty) || 0;
+          var newQty = Number(draftLinkedItems[itemId].qty) || 0;
+          var delta = oldQty - newQty;
+          if (delta > 0) {
+            rollbacks.push({ sourceItemId: cleanLinkedItems[itemId].sourceItemId, qty: delta, name: cleanLinkedItems[itemId].name || "" });
+          }
+        });
+      }
+      if (rollbacks.length > 0 && draft.quoteId && setQuotes) {
         var reductions = {};
         var rollbackDetails = [];
         rollbacks.forEach(function(rb) {
@@ -762,14 +791,14 @@
               var newStatus = q.status === "converted" ? "accepted" : q.status;
               if (newStatus !== q.status) rollbackDetails.push({ cat: "Status", detail: q.status + " \u2192 " + newStatus });
               var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5),
-                type: "invoiced", user: (window.LTP_CURRENT_USER || "User"), message: "Invoice line items removed \u2014 invoiced quantities reduced",
+                type: "invoiced", user: (window.LTP_CURRENT_USER || "User"), message: "Invoiced quantities reduced from " + refDisplay,
  changes: rollbackDetails };
               return Object.assign({}, q, { sections: updatedSections, status: newStatus, activity: (q.activity || []).concat([actEntry]) });
             });
           });
         }
-        pendingRollbacks.current = [];
       }
+      pendingRollbacks.current = [];
 
       if (draft.id == null) {
         var newId = getNextInvoiceId();
