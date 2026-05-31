@@ -120,14 +120,55 @@ var _idCounter = 0;
 window.LTP_genId = function(prefix) { _idCounter++; return (prefix || "x") + "-" + Date.now() + "-" + _idCounter; };
 window.LTP_todayISO = function() { return new Date().toISOString().substring(0, 10); };
 
-// Unsaved changes guard — sets global flag + beforeunload
-window.LTP_useUnsavedGuard = function(isDirty) {
+// Unsaved-changes guard. Owns the dirty-state for the calling component
+// and keeps window.__LTP_UNSAVED in sync — synchronously, not via useEffect.
+//
+// Why synchronous matters: router.navigate() reads window.__LTP_UNSAVED in
+// the click handler. If a save() does
+//     setIsDirty(false);
+//     nav("quotes/" + newId);
+// React queues the state update but doesn't commit until the handler
+// returns. A useEffect-based mirror would still see the OLD value of
+// isDirty when nav() runs, and the user would get a bogus "You have
+// unsaved changes" prompt right after a successful save.
+//
+// API change: this hook used to take `isDirty` as an arg and just mirror
+// to the global from a useEffect. It now OWNS the state — caller does:
+//     var [isDirty, setIsDirty] = window.LTP_useUnsavedGuard();
+// Every call to setIsDirty writes the global immediately, then schedules
+// the React update. Both are in sync at every observable moment.
+//
+// (Render-time mirror is also kept as belt-and-suspenders — covers the
+// rare cases where state changes from somewhere other than the returned
+// setter, e.g. component re-mount.)
+window.LTP_useUnsavedGuard = function() {
+  var pair = React.useState(false);
+  var isDirty = pair[0];
+  var setRaw = pair[1];
+
+  // Render-time mirror keeps the global in sync with whatever value React
+  // is currently rendering. Catches the unmount/remount case.
+  window.__LTP_UNSAVED = !!isDirty;
+
+  // Setter that writes the global FIRST (synchronously), then schedules
+  // the React state update. Supports the (prev) => next functional form.
+  function setIsDirty(next) {
+    var resolved = typeof next === "function" ? !!next(isDirty) : !!next;
+    window.__LTP_UNSAVED = resolved;
+    setRaw(resolved);
+  }
+
   React.useEffect(function() {
-    window.__LTP_UNSAVED = isDirty;
     function onBeforeUnload(e) { if (isDirty) { e.preventDefault(); e.returnValue = ""; } }
     window.addEventListener("beforeunload", onBeforeUnload);
-    return function() { window.removeEventListener("beforeunload", onBeforeUnload); window.__LTP_UNSAVED = false; };
+    return function() {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      // Component leaving the tree no longer owns any dirty state.
+      window.__LTP_UNSAVED = false;
+    };
   }, [isDirty]);
+
+  return [isDirty, setIsDirty];
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

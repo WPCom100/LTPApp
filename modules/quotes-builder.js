@@ -807,8 +807,12 @@
     //   setDraftRaw — internal, does NOT mark dirty (used by reset and post-save sync)
     //   setDraft    — public wrapper used by all mutators, automatically marks dirty
     var [draft, setDraftRaw] = useState(initial);
-    var [isDirty, setIsDirty] = useState(false);
-    window.LTP_useUnsavedGuard(isDirty);
+    // Owns dirty state AND mirrors to window.__LTP_UNSAVED synchronously.
+    // See theme.js — the synchronous mirror is what makes save+nav not
+    // trigger a bogus "unsaved changes" prompt.
+    var unsavedPair = window.LTP_useUnsavedGuard();
+    var isDirty = unsavedPair[0];
+    var setIsDirty = unsavedPair[1];
     // cleanRef tracks the last "clean" state — what Discard should reset to.
     // Updated on mount, after save, and after automated price recalculations.
     var cleanRef = useRef(initial);

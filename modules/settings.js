@@ -11,8 +11,11 @@
 
   window.SettingsView = function({ settings, setSettings }) {
     var [draft, setDraft] = useState(Object.assign({}, settings));
-    var [isDirty, setIsDirty] = useState(false);
-    window.LTP_useUnsavedGuard(isDirty);
+    // Owned-state guard — see theme.js. Synchronous global mirror prevents
+    // a save+nav from flashing a bogus "unsaved changes" prompt.
+    var unsavedPair = window.LTP_useUnsavedGuard();
+    var isDirty = unsavedPair[0];
+    var setIsDirty = unsavedPair[1];
     var [saved, setSaved] = useState(false);
     var [dlg, setDlg] = useState(null);
     var cleanRef = useRef(settings);

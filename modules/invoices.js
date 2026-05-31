@@ -313,8 +313,11 @@
     }, [invoiceId, isNew]);
 
     var [draft, setDraftRaw] = useState(initial);
-    var [isDirty, setIsDirty] = useState(false);
-    window.LTP_useUnsavedGuard(isDirty);
+    // Owns dirty state AND mirrors to window.__LTP_UNSAVED synchronously
+    // (see theme.js) so save+nav doesn't trigger a bogus "unsaved" prompt.
+    var unsavedPair = window.LTP_useUnsavedGuard();
+    var isDirty = unsavedPair[0];
+    var setIsDirty = unsavedPair[1];
     var cleanRef = useRef(initial);
     var pendingRollbacks = useRef([]); // track deleted linked items for quote sync on save
     function setDraft(updater) { setDraftRaw(updater); setIsDirty(true); }

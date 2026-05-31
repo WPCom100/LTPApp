@@ -28,8 +28,11 @@
     }, [project.id]);
 
     var [draft, setDraftRaw] = useState(initial);
-    var [isDirty, setIsDirty] = useState(false);
-    window.LTP_useUnsavedGuard(isDirty);
+    // Owned-state guard — see theme.js. Synchronous global mirror prevents
+    // a save+nav from flashing a bogus "unsaved changes" prompt.
+    var unsavedPair = window.LTP_useUnsavedGuard();
+    var isDirty = unsavedPair[0];
+    var setIsDirty = unsavedPair[1];
     var cleanRef = useRef(initial);
     function setDraft(updater) {
       setDraftRaw(typeof updater === "function" ? function(d) { var next = updater(d); return next; } : updater);
