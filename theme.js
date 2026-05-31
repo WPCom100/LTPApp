@@ -120,6 +120,21 @@ var _idCounter = 0;
 window.LTP_genId = function(prefix) { _idCounter++; return (prefix || "x") + "-" + Date.now() + "-" + _idCounter; };
 window.LTP_todayISO = function() { return new Date().toISOString().substring(0, 10); };
 
+// 256-bit URL-safe random token, equivalent to Python's secrets.token_urlsafe(32).
+// Used by quote/invoice save flows to mint a share_token at the moment of
+// creation, so the entity's React state has the token immediately — the
+// Preview button (gated on draft.shareToken) appears without waiting for
+// the server round-trip. Backend's create() respects a client-supplied
+// shareToken (only mints when absent), so this is the source of truth.
+window.LTP_genShareToken = function() {
+  var bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  // Base64-encode → URL-safe → strip padding.
+  var b64 = "";
+  for (var i = 0; i < bytes.length; i++) b64 += String.fromCharCode(bytes[i]);
+  return btoa(b64).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
 // Unsaved-changes guard. Owns the dirty-state for the calling component
 // and keeps window.__LTP_UNSAVED in sync — synchronously, not via useEffect.
 //

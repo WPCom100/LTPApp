@@ -773,7 +773,10 @@
 
       if (draft.id == null) {
         var newId = getNextInvoiceId();
-        var toSave = Object.assign({}, draft, { id: newId, activity: (draft.activity || []).concat([saveEntry]) });
+        // Client-mint shareToken so the Preview button appears immediately;
+        // backend respects a client-supplied token. See theme.js LTP_genShareToken.
+        var newToken = draft.shareToken || window.LTP_genShareToken();
+        var toSave = Object.assign({}, draft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
         setInvoices(function(prev) { return prev.concat([toSave]); });
         setDraftRaw(toSave); cleanRef.current = toSave; setIsDirty(false);
         nav("invoices/" + newId);

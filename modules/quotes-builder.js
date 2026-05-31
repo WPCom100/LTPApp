@@ -1059,7 +1059,12 @@
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
       if (draft.id == null) {
         var newId = getNextQuoteId();
-        var toSave = Object.assign({}, draft, { id: newId, activity: (draft.activity || []).concat([saveEntry]) });
+        // Mint shareToken client-side so the Preview button (gated on
+        // draft.shareToken) appears immediately. The backend respects a
+        // client-supplied token (only mints when absent), so this is the
+        // source of truth and matches the same value on the server.
+        var newToken = draft.shareToken || window.LTP_genShareToken();
+        var toSave = Object.assign({}, draft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
         setQuotes(function(prev) { return prev.concat([toSave]); });
         setDraftRaw(toSave);
         cleanRef.current = toSave;
