@@ -289,6 +289,7 @@
     function cloneInvoice(inv) {
       return {
         id: inv.id, quoteId: inv.quoteId || null,
+        shareToken: inv.shareToken || null,
         clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
         projectId: inv.projectId, customName: inv.customName || "",
         status: inv.status || "draft",
@@ -594,7 +595,20 @@
       setDraft(function(d) {
         return Object.assign({}, d, { sections: d.sections.map(function(s) {
           if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.map(function(i) { return i.id === itemId ? Object.assign({}, i, patch) : i; }) });
+          return Object.assign({}, s, { items: s.items.map(function(i) {
+            if (i.id !== itemId) return i;
+            var effective = Object.assign({}, patch);
+            // Clamp linkedQty when qty drops below it — qty added on top of
+            // linkedQty is "direct" and reducing back through it doesn't
+            // touch the source quote's invoicedQty. See sendToInvoice for
+            // the model.
+            if (patch.qty != null && i.sourceItemId) {
+              var newQty = Number(patch.qty) || 0;
+              var oldLinked = i.linkedQty != null ? Number(i.linkedQty) : (Number(i.qty) || 0);
+              effective.linkedQty = Math.min(newQty, oldLinked);
+            }
+            return Object.assign({}, i, effective);
+          }) });
         })});
       });
     }
@@ -605,7 +619,11 @@
         if (sec.id !== secId) return;
         (sec.items || []).forEach(function(it) {
           if (it.id === itemId && it.sourceItemId && draft.quoteId) {
-            pendingRollbacks.current.push({ sourceItemId: it.sourceItemId, qty: Number(it.qty) || 0, name: it.name || "" });
+            // Only the linked portion (capped at original conversion qty)
+            // counts against the quote; legacy items without linkedQty fall
+            // back to the full qty.
+            var linked = it.linkedQty != null ? (Number(it.linkedQty) || 0) : (Number(it.qty) || 0);
+            pendingRollbacks.current.push({ sourceItemId: it.sourceItemId, qty: linked, name: it.name || "" });
           }
         });
       });
@@ -740,9 +758,14 @@
 
       // Process rollbacks — reduce invoicedQty on source quote items.
       // Two sources contribute: explicit deletes (pendingRollbacks, pushed by
-      // deleteItem) and qty decreases (diffed against the last-saved snapshot
-      // in cleanRef). Both shrink what's "currently invoiced" against the
-      // source quote line.
+      // deleteItem) and linkedQty decreases (diffed against the last-saved
+      // snapshot in cleanRef). Only the LINKED portion of an invoice line
+      // counts against the quote — direct qty added on top of linkedQty is
+      // a free-form bill and never touches the source quote.
+      function linkedOf(it) {
+        if (it.linkedQty != null) return Number(it.linkedQty) || 0;
+        return Number(it.qty) || 0;  // legacy items predating linkedQty
+      }
       var rollbacks = pendingRollbacks.current.slice();
       var cleanSnap = cleanRef.current || {};
       if (draft.quoteId && Array.isArray(cleanSnap.sections)) {
@@ -761,9 +784,9 @@
         Object.keys(cleanLinkedItems).forEach(function(itemId) {
           // Deletes are already covered by pendingRollbacks; skip here to avoid double-counting.
           if (!(itemId in draftLinkedItems)) return;
-          var oldQty = Number(cleanLinkedItems[itemId].qty) || 0;
-          var newQty = Number(draftLinkedItems[itemId].qty) || 0;
-          var delta = oldQty - newQty;
+          var oldLinked = linkedOf(cleanLinkedItems[itemId]);
+          var newLinked = linkedOf(draftLinkedItems[itemId]);
+          var delta = oldLinked - newLinked;
           if (delta > 0) {
             rollbacks.push({ sourceItemId: cleanLinkedItems[itemId].sourceItemId, qty: delta, name: cleanLinkedItems[itemId].name || "" });
           }
@@ -838,12 +861,15 @@
             setQuotes(function(prevQuotes) {
               return prevQuotes.map(function(q) {
                 if (q.id !== draft.quoteId) return q;
-                // Build a map of sourceItemId → qty to reduce
+                // Build a map of sourceItemId → qty to reduce. Use linkedQty
+                // (fallback qty for legacy items) so direct-added qty above
+                // the linked baseline doesn't double-decrement the quote.
                 var reductions = {};
                 (draft.sections || []).forEach(function(sec) {
                   (sec.items || []).forEach(function(it) {
                     if (it.type === "note" || !it.sourceItemId) return;
-                    reductions[it.sourceItemId] = (reductions[it.sourceItemId] || 0) + (Number(it.qty) || 0);
+                    var linked = it.linkedQty != null ? (Number(it.linkedQty) || 0) : (Number(it.qty) || 0);
+                    reductions[it.sourceItemId] = (reductions[it.sourceItemId] || 0) + linked;
                   });
                 });
                 // Apply reductions to quote sections

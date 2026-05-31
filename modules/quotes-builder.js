@@ -42,6 +42,7 @@
   function cloneDraft(q) {
     return {
       id: q.id,
+      shareToken: q.shareToken || null,
       clientType: q.clientType || (q.companyId ? "company" : "contact"),
       projectId: q.projectId, companyId: q.companyId, clientContactId: q.clientContactId,
       customName: q.customName || "", customStartDate: q.customStartDate || "", customEndDate: q.customEndDate || "",
@@ -1303,7 +1304,12 @@
           var inv = Number(it.invoicedQty) || 0;
           var toInvoice = d - inv;
           if (toInvoice <= 0) return it;
-          invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0, sourceItemId: it.id }));
+          // linkedQty caps how much of this invoice line counts against the
+          // source quote's invoicedQty. Starts equal to qty; only ever shrinks
+          // (when invoice qty is reduced below it). Extra qty added directly
+          // on the invoice sits above linkedQty and is treated as a direct
+          // bill, NOT additional draw against the quote.
+          invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0, sourceItemId: it.id, linkedQty: toInvoice }));
           return Object.assign({}, it, { invoicedQty: d });
         });
         if (invItems.length > 0) {
