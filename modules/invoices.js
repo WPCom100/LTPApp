@@ -781,7 +781,10 @@
         setDraftRaw(toSave); cleanRef.current = toSave; setIsDirty(false);
         nav("invoices/" + newId);
       } else {
-        var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([saveEntry]) });
+        // Backfill shareToken on older invoices that pre-date the column.
+        var existingPatch = { activity: (draft.activity || []).concat([saveEntry]) };
+        if (!draft.shareToken) existingPatch.shareToken = window.LTP_genShareToken();
+        var updated = Object.assign({}, draft, existingPatch);
         setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
         setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
       }

@@ -1071,7 +1071,12 @@
         setIsDirty(false);
         nav("quotes/" + newId);
       } else {
-        var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([saveEntry]) });
+        // Backfill shareToken on existing-but-tokenless quotes (older rows
+        // from before the share_token column was added). Once minted on
+        // first save, the token persists via the standard spread.
+        var existingPatch = { activity: (draft.activity || []).concat([saveEntry]) };
+        if (!draft.shareToken) existingPatch.shareToken = window.LTP_genShareToken();
+        var updated = Object.assign({}, draft, existingPatch);
         setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
         setDraftRaw(updated);
         cleanRef.current = updated;
