@@ -1,0 +1,665 @@
+"""LTP Quote/Invoice PDF Generator (library form).
+
+Adapted from the original CLI script at assets/generate_quote_pdf.py.
+Two material differences from the CLI version:
+
+  1. Pure library — no __main__, no argparse, no file I/O. Caller passes a
+     BytesIO buffer and pre-loaded entity/related-entity/settings dicts.
+     The CLI is gone; the same renderer now powers two API endpoints.
+
+  2. No /usr/share/fonts/ dependency. Both font families load from
+     <project_root>/assets/fonts/ which we bundle:
+       Saira ExtraCondensed (headings, large numbers)
+       Roboto                (body text, line items)
+
+The same template is used for both quotes and invoices. Pass kind="quote"
+or kind="invoice"; only the reference label, date source, and terms-block
+copy differ. Layout, colors, fonts, totals math, and section rendering are
+identical between the two so the brand stays consistent.
+
+Entry point:
+    generate_pdf(buf, kind, entity, company, contact, project, settings, user_name)
+
+All inputs are plain dicts (camelCase keys matching the frontend's shape).
+None values are tolerated — every field has a sensible fallback so a
+half-populated quote still renders.
+"""
+import os
+from datetime import datetime
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.lib.colors import HexColor, white
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.utils import ImageReader
+
+
+# ── Brand Colors ────────────────────────────────────────────────────────────
+BLUE_OUT       = HexColor('#233038')
+LUMIN_ORANGE   = HexColor('#EF5822')
+BACKUP_ORANGE  = HexColor('#F9B998')
+FULL_UP_GRAY   = HexColor('#D1DBDA')
+DRIFT_ORANGE   = HexColor('#64260F')
+WHITE          = white
+
+# ── Asset paths ─────────────────────────────────────────────────────────────
+# Project root = two levels up from this file (backend/pdf_generator.py).
+PROJECT_ROOT = os.path.realpath(os.path.dirname(os.path.dirname(__file__)))
+ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")
+FONTS_DIR = os.path.join(ASSETS_DIR, "fonts")
+LOGOS_DIR = os.path.join(ASSETS_DIR, "logos")
+
+# Font registration is global to reportlab — register once per process. The
+# routes call generate_pdf many times; we use a module-level flag to avoid
+# re-registering on every call (cheap but unnecessary).
+_FONTS_REGISTERED = False
+
+
+def _register_fonts():
+    """Register Saira + Roboto fonts with reportlab. Idempotent: subsequent
+    calls are no-ops. If a TTF is missing on disk (asset wasn't bundled),
+    falls back to Helvetica so the renderer at least doesn't crash."""
+    global _FONTS_REGISTERED
+    if _FONTS_REGISTERED:
+        return
+    saira_map = {
+        'SairaBlack':     'SairaExtraCondensed-Black.ttf',
+        'SairaExtraBold': 'SairaExtraCondensed-ExtraBold.ttf',
+        'SairaBold':      'SairaExtraCondensed-Bold.ttf',
+        'SairaSemiBold':  'SairaExtraCondensed-SemiBold.ttf',
+        'SairaMedium':    'SairaExtraCondensed-Medium.ttf',
+        'SairaRegular':   'SairaExtraCondensed-Regular.ttf',
+        'SairaLight':     'SairaExtraCondensed-Light.ttf',
+    }
+    roboto_map = {
+        'Roboto':        'Roboto-Regular.ttf',
+        'Roboto-Bold':   'Roboto-Bold.ttf',
+        'Roboto-Light':  'Roboto-Light.ttf',
+        'Roboto-Medium': 'Roboto-Medium.ttf',
+    }
+    for name, fname in {**saira_map, **roboto_map}.items():
+        path = os.path.join(FONTS_DIR, fname)
+        if os.path.isfile(path):
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+            except Exception:
+                # Already registered (rare race) — ignore.
+                pass
+        # If the font file is missing, reportlab will fall back to the
+        # built-in Helvetica when we drawString with the unregistered name
+        # — it'll log to stderr but not crash. Acceptable degradation.
+    _FONTS_REGISTERED = True
+
+
+# Convenience alias table — the renderer references these short keys, the
+# registered TTFs handle the heavy lifting.
+FONTS = {
+    'heading':    'SairaBlack',
+    'subheading': 'SairaExtraBold',
+    'body':       'SairaMedium',
+    'body_light': 'SairaRegular',
+    'bold':       'SairaBold',
+    'semibold':   'SairaSemiBold',
+}
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────
+
+def _fmt_money(val):
+    try:
+        return f"${float(val):,.2f}"
+    except (TypeError, ValueError):
+        return "$0.00"
+
+
+def _fmt_date(iso_str):
+    """ISO YYYY-MM-DD → 'May 30th, 2026'. Returns the original string on
+    parse failure so we don't drop info."""
+    if not iso_str:
+        return ""
+    try:
+        d = datetime.strptime(iso_str, "%Y-%m-%d")
+        day = d.day
+        sfx = "th" if 11 <= day <= 13 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+        return d.strftime(f"%B {day}{sfx}, %Y")
+    except (ValueError, TypeError):
+        return str(iso_str)
+
+
+def _doc_ref(kind, entity):
+    """Quote → 'Q-YYYY-NNN'. Invoice → 'INV-YYYY-NNN'. Year comes from the
+    creation date when available, otherwise the current year."""
+    if kind == "invoice":
+        prefix = "INV"
+        date_field = entity.get("invoiceDate") or entity.get("createdDate") or ""
+    else:
+        prefix = "Q"
+        date_field = entity.get("createdDate") or entity.get("sentDate") or ""
+    year = date_field[:4] if (isinstance(date_field, str) and len(date_field) >= 4) else str(datetime.now().year)
+    eid = entity.get("id") or 0
+    return f"{prefix}-{year}-{eid:03d}"
+
+
+def _calc_totals(entity):
+    """Compute subtotal / adjusted / discounted total / cost from sections.
+    Mirrors the frontend's window.LTP_QUOTE_TOTALS implementation."""
+    sub = adj = cost = 0
+    for sec in entity.get("sections", []) or []:
+        for it in sec.get("items", []) or []:
+            if it.get("type") == "note":
+                continue
+            qty = it.get("qty", 0) or 0
+            orig = (it.get("unitPrice", 0) or 0) * qty
+            ap = it.get("adjustedPrice")
+            a = (ap * qty) if ap is not None else orig
+            sub += orig
+            adj += a
+            cost += (it.get("cost", 0) or 0) * qty
+    after = adj
+    gd = entity.get("globalDiscount", {}) or {}
+    gt = gd.get("type", "none")
+    gv = gd.get("value", 0) or 0
+    if gt == "percent":
+        after = adj * (1 - gv / 100)
+    elif gt == "amount":
+        after = adj - gv
+    elif gt == "target":
+        after = gv
+    return {"subtotal": sub, "adjusted": adj, "total": max(after, 0), "cost": cost}
+
+
+def _draw_gradient(c, x, y, w, h, colors=None):
+    """Horizontal gradient: FF921E → EF5822 → 64260F (light orange to deep)."""
+    cols = colors or [(0xFF, 0x92, 0x1E), (0xEF, 0x58, 0x22), (0x64, 0x26, 0x0F)]
+    steps = 80
+    sw = w / steps
+    for i in range(steps):
+        t = i / (steps - 1)
+        if t < 0.5:
+            t2 = t * 2
+            r = int(cols[0][0] + (cols[1][0] - cols[0][0]) * t2)
+            g = int(cols[0][1] + (cols[1][1] - cols[0][1]) * t2)
+            b = int(cols[0][2] + (cols[1][2] - cols[0][2]) * t2)
+        else:
+            t2 = (t - 0.5) * 2
+            r = int(cols[1][0] + (cols[2][0] - cols[1][0]) * t2)
+            g = int(cols[1][1] + (cols[2][1] - cols[1][1]) * t2)
+            b = int(cols[1][2] + (cols[2][2] - cols[1][2]) * t2)
+        c.setFillColor(HexColor(f"#{r:02x}{g:02x}{b:02x}"))
+        c.rect(x + i * sw, y, sw + 1, h, fill=1, stroke=0)
+
+
+def _contact_full_name(contact):
+    if not contact:
+        return ""
+    fn = (contact.get("firstName") or contact.get("first_name") or "").strip()
+    ln = (contact.get("lastName") or contact.get("last_name") or "").strip()
+    return f"{fn} {ln}".strip()
+
+
+def _company_address_line(settings):
+    """Format settings street/suite/city/state/zip into a single address line.
+    Empty fields are skipped so '3786 Arapaho Rd. Addison, TX 75001' renders
+    cleanly even if Suite is unset."""
+    if not settings:
+        return ""
+    parts = []
+    street = (settings.get("street") or "").strip()
+    suite = (settings.get("suite") or "").strip()
+    city = (settings.get("city") or "").strip()
+    state = (settings.get("state") or "").strip()
+    zip_ = (settings.get("zip") or "").strip()
+    if street:
+        parts.append(street + (f", {suite}" if suite else ""))
+    csz = ", ".join(p for p in [city, " ".join(p for p in [state, zip_] if p).strip()] if p)
+    if csz:
+        parts.append(csz)
+    return ". ".join(parts)
+
+
+# ── PDF Builder ────────────────────────────────────────────────────────────
+class _DocPDF:
+    """Renderer for one PDF. Single-use; instantiate per document. Holds the
+    canvas, current y-cursor, and the bundle of related entity dicts. `kind`
+    is "quote" or "invoice" — affects ref label, date source, and the
+    terms-and-conditions block."""
+
+    def __init__(self, buf, kind, entity, company, contact, project, settings, user_name):
+        self.c = canvas.Canvas(buf, pagesize=letter)
+        self.W, self.H = letter
+        self.kind = kind if kind in ("quote", "invoice") else "quote"
+        self.entity = entity or {}
+        self.company = company or {}
+        self.contact = contact or {}
+        self.project = project or {}
+        self.settings = settings or {}
+        self.user_name = user_name or "Generated"
+        self.M = 0.55 * inch
+        self.y = self.H - self.M
+        self.pg = 1
+        self.content_w = self.W - 2 * self.M
+
+    # ── Page chrome ────────────────────────────────────────────────────────
+    def _bg(self):
+        self.c.setFillColor(BLUE_OUT)
+        self.c.rect(0, 0, self.W, self.H, fill=1, stroke=0)
+
+    def _footer(self):
+        _draw_gradient(self.c, 0, 0, self.W, 5)
+        self.c.setFont("Roboto-Light", 8)
+        self.c.setFillColor(FULL_UP_GRAY)
+        # Footer text from settings — falls back to LTP defaults so the
+        # PDF still renders cleanly before someone fills in Settings.
+        cname = self.settings.get("companyName") or "Luminary Technology & Productions"
+        website = self.settings.get("website") or "luminarytechnology.productions"
+        self.c.drawString(self.M, 14, f"{cname}  |  {website}")
+        self.c.drawRightString(self.W - self.M, 14, f"Page {self.pg}")
+
+    def _new_page(self):
+        self.c.showPage()
+        self.pg += 1
+        self._bg()
+        self._footer()
+        self.y = self.H - self.M - 10
+
+    def _need(self, h):
+        """Page break if `h` more units of vertical space won't fit."""
+        if self.y - h < self.M + 30:
+            self._new_page()
+
+    # ── Header ─────────────────────────────────────────────────────────────
+    def _draw_header(self):
+        c = self.c
+        self._bg()
+        self._footer()
+
+        # Top gradient bar
+        _draw_gradient(c, 0, self.H - 6, self.W, 6)
+
+        # Logo + company name on same line
+        logo_path = os.path.join(LOGOS_DIR, "primary.png")
+        logo_top = self.H - 14
+        text_offset = 16
+        if os.path.isfile(logo_path):
+            logo = ImageReader(logo_path)
+            iw, ih = logo.getSize()
+            target_h = 1.2 * inch
+            scale = target_h / ih
+            lw, lh = iw * scale, ih * scale
+            logo_bottom = logo_top - lh
+            c.drawImage(logo, self.M, logo_bottom, lw, lh, mask="auto")
+            text_x = self.M + lw + 14
+        else:
+            text_x = self.M
+            lh = 70
+            logo_bottom = logo_top - lh
+
+        cname = (self.settings.get("companyName") or "LUMINARY TECHNOLOGY & PRODUCTIONS").upper()
+        name_y = logo_top - 20 - text_offset
+        c.setFont(FONTS["heading"], 24)
+        c.setFillColor(LUMIN_ORANGE)
+        c.drawString(text_x, name_y, cname)
+
+        # Address + phone + email under company name
+        info_y = name_y - 16
+        c.setFont("Roboto-Light", 9)
+        c.setFillColor(FULL_UP_GRAY)
+        addr = _company_address_line(self.settings)
+        if addr:
+            c.drawString(text_x, info_y, addr)
+        phone = self.settings.get("phone") or ""
+        email = self.settings.get("emailFrom") or ""
+        contact_bits = [b for b in [phone, email] if b]
+        if contact_bits:
+            c.drawString(text_x, info_y - 12, "  |  ".join(contact_bits))
+
+        self.y = logo_bottom - 24
+
+        # Project name + doc ref on same line
+        display = (
+            self.project.get("name")
+            or self.entity.get("customName")
+            or ("Quote" if self.kind == "quote" else "Invoice")
+        )
+        ref_prefix = "Quote " if self.kind == "quote" else "Invoice "
+        ref = ref_prefix + _doc_ref(self.kind, self.entity)
+
+        c.setFont(FONTS["heading"], 22)
+        c.setFillColor(WHITE)
+        c.drawString(self.M, self.y, display.upper())
+        c.setFillColor(BACKUP_ORANGE)
+        c.drawRightString(self.W - self.M, self.y, ref)
+        self.y -= 18
+
+        # Prepared for / Date generated
+        company_name = self.company.get("name") or ""
+        contact_name = _contact_full_name(self.contact)
+        prepared_for = company_name or contact_name
+        if prepared_for:
+            c.setFont("Roboto-Bold", 11)
+            c.setFillColor(BACKUP_ORANGE)
+            c.drawString(self.M, self.y, f"Prepared for: {prepared_for}")
+        # Date label differs slightly between kinds
+        date_label = "Invoice Date" if self.kind == "invoice" else "Date Generated"
+        date_value = (
+            self.entity.get("invoiceDate") if self.kind == "invoice"
+            else (self.entity.get("createdDate") or self.entity.get("sentDate") or "")
+        )
+        c.setFont("Roboto", 10)
+        c.setFillColor(FULL_UP_GRAY)
+        c.drawRightString(self.W - self.M, self.y, f"{date_label}: {_fmt_date(date_value)}")
+        self.y -= 14
+
+        # Client address / Generated by
+        client_addr = (self.company.get("address") or "").strip()
+        if client_addr:
+            c.setFont("Roboto-Light", 10)
+            c.setFillColor(FULL_UP_GRAY)
+            c.drawString(self.M, self.y, client_addr.replace("\n", "  "))
+        c.setFont("Roboto-Light", 10)
+        c.setFillColor(FULL_UP_GRAY)
+        gen_label = "Issued by" if self.kind == "invoice" else "Quoted by"
+        c.drawRightString(self.W - self.M, self.y, f"{gen_label}: {self.user_name}")
+        self.y -= 14
+
+        # Contact name + title
+        if contact_name and company_name:
+            c.setFont("Roboto", 10)
+            c.setFillColor(FULL_UP_GRAY)
+            title = (self.contact.get("role") or "").strip()
+            line = contact_name + (f"  —  {title}" if title else "")
+            c.drawString(self.M, self.y, line)
+            self.y -= 14
+        # Contact email
+        contact_email = (self.contact.get("email") or "").strip()
+        if contact_email:
+            c.setFont("Roboto-Light", 9)
+            c.setFillColor(HexColor("#8899a0"))
+            c.drawString(self.M, self.y, contact_email)
+            self.y -= 14
+
+        self.y -= 10
+
+    # ── Section ────────────────────────────────────────────────────────────
+    def _draw_section(self, sec):
+        c = self.c
+        label = sec.get("label", "Section")
+        items = [it for it in sec.get("items", []) or [] if it.get("type") != "note"]
+        notes = [it for it in sec.get("items", []) or [] if it.get("type") == "note"]
+
+        col = {
+            "item": self.M + 10,
+            "qty":  self.W - self.M - 230,
+            "unit": self.W - self.M - 150,
+            "total": self.W - self.M - 10,
+        }
+
+        row_data = []
+        sec_total = 0
+        for it in items:
+            qty = it.get("qty", 0) or 0
+            up = it.get("unitPrice", 0) or 0
+            ap = it.get("adjustedPrice")
+            eff = ap if ap is not None else up
+            lt = eff * qty
+            sec_total += lt
+            has_adj = ap is not None and ap != up
+            row_data.append({"it": it, "qty": qty, "up": up, "eff": eff, "lt": lt,
+                             "has_adj": has_adj, "h": 23 if has_adj else 19})
+
+        self._need(60)
+
+        c.setFont(FONTS["heading"], 15)
+        c.setFillColor(BACKUP_ORANGE)
+        c.drawString(self.M, self.y - 12, label.upper())
+
+        # Rental period for equipment sections
+        has_equipment = any(it.get("type") == "equipment" for it in sec.get("items", []) or [])
+        if has_equipment:
+            sec_start = (sec.get("startDate") if sec.get("customDates") else None) \
+                        or self.entity.get("customStartDate") or self.project.get("startDate", "")
+            sec_end = (sec.get("endDate") if sec.get("customDates") else None) \
+                      or self.entity.get("customEndDate") or self.project.get("endDate", "")
+            if sec_start and sec_end:
+                title_w = c.stringWidth(label.upper(), FONTS["heading"], 15)
+                c.setFont("Roboto-Light", 9)
+                c.setFillColor(FULL_UP_GRAY)
+                c.drawString(self.M + title_w + 12, self.y - 12,
+                             f"Rental Period: {_fmt_date(sec_start)} — {_fmt_date(sec_end)}")
+
+        self.y -= 16
+        box_top = self.y
+        self.y -= 4
+
+        # Column headers
+        c.setFont("Roboto-Bold", 9)
+        c.setFillColor(FULL_UP_GRAY)
+        c.drawString(col["item"], self.y - 12, "ITEM")
+        qty_center = col["qty"] + 15
+        c.drawCentredString(qty_center, self.y - 12, "QTY")
+        c.drawRightString(col["unit"] + 55, self.y - 12, "UNIT PRICE")
+        c.drawRightString(col["total"], self.y - 12, "TOTAL")
+        self.y -= 18
+
+        # Header separator
+        c.setStrokeColor(HexColor("#3a4a52"))
+        c.setLineWidth(0.5)
+        c.line(self.M + 4, self.y, self.W - self.M - 4, self.y)
+        self.y -= 3
+
+        # Item rows
+        for i, rd in enumerate(row_data):
+            it = rd["it"]
+            row_h = rd["h"]
+            self._need(row_h + 4)
+            row_top = self.y
+            row_bot = self.y - row_h
+
+            if i % 2 == 0:
+                c.setFillColor(HexColor("#2a3a42"))
+                c.rect(self.M + 1, row_bot, self.content_w - 2, row_h, fill=1, stroke=0)
+
+            fs = 9
+            vc = row_bot + (row_h - fs) / 2 + 1
+
+            name = it.get("name", "") or ""
+            rl = it.get("rentalLabel", "") or ""
+            if rl and it.get("type") == "equipment":
+                name = f"{name}  ({rl})"
+            max_w = col["qty"] - col["item"] - 10
+            c.setFont("Roboto", fs)
+            while c.stringWidth(name, "Roboto", fs) > max_w and len(name) > 20:
+                name = name[:-4] + "..."
+
+            c.setFillColor(FULL_UP_GRAY)
+            c.drawString(col["item"], vc, name)
+
+            c.setFont("Roboto", fs)
+            c.setFillColor(WHITE)
+            c.drawCentredString(qty_center, vc, str(rd["qty"]))
+
+            if rd["has_adj"]:
+                # Original price — muted strikethrough, upper part of row
+                c.setFillColor(HexColor("#667777"))
+                c.setFont("Roboto-Light", 8)
+                orig_str = _fmt_money(rd["up"])
+                ow = c.stringWidth(orig_str, "Roboto-Light", 8)
+                ox = col["unit"] + 55 - ow
+                orig_y = row_bot + row_h * 0.62
+                c.drawString(ox, orig_y, orig_str)
+                c.setStrokeColor(HexColor("#667777"))
+                c.setLineWidth(0.5)
+                c.line(ox, orig_y + 3, ox + ow, orig_y + 3)
+                # Adjusted price — orange
+                c.setFont("Roboto-Bold", fs)
+                c.setFillColor(LUMIN_ORANGE)
+                adj_y = row_bot + row_h * 0.22
+                c.drawRightString(col["unit"] + 55, adj_y, _fmt_money(rd["eff"]))
+            else:
+                c.setFillColor(WHITE)
+                c.setFont("Roboto", fs)
+                c.drawRightString(col["unit"] + 55, vc, _fmt_money(rd["eff"]))
+
+            c.setFont("Roboto-Bold", fs)
+            c.setFillColor(BACKUP_ORANGE)
+            c.drawRightString(col["total"], vc, _fmt_money(rd["lt"]))
+            self.y -= row_h
+
+        # Notes inside box
+        for n in notes:
+            self._need(16)
+            c.setFont("Roboto-Light", 9)
+            c.setFillColor(HexColor("#8899a0"))
+            txt = n.get("text", "") or n.get("name", "") or ""
+            if len(txt) > 110:
+                txt = txt[:107] + "..."
+            c.drawString(col["item"], self.y - 10, f"Note: {txt}")
+            self.y -= 14
+
+        box_bottom = self.y
+
+        # Section border
+        c.setStrokeColor(BACKUP_ORANGE)
+        c.setLineWidth(0.75)
+        c.rect(self.M, box_bottom, self.content_w, box_top - box_bottom, fill=0, stroke=1)
+
+        # Section subtotal below
+        self.y -= 4
+        c.setFont("Roboto", 11)
+        c.setFillColor(FULL_UP_GRAY)
+        c.drawRightString(col["total"] - 80, self.y - 10, f"{label} Subtotal:")
+        c.setFont("Roboto-Bold", 12)
+        c.setFillColor(LUMIN_ORANGE)
+        c.drawRightString(col["total"], self.y - 10, _fmt_money(sec_total))
+        self.y -= 22
+
+    # ── Totals ─────────────────────────────────────────────────────────────
+    def _draw_totals(self):
+        t = _calc_totals(self.entity)
+        c = self.c
+        self._need(110)
+
+        xl = self.W - self.M - 220
+        xv = self.W - self.M - 10
+
+        self.y -= 12
+        c.setStrokeColor(BACKUP_ORANGE)
+        c.setLineWidth(2)
+        c.line(xl - 10, self.y, self.W - self.M, self.y)
+        self.y -= 22
+
+        c.setFont("Roboto", 12)
+        c.setFillColor(FULL_UP_GRAY)
+        c.drawString(xl, self.y, "Subtotal:")
+        c.setFont("Roboto-Bold", 12)
+        c.drawRightString(xv, self.y, _fmt_money(t["subtotal"]))
+        self.y -= 20
+
+        diff = t["subtotal"] - t["adjusted"]
+        if abs(diff) > 0.01:
+            c.setFont("Roboto", 10)
+            c.setFillColor(HexColor("#8899a0"))
+            c.drawString(xl, self.y, "Line Adjustments:")
+            sign = "-" if diff > 0 else "+"
+            c.drawRightString(xv, self.y, f"{sign}{_fmt_money(abs(diff))}")
+            self.y -= 18
+
+        gd = self.entity.get("globalDiscount", {}) or {}
+        gt = gd.get("type", "none")
+        disc = t["adjusted"] - t["total"]
+        if gt != "none" and abs(disc) > 0.01:
+            c.setFont("Roboto", 10)
+            c.setFillColor(HexColor("#8899a0"))
+            lbl = f"Discount ({gd.get('value',0)}%)" if gt == "percent" else "Discount:"
+            c.drawString(xl, self.y, lbl)
+            c.drawRightString(xv, self.y, f"-{_fmt_money(disc)}")
+            self.y -= 18
+
+        # Grand total
+        self.y -= 8
+        c.setStrokeColor(LUMIN_ORANGE)
+        c.setLineWidth(2)
+        c.line(xl - 10, self.y, self.W - self.M, self.y)
+        self.y -= 22
+        c.setFont(FONTS["heading"], 20)
+        c.setFillColor(LUMIN_ORANGE)
+        c.drawString(xl, self.y, "TOTAL:")
+        c.setFillColor(WHITE)
+        c.drawRightString(xv, self.y, _fmt_money(t["total"]))
+        self.y -= 28
+
+    # ── Terms ──────────────────────────────────────────────────────────────
+    def _draw_terms(self):
+        self._need(70)
+        c = self.c
+        self.y -= 16
+
+        c.setStrokeColor(HexColor("#3a4a52"))
+        c.setLineWidth(0.5)
+        c.line(self.M, self.y + 6, self.W - self.M, self.y + 6)
+
+        c.setFont(FONTS["subheading"], 11)
+        c.setFillColor(BACKUP_ORANGE)
+        c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
+        self.y -= 22
+
+        if self.kind == "invoice":
+            lines = [
+                "Payment is due within 30 days of the invoice date unless otherwise specified.",
+                "Late payments are subject to a 1.5% monthly finance charge.",
+                "Please include the invoice reference number with your payment.",
+            ]
+        else:
+            lines = [
+                "This quote is valid for 30 days from the date of issue.",
+                "Prices are subject to equipment availability at time of booking.",
+                "All equipment rentals are subject to a damage waiver fee.",
+                "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",
+                "Cancellation within 72 hours of event may incur a 25% restocking fee.",
+            ]
+        c.setFont("Roboto-Light", 9)
+        c.setFillColor(HexColor("#8899a0"))
+        for line in lines:
+            c.drawString(self.M + 8, self.y, f"•  {line}")
+            self.y -= 14
+
+    # ── Generate ───────────────────────────────────────────────────────────
+    def render(self):
+        self._draw_header()
+        for sec in self.entity.get("sections", []) or []:
+            self._draw_section(sec)
+        self._draw_totals()
+        self._draw_terms()
+        self.c.save()
+
+
+# ── Public entry point ─────────────────────────────────────────────────────
+
+def generate_pdf(buf, kind, entity, company=None, contact=None,
+                 project=None, settings=None, user_name=""):
+    """Render a PDF into `buf` (a BytesIO or any file-like).
+
+    Args:
+        buf:        Open binary buffer to write to.
+        kind:       "quote" or "invoice". Default falls back to "quote".
+        entity:     Quote or Invoice dict (camelCase keys from the API).
+        company:    Company dict, or None.
+        contact:    Contact dict (client contact), or None.
+        project:    Project dict, or None.
+        settings:   Settings dict (singleton), or None. Used for company
+                    name / address / phone / website / emailFrom in the
+                    header and footer.
+        user_name:  Authenticated user's display name — appears as
+                    "Quoted by:" or "Issued by:" in the header.
+
+    Returns nothing; buf is positioned at end-of-PDF on return."""
+    _register_fonts()
+    doc = _DocPDF(buf, kind, entity, company, contact, project, settings, user_name)
+    doc.render()
+
+
+def doc_ref(kind, entity):
+    """Exposed helper so routes can compute the filename without instantiating
+    the renderer: e.g. `Q-2026-001.pdf` or `INV-2026-001.pdf`."""
+    return _doc_ref(kind, entity)

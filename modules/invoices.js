@@ -332,6 +332,57 @@
     var [sendMessage, setSendMessage] = useState("");
     var [payDate, setPayDate] = useState(todayISO());
     var [payAmount, setPayAmount] = useState("");
+    var [generatingPdf, setGeneratingPdf] = useState(false);
+
+    // POST /api/invoices/{id}/pdf → trigger download + mirror activity entry.
+    // Same pattern as quotes-builder.js. See that file's generatePdf for
+    // detailed comments on the flow.
+    function generatePdf() {
+      if (draft.id == null || generatingPdf) return;
+      setGeneratingPdf(true);
+      fetch("/api/invoices/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
+        .then(function(r) {
+          if (!r.ok) {
+            return r.text().then(function(body) {
+              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
+            });
+          }
+          return r.json();
+        })
+        .then(function(resp) {
+          var a = document.createElement("a");
+          a.href = resp.downloadUrl;
+          a.download = resp.filename || ("INV-" + draft.id + ".pdf");
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          var actEntry = {
+            id: "pdf-" + Date.now(),
+            date: todayISO(),
+            time: new Date().toTimeString().substring(0, 5),
+            type: "pdf_generated",
+            user: (window.LTP_CURRENT_USER || "User"),
+            userId: window.LTP_CURRENT_USER_ID || null,
+            message: "PDF generated",
+            pdfToken: resp.token,
+            pdfFilename: resp.filename,
+          };
+          var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
+          setDraftRaw(updated);
+          cleanRef.current = updated;
+          setInvoices(function(prev) { return prev.map(function(inv) { return inv.id === draft.id ? updated : inv; }); });
+        })
+        .catch(function(err) {
+          if (window.LTP_API_ERRORS) {
+            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST invoices/" + draft.id + "/pdf", error: String(err) });
+          }
+          try {
+            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
+          } catch (e) {}
+          showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
+        })
+        .finally(function() { setGeneratingPdf(false); });
+    }
     var [payMethod, setPayMethod] = useState("check");
     var [payRef, setPayRef] = useState("");
     var [payNotes, setPayNotes] = useState("");
@@ -816,6 +867,13 @@
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
           !isDraft && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "\ud83d\udd12 Locked"),
+          // Generate PDF \u2014 only meaningful for saved invoices.
+          draft.id != null && h("button", {
+              onClick: generatePdf,
+              disabled: generatingPdf,
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
+            generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
+          ),
           // Recall to draft (any non-draft invoice)
           !isDraft && h("button", { onClick: recallToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
@@ -1099,19 +1157,30 @@
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.activity || []).slice().reverse().map(function(a) {
-                var typeColors = { created: B.info, saved: B.success, status: B.warn, paid: B.success, sent: B.accent };
+                var typeColors = { created: B.info, saved: B.success, status: B.warn, paid: B.success, sent: B.accent, pdf_generated: B.accent };
                 var tc = typeColors[a.type] || B.textMut;
                 var hasChanges = a.changes && a.changes.length > 0;
+                var isPdf = a.type === "pdf_generated" && a.pdfToken;
+                var rowOnClick = isPdf
+                  ? undefined
+                  : (hasChanges ? function() { setViewActivity(a); } : undefined);
+                var rowClickable = isPdf || hasChanges;
                 return h("div", { key: a.id,
-                  onClick: hasChanges ? function() { setViewActivity(a); } : undefined,
-                  style: { padding: "5px 0", borderBottom: "1px solid " + B.border, display: "flex", gap: 6, cursor: hasChanges ? "pointer" : "default" },
-                  onMouseOver: hasChanges ? function(e) { e.currentTarget.style.background = B.raised; } : undefined,
-                  onMouseOut: hasChanges ? function(e) { e.currentTarget.style.background = "transparent"; } : undefined },
+                  onClick: rowOnClick,
+                  style: { padding: "5px 0", borderBottom: "1px solid " + B.border, display: "flex", gap: 6, cursor: rowClickable && !isPdf ? "pointer" : "default" },
+                  onMouseOver: rowClickable ? function(e) { e.currentTarget.style.background = B.raised; } : undefined,
+                  onMouseOut: rowClickable ? function(e) { e.currentTarget.style.background = "transparent"; } : undefined },
                   h("div", { style: { width: 5, borderRadius: "3px", background: tc, flexShrink: 0, marginTop: 2 } }),
                   h("div", { style: { flex: 1 } },
-                    h("div", { style: { fontSize: "11px", color: B.text, display: "flex", gap: 4, alignItems: "center" } },
+                    h("div", { style: { fontSize: "11px", color: B.text, display: "flex", gap: 6, alignItems: "center" } },
                       a.message,
-                      hasChanges && h("span", { style: { fontSize: "9px", color: B.accent, fontWeight: 600 } }, "\u25b8")),
+                      hasChanges && h("span", { style: { fontSize: "9px", color: B.accent, fontWeight: 600 } }, "\u25b8"),
+                      isPdf && h("a", {
+                        href: "/pdf/" + a.pdfToken,
+                        download: a.pdfFilename || "invoice.pdf",
+                        onClick: function(e) { e.stopPropagation(); },
+                        style: { fontSize: "10px", color: B.accent, fontWeight: 600, textDecoration: "none", border: "1px solid " + B.accent, borderRadius: "4px", padding: "1px 6px" }
+                      }, "\u2193 Download")),
                     h("div", { style: { fontSize: "9px", color: B.textMut } }, (a.user || "") + (a.date ? " \u00b7 " + fmt(a.date) : "")))
                 );
               }))

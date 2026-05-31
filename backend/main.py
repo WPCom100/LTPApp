@@ -12,6 +12,7 @@ from backend import models
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
+from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.rate_limit import RateLimitMiddleware
 
 
@@ -326,6 +327,11 @@ app.state.oauth = oauth
 # registered first it would swallow `/auth/login` etc.
 app.include_router(auth_router)
 app.include_router(api_router)
+# PDF: api_pdf_router holds the session-gated POST endpoints (under /api/);
+# public_pdf_router holds the tokenized GET endpoint (under /pdf/) which
+# intentionally bypasses session auth — the token is the credential.
+app.include_router(api_pdf_router)
+app.include_router(public_pdf_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────
@@ -375,10 +381,10 @@ def _resolve_static(full_path):
 
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
-    # Anything under api/ or auth/ that didn't match the routers above is a
-    # genuinely unknown endpoint — 404 instead of returning index.html, which
-    # would otherwise mask typos.
-    if full_path.startswith("api/") or full_path.startswith("auth/"):
+    # Anything under api/, auth/, or pdf/ that didn't match the routers
+    # above is a genuinely unknown endpoint — 404 instead of returning
+    # index.html, which would otherwise mask typos.
+    if full_path.startswith("api/") or full_path.startswith("auth/") or full_path.startswith("pdf/"):
         return Response(status_code=404)
 
     static = _resolve_static(full_path)

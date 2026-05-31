@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey, LargeBinary
 from sqlalchemy.sql import func
 from backend.database import Base
 
@@ -337,6 +337,31 @@ class User(Base):
     role = Column(String(20), default="member", nullable=False)                # {member, admin}
     last_login = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PdfArchive(Base):
+    """A snapshot of a generated Quote/Invoice PDF. Each generation creates
+    one row — historical iterations stay downloadable from the entity's
+    activity feed until the row is deleted.
+
+    The `token` column IS the download URL credential — clients hit
+    GET /pdf/{token} (unauthenticated) and get the bytes. ~256 bits of
+    entropy via `secrets.token_urlsafe(32)`. Treat as a non-guessable URL,
+    not a long-lived auth token: anyone with the link can download.
+
+    `entity_type` is "quote" or "invoice". We intentionally do NOT use a
+    FK to quotes/invoices because we want the archive to outlive the
+    entity (audit/recall). `entity_id` is just a denormalized lookup hint."""
+    __tablename__ = "pdf_archives"
+
+    token = Column(String(64), primary_key=True)
+    entity_type = Column(String(20), nullable=False)             # {"quote", "invoice"}
+    entity_id = Column(Integer, nullable=False, index=True)
+    filename = Column(String(255), nullable=False)               # e.g. "Q-2026-001.pdf"
+    pdf_bytes = Column(LargeBinary, nullable=False)              # the rendered PDF
+    bytes_size = Column(Integer, nullable=False)                 # cached len(pdf_bytes) for quick reporting
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
 class Session(Base):

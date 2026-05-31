@@ -840,6 +840,68 @@
     var [sendEmail, setSendEmail] = useState("");
     var [sendSubject, setSendSubject] = useState("");
     var [sendMessage, setSendMessage] = useState("");
+    var [generatingPdf, setGeneratingPdf] = useState(false);
+
+    // Generate PDF: POST /api/quotes/{id}/pdf → triggers archive + activity
+    // append on the server → returns {token, downloadUrl, filename}. We then
+    // navigate the browser to that URL to download. The server-side activity
+    // entry is reflected locally by appending to draft.activity so the user
+    // sees the new "PDF generated" entry without a full refetch.
+    function generatePdf() {
+      if (draft.id == null || generatingPdf) return;
+      setGeneratingPdf(true);
+      fetch("/api/quotes/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
+        .then(function(r) {
+          if (!r.ok) {
+            return r.text().then(function(body) {
+              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
+            });
+          }
+          return r.json();
+        })
+        .then(function(resp) {
+          // Trigger download. <a download> on a same-origin URL just works.
+          var a = document.createElement("a");
+          a.href = resp.downloadUrl;
+          a.download = resp.filename || ("Q-" + draft.id + ".pdf");
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          // Mirror the server's activity entry into local state so the
+          // activity feed updates immediately. The server is the source of
+          // truth; this is just an optimistic display so the user sees the
+          // entry before the next save sync.
+          var actEntry = {
+            id: "pdf-" + Date.now(),
+            date: todayISO(),
+            time: new Date().toTimeString().substring(0, 5),
+            type: "pdf_generated",
+            user: (window.LTP_CURRENT_USER || "User"),
+            userId: window.LTP_CURRENT_USER_ID || null,
+            message: "PDF generated",
+            pdfToken: resp.token,
+            pdfFilename: resp.filename,
+          };
+          var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
+          setDraftRaw(updated);
+          cleanRef.current = updated;
+          // Also update the quotes list state so the activity persists if
+          // the user navigates away and back.
+          setQuotes(function(prev) { return prev.map(function(q) { return q.id === draft.id ? updated : q; }); });
+        })
+        .catch(function(err) {
+          // The fetch wrapper in data-state.js handles 401 by redirecting;
+          // here we just surface via the existing toast system.
+          if (window.LTP_API_ERRORS) {
+            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST quotes/" + draft.id + "/pdf", error: String(err) });
+          }
+          try {
+            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
+          } catch (e) {}
+          showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
+        })
+        .finally(function() { setGeneratingPdf(false); });
+    }
 
     // Drag tracking — ref so drag events don't trigger re-renders
     var dragRef = useRef(null); // { type: "item"|"section", sectionId, itemId? }
@@ -1430,11 +1492,11 @@
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),
           (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "\ud83d\udd12 Locked"),
-          draft.id != null && h("button", { onClick: function() {
-              showAlert("Generate PDF", "PDF export will be available when the backend is connected.");
-            },
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } },
-            "\ud83d\udcc4 Generate PDF"
+          draft.id != null && h("button", {
+              onClick: generatePdf,
+              disabled: generatingPdf,
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
+            generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
           ),
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
@@ -1708,19 +1770,31 @@
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {
-                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn };
+                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent };
                 var tc = typeColors[a.type] || B.textMut;
                 var hasChanges = a.changes && a.changes.length > 0;
+                var isPdf = a.type === "pdf_generated" && a.pdfToken;
+                // PDF entries get a click-to-download instead of details-modal behavior
+                var rowOnClick = isPdf
+                  ? undefined  // the inner link handles its own click
+                  : (hasChanges ? function() { setViewActivity(a); } : undefined);
+                var rowClickable = isPdf || hasChanges;
                 return h("div", { key: a.id,
-                  onClick: hasChanges ? function() { setViewActivity(a); } : undefined,
-                  style: { padding: "6px 0", borderBottom: "1px solid " + B.border, display: "flex", gap: 8, cursor: hasChanges ? "pointer" : "default", borderRadius: "3px" },
-                  onMouseOver: hasChanges ? function(e) { e.currentTarget.style.background = B.raised; } : undefined,
-                  onMouseOut: hasChanges ? function(e) { e.currentTarget.style.background = "transparent"; } : undefined },
+                  onClick: rowOnClick,
+                  style: { padding: "6px 0", borderBottom: "1px solid " + B.border, display: "flex", gap: 8, cursor: rowClickable && !isPdf ? "pointer" : "default", borderRadius: "3px" },
+                  onMouseOver: rowClickable ? function(e) { e.currentTarget.style.background = B.raised; } : undefined,
+                  onMouseOut: rowClickable ? function(e) { e.currentTarget.style.background = "transparent"; } : undefined },
                   h("div", { style: { width: 6, borderRadius: "3px", background: tc, flexShrink: 0, marginTop: 2 } }),
                   h("div", { style: { flex: 1, minWidth: 0 } },
-                    h("div", { style: { fontSize: "11px", color: B.text, fontWeight: 500, display: "flex", alignItems: "center", gap: 4 } },
+                    h("div", { style: { fontSize: "11px", color: B.text, fontWeight: 500, display: "flex", alignItems: "center", gap: 6 } },
                       a.message,
-                      hasChanges && h("span", { style: { fontSize: "9px", color: B.accent, fontWeight: 600 } }, "\u25b8 details")
+                      hasChanges && h("span", { style: { fontSize: "9px", color: B.accent, fontWeight: 600 } }, "\u25b8 details"),
+                      isPdf && h("a", {
+                        href: "/pdf/" + a.pdfToken,
+                        download: a.pdfFilename || "quote.pdf",
+                        onClick: function(e) { e.stopPropagation(); },
+                        style: { fontSize: "10px", color: B.accent, fontWeight: 600, textDecoration: "none", border: "1px solid " + B.accent, borderRadius: "4px", padding: "1px 6px" }
+                      }, "\u2193 Download")
                     ),
                     h("div", { style: { fontSize: "9px", color: B.textMut } },
                       (a.user || "") + (a.user && a.date ? " \u00b7 " : "") + (a.date ? window.LTP_formatDate(a.date) : "") + (a.time ? " " + window.LTP_formatTime(a.time) : ""))
