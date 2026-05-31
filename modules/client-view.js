@@ -88,9 +88,14 @@
         if (padRef.current) padRef.current.clear();
       }
       resize();
+      // White background + dark pen — the exported PNG is the same pixels,
+      // so when the signature is later rendered against a white (or any
+      // light) background in the activity feed / "View signature" popup,
+      // the strokes remain visible. (Previously: white strokes on a
+      // transparent PNG vanished against the white display background.)
       var pad = new window.SignaturePad(canvasRef.current, {
-        backgroundColor: "rgba(0,0,0,0)",
-        penColor: B.text || "#fff",
+        backgroundColor: "#ffffff",
+        penColor: "#233038",   // BLUE_OUT — brand-consistent dark
       });
       padRef.current = pad;
       window.addEventListener("resize", resize);
@@ -113,10 +118,14 @@
       };
     }, []);
 
-    return h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", overflow: "hidden" } },
+    return h("div", { style: { background: "#fff", border: "1px solid " + B.border, borderRadius: "6px", overflow: "hidden" } },
+      // Canvas is visually white so dark pen strokes are visible while
+      // drawing, AND the exported PNG (configured above with white
+      // background) matches what the user sees in the form. No surprises
+      // between draw-time and view-time.
       h("canvas", {
         ref: canvasRef,
-        style: { width: "100%", height: 160, display: "block", cursor: "crosshair", touchAction: "none" },
+        style: { width: "100%", height: 160, display: "block", cursor: "crosshair", touchAction: "none", background: "#fff" },
       }),
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 10px", background: B.bg, borderTop: "1px solid " + B.border, fontSize: "10px", color: B.textMut } },
         h("span", null, "Sign with mouse or finger"),
