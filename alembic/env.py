@@ -72,10 +72,16 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection) -> None:
+    # SQLite can't ALTER COLUMN. Render alterations as batch operations
+    # (table recreate) when the target is SQLite so local dev with the
+    # sqlite fallback can run the same migrations Postgres does. Postgres
+    # gets plain ALTERs since batch mode is unnecessary overhead there.
+    is_sqlite = connection.dialect.name == "sqlite"
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
         compare_type=True,
+        render_as_batch=is_sqlite,
     )
     with context.begin_transaction():
         context.run_migrations()

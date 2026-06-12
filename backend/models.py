@@ -77,9 +77,9 @@ class Project(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(255), nullable=False)
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     category = Column(String(100), default="")           # {rental, labor, service, full-production}
-    status = Column(String(50), default="planning")      # {upcoming, in-progress, completed, cancelled}
+    status = Column(String(50), default="upcoming")      # {upcoming, in-progress, completed, cancelled}
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     venue = Column(String(255), default="")
@@ -110,9 +110,9 @@ class Quote(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_type = Column(String(20), default="company") # {company, contact}
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
-    client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True)
-    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(20), default="draft")        # {draft, sent, accepted, declined, converted}
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     custom_start_date = Column(String(10), default="") # overrides project's startDate on the printed quote
@@ -132,7 +132,9 @@ class Quote(Base):
     # creation); see backend/routes/api.py create(). Same security model as
     # PdfArchive.token — anyone with the token can hit /api/view/{token}.
     # Used for client preview, accept/decline, and the live PDF download.
-    share_token = Column(String(64), nullable=True, unique=True, index=True)
+    # NOT NULL because every Quote has one — the create() handler mints it
+    # unconditionally if the client didn't supply one.
+    share_token = Column(String(64), nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -146,10 +148,10 @@ class Invoice(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_type = Column(String(20), default="company") # {company, contact}
-    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True)
-    client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True)
-    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
-    quote_id = Column(Integer, ForeignKey("quotes.id", ondelete="SET NULL"), nullable=True)
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    quote_id = Column(Integer, ForeignKey("quotes.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(20), default="draft")        # {draft, sent, partial, paid, overdue}
     invoice_date = Column(String(10), default="")       # ISO YYYY-MM-DD
     due_date = Column(String(10), default="")           # ISO YYYY-MM-DD
@@ -165,7 +167,8 @@ class Invoice(Base):
     activity = Column(JSON, default=list)               # same shape as Quote.activity
     # Public-view credential. View-only (no accept/decline on invoices).
     # Same shape + security model as Quote.share_token; minted on POST.
-    share_token = Column(String(64), nullable=True, unique=True, index=True)
+    # NOT NULL because every Invoice has one (see create() in api.py).
+    share_token = Column(String(64), nullable=False, unique=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -255,8 +258,8 @@ class Allocation(Base):
     __tablename__ = "allocations"
 
     id = Column(Integer, primary_key=True, index=True)
-    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=True)
-    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=True, index=True)
     qty = Column(Integer, default=1)                     # how many units of the equipment are allocated
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
