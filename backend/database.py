@@ -1,4 +1,8 @@
+import asyncio
 import os
+from pathlib import Path
+
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
@@ -32,45 +36,66 @@ async def get_db():
             raise
 
 
+# Path to alembic.ini relative to repo root (this file lives one level down).
+_ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+
+
+def _alembic_config():
+    """Build an Alembic Config that points at our alembic.ini. We
+    intentionally do NOT set sqlalchemy.url here — env.py reads DATABASE_URL
+    itself, which keeps CLI runs (`alembic upgrade head` from a terminal)
+    and boot-time upgrades on the same code path."""
+    from alembic.config import Config
+    return Config(str(_ALEMBIC_INI))
+
+
+async def _probe_tables() -> set[str]:
+    """Return the set of table names currently in the database. Uses the
+    app's async engine via run_sync so we don't need a separate sync driver
+    (no psycopg2) just to peek at the schema."""
+    async with engine.connect() as conn:
+        return await conn.run_sync(lambda c: set(inspect(c).get_table_names()))
+
+
+def _run_alembic_commands(needs_stamp: bool) -> None:
+    """Worker-thread body. Stamps once if cutting over from create_all, then
+    runs upgrade head. Both calls go through Alembic's sync command layer;
+    env.py internally uses asyncio.run() to drive the actual SQL, which
+    works because to_thread gave us a fresh event loop slot."""
+    from alembic import command
+    cfg = _alembic_config()
+    if needs_stamp:
+        print("[LTP] alembic: stamping pre-alembic schema as head (one-shot cutover)", flush=True)
+        command.stamp(cfg, "head")
+    print("[LTP] alembic: upgrade head", flush=True)
+    command.upgrade(cfg, "head")
+
+
 async def init_db():
-    """Create tables on startup. Set LTP_RESET_DB=true in the environment to
-    drop everything first — one-shot, intended for schema rewrites where the
-    existing data is disposable. Unset the var (or set to false) after the
-    next deploy so subsequent restarts don't keep wiping the database.
+    """Apply pending Alembic migrations.
 
-    On Postgres, the reset does DROP SCHEMA public CASCADE so it wipes EVERY
-    table including orphans from prior schemas — Base.metadata.drop_all
-    alone only knows about tables in the current models, so a stale table
-    from an earlier deploy with a different name would survive."""
-    from sqlalchemy import text
+    Replaces the prior Base.metadata.create_all + LTP_RESET_DB combo. Schema
+    changes now go through `alembic revision --autogenerate`, are reviewed,
+    and ride a normal deploy. There is no longer any in-process knob that
+    drops the database — recovery from corruption is via Railway's
+    point-in-time restore, not an env var.
 
-    raw = os.environ.get("LTP_RESET_DB", "")
-    reset = raw.strip().lower() in ("1", "true", "yes")
-    # Loud startup log — visible in Railway's deploy logs so you can confirm
-    # the reset actually ran. The repr() shows trailing whitespace etc.
-    print(f"[LTP] init_db: LTP_RESET_DB={raw!r} -> reset={reset}", flush=True)
+    Three boot scenarios are handled:
+      (a) Fresh DB (no app tables, no alembic_version) — upgrade head
+          creates everything from the migration history.
+      (b) Existing DB seeded by the prior create_all path (app tables but
+          no alembic_version) — stamp head once to adopt the live schema as
+          Alembic's baseline, then upgrade head (no-op the first time).
+      (c) Existing DB already under Alembic management — upgrade head
+          applies any pending migrations.
 
-    async with engine.begin() as conn:
-        dialect = conn.dialect.name
-        if reset:
-            if dialect == "postgresql":
-                # Railway does rolling deploys: the old container is still
-                # alive holding pool connections when the new one starts, and
-                # those connections block our exclusive lock on the schema.
-                # Forcibly terminate every OTHER backend on this database so
-                # DROP SCHEMA can acquire its lock. Without this, the reset
-                # hangs indefinitely waiting for the old instance.
-                print("[LTP] terminating other backends on this database", flush=True)
-                killed = await conn.execute(text(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND pid <> pg_backend_pid()"
-                ))
-                print(f"[LTP] terminated {killed.rowcount} backend(s)", flush=True)
-                print("[LTP] DROP SCHEMA public CASCADE (nuclear reset)", flush=True)
-                await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
-                await conn.execute(text("CREATE SCHEMA public"))
-            else:
-                print("[LTP] drop_all (sqlite/other)", flush=True)
-                await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
-        print(f"[LTP] tables ready ({dialect}): {sorted(Base.metadata.tables.keys())}", flush=True)
+    Stamping in case (b) is safe ONLY because the initial migration was
+    autogenerated from the same models create_all was producing. If we
+    ever ship a schema change before this cutover runs everywhere, that
+    assumption breaks; see README "Migrations" for the operational note."""
+    tables = await _probe_tables()
+    has_alembic = "alembic_version" in tables
+    has_app_tables = any(t in tables for t in ("companies", "quotes", "invoices", "users"))
+    needs_stamp = has_app_tables and not has_alembic
+    await asyncio.to_thread(_run_alembic_commands, needs_stamp)
+    print(f"[LTP] init_db complete ({engine.dialect.name})", flush=True)

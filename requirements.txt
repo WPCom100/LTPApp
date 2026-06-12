@@ -4,13 +4,15 @@ sqlalchemy[asyncio]==2.0.40
 asyncpg==0.30.0
 pydantic==2.11.3
 aiosqlite==0.21.0
+# Schema migrations — replaces the prior LTP_RESET_DB nuclear option. See
+# alembic/env.py and the "Migrations" section of README.md for the workflow.
+alembic==1.13.2
 # Google OAuth + sessions
 authlib==1.3.2          # OAuth2/OIDC client; verifies Google ID tokens via JWKS
 itsdangerous==2.2.0     # signs Starlette's SessionMiddleware cookie (Authlib state/nonce)
 # PDF generation
 reportlab==4.4.0        # PDF rendering for quotes/invoices (backend/pdf_generator.py)
 # Removed (re-add when needed):
-#   alembic              — will return when we replace LTP_RESET_DB with real migrations
 #   python-dotenv        — Railway provides env vars directly; only needed for local .env files
 #   pydantic-settings    — no settings classes in use
 #   passlib[bcrypt]      — no password storage; Google handles authentication
