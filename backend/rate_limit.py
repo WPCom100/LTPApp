@@ -19,6 +19,7 @@ The counter resets every WINDOW_SECONDS; not a token bucket. Edge cases at
 window boundaries are acceptable for this scale (a perfectly-timed attacker
 could double the rate for one second per window — meaningless).
 """
+import os
 import time
 from typing import Optional
 from fastapi import Response
@@ -70,16 +71,62 @@ class _RateLimitState:
 _state = _RateLimitState()
 
 
+# How many trusted proxy hops sit between the client and the app.
+#
+# Railway adds exactly one X-Forwarded-For hop (their edge proxy), so
+# default = 1. If a CDN (Cloudflare, Fastly, etc.) is layered in front
+# later, bump this to 2, and so on. Setting to 0 disables XFF parsing
+# entirely — direct socket IP only, correct for purely-local dev with no
+# proxy in the loop.
+#
+# The math: with N trusted hops, the (-N)th entry from the right end of
+# XFF is the IP that the FIRST trusted hop observed connecting to it —
+# i.e. the real client (assuming the trusted chain doesn't lie). Entries
+# to the LEFT of that are client-supplied and CAN be spoofed; entries to
+# the RIGHT are inner proxies and irrelevant for attribution.
+#
+# Previous bug: this code took XFF[0] (leftmost), which on Railway is
+# trustworthy only when the client sends no XFF of their own. If the
+# client sends `X-Forwarded-For: 1.2.3.4`, Railway appends its observed
+# IP and the app sees `1.2.3.4, <real>` — XFF[0] is then the attacker's
+# choice. The new code takes XFF[-1] for the default 1-hop config, which
+# is always Railway's view of the connecting client.
+_TRUST_PROXY_HOPS = int(os.environ.get("LTP_TRUST_PROXY_HOPS", "1"))
+
+
 def _client_ip(scope) -> str:
-    """Extract the originating IP. Behind Railway's proxy the real client
-    address is in X-Forwarded-For; the first entry is the original client.
-    Falls back to the direct connection IP if no proxy header (local dev)."""
-    for name, value in scope.get("headers", []):
-        if name == b"x-forwarded-for":
-            try:
-                return value.decode("ascii", errors="replace").split(",")[0].strip()
-            except Exception:
-                pass
+    """Extract the originating IP, accounting for the configured trusted
+    proxy chain. Falls back to the direct socket IP when no XFF header is
+    present (local dev), or when the header doesn't contain at least
+    LTP_TRUST_PROXY_HOPS entries (misconfigured chain — safer to fall back
+    than guess wrong).
+
+    Why `len(parts) >= N` and not `> N`:
+    in standard XFF semantics, EVERY entry was appended by a proxy from its
+    view of the immediate predecessor — there is no "client-supplied untrusted
+    entry that must precede the trusted N." When Railway adds exactly one
+    entry, that single entry IS the trusted view of the client; the `>=`
+    bound is what makes the common Railway-default case work. Matches
+    Werkzeug's ProxyFix and similar libraries.
+
+    The misconfiguration risk (operator sets HOPS higher than actual chain
+    depth) is handled by documentation, not arithmetic — bumping HOPS without
+    a corresponding proxy in front of the app would also be wrong with a `>`
+    check, just in a different way (silently falls back to socket)."""
+    if _TRUST_PROXY_HOPS > 0:
+        for name, value in scope.get("headers", []):
+            if name == b"x-forwarded-for":
+                try:
+                    parts = [
+                        p.strip()
+                        for p in value.decode("ascii", errors="replace").split(",")
+                        if p.strip()
+                    ]
+                    if len(parts) >= _TRUST_PROXY_HOPS:
+                        return parts[-_TRUST_PROXY_HOPS]
+                except Exception:
+                    pass
+                break  # XFF present but unusable; fall through to socket
     client = scope.get("client")
     return client[0] if client else "unknown"
 

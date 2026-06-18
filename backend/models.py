@@ -337,7 +337,17 @@ class User(Base):
     `google_sub` column is Google's stable subject identifier; we key off it
     instead of email so a user changing their primary email keeps the same
     row. `role` ∈ {member, admin}. The first user ever created gets admin;
-    everyone after gets member."""
+    everyone after gets member.
+
+    Gmail send (columns below) is per-user via OAuth scope
+    `https://www.googleapis.com/auth/gmail.send`. Refresh + access tokens
+    are stored as Fernet ciphertext (see backend/crypto.py). All four gmail_*
+    columns are nullable because a user may exist (have signed in) BEFORE
+    the scope was granted — null = user hasn't connected Gmail yet, banner
+    in the UI prompts them to.
+
+    `title` and `phone` are admin-edited per user; they feed the workspace
+    email signature template via `{{userTitle}}` / `{{userPhone}}`."""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -347,6 +357,17 @@ class User(Base):
     picture_url = Column(Text, default="")
     role = Column(String(20), default="member", nullable=False)                # {member, admin}
     last_login = Column(DateTime(timezone=True), nullable=True)
+    # Gmail OAuth token cache (Fernet ciphertext for the two token columns)
+    gmail_refresh_token = Column(Text, nullable=True)
+    gmail_access_token = Column(Text, nullable=True)
+    gmail_token_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # Space-separated scope list as granted by Google on the last token exchange.
+    # Used to detect whether the user has gmail.send (for the Send button gate)
+    # and to drive re-consent when we add new scopes in the future.
+    gmail_granted_scopes = Column(Text, nullable=True)
+    # Admin-edited per-user profile fields used by the email signature template.
+    title = Column(String(255), nullable=True)
+    phone = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

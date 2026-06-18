@@ -4,9 +4,11 @@ Flow:
     GET  /auth/login     → redirect to Google with OAuth state in a transient cookie
     GET  /auth/callback  → Google sends user back here with a code → we exchange,
                             verify the ID token, check the email domain, upsert User,
-                            create Session row, set ltp_session cookie, redirect to /
+                            persist Gmail tokens (encrypted), create Session row,
+                            set ltp_session cookie, redirect to /
     POST /auth/logout    → delete Session row + clear cookie
-    GET  /auth/me        → return current user info (or 401)
+    GET  /auth/me        → return current user info (or 401), including gmail
+                            connection status for the Send-button gate
 
 The Authlib OAuth client is instantiated in backend/main.py and stashed on
 `app.state.oauth`. We pull it back via the Request to keep this module decoupled.
@@ -23,6 +25,12 @@ from authlib.integrations.starlette_client import OAuthError
 from backend.database import get_db
 from backend import models
 from backend.auth_deps import require_session, SESSION_COOKIE_NAME
+from backend import crypto
+
+# Scope string for the per-user Gmail send feature. Mirrored from
+# backend/main.py — kept inline here so the lookup in /auth/me doesn't
+# create an import cycle through main.
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -65,7 +73,15 @@ def _clear_session_cookie(response: Response) -> None:
 @router.get("/login")
 async def login(request: Request):
     """Kick off Google OAuth. Authlib generates and stores state + nonce in
-    Starlette's signed session cookie before redirecting."""
+    Starlette's signed session cookie before redirecting.
+
+    `access_type=offline` asks Google to include a refresh_token in the token
+    response; `prompt=consent` forces the consent screen on every sign-in,
+    which is what makes Google issue the refresh_token reliably (without it,
+    Google returns one only on the user's very first consent — invisible to
+    us at callback time). The UX cost is a one-screen consent prompt per
+    sign-in; the correctness gain is that we never lose the refresh token to
+    a silent skip."""
     oauth = request.app.state.oauth
     redirect_uri = os.environ.get("LTP_OAUTH_REDIRECT_URI", "")
     if not redirect_uri:
@@ -73,7 +89,12 @@ async def login(request: Request):
             status_code=500,
             detail="LTP_OAUTH_REDIRECT_URI is not configured on the server",
         )
-    return await oauth.google.authorize_redirect(request, redirect_uri)
+    return await oauth.google.authorize_redirect(
+        request,
+        redirect_uri,
+        access_type="offline",
+        prompt="consent",
+    )
 
 
 @router.get("/callback")
@@ -156,6 +177,25 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
         user.last_login = now
         await db.flush()
 
+    # Persist Gmail OAuth tokens. The token dict from Authlib mirrors Google's
+    # response: access_token (short-lived), refresh_token (long-lived, present
+    # because we asked for prompt=consent + access_type=offline at /auth/login),
+    # expires_in (seconds), expires_at (epoch seconds, sometimes), scope
+    # (space-separated string of granted scopes).
+    #
+    # Defensive rules:
+    #   - Always update access_token + expires_at + scope: short-lived state.
+    #   - Update refresh_token only if Google returned one. With prompt=consent
+    #     it should always be present, but if Google ever skips it (policy
+    #     change, edge case in Authlib parsing), we'd rather keep a working
+    #     stored token than overwrite with null and break sends silently.
+    #   - Ciphertexts are written via crypto.encrypt_token. If the encryption
+    #     key isn't configured (LTP_TOKEN_ENCRYPTION_KEY env var), the helper
+    #     raises and we let it propagate — sign-in fails loudly rather than
+    #     storing plaintext.
+    _persist_gmail_tokens(user, token, now)
+    await db.flush()
+
     # Mint session
     session_token = secrets.token_urlsafe(48)  # ~64 chars
     session_row = models.Session(
@@ -187,14 +227,76 @@ async def logout(
     return response
 
 
+def _persist_gmail_tokens(user: models.User, token: dict, now: datetime) -> None:
+    """Pull token fields out of the Authlib token dict and write them to the
+    User row. Encryption happens here so the calling code path is unaware of
+    the ciphertext format. See callback() above for the defensive rules."""
+    access_token = token.get("access_token")
+    refresh_token = token.get("refresh_token")
+    scope_str = token.get("scope") or ""
+
+    # Compute expiry. Google returns either `expires_in` (seconds from now) or
+    # `expires_at` (epoch seconds), depending on Authlib version + flow.
+    expires_at: datetime | None = None
+    if "expires_at" in token:
+        try:
+            expires_at = datetime.fromtimestamp(int(token["expires_at"]), tz=timezone.utc)
+        except (TypeError, ValueError) as e:
+            print(f"[LTP] auth: ignored bad token['expires_at']={token.get('expires_at')!r} ({e})", flush=True)
+            expires_at = None
+    if expires_at is None and token.get("expires_in"):
+        try:
+            expires_at = now + timedelta(seconds=int(token["expires_in"]))
+        except (TypeError, ValueError) as e:
+            print(f"[LTP] auth: ignored bad token['expires_in']={token.get('expires_in')!r} ({e})", flush=True)
+            expires_at = None
+
+    if access_token:
+        user.gmail_access_token = crypto.encrypt_token(access_token)
+    # Persist expiry whenever we computed one — independent of access_token
+    # presence. Google always returns access_token alongside in practice, but
+    # decoupling here means we don't silently lose the expiry if a future
+    # Authlib version splits the fields across calls.
+    if expires_at is not None:
+        user.gmail_token_expires_at = expires_at
+    if refresh_token:
+        # Critical: only overwrite when Google actually sent one. A returning
+        # user where Google skipped the refresh_token (shouldn't happen with
+        # prompt=consent but defense in depth) keeps their previously-stored
+        # token rather than getting nulled out.
+        user.gmail_refresh_token = crypto.encrypt_token(refresh_token)
+    if scope_str:
+        user.gmail_granted_scopes = scope_str
+
+
+def _has_gmail_send_scope(user: models.User) -> bool:
+    """True if the user's stored granted-scopes list includes gmail.send.
+    Tokens being absent (user signed in before scope shipped) returns False,
+    which is the signal the frontend uses to surface the reconnect banner."""
+    if not user.gmail_granted_scopes:
+        return False
+    scopes = user.gmail_granted_scopes.split()
+    return GMAIL_SEND_SCOPE in scopes
+
+
 @router.get("/me")
 async def me(user: models.User = Depends(require_session)):
     """Current-user endpoint. UNGATED in the sense that it doesn't require admin,
-    but it does require a valid session — that's the whole point."""
+    but it does require a valid session — that's the whole point.
+
+    The `gmail*` fields drive the Send button gate in the frontend:
+      gmailConnected: a refresh token is on file (so we *can* attempt to send)
+      gmailScope:     "send" if gmail.send was granted on the last sign-in,
+                      else "none" — the frontend uses this to decide whether to
+                      gate the Send modal vs surface a reconnect banner."""
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "pictureUrl": user.picture_url,
         "role": user.role,
+        "title": user.title or "",
+        "phone": user.phone or "",
+        "gmailConnected": bool(user.gmail_refresh_token),
+        "gmailScope": "send" if _has_gmail_send_scope(user) else "none",
     }

@@ -311,13 +311,28 @@ print(f"[LTP] payload size limit: {MAX_PAYLOAD_BYTES} bytes "
 
 # ── Authlib OAuth client ────────────────────────────────────────────────────
 # Stashed on app.state so routes/auth.py can pull it via the Request.
+#
+# Scope list:
+#   openid email profile     — identity (sub claim, email, name, picture)
+#   gmail.send               — send email as the signed-in user (no read access
+#                              to their inbox, no full Gmail). Required for the
+#                              per-user Gmail send feature; users grant on first
+#                              sign-in after this scope shipped.
+#
+# access_type=offline + prompt=consent at the /auth/login redirect (see
+# routes/auth.py) force Google to issue a refresh_token in the token response
+# every time. Without prompt=consent, Google issues a refresh_token only on
+# the very first consent — and we cannot tell at callback time whether this
+# was that first time, so the refresh_token would silently go missing for
+# every returning user.
+GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 oauth = OAuth()
 oauth.register(
     name="google",
     server_metadata_url="https://accounts.google.com/.well-known/openid-configuration",
     client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
     client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
-    client_kwargs={"scope": "openid email profile"},
+    client_kwargs={"scope": f"openid email profile {GMAIL_SEND_SCOPE}"},
 )
 app.state.oauth = oauth
 

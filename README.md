@@ -119,6 +119,44 @@ Verify on Railway:
 If retention is shorter than you want, the plan tier on Railway controls
 it — bump there rather than building a parallel backup pipeline.
 
+## Environment variables
+
+Set in Railway → service → **Variables**. Local dev uses a `.env` file or
+shell exports.
+
+| Variable | Required? | Default | What it does |
+|---|---|---|---|
+| `DATABASE_URL` | Prod | (sqlite local) | Railway sets automatically when the Postgres service is linked. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Prod | — | OAuth client credentials from Google Cloud Console → APIs & Services → Credentials. |
+| `LTP_OAUTH_REDIRECT_URI` | Prod | — | The full `https://yourdomain/auth/callback` URL. Must match what's registered in Google Cloud Console. |
+| `LTP_SESSION_SECRET` | Prod | (ephemeral) | Signs Authlib's transient state cookie. Generate via `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Without it, sign-in breaks across pod restarts. |
+| `LTP_ALLOWED_DOMAIN` | Optional | (none) | Restrict sign-in to a single Workspace domain (e.g. `ltpnj.com`). Empty = anyone with a Google account. |
+| `LTP_TOKEN_ENCRYPTION_KEY` | **Required for Gmail send** | — | Fernet key for encrypting Gmail OAuth tokens at rest. Generate via `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. **Missing key causes a `RuntimeError` on the first sign-in after the email feature ships** — set this before deploying the email feature. Comma-separated values support key rotation (new key first; old keys still decrypt). |
+| `LTP_TRUST_PROXY_HOPS` | Optional | `1` | Number of trusted reverse-proxy hops sitting between the client and the app. `1` is correct for Railway with no CDN. Bump to `2` if you front Railway with Cloudflare/Fastly, `3` for two CDNs, etc. Set to `0` for purely-local dev with no proxy. **Misconfiguring higher than actual hops enables IP spoofing** — match it to your real topology. |
+| `LTP_MAX_PAYLOAD_BYTES` | Optional | `10485760` | Max request body size; rejects with 413 above this. |
+| `LTP_SESSION_SWEEP_INTERVAL_SECONDS` | Optional | `3600` | How often the background sweeper deletes expired session rows. |
+
+## Email feature deploy notes
+
+The Gmail-send feature ships in stages. Before the first deploy that
+includes it:
+
+1. In Google Cloud Console → APIs & Services → **OAuth consent screen** →
+   **Audience**, confirm User Type is **Internal**. (Required for the
+   sensitive `gmail.send` scope to skip Google's CASA verification.)
+2. On the same consent screen, add scope
+   `https://www.googleapis.com/auth/gmail.send` under **Scopes**.
+3. In APIs & Services → **Library**, enable the **Gmail API**.
+4. Set `LTP_TOKEN_ENCRYPTION_KEY` in Railway Variables (see Environment
+   variables table for the generation command).
+
+After the first post-deploy sign-in, **every existing user must sign out
+and back in once** — the OAuth login flow now passes `prompt=consent` to
+force Google to issue a refresh token, which requires re-consent. Users
+who don't re-consent can use the app normally but can't send email until
+they do. The frontend shows a "Reconnect Google" banner when this is the
+case.
+
 ## API Endpoints
 
 All entities follow REST conventions:
