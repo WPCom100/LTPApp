@@ -6,7 +6,7 @@ frontend/
 node_modules/
 .venv/
 *.local.json
-.claude/settings.local.json
+**/.claude/settings.local.json
 # Local dev sqlite + migration cache
 ltp_dev.db
 ltp_dev.db-journal
