@@ -164,6 +164,13 @@ gmail.send scope is granted and the Send button works again. Admins
 can spot users in this state from the Team Members section of Settings —
 a "Gmail not connected" warning shows below their email.
 
+The signature template ships with a `{{userPhoto}}` placeholder that
+resolves to each sender's Google profile picture at send time. Users
+who somehow lack a profile picture (rare for Google OAuth) get the LTP
+logo as a fallback. The Team Members section in Settings shows each
+user's photo as a small circular avatar so admins can verify what each
+team member's signature will display.
+
 ## API Endpoints
 
 All entities follow REST conventions:

@@ -376,19 +376,30 @@ window.LTP_resolveTemplate = function(template, vars) {
 // false positives (HTML passes through untouched) are fine; false
 // negatives (plain-text wrongly classified as HTML) lose the
 // formatting we're trying to add.
+// Fallback photo URL used when the signed-in user has no Google profile
+// picture (rare). Same image as the legacy logo position in the signature
+// template, so the layout doesn't break on first send. MUST stay in sync
+// with backend/routes/email.py::_PHOTO_FALLBACK_URL.
+window.LTP_SIGNATURE_PHOTO_FALLBACK = "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png";
+
 // Render the {{signature}} placeholder against the currently signed-in
 // user, using the workspace-wide signature template from settings.
 // This is the FRONTEND counterpart of backend/routes/email.py::_render_signature;
 // it exists so the Send-modal preview shows what the recipient will see
 // instead of literal {{signature}}. The real substitution at send time
 // still happens server-side (authoritative).
+//
+// {{userPhoto}} resolves to the Google profile picture, falling back
+// to the LTP logo when absent. Other placeholders coerce missing
+// values to empty string so the template never leaks literal {{...}}.
 window.LTP_renderSignature = function(template) {
   if (!template) return "";
   return template
     .replace(/\{\{userName\}\}/g, window.LTP_SENDER_NAME || "")
     .replace(/\{\{userEmail\}\}/g, window.LTP_SENDER_EMAIL || "")
     .replace(/\{\{userTitle\}\}/g, window.LTP_SENDER_TITLE || "")
-    .replace(/\{\{userPhone\}\}/g, window.LTP_SENDER_PHONE || "");
+    .replace(/\{\{userPhone\}\}/g, window.LTP_SENDER_PHONE || "")
+    .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK);
 };
 
 // Build a Send-modal preview body: substitute the placeholders the

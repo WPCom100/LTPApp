@@ -335,11 +335,15 @@
                 // Fall back to the data/settings.js default when the draft
                 // signature is empty/missing, so admins editing a fresh
                 // install see the rich starter template they'll get sent.
+                // Sample values for name/title/phone/email; {{userPhoto}}
+                // uses the admin's OWN photo so they see a real image
+                // (their own) rather than a placeholder.
                 (draft.emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate || "")
                   .replace(/\{\{userName\}\}/g, "Sarah Chen")
                   .replace(/\{\{userTitle\}\}/g, "Production Manager")
                   .replace(/\{\{userPhone\}\}/g, "(555) 123-4567")
                   .replace(/\{\{userEmail\}\}/g, "sarah@example.com")
+                  .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK)
               )) }
             })
           )
@@ -366,11 +370,26 @@
           users.map(function(u) {
             return h("div", { key: u.id,
               style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 12px", display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 0.8fr", gap: 8, alignItems: "center" } },
-              // Identity (read-only)
-              h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0 } },
-                h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
-                h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
-                u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
+              // Identity (read-only): circular Google profile photo + name/email.
+              // The photo is the same image that feeds {{userPhoto}} in the
+              // email signature template — showing it here makes it visible to
+              // the admin which photo each team member's signature will use.
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
+                // URL scheme guard: only render an <img> when pictureUrl is
+                // explicitly http(s). CSP would already block javascript:/
+                // data: at runtime, but rejecting them here means a stored
+                // bad value can't even reach the DOM. Falls back to the
+                // initial-letter placeholder otherwise.
+                (u.pictureUrl && /^https?:\/\//i.test(u.pictureUrl))
+                  ? h("img", { src: u.pictureUrl, alt: u.name || u.email,
+                      style: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid " + B.border } })
+                  : h("div", { style: { width: 32, height: 32, borderRadius: "50%", background: B.bg, border: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "center", color: B.textMut, fontSize: "11px", fontWeight: 700, flexShrink: 0 } },
+                      (u.name || u.email || "?").charAt(0).toUpperCase()),
+                h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 } },
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
+                  u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
+                )
               ),
               // Title (editable, debounce-on-blur)
               h("input", { type: "text", value: u.title || "", placeholder: "Title",

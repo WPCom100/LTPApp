@@ -144,13 +144,31 @@ def _render_signature(
     template = (settings_data.get("emailSignatureTemplate") or "").strip()
     if not template:
         template = _FALLBACK_SIGNATURE
+    # {{userPhoto}} resolves to the user's Google profile picture, with
+    # the LTP logo as a fallback when picture_url is empty (rare —
+    # Google OAuth users almost always have one, but a User row that
+    # pre-dates the OAuth scope grant could be photo-less). We escape
+    # picture_url too even though it's controlled by Google; an attacker
+    # who managed to inject HTML there would still be neutered.
+    photo_url = (user.picture_url or "").strip() or _PHOTO_FALLBACK_URL
     return (
         template
+        .replace("{{userPhoto}}", escape(photo_url))
         .replace("{{userName}}", escape(user.name or ""))
         .replace("{{userEmail}}", escape(user.email or ""))
         .replace("{{userTitle}}", escape(user.title or ""))
         .replace("{{userPhone}}", escape(user.phone or ""))
     )
+
+
+# Used by both _render_signature (for users with no Google profile pic)
+# AND embedded in _FALLBACK_SIGNATURE; pinned here so changing the URL
+# updates both call sites in one edit. MUST stay in sync with the same
+# constant in theme.js (window.LTP_SIGNATURE_PHOTO_FALLBACK) so the
+# Send-modal preview renders the same image the recipient gets.
+_PHOTO_FALLBACK_URL = (
+    "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
+)
 
 
 # Server-side fallback signature — must stay byte-identical to the
@@ -162,9 +180,9 @@ def _render_signature(
 _FALLBACK_SIGNATURE = (
     '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse">'
     '<tr><td style="padding:0 10px 0 0;vertical-align:top">'
-    '<img alt="Luminary Technology and Productions" height="135" '
-    'src="https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" '
-    'style="display:block">'
+    '<img alt="{{userName}}" height="120" '
+    'src="{{userPhoto}}" width="120" '
+    'style="display:block;border-radius:50%;object-fit:cover">'
     '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;'
     "font-family:'verdana','geneva',sans-serif;font-size:12px;line-height:14px;color:#233038\">"
     '<div style="margin-bottom:10px"><strong>'

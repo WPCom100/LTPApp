@@ -94,7 +94,6 @@ def test_backend_fallback_matches_frontend_default_structure():
         frontend_src = f.read()
     # Markers that MUST appear in both
     markers = [
-        "Luminary Technology and Productions",   # logo alt text
         "border-left:3px solid #dddddd",         # accent border
         "#ef5822",                                # LTP brand color
         "3786 Arapaho Rd.",                       # address line 1
@@ -102,6 +101,9 @@ def test_backend_fallback_matches_frontend_default_structure():
         "https://LuminaryTechnology.Productions", # website (HTTPS)
         "facebook.com/profile.php?id=61563798680454",  # FB link
         "instagram.com/luminarytechnologyproductions",  # IG link
+        "border-radius:50%",                      # circular profile photo
+        "object-fit:cover",                       # photo crop policy
+        "{{userPhoto}}",                          # per-user Google photo
         "{{userName}}", "{{userEmail}}",
         "{{userTitle}}", "{{userPhone}}",
     ]
@@ -119,11 +121,60 @@ def test_render_signature_html_escapes_user_fields():
     u = models.User(
         google_sub="g", email="x@y.com",
         name="<script>alert(1)</script>", title="Boss & CEO", phone="555 < 1212",
+        picture_url="https://lh3.googleusercontent.com/a/fake-photo",
     )
     out = _render_signature(u, {})
     _check("script tag escaped", "&lt;script&gt;" in out and "<script>alert" not in out)
     _check("ampersand escaped", "Boss &amp; CEO" in out)
     _check("less-than in phone escaped", "555 &lt; 1212" in out)
+
+
+def test_signature_userphoto_substituted_from_picture_url():
+    """The {{userPhoto}} placeholder should resolve to the user's Google
+    profile picture URL."""
+    print("test_signature_userphoto_substituted_from_picture_url")
+    u = models.User(
+        google_sub="g", email="alice@x.com", name="Alice",
+        picture_url="https://lh3.googleusercontent.com/a/ACg8oc-FAKE=s96-c",
+    )
+    out = _render_signature(u, {})
+    _check("picture_url appears in rendered signature",
+           "https://lh3.googleusercontent.com/a/ACg8oc-FAKE=s96-c" in out)
+    _check("no literal {{userPhoto}} left", "{{userPhoto}}" not in out)
+
+
+def test_signature_userphoto_falls_back_when_picture_url_empty():
+    """If a User row has no picture_url (rare for Google OAuth, but
+    possible — pre-grant-scope users, or test seeds), {{userPhoto}}
+    falls back to the LTP logo URL so the layout doesn't break."""
+    print("test_signature_userphoto_falls_back_when_picture_url_empty")
+    u = models.User(google_sub="g", email="bob@x.com", name="Bob", picture_url="")
+    out = _render_signature(u, {})
+    _check("fallback logo URL substituted",
+           "luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" in out)
+    _check("no literal {{userPhoto}} left", "{{userPhoto}}" not in out)
+
+    u2 = models.User(google_sub="g", email="c@x.com", name="Carol", picture_url=None)
+    out2 = _render_signature(u2, {})
+    _check("None picture_url also falls back",
+           "luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" in out2)
+
+
+def test_signature_userphoto_html_escaped():
+    """picture_url comes from Google but defense-in-depth — should be
+    escaped before substitution so even a hijacked Google response
+    can't inject HTML."""
+    print("test_signature_userphoto_html_escaped")
+    u = models.User(
+        google_sub="g", email="x@y.com", name="X",
+        picture_url='https://x.com/photo.png"><script>alert(1)</script>',
+    )
+    out = _render_signature(u, {})
+    _check("<script> in picture_url escaped",
+           "&lt;script&gt;" in out and "<script>alert" not in out)
+    _check("quote in picture_url escaped",
+           "&quot;" in out or "&#x27;" in out or '&#34;' in out,
+           f"got {out[:200]!r}")
 
 
 def test_signature_custom_template_wins():
@@ -343,6 +394,9 @@ def main() -> int:
     test_signature_fallback_when_template_is_whitespace_only()
     test_backend_fallback_matches_frontend_default_structure()
     test_render_signature_html_escapes_user_fields()
+    test_signature_userphoto_substituted_from_picture_url()
+    test_signature_userphoto_falls_back_when_picture_url_empty()
+    test_signature_userphoto_html_escaped()
     test_signature_custom_template_wins()
     test_signature_null_user_fields_handled()
     test_data_settings_has_rich_signature_default()
