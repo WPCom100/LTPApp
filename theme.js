@@ -419,22 +419,96 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
     .replace(/\{\{signature\}\}/g, sig);
 };
 
+// ── EmailBodyEditor bidirectional conversion ─────────────────────────────
+// The Send modal uses a WYSIWYG contentEditable rather than a textarea —
+// the user shouldn't have to look at raw HTML to tweak an email. The
+// body that gets STORED + SENT keeps placeholders intact ({{viewUrl}},
+// {{signature}}) so the backend can substitute per-recipient values.
+// The body that gets DISPLAYED has the signature substituted as a
+// non-editable marker block (so the user sees what the recipient sees
+// without being able to accidentally mangle the signature structure).
+// {{viewUrl}} stays inline in href attributes — invisible to the user
+// because it lives in attribute space, not text content.
+//
+// `LTP_bodyToEditableHtml(rawBody, signatureTemplate)` — call when
+// opening the modal. Produces HTML safe to drop into a contentEditable.
+//
+// `LTP_editableHtmlToBody(html)` — call on every input event. Reverses
+// the signature substitution so the stored body still has {{signature}}
+// for the backend to resolve.
+//
+// The signature marker is a div with class="ltp-sig-block". Class is in
+// the email sanitizer allowlist; contenteditable is NOT (admin-authored
+// templates can't pre-mark blocks as non-editable). The editor component
+// re-applies contenteditable="false" via DOM API after setting innerHTML.
+window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate) {
+  if (!rawBody) return "";
+  // 1. Paragraph-wrap FIRST, while the body still has {{signature}} as
+  //    a plain-text token. If we substituted signature first, the
+  //    rendered <table> would trigger textToHtml's block-detection
+  //    early and the surrounding plain-text paragraphs wouldn't get
+  //    wrapped — collapsing all whitespace in the editor.
+  var withParagraphs = window.LTP_textToHtml(String(rawBody));
+  // 2. NOW substitute {{signature}}. The table-based signature block is
+  //    block-level HTML; nesting it inside <p>...</p> produces invalid
+  //    markup (browsers auto-close the <p> at the first <table>, leaving
+  //    orphaned trailing text). We walk every <p>...</p> that contains
+  //    the placeholder and split it: text before → its own <p>, sig
+  //    block as a sibling, text after → its own <p>. Empty halves are
+  //    dropped so "<p>{{signature}}</p>" collapses to just the sig
+  //    block. Bare {{signature}} outside any <p> (admin template with
+  //    pre-authored block HTML) falls through to the final replace.
+  var sig = window.LTP_renderSignature(signatureTemplate || "");
+  var sigBlock = '<div class="ltp-sig-block">' + sig + '</div>';
+  var stripEnds = function(s) {
+    return s.replace(/^(?:\s|<br\s*\/?>)+/i, '').replace(/(?:\s|<br\s*\/?>)+$/i, '');
+  };
+  var withSig = withParagraphs.replace(/<p>([\s\S]*?)<\/p>/g, function(match, inner) {
+    if (inner.indexOf('{{signature}}') === -1) return match;
+    var pieces = inner.split('{{signature}}');
+    var out = [];
+    for (var i = 0; i < pieces.length; i++) {
+      var clean = stripEnds(pieces[i]);
+      if (clean) out.push('<p>' + clean + '</p>');
+      if (i < pieces.length - 1) out.push(sigBlock);
+    }
+    return out.join('\n');
+  }).replace(/\{\{signature\}\}/g, sigBlock);
+  return window.LTP_SANITIZE.emailHtml(withSig);
+};
+
+window.LTP_editableHtmlToBody = function(html) {
+  if (!html) return "";
+  // Reverse the signature substitution. We accept either single OR
+  // double quoted class attribute (sanitizers and browsers can rewrite
+  // either) and we tolerate any additional attributes (e.g. the
+  // contenteditable="false" we add post-render).
+  return String(html).replace(
+    /<div\s[^>]*class\s*=\s*["']ltp-sig-block["'][^>]*>[\s\S]*?<\/div>/gi,
+    '{{signature}}'
+  );
+};
+
 window.LTP_textToHtml = (function() {
-  var HTML_DETECT_RE = /<\s*(p|div|br|h[1-6]|table|tr|td|th|ul|ol|li|blockquote)\b/i;
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  }
+  // Detect block-level structure. If the body already has paragraphs,
+  // divs, tables, headings, etc. then it was authored as full HTML and
+  // we leave it alone. If only inline tags (<a>, <strong>, <img>) appear
+  // — or no tags at all — we paragraph-wrap so blank lines render as
+  // <p> blocks and single newlines as <br>. Crucially we DON'T escape
+  // inline tags in the plain-text path; the downstream sanitizer
+  // (bleach server-side, DOMPurify in-app) is the trust boundary that
+  // strips anything dangerous. Escaping here would turn legitimate
+  // <a href="{{viewUrl}}">...</a> in plain-text templates into literal
+  // "&lt;a href=...&gt;" text in the recipient's inbox — the exact bug
+  // this rewrite fixes.
+  var BLOCK_DETECT_RE = /<\/?(p|div|h[1-6]|table|tr|td|th|ul|ol|li|blockquote|hr|article|section)\b/i;
   return function(input) {
     if (input == null) return "";
     var s = String(input);
-    if (HTML_DETECT_RE.test(s)) return s;   // already HTML — let it through
-    // Plain-text path: escape HTML metachars (so user typing "<3" doesn't
-    // accidentally become a tag), split on blank-line runs into
-    // paragraphs, replace remaining single newlines with <br>. The
-    // trim+filter avoids empty leading/trailing paragraphs.
-    var escaped = escapeHtml(s);
-    var paras = escaped.split(/\n\s*\n+/).map(function(p) { return p.trim(); })
-                       .filter(function(p) { return p.length > 0; });
+    if (BLOCK_DETECT_RE.test(s)) return s;   // already block-structured — pass through
+    // Plain-text-with-maybe-inline-HTML path: paragraph-wrap, no escape.
+    var paras = s.split(/\n\s*\n+/).map(function(p) { return p.trim(); })
+                 .filter(function(p) { return p.length > 0; });
     if (paras.length === 0) return "";
     return paras.map(function(p) {
       return "<p>" + p.replace(/\n/g, "<br>") + "</p>";

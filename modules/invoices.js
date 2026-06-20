@@ -1465,24 +1465,17 @@
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
               "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
-              h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
-              h("div", {
-                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                // Preview mirrors what the recipient will see — substitute
-                // {{viewUrl}} + {{signature}} sample values, textToHtml
-                // for paragraph spacing on plain-text bodies, then sanitize.
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
-                  sendMessage,
-                  draft.shareToken ? (window.location.origin + "/#/view/invoice/" + draft.shareToken) : "",
-                  // Fall back to the data/settings.js default when the merged
-                  // settings has empty/missing signature (data-state lets ""
-                  // override the client default). Mirrors backend fallback.
-                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
-                ))) }
-              })
-            )
+            // WYSIWYG body editor (see modules/quotes-builder.js for the
+            // matching block + rationale). sendMessage state still keeps
+            // placeholders intact; EmailBodyEditor renders the signature
+            // as a non-editable block locally and reverses the
+            // substitution on every input.
+            h(window.EmailBodyEditor, {
+              value: sendMessage,
+              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              onChange: setSendMessage,
+              minHeight: 240,
+            })
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
@@ -1539,24 +1532,17 @@
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
               "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
-              h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
-              h("div", {
-                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                // Preview mirrors what the recipient will see — substitute
-                // {{viewUrl}} + {{signature}} sample values, textToHtml
-                // for paragraph spacing on plain-text bodies, then sanitize.
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
-                  sendMessage,
-                  draft.shareToken ? (window.location.origin + "/#/view/invoice/" + draft.shareToken) : "",
-                  // Fall back to the data/settings.js default when the merged
-                  // settings has empty/missing signature (data-state lets ""
-                  // override the client default). Mirrors backend fallback.
-                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
-                ))) }
-              })
-            )
+            // WYSIWYG body editor (see modules/quotes-builder.js for the
+            // matching block + rationale). sendMessage state still keeps
+            // placeholders intact; EmailBodyEditor renders the signature
+            // as a non-editable block locally and reverses the
+            // substitution on every input.
+            h(window.EmailBodyEditor, {
+              value: sendMessage,
+              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              onChange: setSendMessage,
+              minHeight: 240,
+            })
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },

@@ -269,20 +269,25 @@ def test_data_settings_email_templates_wrap_viewurl_in_anchor():
 
 
 _HTML_DETECT_RE = re.compile(
-    r"<\s*(p|div|br|h[1-6]|table|tr|td|th|ul|ol|li|blockquote)\b",
+    r"<\/?(p|div|h[1-6]|table|tr|td|th|ul|ol|li|blockquote|hr|article|section)\b",
     re.IGNORECASE,
 )
 
 
 def _py_text_to_html(s):
-    """Python port of window.LTP_textToHtml for testing the algorithm."""
+    """Python port of window.LTP_textToHtml for testing the algorithm.
+
+    Critically does NOT escape `<` / `>` / `&` — that was the live bug
+    this rewrite fixed. Inline tags (<a>, <strong>) in plain-text
+    templates must survive to the recipient as clickable HTML; the
+    downstream sanitizer (bleach/DOMPurify) is the trust boundary.
+    """
     if s is None:
         return ""
     s = str(s)
     if _HTML_DETECT_RE.search(s):
         return s
-    escaped = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    paras = [p.strip() for p in re.split(r"\n\s*\n+", escaped)]
+    paras = [p.strip() for p in re.split(r"\n\s*\n+", s)]
     paras = [p for p in paras if p]
     if not paras:
         return ""
@@ -313,14 +318,20 @@ def test_text_to_html_single_newlines_become_br():
     _check("wrapped in one <p>", out.count("<p>") == 1)
 
 
-def test_text_to_html_escapes_metachars():
-    print("test_text_to_html_escapes_metachars")
-    body = "I think 3 < 5 and 5 > 3 & that's fine"
+def test_text_to_html_does_not_escape_inline_html():
+    """REGRESSION GUARD for the bug this rewrite fixed: textToHtml used
+    to escape <, > and & in plain-text bodies, turning inline <a> tags
+    into literal '&lt;a&gt;' text in recipients' inboxes (broke the
+    'View Online' link). Plain-text path now passes raw inline HTML
+    through; the downstream sanitizer is the trust boundary."""
+    print("test_text_to_html_does_not_escape_inline_html")
+    body = '<a href="{{viewUrl}}">View Quote</a>\n\nThanks!'
     out = _py_text_to_html(body)
-    _check("& escaped", "&amp;" in out)
-    _check("< escaped", "&lt;" in out)
-    _check("> escaped", "&gt;" in out)
-    _check("no raw <", "< 5" not in out)
+    _check("anchor open tag NOT escaped", "&lt;a" not in out)
+    _check("anchor close tag NOT escaped", "&lt;/a&gt;" not in out)
+    _check("href preserved", 'href="{{viewUrl}}"' in out)
+    _check("paragraph-wrapped (inline tag does not trigger pass-through)",
+           out.count("<p>") == 2, f"got {out.count('<p>')}")
 
 
 def test_text_to_html_empty_and_whitespace():
@@ -342,14 +353,18 @@ def test_text_to_html_detects_table_as_html():
 
 
 def test_quotes_builder_uses_helpers():
+    """Send path: still LTP_textToHtml-converts on the wire so the
+    backend gets HTML even if the user never typed in the editor.
+    The preview pane was replaced by EmailBodyEditor in the WYSIWYG
+    rewrite; the editor calls LTP_bodyToEditableHtml internally."""
     print("test_quotes_builder_uses_helpers")
     path = os.path.join(_root, "modules", "quotes-builder.js")
     with open(path, encoding="utf-8") as f:
         src = f.read()
     _check("Send path uses LTP_textToHtml",
            "LTP_textToHtml(sendMessage)" in src)
-    _check("Preview uses LTP_renderPreviewBody",
-           "LTP_renderPreviewBody(" in src)
+    _check("Send modal renders EmailBodyEditor (replaces split-pane preview)",
+           "window.EmailBodyEditor" in src)
 
 
 def test_invoices_uses_helpers():
@@ -359,8 +374,9 @@ def test_invoices_uses_helpers():
         src = f.read()
     _check("Send path uses LTP_textToHtml",
            "LTP_textToHtml(sendMessage)" in src)
-    _check("Preview uses LTP_renderPreviewBody",
-           "LTP_renderPreviewBody(" in src)
+    _check("Send + Receipt modals render EmailBodyEditor",
+           src.count("window.EmailBodyEditor") >= 2,
+           f"got {src.count('window.EmailBodyEditor')} EmailBodyEditor refs")
 
 
 def test_theme_js_exposes_helpers():
@@ -404,7 +420,7 @@ def main() -> int:
     test_text_to_html_plain_text()
     test_text_to_html_passes_html_through()
     test_text_to_html_single_newlines_become_br()
-    test_text_to_html_escapes_metachars()
+    test_text_to_html_does_not_escape_inline_html()
     test_text_to_html_empty_and_whitespace()
     test_text_to_html_detects_table_as_html()
     test_quotes_builder_uses_helpers()

@@ -2043,36 +2043,24 @@
             // it AT the moment they're trying to send rather than at app load.
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
               "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // Body editor: split-pane HTML textarea + sanitized live preview.
-            // The backend re-sanitizes at send time (server is authoritative)
-            // and re-resolves {{viewUrl}} (per-recipient tracking URL) +
-            // {{signature}} (workspace template rendered with sender fields).
-            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
-              h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
-              h("div", {
-                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                // Preview pipeline matches what the recipient will get:
-                //   1. Substitute {{viewUrl}} (sample, no per-recipient
-                //      tracking token — that's minted server-side).
-                //   2. Substitute {{signature}} via the workspace template
-                //      rendered against the signed-in sender.
-                //   3. textToHtml so plain-text bodies render with
-                //      paragraph spacing instead of collapsed whitespace.
-                //   4. Sanitize.
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
-                  sendMessage,
-                  draft.shareToken ? (window.location.origin + "/#/view/quote/" + draft.shareToken) : "",
-                  // Fall back to the data/settings.js default when the
-                  // merged settings has an empty / missing signature
-                  // template — the data-state hook lets server "" override
-                  // the client default, but the preview should mirror what
-                  // the recipient will actually get (backend has the same
-                  // fallback). See review finding 1+2 on the polish pass.
-                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
-                ))) }
-              })
-            )
+            // WYSIWYG body editor — replaces the prior split-pane.
+            // User sees the rendered email and edits text inline; the
+            // signature block is rendered + locked (contenteditable="false"
+            // applied inside EmailBodyEditor), {{viewUrl}} lives in href
+            // attributes invisibly. HTML editing happens in the template
+            // editor in Settings, not at send time.
+            //
+            // sendMessage state still carries placeholders intact —
+            // EmailBodyEditor extracts the editable HTML and reverses
+            // the signature substitution on every input, so what we
+            // POST to /api/email/send still has {{signature}} for the
+            // backend to render per-user.
+            h(window.EmailBodyEditor, {
+              value: sendMessage,
+              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              onChange: setSendMessage,
+              minHeight: 240,
+            })
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
