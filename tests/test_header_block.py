@@ -325,6 +325,35 @@ def test_total_renders_with_cents_in_all_three_modals():
 # ── Editor + send-modal wiring ────────────────────────────────────────────
 
 
+def test_settings_page_has_header_template_editor():
+    """The Settings page must expose a split-pane editor for
+    emailHeaderTemplate so admins can customize the banner. Mirrors
+    the existing emailSignatureTemplate editor — same shape (left
+    textarea / right sanitized preview), same Available Variables
+    chip row, same persistence path through PUT /api/settings."""
+    print("test_settings_page_has_header_template_editor")
+    src = _read("modules", "settings.js")
+    _check("Email Header Template section title present",
+           "Email Header Template" in src)
+    _check("textarea bound to draft.emailHeaderTemplate",
+           "draft.emailHeaderTemplate" in src)
+    _check("set(\"emailHeaderTemplate\", ...) on change",
+           'set("emailHeaderTemplate"' in src)
+    _check("Available Variables chips list the four header tokens",
+           all(t in src for t in ('"viewUrl"', '"refNumber"',
+                                  '"projectName"', '"total"'))
+           and '["viewUrl", "refNumber", "projectName", "total"]' in src)
+    _check("preview uses LTP_SANITIZE.emailHtml (defense in depth)",
+           "LTP_SANITIZE.emailHtml" in src
+           and "emailHeaderTemplate" in src.split("LTP_SANITIZE.emailHtml")[1].split("// ── Team Members")[0])
+    _check("preview substitutes sample {{refNumber}}",
+           '"QT-2026-007"' in src)
+    _check("preview substitutes sample {{projectName}}",
+           '"Spring Showcase"' in src)
+    _check("preview substitutes sample {{total}}",
+           '"$1,234.00"' in src)
+
+
 def test_email_body_editor_consumes_header_props():
     """EmailBodyEditor must accept + forward headerTemplate + headerVars
     so the non-editable header block renders + the per-entity tokens
@@ -441,6 +470,7 @@ def main() -> int:
     test_bleach_strips_disallowed_attrs_from_header()
     test_frontend_sanitizer_allowlist_pinned()
     test_total_renders_with_cents_in_all_three_modals()
+    test_settings_page_has_header_template_editor()
     test_email_body_editor_consumes_header_props()
     test_send_modals_wire_header_template_and_vars()
     test_backend_render_header_falls_back_to_constant()

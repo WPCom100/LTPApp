@@ -350,6 +350,54 @@
         )
       ),
 
+      // ── Email Header Template ──────────────────────────────────────────────
+      // Customer-facing banner block at the top of quote / invoice / receipt
+      // emails. The send pipeline expands {{header}} into this HTML with
+      // per-entity tokens ({{refNumber}}, {{projectName}}, {{total}})
+      // substituted client-side; {{viewUrl}} is left literal for the
+      // backend's per-recipient resolver. Stored pre-sanitized server-side
+      // (PUT /api/settings runs email_html on it, same as the signature).
+      h("div", { style: sectionStyle },
+        h("div", { style: sectionTitle }, "Email Header Template"),
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+          "HTML banner rendered at the top of customer emails when a template body uses ",
+          h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{header}}"),
+          ". Per-entity values (refNumber, projectName, total) come from the quote or invoice; viewUrl is per-recipient and resolved at send time."),
+        h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 10, border: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+            ["viewUrl", "refNumber", "projectName", "total"].map(function(v) {
+              return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
+            }))
+        ),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+          // Left: raw HTML textarea
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "HTML"),
+            h("textarea", { value: draft.emailHeaderTemplate || "",
+              onChange: function(e) { set("emailHeaderTemplate", e.target.value); },
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "monospace", outline: "none", resize: "vertical", lineHeight: 1.5 } })
+          ),
+          // Right: sanitized preview with sample per-entity values so the
+          // admin sees a realistic banner. {{viewUrl}} is given a sample
+          // URL ("#preview") rather than left literal so the View button
+          // looks plausibly clickable in the preview pane.
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview (sample values)"),
+            h("div", {
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
+              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(
+                (draft.emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate || "")
+                  .replace(/\{\{viewUrl\}\}/g, "#preview")
+                  .replace(/\{\{refNumber\}\}/g, "QT-2026-007")
+                  .replace(/\{\{projectName\}\}/g, "Spring Showcase")
+                  .replace(/\{\{total\}\}/g, "$1,234.00")
+              )) }
+            })
+          )
+        )
+      ),
+
       // ── Team Members ───────────────────────────────────────────────────────
       // Admin-only roster of users who have signed in. Editable: title,
       // phone, role. Identity fields (name/email/picture) come from Google

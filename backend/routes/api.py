@@ -242,17 +242,19 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
     not present in the payload are preserved. Admin-only — non-admins get 403.
     To delete a key, send it explicitly as null.
 
-    Sanitizes `emailSignatureTemplate` server-side if present. Defense in
-    depth: the frontend editor already renders a sanitized preview, and the
-    send pipeline sanitizes at send time, but storing pre-sanitized HTML
-    means a future surface that reads the template without sanitizing can't
-    accidentally render an XSS payload. Idempotent — re-sanitizing a clean
-    string is a no-op."""
-    # Sanitize the email signature template BEFORE merging into storage. The
-    # admin authoring it gets the original-vs-sanitized diff visible in their
-    # preview pane (commit 4 wires that on the frontend).
+    Sanitizes `emailSignatureTemplate` AND `emailHeaderTemplate`
+    server-side if present. Defense in depth: the frontend editor already
+    renders a sanitized preview, and the send pipeline sanitizes at send
+    time, but storing pre-sanitized HTML means a future surface that
+    reads the template without sanitizing can't accidentally render an
+    XSS payload. Idempotent — re-sanitizing a clean string is a no-op."""
+    # Sanitize the email signature + header templates BEFORE merging into
+    # storage. Admin authoring either gets the original-vs-sanitized
+    # diff visible in their preview pane.
     if "emailSignatureTemplate" in data and data["emailSignatureTemplate"]:
         data["emailSignatureTemplate"] = email_html(data["emailSignatureTemplate"])
+    if "emailHeaderTemplate" in data and data["emailHeaderTemplate"]:
+        data["emailHeaderTemplate"] = email_html(data["emailHeaderTemplate"])
     result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
     row = result.scalar_one_or_none()
     if not row:
