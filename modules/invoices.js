@@ -330,6 +330,8 @@
     var [viewActivity, setViewActivity] = useState(null);
     var [showPaymentForm, setShowPaymentForm] = useState(false);
     var [showSendModal, setShowSendModal] = useState(false);
+    var [sendCc, setSendCc] = useState("");
+    var [sending, setSending] = useState(false);
     var [showReceiptModal, setShowReceiptModal] = useState(false);
     var [sendEmail, setSendEmail] = useState("");
     var [sendSubject, setSendSubject] = useState("");
@@ -449,8 +451,19 @@
       var resolve = window.LTP_resolveTemplate;
       var s = settings || {};
       var tmpl = (s.emailTemplates || {}).paymentReceipt || {};
-      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(t.total).toLocaleString(), lineItems: "Payments Received:\n" + paymentLines, signature: s.emailSignature || "" };
+      // {{signature}} stays unresolved — backend renders it per-user. {{viewUrl}}
+      // isn't in the receipt template by default (receipts don't need a live
+      // view link), but if an admin adds it, the backend handles it.
+      var vars = {
+        companyName: s.companyName || "LTP",
+        refNumber: ref,
+        projectName: projName,
+        clientName: clientName || "there",
+        total: "$" + Math.round(t.total).toLocaleString(),
+        lineItems: "Payments Received:\n" + paymentLines,
+      };
       setSendEmail(email);
+      setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — Payment Received", vars));
       setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars));
       setShowReceiptModal(true);
@@ -458,16 +471,49 @@
 
     function sendReceipt() {
       if (!sendEmail) { showAlert("No Email", "Enter a recipient email address."); return; }
-      var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-        type: "paid", user: (window.LTP_CURRENT_USER || "User"), message: "Payment receipt sent to " + sendEmail,
-
-        changes: [{ cat: "Sent To", detail: sendEmail }, { cat: "Type", detail: "Payment receipt" }]
-      };
-      var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
-      if (draft.id != null) { setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); }); }
-      setDraftRaw(updated); cleanRef.current = updated;
-      setShowReceiptModal(false);
-      setDlg({ title: "Receipt Sent", message: "Payment receipt sent to " + sendEmail + ".\n\nNote: Email delivery will be available when the backend is connected.", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+      if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the invoice before sending so it has a stable share link."); return; }
+      if (!window.LTP_GMAIL_CONNECTED) {
+        showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
+        return;
+      }
+      setSending(true);
+      fetch("/api/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entityType: "invoice",
+          entityId: draft.id,
+          to: sendEmail,
+          cc: (sendCc || "").trim() || null,  // whitespace-only → omit
+          subject: sendSubject,
+          bodyHtml: sendMessage,
+        }),
+      })
+        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(resp) {
+          setSending(false);
+          if (resp.status === 200) {
+            setShowReceiptModal(false);
+            setDlg({ title: "Receipt Sent", message: "Payment receipt sent to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            return;
+          }
+          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
+            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
+            return;
+          }
+          var msg = "Send failed (HTTP " + resp.status + ").";
+          if (resp.body && resp.body.detail) {
+            var d = resp.body.detail;
+            if (typeof d === "string") msg = d;
+            else if (d.error) msg = d.error;
+            else if (d.reason) msg = d.reason;
+          }
+          showAlert("Send Failed", msg);
+        })
+        .catch(function(e) {
+          setSending(false);
+          showAlert("Send Failed", "Network or server error: " + String(e.message || e));
+        });
     }
 
     function deletePayment(payId) {
@@ -510,37 +556,77 @@
       var s = settings || {};
       var templateKey = isDraft ? "invoiceSent" : (window.LTP_isOverdue(draft) ? "invoiceReminder" : "invoiceSent");
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
-      // viewUrl: public client-view link for this invoice. Empty until the
-      // invoice has been saved (and therefore has a shareToken).
-      var viewUrl = draft.shareToken
-        ? (window.location.origin + "/#/view/invoice/" + draft.shareToken)
-        : "";
-      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(t.total).toLocaleString(), dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt", signature: s.emailSignature || "", viewUrl: viewUrl };
+      // {{viewUrl}} and {{signature}} are intentionally LEFT unresolved here
+      // — backend substitutes them per-recipient at send time. See the
+      // corresponding comment in modules/quotes-builder.js openQuoteSendModal.
+      var vars = {
+        companyName: s.companyName || "LTP",
+        refNumber: ref,
+        projectName: projName,
+        clientName: clientName || "there",
+        total: "$" + Math.round(t.total).toLocaleString(),
+        dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt",
+      };
       setSendEmail(email);
+      setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
-      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nTotal: {{total}}\nDue: {{dueDate}}\n\n{{signature}}", vars));
+      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nTotal: {{total}}\nDue: {{dueDate}}\n\n{{viewUrl}}\n\n{{signature}}", vars));
       setShowSendModal(true);
     }
 
     function executeSend() {
       if (!sendEmail || !window.LTP_isValidEmail(sendEmail)) { showAlert("Invalid Email", "Enter a valid email address."); return; }
-      var today = todayISO();
+      if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the invoice before sending so it has a stable share link."); return; }
+      if (!window.LTP_GMAIL_CONNECTED) {
+        showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
+        return;
+      }
       var isResend = draft.status !== "draft";
-      var actEntry = { id: genId("act"), date: today, time: new Date().toTimeString().substring(0, 5),
-        type: "sent", user: (window.LTP_CURRENT_USER || "User"), message: isResend ? "Invoice resent to " + sendEmail : "Invoice sent to " + sendEmail,
-
-        changes: [{ cat: "Sent To", detail: sendEmail }, { cat: "Subject", detail: sendSubject }].concat(
-          !isResend ? [{ cat: "Status", detail: "draft \u2192 sent" }] : [])
-      };
-      var updated = Object.assign({}, draft, {
-        status: isResend ? draft.status : "sent",
-        sentDate: isResend ? draft.sentDate : today,
-        activity: (draft.activity || []).concat([actEntry])
-      });
-      if (draft.id != null) { setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); }); }
-      setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-      setShowSendModal(false);
-      setDlg({ title: isResend ? "Invoice Resent" : "Invoice Sent", message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".\n\nNote: Email delivery will be available when the backend is connected. The invoice status has been updated.", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+      setSending(true);
+      fetch("/api/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entityType: "invoice",
+          entityId: draft.id,
+          to: sendEmail,
+          cc: (sendCc || "").trim() || null,  // whitespace-only → omit
+          subject: sendSubject,
+          bodyHtml: sendMessage,
+        }),
+      })
+        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(resp) {
+          setSending(false);
+          if (resp.status === 200) {
+            var today = todayISO();
+            var updated = Object.assign({}, draft, {
+              status: isResend ? draft.status : "sent",
+              sentDate: isResend ? draft.sentDate : today,
+            });
+            setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
+            setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+            setShowSendModal(false);
+            setDlg({ title: isResend ? "Invoice Resent" : "Invoice Sent", message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            return;
+          }
+          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
+            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
+            return;
+          }
+          var msg = "Send failed (HTTP " + resp.status + ").";
+          if (resp.body && resp.body.detail) {
+            var d = resp.body.detail;
+            if (typeof d === "string") msg = d;
+            else if (d.error) msg = d.error;
+            else if (d.reason) msg = d.reason;
+          }
+          showAlert("Send Failed", msg);
+        })
+        .catch(function(e) {
+          setSending(false);
+          showAlert("Send Failed", "Network or server error: " + String(e.message || e));
+        });
     }
 
     function recallToDraft() {
@@ -1235,7 +1321,11 @@
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.activity || []).slice().reverse().map(function(a) {
-                var typeColors = { created: B.info, saved: B.success, status: B.warn, paid: B.success, sent: B.accent, pdf_generated: B.accent };
+                var typeColors = { created: B.info, saved: B.success, status: B.warn, paid: B.success, sent: B.accent, pdf_generated: B.accent,
+                  // Email + view-tracking types (commits 2 + 3)
+                  email_sent: B.accent, email_failed: B.danger,
+                  recipient_opened: B.info, recipient_downloaded_pdf: B.info,
+                  client_viewed: B.textMut, client_downloaded_pdf: B.textMut };
                 var tc = typeColors[a.type] || B.textMut;
                 var hasChanges = a.changes && a.changes.length > 0;
                 var isPdf = a.type === "pdf_generated" && a.pdfToken;
@@ -1358,24 +1448,39 @@
             h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
               h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
+                h("span", { style: { fontSize: "11px", color: B.text } },
+                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
                 h("input", { value: sendEmail, onChange: function(e) { setSendEmail(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "client@example.com" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.textMut } }, (settings || {}).emailFrom || "Not configured")),
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "CC:"),
+                h("input", { value: sendCc, onChange: function(e) { setSendCc(e.target.value); },
+                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "comma-separated (optional)" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            h("div", { style: { flex: 1, padding: "10px 14px", overflowY: "auto" } },
+            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
+              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
               h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { width: "100%", height: "100%", minHeight: 200, background: "transparent", border: "none", color: B.textSec, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "none", lineHeight: 1.6 } }))
+                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
+              h("div", {
+                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+              })
+            )
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
-          h(window.Btn, { onClick: executeSend }, isDraft ? "\u2709 Send Invoice" : "\u2709 Resend"))
+          h(window.Btn, {
+            onClick: executeSend,
+            disabled: sending || !window.LTP_GMAIL_CONNECTED,
+          }, sending ? "Sending\u2026" : (isDraft ? "\u2709 Send Invoice" : "\u2709 Resend")))
       ),
 
       // Payment Receipt modal
@@ -1407,24 +1512,39 @@
             h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
               h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
+                h("span", { style: { fontSize: "11px", color: B.text } },
+                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
                 h("input", { value: sendEmail, onChange: function(e) { setSendEmail(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "client@example.com" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.textMut } }, (settings || {}).emailFrom || "Not configured")),
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "CC:"),
+                h("input", { value: sendCc, onChange: function(e) { setSendCc(e.target.value); },
+                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "comma-separated (optional)" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            h("div", { style: { flex: 1, padding: "10px 14px", overflowY: "auto" } },
+            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
+              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
               h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { width: "100%", height: "100%", minHeight: 200, background: "transparent", border: "none", color: B.textSec, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "none", lineHeight: 1.6 } }))
+                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
+              h("div", {
+                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+              })
+            )
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowReceiptModal(false); } }, "Skip"),
-          h(window.Btn, { onClick: sendReceipt }, "\u2709 Send Receipt"))
+          h(window.Btn, {
+            onClick: sendReceipt,
+            disabled: sending || !window.LTP_GMAIL_CONNECTED,
+          }, sending ? "Sending\u2026" : "\u2709 Send Receipt"))
       )
     );
   }

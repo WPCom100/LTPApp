@@ -7,13 +7,19 @@
     return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 9px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" } }, status);
   };
 
-  window.Btn = function({ children, onClick, variant, small, style: sx }) {
+  window.Btn = function({ children, onClick, variant, small, disabled, style: sx }) {
     variant = variant || "primary";
-    var base = { border: "none", borderRadius: "6px", fontWeight: 700, cursor: "pointer", transition: "all 0.15s", fontSize: small ? "11px" : "12px", padding: small ? "4px 10px" : "7px 16px", letterSpacing: "0.02em" };
+    var base = { border: "none", borderRadius: "6px", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", transition: "all 0.15s", fontSize: small ? "11px" : "12px", padding: small ? "4px 10px" : "7px 16px", letterSpacing: "0.02em" };
     var v = { primary: { background: B.accent, color: "#000" }, ghost: { background: "transparent", color: B.textSec, border: "1px solid " + B.border }, danger: { background: B.dangerBg, color: B.danger, border: "1px solid " + B.dangerBd } };
-    return h("button", { onClick: onClick, style: Object.assign({}, base, v[variant], sx),
-      onMouseOver: function(e) { if (variant === "primary") e.target.style.background = B.accentHover; },
-      onMouseOut: function(e) { if (variant === "primary") e.target.style.background = B.accent; }
+    var disabledStyle = disabled ? { opacity: 0.5, pointerEvents: "none" } : {};
+    return h("button", {
+      onClick: disabled ? undefined : onClick,
+      disabled: !!disabled,
+      style: Object.assign({}, base, v[variant], disabledStyle, sx),
+      // Skip hover effects when disabled — otherwise the button visually
+      // "lights up" while in a click-suppressed state, which is misleading.
+      onMouseOver: function(e) { if (!disabled && variant === "primary") e.target.style.background = B.accentHover; },
+      onMouseOut:  function(e) { if (!disabled && variant === "primary") e.target.style.background = B.accent; }
     }, children);
   };
 

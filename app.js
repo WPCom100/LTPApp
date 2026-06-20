@@ -119,6 +119,17 @@ function LTPSignedInApp(props) {
   // consistent until the next refresh.
   window.LTP_CURRENT_USER = props.authUser.name || props.authUser.email || "User";
   window.LTP_CURRENT_USER_ID = props.authUser.id;
+  // Gmail-send capability flags from /auth/me. Used by the Send modals
+  // (quotes-builder.js / invoices.js) to gate the Send button:
+  //   gmailConnected=false → no refresh token on file (user never granted scope)
+  //   gmailScope="none"    → consent didn't include gmail.send
+  // Either case surfaces the "Reconnect Google" affordance + disables Send.
+  window.LTP_GMAIL_CONNECTED = props.authUser.gmailConnected === true;
+  window.LTP_GMAIL_SCOPE = props.authUser.gmailScope || "none";
+  // Sender identity surfaced in the Send modal's read-only From: line
+  // so the user knows exactly what the recipient will see as the From address.
+  window.LTP_SENDER_EMAIL = props.authUser.email || "";
+  window.LTP_SENDER_NAME = props.authUser.name || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_COMPANY_SHORT = settings.companyShort || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;

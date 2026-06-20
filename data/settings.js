@@ -73,46 +73,55 @@ window.LTP_DATA_SETTINGS = {
   emailTemplates: {
     quoteSent: {
       label: "Quote Sent",
+      cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
       body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\nView, accept, or decline online: {{viewUrl}}\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
     },
     quoteFollowUp: {
       label: "Quote Follow-Up",
+      cc: "",
       subject: "Following up: {{refNumber}} — {{projectName}}",
       body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\nYou can view, accept, or decline online here: {{viewUrl}}\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
     },
     invoiceSent: {
       label: "Invoice Sent",
+      cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
       body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\nView online: {{viewUrl}}\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
     },
     invoiceReminder: {
       label: "Payment Reminder",
+      cc: "",
       subject: "Payment Reminder: {{refNumber}} — {{projectName}}",
       body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\nView online: {{viewUrl}}\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
     },
     paymentReceipt: {
       label: "Payment Receipt",
+      cc: "",
       subject: "{{refNumber}} — Payment Received — Thank You",
       body: "Hi {{clientName}},\n\nThank you! We have received your payment for {{refNumber}} ({{projectName}}).\n\nInvoice Total: {{total}}\n\n{{lineItems}}\n\nBalance: $0.00 — Paid in Full\n\nThis email serves as your receipt. Please keep it for your records.\n\n{{signature}}"
     },
     crewRequest: {
       label: "Crew Availability Request",
+      cc: "",
       subject: "Availability Check: {{projectName}} — {{date}}",
       body: "Hi {{crewName}},\n\nWe have an upcoming project and would like to check your availability.\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease let us know if you're available and interested.\n\n{{signature}}"
     },
     crewConfirmed: {
       label: "Crew Position Confirmed",
+      cc: "",
       subject: "Confirmed: {{projectName}} — {{date}}",
       body: "Hi {{crewName}},\n\nYou are confirmed for the following:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease reach out if you have any questions. We look forward to working with you.\n\n{{signature}}"
     },
     crewCancelled: {
       label: "Position Cancellation",
+      cc: "",
       subject: "Schedule Update: {{projectName}} — {{date}}",
       body: "Hi {{crewName}},\n\nWe're writing to let you know that your position on the following has been cancelled:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\n\nWe apologize for any inconvenience and hope to work with you on future projects.\n\n{{signature}}"
     },
     crewNotSelected: {
       label: "Not Selected for Position",
+      cc: "",
       subject: "Update: {{projectName}} — {{date}}",
       body: "Hi {{crewName}},\n\nThank you for your interest and availability for {{projectName}} on {{date}}.\n\nUnfortunately, we've gone in a different direction for the {{role}} position and won't be needing your services for this particular project.\n\nWe appreciate your willingness to work with us and will absolutely keep you in mind for upcoming opportunities.\n\n{{signature}}"
     },

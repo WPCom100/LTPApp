@@ -157,6 +157,13 @@ who don't re-consent can use the app normally but can't send email until
 they do. The frontend shows a "Reconnect Google" banner when this is the
 case.
 
+Until a user re-consents, the **Send button in every quote, invoice, and
+receipt modal is disabled** (greyed out, not clickable). The banner in
+the modal explains the fix. Once they sign out and back in, the
+gmail.send scope is granted and the Send button works again. Admins
+can spot users in this state from the Team Members section of Settings —
+a "Gmail not connected" warning shows below their email.
+
 ## API Endpoints
 
 All entities follow REST conventions:

@@ -843,8 +843,10 @@
     var [invPickerData, setInvPickerData] = useState(null);
     var [showSendModal, setShowSendModal] = useState(false);
     var [sendEmail, setSendEmail] = useState("");
+    var [sendCc, setSendCc] = useState("");
     var [sendSubject, setSendSubject] = useState("");
     var [sendMessage, setSendMessage] = useState("");
+    var [sending, setSending] = useState(false);  // disables Send button while POST is in flight
     var [generatingPdf, setGeneratingPdf] = useState(false);
 
     // Generate PDF: POST /api/quotes/{id}/pdf → triggers archive + activity
@@ -1123,39 +1125,93 @@
       var s = settings || {};
       var templateKey = draft.status === "draft" ? "quoteSent" : "quoteFollowUp";
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
-      // viewUrl: public client-view link for this quote, included in the
-      // emailed template so the recipient can view + accept/decline online.
-      // Empty if the quote was never saved (no share_token yet) — the
-      // executeSend below validates and prompts to save first.
-      var viewUrl = draft.shareToken
-        ? (window.location.origin + "/#/view/quote/" + draft.shareToken)
-        : "";
-      var vars = { companyName: s.companyName || "LTP", refNumber: ref, projectName: projName, clientName: clientName || "there", total: "$" + Math.round(totals.total).toLocaleString(), quoteValidity: String(s.defaultQuoteValidity || 30), signature: s.emailSignature || "", viewUrl: viewUrl };
+      // viewUrl and signature are intentionally LEFT as placeholders in the
+      // body the user sees and edits — backend re-resolves them at send time:
+      //   {{viewUrl}}   becomes the per-recipient tracked URL (with ?r=<token>)
+      //   {{signature}} becomes the workspace signature template rendered
+      //                 with the sender's userName/userTitle/userPhone.
+      // Substituting them here would either inject a non-tracking URL or a
+      // stale signature. All OTHER variables get substituted now since they
+      // depend on the entity, not on per-recipient state.
+      var vars = {
+        companyName: s.companyName || "LTP",
+        refNumber: ref,
+        projectName: projName,
+        clientName: clientName || "there",
+        total: "$" + Math.round(totals.total).toLocaleString(),
+        quoteValidity: String(s.defaultQuoteValidity || 30),
+      };
       setSendEmail(email);
+      setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
-      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{signature}}", vars));
+      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{viewUrl}}\n\n{{signature}}", vars));
       setShowSendModal(true);
     }
 
     function executeSendQuote() {
       if (!sendEmail || !window.LTP_isValidEmail(sendEmail)) { showAlert("Invalid Email", "Enter a valid email address."); return; }
-      var today = todayISO();
+      if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the quote before sending so it has a stable share link."); return; }
+      if (!window.LTP_GMAIL_CONNECTED) {
+        showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
+        return;
+      }
       var isResend = draft.status !== "draft";
-      var actEntry = { id: genId("act"), date: today, time: new Date().toTimeString().substring(0, 5),
-        type: "sent", user: (window.LTP_CURRENT_USER || "User"), message: isResend ? "Quote resent to " + sendEmail : "Quote sent to " + sendEmail,
-
-        changes: [{ cat: "Sent To", detail: sendEmail }, { cat: "Subject", detail: sendSubject }].concat(
-          !isResend ? [{ cat: "Status", detail: "draft \u2192 sent" }] : [])
-      };
-      var updated = Object.assign({}, draft, {
-        status: isResend ? draft.status : "sent",
-        sentDate: isResend ? draft.sentDate : today,
-        activity: (draft.activity || []).concat([actEntry])
-      });
-      setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
-      setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-      setShowSendModal(false);
-      setDlg({ title: isResend ? "Quote Resent" : "Quote Sent", message: "Quote " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".\n\nNote: Email delivery will be available when the backend is connected.", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+      // Backend owns the activity entry now \u2014 see backend/routes/email.py.
+      // Frontend posts the message; on 2xx we just refresh the draft from
+      // setQuotes since the server already appended `email_sent` to the
+      // activity log + minted email_recipients rows with tracking tokens.
+      setSending(true);
+      fetch("/api/email/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          entityType: "quote",
+          entityId: draft.id,
+          to: sendEmail,
+          cc: (sendCc || "").trim() || null,  // whitespace-only → omit
+          subject: sendSubject,
+          bodyHtml: sendMessage,  // server sanitizes via bleach
+        }),
+      })
+        .then(function(r) {
+          return r.json().then(function(body) { return { status: r.status, body: body }; });
+        })
+        .then(function(resp) {
+          setSending(false);
+          if (resp.status === 200) {
+            // Mark the quote sent locally so the UI flips status without a
+            // round-trip. Backend already stamped `email_sent` on the
+            // entity's activity \u2014 the next list refresh will surface it.
+            var today = todayISO();
+            var updated = Object.assign({}, draft, {
+              status: isResend ? draft.status : "sent",
+              sentDate: isResend ? draft.sentDate : today,
+            });
+            setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+            setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+            setShowSendModal(false);
+            setDlg({ title: isResend ? "Quote Resent" : "Quote Sent", message: "Quote " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            return;
+          }
+          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
+            // Token revoked / refresh failed \u2014 Gmail send won't work until
+            // the user re-consents.
+            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
+            return;
+          }
+          var msg = "Send failed (HTTP " + resp.status + ").";
+          if (resp.body && resp.body.detail) {
+            var d = resp.body.detail;
+            if (typeof d === "string") msg = d;
+            else if (d.error) msg = d.error;
+            else if (d.reason) msg = d.reason;
+          }
+          showAlert("Send Failed", msg);
+        })
+        .catch(function(e) {
+          setSending(false);
+          showAlert("Send Failed", "Network or server error: " + String(e.message || e));
+        });
     }
 
     function recallQuoteToDraft() {
@@ -1809,7 +1865,11 @@
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {
-                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent, client_accepted: B.success, client_declined: B.danger };
+                var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent, client_accepted: B.success, client_declined: B.danger,
+                  // Email + view-tracking types (commits 2 + 3)
+                  email_sent: B.accent, email_failed: B.danger,
+                  recipient_opened: B.info, recipient_downloaded_pdf: B.info,
+                  client_viewed: B.textMut, client_downloaded_pdf: B.textMut };
                 var tc = typeColors[a.type] || B.textMut;
                 var hasChanges = a.changes && a.changes.length > 0;
                 var isPdf = a.type === "pdf_generated" && a.pdfToken;
@@ -1955,25 +2015,49 @@
           h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
             h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
               h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
+              // From: read-only \u2014 the recipient sees the signed-in LTP user's
+              // Google identity. Surfacing this here removes the "who's it
+              // actually from?" surprise some users get with multi-account apps.
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
+                h("span", { style: { fontSize: "11px", color: B.text } },
+                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
                 h("input", { value: sendEmail, onChange: function(e) { setSendEmail(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "client@example.com" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.textMut } }, (settings || {}).emailFrom || "Not configured")),
+                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "CC:"),
+                h("input", { value: sendCc, onChange: function(e) { setSendCc(e.target.value); },
+                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "comma-separated (optional)" })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            h("div", { style: { flex: 1, padding: "10px 14px", overflowY: "auto" } },
+            // Reconnect banner \u2014 surfaced inside the modal so the user sees
+            // it AT the moment they're trying to send rather than at app load.
+            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
+              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+            // Body editor: split-pane HTML textarea + sanitized live preview.
+            // The backend re-sanitizes at send time (server is authoritative)
+            // and re-resolves {{viewUrl}} (per-recipient tracking URL) +
+            // {{signature}} (workspace template rendered with sender fields).
+            h("div", { style: { flex: 1, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0, borderTop: "1px solid " + B.border, overflow: "hidden" } },
               h("textarea", { value: sendMessage, onChange: function(e) { setSendMessage(e.target.value); },
-                style: { width: "100%", height: "100%", minHeight: 200, background: "transparent", border: "none", color: B.textSec, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "none", lineHeight: 1.6 } }))
+                style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
+              h("div", {
+                style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+              })
+            )
           )
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
-          h(window.Btn, { onClick: executeSendQuote }, draft.status === "draft" ? "\u2709 Send Quote" : "\u2709 Resend"))
+          h(window.Btn, {
+            onClick: executeSendQuote,
+            disabled: sending || !window.LTP_GMAIL_CONNECTED,
+          }, sending ? "Sending\u2026" : (draft.status === "draft" ? "\u2709 Send Quote" : "\u2709 Resend")))
       )
     );
   };

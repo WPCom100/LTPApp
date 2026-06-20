@@ -433,22 +433,44 @@
                     h("span", null, tmpl.label || key),
                     h("span", { style: { fontSize: "9px", color: B.textMut, fontWeight: 400 } }, key)),
                   h("div", { style: { padding: "0 14px 14px" } },
-                    h("div", { style: { marginBottom: 8 } },
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 } },
                       h(window.LTPInput, { label: "Subject", value: tmpl.subject || "",
                         onChange: function(v) {
                           var t2 = Object.assign({}, templates);
                           t2[key] = Object.assign({}, tmpl, { subject: v });
                           set("emailTemplates", t2);
-                        }, placeholder: "Email subject with {{variables}}" })),
-                    h("div", null,
-                      h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Body"),
-                      h("textarea", { value: tmpl.body || "",
-                        onChange: function(e) {
+                        }, placeholder: "Email subject with {{variables}}" }),
+                      h(window.LTPInput, { label: "CC (optional)", value: tmpl.cc || "",
+                        onChange: function(v) {
                           var t2 = Object.assign({}, templates);
-                          t2[key] = Object.assign({}, tmpl, { body: e.target.value });
+                          t2[key] = Object.assign({}, tmpl, { cc: v });
                           set("emailTemplates", t2);
-                        },
-                        style: { width: "100%", minHeight: 120, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.5 } }))
+                        }, placeholder: "comma-separated emails" })
+                    ),
+                    // Split-pane body editor: raw HTML on the left, sanitized
+                    // live preview on the right. Preview pipes through
+                    // LTP_SANITIZE.emailHtml so what the admin sees matches
+                    // what the recipient will actually get (backend re-sanitizes
+                    // at send time using a near-identical allowlist).
+                    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 } },
+                      h("div", null,
+                        h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Body (HTML)"),
+                        h("textarea", { value: tmpl.body || "",
+                          onChange: function(e) {
+                            var t2 = Object.assign({}, templates);
+                            t2[key] = Object.assign({}, tmpl, { body: e.target.value });
+                            set("emailTemplates", t2);
+                          },
+                          style: { width: "100%", minHeight: 160, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "monospace", outline: "none", resize: "vertical", lineHeight: 1.5 } })
+                      ),
+                      h("div", null,
+                        h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview"),
+                        h("div", {
+                          style: { width: "100%", minHeight: 160, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
+                          dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(tmpl.body || "") }
+                        })
+                      )
+                    )
                   )
                 ));
               });
