@@ -355,6 +355,82 @@ window.LTP_resolveTemplate = function(template, vars) {
   });
 };
 
+// ── textToHtml ──────────────────────────────────────────────────────────
+// Convert a body that was typed as plain text (blank lines = paragraphs,
+// single newlines = line breaks) into the HTML that the email pipeline
+// expects. If the input already contains HTML structure (a <p>, <div>,
+// <br>, <h*>, or <table> tag — common when the admin pasted from a
+// marketing-tool export), pass it through unchanged.
+//
+// Why this exists: the email body field accepts both plain text and
+// HTML. The send pipeline ALWAYS sends as text/html (multipart/alt with
+// a derived text/plain), so plain-text bodies typed at the textarea get
+// their whitespace collapsed by every HTML rendering layer downstream
+// (Send modal preview, backend sanitizer, recipient mail client).
+// This helper bridges the gap so what the user sees in the preview
+// matches what their recipient gets.
+//
+// Detection heuristic: presence of any common block-level or
+// line-break tag means "treat as HTML." Markup-free user input gets
+// the paragraph + br conversion. The check is intentionally loose —
+// false positives (HTML passes through untouched) are fine; false
+// negatives (plain-text wrongly classified as HTML) lose the
+// formatting we're trying to add.
+// Render the {{signature}} placeholder against the currently signed-in
+// user, using the workspace-wide signature template from settings.
+// This is the FRONTEND counterpart of backend/routes/email.py::_render_signature;
+// it exists so the Send-modal preview shows what the recipient will see
+// instead of literal {{signature}}. The real substitution at send time
+// still happens server-side (authoritative).
+window.LTP_renderSignature = function(template) {
+  if (!template) return "";
+  return template
+    .replace(/\{\{userName\}\}/g, window.LTP_SENDER_NAME || "")
+    .replace(/\{\{userEmail\}\}/g, window.LTP_SENDER_EMAIL || "")
+    .replace(/\{\{userTitle\}\}/g, window.LTP_SENDER_TITLE || "")
+    .replace(/\{\{userPhone\}\}/g, window.LTP_SENDER_PHONE || "");
+};
+
+// Build a Send-modal preview body: substitute the placeholders the
+// backend would normally fill in at send time, so the preview pane
+// shows the SAME shape the recipient gets. Real send still leaves
+// these placeholders intact for backend resolution.
+//
+// `viewUrl` should be the entity's share-link URL with no `?r=` (or a
+// sample one); `signatureTemplate` should be the workspace signature
+// template string (frontend reads settings.emailSignatureTemplate with
+// the data/settings.js default).
+window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
+  if (!body) return "";
+  var sig = window.LTP_renderSignature(signatureTemplate || "");
+  return String(body)
+    .replace(/\{\{viewUrl\}\}/g, viewUrl || "")
+    .replace(/\{\{signature\}\}/g, sig);
+};
+
+window.LTP_textToHtml = (function() {
+  var HTML_DETECT_RE = /<\s*(p|div|br|h[1-6]|table|tr|td|th|ul|ol|li|blockquote)\b/i;
+  function escapeHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  return function(input) {
+    if (input == null) return "";
+    var s = String(input);
+    if (HTML_DETECT_RE.test(s)) return s;   // already HTML — let it through
+    // Plain-text path: escape HTML metachars (so user typing "<3" doesn't
+    // accidentally become a tag), split on blank-line runs into
+    // paragraphs, replace remaining single newlines with <br>. The
+    // trim+filter avoids empty leading/trailing paragraphs.
+    var escaped = escapeHtml(s);
+    var paras = escaped.split(/\n\s*\n+/).map(function(p) { return p.trim(); })
+                       .filter(function(p) { return p.length > 0; });
+    if (paras.length === 0) return "";
+    return paras.map(function(p) {
+      return "<p>" + p.replace(/\n/g, "<br>") + "</p>";
+    }).join("\n");
+  };
+})();
+
 // ── Invoice & Quote display helpers (used across modules) ────────────────
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";

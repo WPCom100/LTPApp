@@ -483,11 +483,17 @@ def test_render_signature_substitutes_variables():
 
 
 def test_render_signature_handles_missing_template():
+    """The polish pass changed this behavior: empty/missing template
+    now falls back to _FALLBACK_SIGNATURE so recipients always see a
+    signed-off email. (See tests/test_polish_pass_signature_html.py
+    for the canonical fallback coverage.)"""
     print("test_render_signature_handles_missing_template")
     u = models.User(google_sub="g", email="x@y.com", name="X")
-    _check("empty template returns empty string", _render_signature(u, {}) == "")
-    _check("missing key returns empty string",
-           _render_signature(u, {"other": "stuff"}) == "")
+    out_empty = _render_signature(u, {})
+    _check("empty template falls back to non-empty", out_empty != "")
+    _check("fallback includes the user's name", "X" in out_empty)
+    out_missing = _render_signature(u, {"other": "stuff"})
+    _check("missing key also falls back", out_missing != "" and "X" in out_missing)
 
 
 def test_render_signature_null_safe_user_fields():

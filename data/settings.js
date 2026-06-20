@@ -59,11 +59,16 @@ window.LTP_DATA_SETTINGS = {
   // Workspace-wide signature template. Renders per-user when a body uses
   // the {{signature}} placeholder: backend substitutes {{userName}},
   // {{userEmail}}, {{userTitle}}, {{userPhone}} against the sender's User
-  // row. Admin edits this in Settings.
+  // row.
   //
-  // Default uses simple inline HTML — no <style> blocks, since most mail
-  // clients strip them. Inline `style="..."` survives.
-  emailSignatureTemplate: '<p style="margin-top:24px;color:#5b6770">— {{userName}}<br>{{userTitle}}<br>{{userPhone}}<br><a href="mailto:{{userEmail}}">{{userEmail}}</a></p>',
+  // This default is a rich Gmail-export-style signature: two-column
+  // table with the company logo on the left + an accent-bordered
+  // contact block on the right (name + title + email + phone), then
+  // a company block (name + address + website), then social icons.
+  // All inline-styled — no <style> blocks, since Gmail/Outlook strip
+  // them. Image URLs point at the public site directly (not the Gmail
+  // image-proxy wrappers, which break in non-Gmail clients).
+  emailSignatureTemplate: '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse"><tr><td style="padding:0 10px 0 0;vertical-align:top"><img alt="Luminary Technology and Productions" height="135" src="https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" style="display:block"></td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;font-family:\'verdana\',\'geneva\',sans-serif;font-size:12px;line-height:14px;color:#233038"><div style="margin-bottom:10px"><strong><span style="font-size:16px;color:#ef5822">{{userName}}</span></strong><br>{{userTitle}}</div><div style="margin-bottom:10px"><a href="mailto:{{userEmail}}" style="color:#233038;text-decoration:none" target="_blank">{{userEmail}}</a><br>M:&nbsp;<a href="tel:{{userPhone}}" style="color:#233038;text-decoration:none" target="_blank">{{userPhone}}</a></div><div style="margin-bottom:10px"><span style="font-size:15px;color:#ef5822"><strong>Luminary Technology &amp; Productions</strong></span><br>3786 Arapaho Rd.<br>Addison, TX 75001<br><a href="https://LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">LuminaryTechnology.Productions</a></div><div><a href="https://www.facebook.com/profile.php?id=61563798680454" style="color:rgb(255,146,30);text-decoration:none;margin-right:6px" target="_blank"><img alt="facebook" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png" width="18" style="vertical-align:middle"></a><a href="https://www.instagram.com/luminarytechnologyproductions/" style="color:rgb(255,146,30);text-decoration:none" target="_blank"><img alt="instagram" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png" width="18" style="vertical-align:middle"></a></div></td></tr></table>',
 
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
@@ -75,25 +80,25 @@ window.LTP_DATA_SETTINGS = {
       label: "Quote Sent",
       cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\nView, accept, or decline online: {{viewUrl}}\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\n<a href=\"{{viewUrl}}\">View, Accept, or Decline Online</a>\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
     },
     quoteFollowUp: {
       label: "Quote Follow-Up",
       cc: "",
       subject: "Following up: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\nYou can view, accept, or decline online here: {{viewUrl}}\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\n<a href=\"{{viewUrl}}\">View, Accept, or Decline Online</a>\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
     },
     invoiceSent: {
       label: "Invoice Sent",
       cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\nView online: {{viewUrl}}\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\n<a href=\"{{viewUrl}}\">View Invoice Online</a>\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
     },
     invoiceReminder: {
       label: "Payment Reminder",
       cc: "",
       subject: "Payment Reminder: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\nView online: {{viewUrl}}\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
+      body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\n<a href=\"{{viewUrl}}\">View Invoice Online</a>\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
     },
     paymentReceipt: {
       label: "Payment Receipt",

@@ -486,7 +486,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: sendMessage,
+          bodyHtml: window.LTP_textToHtml(sendMessage),  // plain-text bodies keep paragraph spacing
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -592,7 +592,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: sendMessage,
+          bodyHtml: window.LTP_textToHtml(sendMessage),  // plain-text bodies keep paragraph spacing
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -1470,7 +1470,17 @@
                 style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
               h("div", {
                 style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+                // Preview mirrors what the recipient will see — substitute
+                // {{viewUrl}} + {{signature}} sample values, textToHtml
+                // for paragraph spacing on plain-text bodies, then sanitize.
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
+                  sendMessage,
+                  draft.shareToken ? (window.location.origin + "/#/view/invoice/" + draft.shareToken) : "",
+                  // Fall back to the data/settings.js default when the merged
+                  // settings has empty/missing signature (data-state lets ""
+                  // override the client default). Mirrors backend fallback.
+                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
+                ))) }
               })
             )
           )
@@ -1534,7 +1544,17 @@
                 style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
               h("div", {
                 style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+                // Preview mirrors what the recipient will see — substitute
+                // {{viewUrl}} + {{signature}} sample values, textToHtml
+                // for paragraph spacing on plain-text bodies, then sanitize.
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
+                  sendMessage,
+                  draft.shareToken ? (window.location.origin + "/#/view/invoice/" + draft.shareToken) : "",
+                  // Fall back to the data/settings.js default when the merged
+                  // settings has empty/missing signature (data-state lets ""
+                  // override the client default). Mirrors backend fallback.
+                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
+                ))) }
               })
             )
           )

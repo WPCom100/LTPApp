@@ -60,6 +60,7 @@ Lifecycle
 import os
 import secrets
 from datetime import datetime, timezone
+from html import escape
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -123,19 +124,69 @@ def _render_signature(
     """Apply the workspace signature template against the sender's profile.
     Returns the rendered HTML (or empty string if no template configured).
     Substitutes {{userName}}, {{userEmail}}, {{userTitle}}, {{userPhone}}.
-    Missing user fields become empty strings; the template is responsible
-    for handling those gracefully (e.g. skipping a phone line via styling
-    rather than via conditional logic in the template)."""
+    User fields are HTML-escaped BEFORE substitution as defense in depth
+    — the email body goes through bleach sanitization downstream too,
+    but escaping here ensures a future refactor that drops one of those
+    layers doesn't open an XSS hole.
+
+    Falls back to _FALLBACK_SIGNATURE when the workspace hasn't
+    customized a template. Reason: data/settings.js ships a rich default
+    that lives only in the frontend's merged config — it's not in the DB
+    until an admin clicks Save in Settings. Without this fallback, the
+    first send from a fresh deploy would substitute {{signature}} with
+    "" and the recipient would see the body abruptly end.
+
+    The fallback string MUST match data/settings.js::emailSignatureTemplate
+    byte-for-byte so the Send-modal preview (which reads the frontend
+    config) shows the same signature the recipient gets. Any change to
+    one MUST be mirrored in the other; tests/test_polish_pass_signature_html.py
+    pins both via substring checks."""
     template = (settings_data.get("emailSignatureTemplate") or "").strip()
     if not template:
-        return ""
+        template = _FALLBACK_SIGNATURE
     return (
         template
-        .replace("{{userName}}", user.name or "")
-        .replace("{{userEmail}}", user.email or "")
-        .replace("{{userTitle}}", user.title or "")
-        .replace("{{userPhone}}", user.phone or "")
+        .replace("{{userName}}", escape(user.name or ""))
+        .replace("{{userEmail}}", escape(user.email or ""))
+        .replace("{{userTitle}}", escape(user.title or ""))
+        .replace("{{userPhone}}", escape(user.phone or ""))
     )
+
+
+# Server-side fallback signature — must stay byte-identical to the
+# data/settings.js default. When the DB has no emailSignatureTemplate
+# value (fresh deploy, settings never saved, admin set it to ""), the
+# Send pipeline renders this. Storing it here too means the recipient
+# always sees a rich signature, never the truncated "...if you have any
+# questions or would like to proceed." that motivated this fallback.
+_FALLBACK_SIGNATURE = (
+    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse">'
+    '<tr><td style="padding:0 10px 0 0;vertical-align:top">'
+    '<img alt="Luminary Technology and Productions" height="135" '
+    'src="https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" '
+    'style="display:block">'
+    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;'
+    "font-family:'verdana','geneva',sans-serif;font-size:12px;line-height:14px;color:#233038\">"
+    '<div style="margin-bottom:10px"><strong>'
+    '<span style="font-size:16px;color:#ef5822">{{userName}}</span>'
+    '</strong><br>{{userTitle}}</div>'
+    '<div style="margin-bottom:10px">'
+    '<a href="mailto:{{userEmail}}" style="color:#233038;text-decoration:none" target="_blank">{{userEmail}}</a>'
+    '<br>M:&nbsp;<a href="tel:{{userPhone}}" style="color:#233038;text-decoration:none" target="_blank">{{userPhone}}</a>'
+    '</div>'
+    '<div style="margin-bottom:10px">'
+    '<span style="font-size:15px;color:#ef5822"><strong>Luminary Technology &amp; Productions</strong></span>'
+    '<br>3786 Arapaho Rd.<br>Addison, TX 75001<br>'
+    '<a href="https://LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">LuminaryTechnology.Productions</a>'
+    '</div>'
+    '<div>'
+    '<a href="https://www.facebook.com/profile.php?id=61563798680454" style="color:rgb(255,146,30);text-decoration:none;margin-right:6px" target="_blank">'
+    '<img alt="facebook" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png" width="18" style="vertical-align:middle">'
+    '</a>'
+    '<a href="https://www.instagram.com/luminarytechnologyproductions/" style="color:rgb(255,146,30);text-decoration:none" target="_blank">'
+    '<img alt="instagram" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png" width="18" style="vertical-align:middle">'
+    '</a></div></td></tr></table>'
+)
 
 
 async def _load_entity(

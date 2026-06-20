@@ -331,13 +331,16 @@
             h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview (sample values)"),
             h("div", {
               style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
-              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(
-                (draft.emailSignatureTemplate || "")
+              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(
+                // Fall back to the data/settings.js default when the draft
+                // signature is empty/missing, so admins editing a fresh
+                // install see the rich starter template they'll get sent.
+                (draft.emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate || "")
                   .replace(/\{\{userName\}\}/g, "Sarah Chen")
                   .replace(/\{\{userTitle\}\}/g, "Production Manager")
                   .replace(/\{\{userPhone\}\}/g, "(555) 123-4567")
                   .replace(/\{\{userEmail\}\}/g, "sarah@example.com")
-              ) }
+              )) }
             })
           )
         )
@@ -467,7 +470,10 @@
                         h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview"),
                         h("div", {
                           style: { width: "100%", minHeight: 160, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
-                          dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(tmpl.body || "") }
+                          // textToHtml first so plain-text templates keep
+                          // their paragraph spacing (admin can type
+                          // newlines without authoring <p> tags by hand).
+                          dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(tmpl.body || "")) }
                         })
                       )
                     )

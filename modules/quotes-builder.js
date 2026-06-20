@@ -1170,7 +1170,12 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: sendMessage,  // server sanitizes via bleach
+          // textToHtml converts blank-line paragraphs + single newlines
+          // when the body is plain text. If the admin authored HTML in
+          // the template editor, it passes through untouched. Server
+          // re-resolves {{viewUrl}} and {{signature}} and sanitizes via
+          // bleach before sending.
+          bodyHtml: window.LTP_textToHtml(sendMessage),
         }),
       })
         .then(function(r) {
@@ -2047,7 +2052,25 @@
                 style: { background: B.bg, border: "none", borderRight: "1px solid " + B.border, color: B.text, fontSize: "11px", fontFamily: "monospace", padding: "10px 14px", outline: "none", resize: "none", lineHeight: 1.5 } }),
               h("div", {
                 style: { background: B.surface, overflowY: "auto", padding: "10px 14px", fontSize: "11px", color: B.textSec, lineHeight: 1.5 },
-                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(sendMessage || "") }
+                // Preview pipeline matches what the recipient will get:
+                //   1. Substitute {{viewUrl}} (sample, no per-recipient
+                //      tracking token — that's minted server-side).
+                //   2. Substitute {{signature}} via the workspace template
+                //      rendered against the signed-in sender.
+                //   3. textToHtml so plain-text bodies render with
+                //      paragraph spacing instead of collapsed whitespace.
+                //   4. Sanitize.
+                dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(window.LTP_renderPreviewBody(
+                  sendMessage,
+                  draft.shareToken ? (window.location.origin + "/#/view/quote/" + draft.shareToken) : "",
+                  // Fall back to the data/settings.js default when the
+                  // merged settings has an empty / missing signature
+                  // template — the data-state hook lets server "" override
+                  // the client default, but the preview should mirror what
+                  // the recipient will actually get (backend has the same
+                  // fallback). See review finding 1+2 on the polish pass.
+                  ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate)
+                ))) }
               })
             )
           )

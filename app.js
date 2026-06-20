@@ -128,8 +128,13 @@ function LTPSignedInApp(props) {
   window.LTP_GMAIL_SCOPE = props.authUser.gmailScope || "none";
   // Sender identity surfaced in the Send modal's read-only From: line
   // so the user knows exactly what the recipient will see as the From address.
+  // Title + phone feed the {{userTitle}}/{{userPhone}} placeholders when
+  // the Send modal renders a SAMPLE signature for preview (real-send
+  // substitution happens server-side against the canonical User row).
   window.LTP_SENDER_EMAIL = props.authUser.email || "";
   window.LTP_SENDER_NAME = props.authUser.name || "";
+  window.LTP_SENDER_TITLE = props.authUser.title || "";
+  window.LTP_SENDER_PHONE = props.authUser.phone || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_COMPANY_SHORT = settings.companyShort || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
