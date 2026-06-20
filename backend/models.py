@@ -371,6 +371,52 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class EmailRecipient(Base):
+    """One row per (send, recipient_email, role) — created when an email is
+    sent through /api/email/send. Each row carries a per-recipient
+    `tracking_token` embedded in that recipient's copy of the view URL.
+    When the recipient opens the URL, the backend resolves the token and
+    bumps `open_count` / timestamps here AND writes a `recipient_opened`
+    activity entry on the parent entity.
+
+    Used for: knowing WHO read the quote/invoice vs anonymous link
+    sharing. The bare `share_token` URL still works for anonymous reads
+    (Preview button, copy-link sharing) — those produce `client_viewed`
+    entries with no recipient attribution.
+
+    Why a separate table and not JSON-on-activity:
+      - `tracking_token` needs a unique index for O(1) lookup at view time
+      - `open_count`/`last_opened_at` mutate over time; activity entries
+        are immutable audit records
+      - "all recipients of this quote, with status" is naturally a query
+        against this table
+
+    `share_token` is denormalized from the parent quote/invoice for
+    audit — if the parent's share_token is ever rotated (out of scope for
+    v1), historical recipient rows remember the token the recipient
+    actually got."""
+    __tablename__ = "email_recipients"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entity_type = Column(String(20), nullable=False)              # {"quote", "invoice"}
+    entity_id = Column(Integer, nullable=False, index=True)
+    share_token = Column(String(64), nullable=False, index=True)  # parent's share_token at send time
+    recipient_email = Column(String(255), nullable=False)
+    recipient_role = Column(String(4), nullable=False)            # {"to", "cc"}
+    tracking_token = Column(String(64), nullable=False, unique=True, index=True)
+    sent_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    sent_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Gmail's message id from the send response (~16 hex chars). Lets ops
+    # debug delivery questions against the sender's Gmail Sent folder.
+    gmail_message_id = Column(String(64), nullable=True)
+    # Open tracking — populated by /api/view/{token}?r=<tracking_token>
+    first_opened_at = Column(DateTime(timezone=True), nullable=True)
+    last_opened_at = Column(DateTime(timezone=True), nullable=True)
+    open_count = Column(Integer, nullable=False, default=0)
+    # PDF download via the recipient-tagged URL (separate from view).
+    pdf_downloaded_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class PdfArchive(Base):
     """A snapshot of a generated Quote/Invoice PDF. Each generation creates
     one row — historical iterations stay downloadable from the entity's

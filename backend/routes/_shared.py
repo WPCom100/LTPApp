@@ -179,7 +179,13 @@ def public_activity(activity: list) -> list:
     if not isinstance(activity, list):
         return []
     PUBLIC_TYPES = {"created", "sent", "accepted", "declined",
-                    "client_accepted", "client_declined", "converted"}
+                    "client_accepted", "client_declined", "converted",
+                    # email_sent shows the client "yes, your quote was emailed
+                    # to me, here's when." We deliberately do NOT include
+                    # email_failed (internal ops detail) or recipient_opened /
+                    # client_viewed / client_downloaded_pdf (those are about
+                    # the client's own activity — confusing to show back at them).
+                    "email_sent"}
     out = []
     for entry in activity:
         if not isinstance(entry, dict):

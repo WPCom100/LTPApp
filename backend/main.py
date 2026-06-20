@@ -14,6 +14,7 @@ from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
+from backend.routes.email import email_router
 from backend.rate_limit import RateLimitMiddleware
 
 
@@ -352,6 +353,9 @@ app.include_router(public_pdf_router)
 # existing catch-all early-return (api/ prefix) covers it; we don't need a
 # separate prefix exclusion.
 app.include_router(view_router)
+# Email send: session-gated. Per-user Gmail via OAuth scope gmail.send;
+# see backend/routes/email.py for the full lifecycle.
+app.include_router(email_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────
