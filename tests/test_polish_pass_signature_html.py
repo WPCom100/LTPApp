@@ -352,17 +352,30 @@ def test_text_to_html_detects_table_as_html():
 # helpers (sanity test against regression of the polish pass).
 
 
+def test_quotes_builder_send_expands_header_then_calls_text_to_html():
+    """Quote send path: expand {{header}} into rendered HTML BEFORE
+    LTP_textToHtml runs (so the per-entity tokens inside the header
+    get the same client-side substitution as the rest of the body)."""
+    print("test_quotes_builder_send_expands_header_then_calls_text_to_html")
+    path = os.path.join(_root, "modules", "quotes-builder.js")
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    _check("calls LTP_renderHeader to expand {{header}}",
+           "LTP_renderHeader" in src)
+    _check("Send path runs textToHtml on the expanded body, not raw sendMessage",
+           "LTP_textToHtml(bodyWithHeader)" in src
+           and "LTP_textToHtml(sendMessage)" not in src,
+           "Found old LTP_textToHtml(sendMessage) call — should be bodyWithHeader")
+
+
 def test_quotes_builder_uses_helpers():
-    """Send path: still LTP_textToHtml-converts on the wire so the
-    backend gets HTML even if the user never typed in the editor.
-    The preview pane was replaced by EmailBodyEditor in the WYSIWYG
-    rewrite; the editor calls LTP_bodyToEditableHtml internally."""
+    """Preview pane is the EmailBodyEditor (single WYSIWYG component)
+    instead of the prior split-pane + LTP_renderPreviewBody. The editor
+    calls LTP_bodyToEditableHtml internally."""
     print("test_quotes_builder_uses_helpers")
     path = os.path.join(_root, "modules", "quotes-builder.js")
     with open(path, encoding="utf-8") as f:
         src = f.read()
-    _check("Send path uses LTP_textToHtml",
-           "LTP_textToHtml(sendMessage)" in src)
     _check("Send modal renders EmailBodyEditor (replaces split-pane preview)",
            "window.EmailBodyEditor" in src)
 
@@ -372,11 +385,15 @@ def test_invoices_uses_helpers():
     path = os.path.join(_root, "modules", "invoices.js")
     with open(path, encoding="utf-8") as f:
         src = f.read()
-    _check("Send path uses LTP_textToHtml",
-           "LTP_textToHtml(sendMessage)" in src)
     _check("Send + Receipt modals render EmailBodyEditor",
            src.count("window.EmailBodyEditor") >= 2,
            f"got {src.count('window.EmailBodyEditor')} EmailBodyEditor refs")
+    _check("Both send paths expand {{header}} via LTP_renderHeader before textToHtml",
+           src.count("LTP_renderHeader") >= 2
+           and src.count("LTP_textToHtml(bodyWithHeader)") >= 2
+           and "LTP_textToHtml(sendMessage)" not in src,
+           f"renderHeader={src.count('LTP_renderHeader')}, "
+           f"textToHtml(bodyWithHeader)={src.count('LTP_textToHtml(bodyWithHeader)')}")
 
 
 def test_theme_js_exposes_helpers():
@@ -423,6 +440,7 @@ def main() -> int:
     test_text_to_html_does_not_escape_inline_html()
     test_text_to_html_empty_and_whitespace()
     test_text_to_html_detects_table_as_html()
+    test_quotes_builder_send_expands_header_then_calls_text_to_html()
     test_quotes_builder_uses_helpers()
     test_invoices_uses_helpers()
     test_theme_js_exposes_helpers()

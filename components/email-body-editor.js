@@ -6,14 +6,21 @@
 //
 // Contract with parent:
 //   props.value           — the stored body string (with {{viewUrl}} +
-//                           {{signature}} placeholders left intact for
-//                           backend per-recipient substitution).
+//                           {{signature}} + {{header}} placeholders left
+//                           intact for backend per-recipient substitution).
 //   props.signatureTemplate — workspace signature template (settings
 //                           emailSignatureTemplate with fallback chain
 //                           handled by the caller).
+//   props.headerTemplate  — workspace customer-facing header template
+//                           (settings emailHeaderTemplate). Empty/omitted
+//                           for crew emails or workspaces without one.
+//   props.headerVars      — {viewUrl, refNumber, projectName, total} for
+//                           the editor's preview render of the header
+//                           block. Backend re-resolves these per-recipient
+//                           at send time.
 //   props.onChange(body)  — fires on every user input. Body still has
-//                           placeholders intact (signature block reversed
-//                           back to {{signature}} token).
+//                           placeholders intact (signature + header blocks
+//                           reversed back to {{signature}} / {{header}}).
 //
 // React + contentEditable gotchas the implementation works around:
 //   1. React diffs DOM; contentEditable owns its DOM. Setting innerHTML
@@ -36,6 +43,8 @@
   window.EmailBodyEditor = function(props) {
     var value = props.value || "";
     var signatureTemplate = props.signatureTemplate || "";
+    var headerTemplate = props.headerTemplate || "";
+    var headerVars = props.headerVars || null;
     var onChange = props.onChange;
     var heightStyle = props.minHeight || 220;
 
@@ -47,22 +56,24 @@
       if (initializedRef.current || !ref.current) return;
       initializedRef.current = true;
 
-      // 1. Render initial editable HTML (signature substituted in,
-      //    viewUrl left as placeholder in hrefs).
-      var displayHtml = window.LTP_bodyToEditableHtml(value, signatureTemplate);
+      // 1. Render initial editable HTML (signature + header substituted
+      //    in, viewUrl left as placeholder in hrefs for backend resolution).
+      var displayHtml = window.LTP_bodyToEditableHtml(
+        value, signatureTemplate, headerTemplate, headerVars
+      );
       ref.current.innerHTML = displayHtml;
 
-      // 2. Mark signature blocks non-editable. The sanitizer dropped
-      //    contenteditable attrs; we add them back via DOM API. Also
-      //    add a subtle UI hint that the block is auto-managed.
-      var sigBlocks = ref.current.querySelectorAll(".ltp-sig-block");
-      for (var i = 0; i < sigBlocks.length; i++) {
-        var el = sigBlocks[i];
+      // 2. Mark signature + header blocks non-editable. The sanitizer
+      //    dropped contenteditable attrs; we add them back via DOM API.
+      //    Both blocks get the same subtle accent tint so they read as
+      //    "auto-managed system block" — visually consistent so the user
+      //    learns the convention once.
+      var markers = ref.current.querySelectorAll(".ltp-sig-block, .ltp-header-block");
+      for (var i = 0; i < markers.length; i++) {
+        var el = markers[i];
         el.setAttribute("contenteditable", "false");
         el.style.userSelect = "none";
         el.style.cursor = "default";
-        // Faint background tint so the user understands this block is
-        // not editable and gets re-rendered per-recipient at send time.
         el.style.background = "rgba(232, 115, 26, 0.04)";
         el.style.borderLeft = "2px solid " + B.accent + "44";
         el.style.padding = "8px 10px";
@@ -77,9 +88,9 @@
 
     function handleInput() {
       if (!ref.current || !onChange) return;
-      // Extract the current display HTML and reverse the signature
-      // substitution. The stored body keeps {{signature}} so the
-      // backend can render per-user at send time.
+      // Extract the current display HTML and reverse the marker-block
+      // substitutions. The stored body keeps {{signature}} + {{header}}
+      // so the backend can render per-user / per-recipient at send time.
       var raw = ref.current.innerHTML;
       onChange(window.LTP_editableHtmlToBody(raw));
     }

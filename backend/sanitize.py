@@ -58,12 +58,22 @@ ALLOWED_TAGS = frozenset({
     "table", "thead", "tbody", "tfoot", "tr", "th", "td",
     # Links + images
     "a", "img",
+    # Section — used by the WYSIWYG editor as a stable wrapper for
+    # auto-managed signature / header blocks; chosen because neither
+    # template contains <section>, so non-greedy regex reversal matches
+    # the wrapper's </section> not an inner closing tag.
+    "section",
 })
 
 
 # `*` keys apply to every tag. Per-tag entries layer on top of `*`.
+# `role` allows the customer-facing header table to keep role="presentation"
+# (recommended for table-layout emails so screen readers don't announce
+# layout tables as data tables). `width` is widened from img/table to `*`
+# so the header's <hr width="100%"> survives — same reason classic email
+# templates need legacy presentational attrs to render in Outlook.
 ALLOWED_ATTRIBUTES = {
-    "*": ["class", "style", "title", "align"],
+    "*": ["class", "style", "title", "align", "role", "width"],
     "a": ["href", "target", "rel"],
     "img": ["src", "alt", "width", "height"],
     "td": ["colspan", "rowspan", "valign"],

@@ -336,6 +336,10 @@
     var [sendEmail, setSendEmail] = useState("");
     var [sendSubject, setSendSubject] = useState("");
     var [sendMessage, setSendMessage] = useState("");
+    // Per-entity values baked into the {{header}} block at send time —
+    // captured at openSendModal / openReceiptModal so a later draft
+    // mutation doesn't change what the user sees in the modal preview.
+    var [sendHeaderVars, setSendHeaderVars] = useState(null);
     var [payDate, setPayDate] = useState(todayISO());
     var [payAmount, setPayAmount] = useState("");
     var [generatingPdf, setGeneratingPdf] = useState(false);
@@ -459,13 +463,17 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(t.total).toLocaleString(),
+        total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         lineItems: "Payments Received:\n" + paymentLines,
       };
       setSendEmail(email);
       setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — Payment Received", vars));
-      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars));
+      setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars));
+      // headerVars feed both the editor preview and the send-time
+      // expansion in sendReceipt. viewUrl blank — backend resolves
+      // per-recipient if the receipt body uses {{viewUrl}}.
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
       setShowReceiptModal(true);
     }
 
@@ -477,6 +485,14 @@
         return;
       }
       setSending(true);
+      // Expand {{header}} into rendered HTML (with refNumber / projectName
+      // / total inlined) JUST before send. See quotes-builder.js for
+      // the full rationale.
+      var headerHtml = window.LTP_renderHeader(
+        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+        sendHeaderVars || {}
+      );
+      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -486,7 +502,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: window.LTP_textToHtml(sendMessage),  // plain-text bodies keep paragraph spacing
+          bodyHtml: window.LTP_textToHtml(bodyWithHeader),  // plain-text bodies keep paragraph spacing
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -564,13 +580,14 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(t.total).toLocaleString(),
+        total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt",
       };
       setSendEmail(email);
       setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
-      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nTotal: {{total}}\nDue: {{dueDate}}\n\n{{viewUrl}}\n\n{{signature}}", vars));
+      setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nDue: {{dueDate}}\n\n{{signature}}", vars));
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
       setShowSendModal(true);
     }
 
@@ -583,6 +600,13 @@
       }
       var isResend = draft.status !== "draft";
       setSending(true);
+      // Expand {{header}} into rendered HTML JUST before send. See
+      // quotes-builder.js for the full rationale on this split.
+      var headerHtml = window.LTP_renderHeader(
+        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+        sendHeaderVars || {}
+      );
+      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -592,7 +616,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: window.LTP_textToHtml(sendMessage),  // plain-text bodies keep paragraph spacing
+          bodyHtml: window.LTP_textToHtml(bodyWithHeader),  // plain-text bodies keep paragraph spacing
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -1473,6 +1497,8 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,
             })
@@ -1540,6 +1566,8 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,
             })

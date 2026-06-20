@@ -846,6 +846,10 @@
     var [sendCc, setSendCc] = useState("");
     var [sendSubject, setSendSubject] = useState("");
     var [sendMessage, setSendMessage] = useState("");
+    // Per-entity values that get baked into the header HTML at send time.
+    // Captured at openSendModal so a later draft mutation doesn't change
+    // what the user sees in the modal preview.
+    var [sendHeaderVars, setSendHeaderVars] = useState(null);
     var [sending, setSending] = useState(false);  // disables Send button while POST is in flight
     var [generatingPdf, setGeneratingPdf] = useState(false);
 
@@ -1138,13 +1142,17 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(totals.total).toLocaleString(),
+        total: "$" + Math.round(totals.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         quoteValidity: String(s.defaultQuoteValidity || 30),
       };
       setSendEmail(email);
       setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
-      setSendMessage(resolve(tmpl.body || "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{viewUrl}}\n\n{{signature}}", vars));
+      setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{signature}}", vars));
+      // headerVars feed both (a) the editor's preview render of the
+      // {{header}} block and (b) the send-time expansion in executeSendQuote.
+      // viewUrl is left blank — backend resolves it per-recipient.
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
       setShowSendModal(true);
     }
 
@@ -1161,6 +1169,16 @@
       // setQuotes since the server already appended `email_sent` to the
       // activity log + minted email_recipients rows with tracking tokens.
       setSending(true);
+      // Expand {{header}} into its rendered HTML (with refNumber /
+      // projectName / total baked in) JUST before send. We keep
+      // {{header}} literal in sendMessage state so the editor can wrap
+      // it as a non-editable block; backend stays simple and only
+      // resolves the per-recipient {{viewUrl}} + per-sender {{signature}}.
+      var headerHtml = window.LTP_renderHeader(
+        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+        sendHeaderVars || {}
+      );
+      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1175,7 +1193,7 @@
           // the template editor, it passes through untouched. Server
           // re-resolves {{viewUrl}} and {{signature}} and sanitizes via
           // bleach before sending.
-          bodyHtml: window.LTP_textToHtml(sendMessage),
+          bodyHtml: window.LTP_textToHtml(bodyWithHeader),
         }),
       })
         .then(function(r) {
@@ -2058,6 +2076,8 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
+              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,
             })

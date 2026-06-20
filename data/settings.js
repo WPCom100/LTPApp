@@ -70,41 +70,66 @@ window.LTP_DATA_SETTINGS = {
   // image-proxy wrappers, which break in non-Gmail clients).
   emailSignatureTemplate: '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse"><tr><td style="padding:0 10px 0 0;vertical-align:top"><img alt="{{userName}}" height="120" src="{{userPhoto}}" width="120" style="display:block;border-radius:50%;object-fit:cover"></td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;font-family:\'verdana\',\'geneva\',sans-serif;font-size:12px;line-height:14px;color:#233038"><div style="margin-bottom:10px"><strong><span style="font-size:16px;color:#ef5822">{{userName}}</span></strong><br>{{userTitle}}</div><div style="margin-bottom:10px"><a href="mailto:{{userEmail}}" style="color:#233038;text-decoration:none" target="_blank">{{userEmail}}</a><br>M:&nbsp;<a href="tel:{{userPhone}}" style="color:#233038;text-decoration:none" target="_blank">{{userPhone}}</a></div><div style="margin-bottom:10px"><span style="font-size:15px;color:#ef5822"><strong>Luminary Technology &amp; Productions</strong></span><br>3786 Arapaho Rd.<br>Addison, TX 75001<br><a href="https://LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">LuminaryTechnology.Productions</a></div><div><a href="https://www.facebook.com/profile.php?id=61563798680454" style="color:rgb(255,146,30);text-decoration:none;margin-right:6px" target="_blank"><img alt="facebook" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png" width="18" style="vertical-align:middle"></a><a href="https://www.instagram.com/luminarytechnologyproductions/" style="color:rgb(255,146,30);text-decoration:none" target="_blank"><img alt="instagram" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png" width="18" style="vertical-align:middle"></a></div></td></tr></table>',
 
+  // Customer-facing email header block. Renders ONLY when a body uses
+  // the {{header}} placeholder (all customer templates below do; crew
+  // templates do not). Treated as a non-editable block in the WYSIWYG
+  // editor (analog of emailSignatureTemplate / .ltp-sig-block).
+  //
+  // Substitution split: the FRONTEND expands {{header}} into this HTML
+  // with the per-entity tokens ({{refNumber}}, {{projectName}}, {{total}})
+  // baked in by the same vars resolution that handles the rest of the
+  // body — runs in executeSendQuote / executeSend / sendReceipt right
+  // before POSTing. The BACKEND then substitutes {{viewUrl}} (per-
+  // recipient tracking URL) and {{signature}} (per-sender) in the
+  // already-expanded HTML. Backend does NOT touch {{header}} on
+  // purpose — it has no per-entity vars and would leak literal
+  // {{refNumber}}/{{projectName}}/{{total}} into the email.
+  //
+  // The fallback string MUST match backend/routes/email.py::_FALLBACK_HEADER
+  // byte-for-byte so the Send-modal preview shows the same header the
+  // recipient gets.
+  emailHeaderTemplate: '<div style="padding:0px"><table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin-top:5px"><tbody><tr><td valign="center" style="white-space:nowrap"><table cellspacing="0" cellpadding="0" border="0"><tbody><tr><td style="border-radius:3px;text-align:center;background:#ef5822"><a style="font-size:12px;color:#ffffff;display:block;padding:8px 12px 11px;text-decoration:none;font-weight:bold" href="{{viewUrl}}">View &amp; Accept or Decline</a></td><td>&nbsp;&nbsp;</td><td style="font-size:12px"><span style="font-weight:bold">{{refNumber}} - {{projectName}}</span><br><span>{{total}}</span></td></tr></tbody></table></td></tr><tr><td valign="center"><hr width="100%" style="background-color:rgb(204,204,204);border:medium none;clear:both;display:block;font-size:0px;min-height:1px;line-height:0;margin:10px 0px"></td></tr></tbody></table></div>',
+
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
-  //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}},
+  //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}}, {{header}},
   //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
   //            {{quoteValidity}}, {{viewUrl}}
+  //
+  // {{header}} renders the customer-facing header block (View button +
+  // refNumber + projectName + total). Only customer templates (quotes
+  // + invoices + receipts) prepend it; crew templates omit it since
+  // crew emails don't have a per-recipient view link.
   emailTemplates: {
     quoteSent: {
       label: "Quote Sent",
       cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nQuote Total: {{total}}\n\n<a href=\"{{viewUrl}}\">View, Accept, or Decline Online</a>\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
+      body: "{{header}}\n\nHi {{clientName}},\n\nPlease find the attached quote {{refNumber}} for {{projectName}}.\n\nThis quote is valid for {{quoteValidity}} days from the date of issue. Please review and let us know if you have any questions or would like to proceed.\n\n{{signature}}"
     },
     quoteFollowUp: {
       label: "Quote Follow-Up",
       cc: "",
       subject: "Following up: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nQuote Total: {{total}}\n\n<a href=\"{{viewUrl}}\">View, Accept, or Decline Online</a>\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
+      body: "{{header}}\n\nHi {{clientName}},\n\nI wanted to follow up on quote {{refNumber}} for {{projectName}} that we sent over recently.\n\nPlease let us know if you have any questions or if you'd like to discuss any adjustments.\n\n{{signature}}"
     },
     invoiceSent: {
       label: "Invoice Sent",
       cc: "",
       subject: "{{refNumber}} — {{projectName}} from {{companyName}}",
-      body: "Hi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nInvoice Total: {{total}}\nDue Date: {{dueDate}}\n\n<a href=\"{{viewUrl}}\">View Invoice Online</a>\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
+      body: "{{header}}\n\nHi {{clientName}},\n\nPlease find attached invoice {{refNumber}} for {{projectName}}.\n\nDue Date: {{dueDate}}\n\nPayment can be made via check or ACH transfer. Please reference {{refNumber}} with your payment.\n\n{{signature}}"
     },
     invoiceReminder: {
       label: "Payment Reminder",
       cc: "",
       subject: "Payment Reminder: {{refNumber}} — {{projectName}}",
-      body: "Hi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nAmount Due: {{total}}\n\n<a href=\"{{viewUrl}}\">View Invoice Online</a>\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
+      body: "{{header}}\n\nHi {{clientName}},\n\nThis is a friendly reminder that invoice {{refNumber}} for {{projectName}} is due on {{dueDate}}.\n\nIf payment has already been sent, please disregard this message.\n\n{{signature}}"
     },
     paymentReceipt: {
       label: "Payment Receipt",
       cc: "",
       subject: "{{refNumber}} — Payment Received — Thank You",
-      body: "Hi {{clientName}},\n\nThank you! We have received your payment for {{refNumber}} ({{projectName}}).\n\nInvoice Total: {{total}}\n\n{{lineItems}}\n\nBalance: $0.00 — Paid in Full\n\nThis email serves as your receipt. Please keep it for your records.\n\n{{signature}}"
+      body: "{{header}}\n\nHi {{clientName}},\n\nThank you! We have received your payment for {{refNumber}} ({{projectName}}).\n\n{{lineItems}}\n\nBalance: $0.00 — Paid in Full\n\nThis email serves as your receipt. Please keep it for your records.\n\n{{signature}}"
     },
     crewRequest: {
       label: "Crew Availability Request",

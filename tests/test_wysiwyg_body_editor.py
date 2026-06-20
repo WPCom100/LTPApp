@@ -82,7 +82,23 @@ def py_render_signature(template, name="Sarah", email="sarah@x.com",
     )
 
 
-def py_body_to_editable_html(raw_body, sig_template):
+def py_render_header(template, vars):
+    """Python port of window.LTP_renderHeader. Substitutes per-entity
+    placeholders in the customer-facing header HTML. Mirrors what the
+    Send modal does at editor-render time and at executeSendQuote time."""
+    if not template:
+        return ""
+    vars = vars or {}
+    return (
+        template
+        .replace("{{viewUrl}}", vars.get("viewUrl", "") or "")
+        .replace("{{refNumber}}", vars.get("refNumber", "") or "")
+        .replace("{{projectName}}", vars.get("projectName", "") or "")
+        .replace("{{total}}", vars.get("total", "") or "")
+    )
+
+
+def py_body_to_editable_html(raw_body, sig_template, header_template=None, header_vars=None):
     """Python port of window.LTP_bodyToEditableHtml.
 
     NOTE: we skip the LTP_SANITIZE.emailHtml step (DOMPurify isn't
@@ -90,52 +106,71 @@ def py_body_to_editable_html(raw_body, sig_template):
     for these tests; sanitization is exercised separately by the
     polish-pass tests.
 
-    We walk every <p>...</p> that contains {{signature}} and split it:
-    text before becomes its own <p>, the sig block sits as a sibling,
-    text after becomes its own <p>. Empty halves are dropped. Bare
-    {{signature}} outside any <p> (admin template with block HTML)
-    falls through to the final replace. This prevents the table-based
-    sig from being nested inside an inline <p>."""
+    Walks every <p>...</p> that contains a marker token and splits it:
+    text before becomes its own <p>, the block sits as a sibling, text
+    after becomes its own <p>. Empty halves are dropped. Bare markers
+    outside any <p> (admin templates with block HTML) fall through to
+    the final replace. Marker wrapper is <section> not <div>, because
+    the inner template HTML contains nested <div>s — a non-greedy
+    regex on <div> would match the wrong closing tag."""
     if not raw_body:
         return ""
     with_paragraphs = py_text_to_html(str(raw_body))
-    sig = py_render_signature(sig_template or "")
-    sig_block = '<div class="ltp-sig-block">' + sig + '</div>'
+    sig_block = (
+        '<section class="ltp-sig-block">'
+        + py_render_signature(sig_template or "")
+        + '</section>'
+    )
+    header_block = (
+        '<section class="ltp-header-block">'
+        + py_render_header(header_template or "", header_vars or {})
+        + '</section>'
+    )
 
     end_re = re.compile(r"^(?:\s|<br\s*/?>)+|(?:\s|<br\s*/?>)+$", re.IGNORECASE)
 
     def strip_ends(s):
         return end_re.sub("", s)
 
-    def replace_p(m):
-        inner = m.group(1)
-        if "{{signature}}" not in inner:
-            return m.group(0)
-        pieces = inner.split("{{signature}}")
-        out = []
-        for i, piece in enumerate(pieces):
-            cleaned = strip_ends(piece)
-            if cleaned:
-                out.append("<p>" + cleaned + "</p>")
-            if i < len(pieces) - 1:
-                out.append(sig_block)
-        return "\n".join(out)
+    def substitute(html, token, block):
+        def replace_p(m):
+            inner = m.group(1)
+            if token not in inner:
+                return m.group(0)
+            pieces = inner.split(token)
+            out = []
+            for i, piece in enumerate(pieces):
+                cleaned = strip_ends(piece)
+                if cleaned:
+                    out.append("<p>" + cleaned + "</p>")
+                if i < len(pieces) - 1:
+                    out.append(block)
+            return "\n".join(out)
 
-    result = re.sub(r"<p>([\s\S]*?)</p>", replace_p, with_paragraphs)
-    result = result.replace("{{signature}}", sig_block)
-    return result
+        return re.sub(r"<p>([\s\S]*?)</p>", replace_p, html).replace(token, block)
+
+    with_header = substitute(with_paragraphs, "{{header}}", header_block)
+    with_sig = substitute(with_header, "{{signature}}", sig_block)
+    return with_sig
 
 
 def py_editable_html_to_body(html):
     """Python port of window.LTP_editableHtmlToBody."""
     if not html:
         return ""
-    return re.sub(
-        r'<div\s[^>]*class\s*=\s*["\']ltp-sig-block["\'][^>]*>[\s\S]*?</div>',
-        "{{signature}}",
+    result = re.sub(
+        r'<section[^>]*class\s*=\s*["\']ltp-header-block["\'][^>]*>[\s\S]*?</section>',
+        "{{header}}",
         str(html),
         flags=re.IGNORECASE,
     )
+    result = re.sub(
+        r'<section[^>]*class\s*=\s*["\']ltp-sig-block["\'][^>]*>[\s\S]*?</section>',
+        "{{signature}}",
+        result,
+        flags=re.IGNORECASE,
+    )
+    return result
 
 
 # ── textToHtml: block detection vs inline + plain ─────────────────────────
@@ -227,8 +262,8 @@ def test_body_to_editable_html_paragraph_wraps_around_signature():
            "{{signature}}" not in out)
     # The signature should NOT be nested inside a <p> (block in inline =
     # invalid HTML). Confirm by looking for the wrapped-paragraph form.
-    _check("signature <div> NOT nested in a <p>",
-           "<p><div" not in out and "<p>\n<div" not in out)
+    _check("signature <section> NOT nested in a <p>",
+           "<p><section" not in out and "<p>\n<section" not in out)
 
 
 def test_body_to_editable_html_bare_signature_token_substituted():
@@ -253,7 +288,7 @@ def test_body_to_editable_html_inline_signature_splits_paragraph():
     body = "Best, {{signature}}"
     out = py_body_to_editable_html(body, "<table><tr><td>S</td></tr></table>")
     _check("sig block NOT nested inside <p> (block-in-inline)",
-           "<p><div" not in out and "<p>Best, <div" not in out)
+           "<p><section" not in out and "<p>Best, <section" not in out)
     _check("surrounding text wrapped in its own <p>",
            "<p>Best,</p>" in out)
     _check("sig block rendered as sibling",
@@ -272,7 +307,7 @@ def test_body_to_editable_html_signature_between_text_pieces():
     _check("text after sig wrapped", "<p>bye</p>" in out)
     _check("sig block present", 'class="ltp-sig-block"' in out)
     _check("no invalid block-in-inline",
-           "<p><div" not in out and "<p>Hi <div" not in out)
+           "<p><section" not in out and "<p>Hi <section" not in out)
 
 
 def test_body_to_editable_html_empty_inputs():
@@ -289,7 +324,7 @@ def test_editable_html_to_body_restores_signature_placeholder():
     src = (
         '<p>Hi Alice,</p>\n'
         '<p>Quote Total: $197</p>\n'
-        '<div class="ltp-sig-block">[rendered sig]</div>'
+        '<section class="ltp-sig-block">[rendered sig]</section>'
     )
     out = py_editable_html_to_body(src)
     _check("signature block reversed to placeholder",
@@ -302,15 +337,14 @@ def test_editable_html_to_body_restores_signature_placeholder():
 
 def test_editable_html_to_body_tolerates_extra_attributes():
     """The EmailBodyEditor component adds contenteditable='false' +
-    inline styles to the signature block via DOM API after innerHTML
-    is set. The reverse must match the block regardless of extra
-    attributes."""
+    inline styles to the marker block via DOM API after innerHTML
+    is set. The reverse must match regardless of extra attributes."""
     print("test_editable_html_to_body_tolerates_extra_attributes")
     src = (
-        '<div class="ltp-sig-block" contenteditable="false" '
+        '<section class="ltp-sig-block" contenteditable="false" '
         'style="background:rgba(232,115,26,0.04);padding:8px">'
         '<table><tr><td>Sarah</td></tr></table>'
-        '</div>'
+        '</section>'
     )
     out = py_editable_html_to_body(src)
     _check("reversed even with extra attrs", out == "{{signature}}")
@@ -320,9 +354,24 @@ def test_editable_html_to_body_tolerates_single_quotes_around_class():
     """Browser DOM serialization may use single or double quotes around
     attribute values. The regex accepts either."""
     print("test_editable_html_to_body_tolerates_single_quotes_around_class")
-    src = "<div class='ltp-sig-block'>X</div>"
+    src = "<section class='ltp-sig-block'>X</section>"
     out = py_editable_html_to_body(src)
     _check("single-quoted class handled", out == "{{signature}}")
+
+
+def test_editable_html_to_body_handles_signature_with_nested_divs():
+    """REGRESSION GUARD: the real signature template contains inner
+    <div>s. The reverse regex MUST find the wrapper's closing tag,
+    not the first inner one. Switching the wrapper to <section> (which
+    the signature template doesn't contain) is what makes this work."""
+    print("test_editable_html_to_body_handles_signature_with_nested_divs")
+    src = (
+        '<section class="ltp-sig-block">'
+        '<table><tr><td><div>row 1</div><div>row 2</div></td></tr></table>'
+        '</section>'
+    )
+    out = py_editable_html_to_body(src)
+    _check("reversed cleanly across inner <div>s", out == "{{signature}}")
 
 
 def test_body_to_editable_and_back_roundtrip():
@@ -429,6 +478,7 @@ def main() -> int:
     test_editable_html_to_body_restores_signature_placeholder()
     test_editable_html_to_body_tolerates_extra_attributes()
     test_editable_html_to_body_tolerates_single_quotes_around_class()
+    test_editable_html_to_body_handles_signature_with_nested_divs()
     test_body_to_editable_and_back_roundtrip()
     test_theme_js_exposes_helpers()
     test_email_body_editor_component_loaded()

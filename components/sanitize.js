@@ -73,14 +73,19 @@
     "ul", "ol", "li",
     "table", "thead", "tbody", "tfoot", "tr", "th", "td",
     "a", "img",
+    // Section — used by EmailBodyEditor as the marker wrapper for the
+    // auto-managed signature + header blocks. Mirror of backend/sanitize.py.
+    "section",
   ];
   // DOMPurify takes ALLOWED_ATTR as a flat list (not per-tag); the resulting
   // permission is "this attr may appear on any tag in ALLOWED_TAGS." That's
   // looser than the backend's per-tag map but acceptable for a PREVIEW
   // surface — the backend remains authoritative at save and send time, so
   // any attribute drift gets normalized server-side.
+  // `role` lets the customer-facing header table keep role="presentation"
+  // (accessibility for table-layout emails).
   var EMAIL_ALLOWED_ATTR = [
-    "class", "style", "title", "align",
+    "class", "style", "title", "align", "role",
     "href", "target", "rel",
     "src", "alt", "width", "height",
     "colspan", "rowspan", "valign", "scope",

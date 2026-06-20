@@ -117,6 +117,32 @@ def _build_view_url(entity_type: str, share_token: str, tracking_token: str) -> 
     return f"{origin}/#/view/{entity_type}/{share_token}?r={tracking_token}"
 
 
+def _render_header(settings_data: dict) -> str:
+    """Return the customer-facing header HTML.
+
+    The header is the "View & Accept or Decline" button + refNumber /
+    projectName / total summary table that sits at the top of quote and
+    invoice emails. We expand the `{{header}}` placeholder with this
+    HTML, then the OUTER substitution chain expands `{{viewUrl}}`,
+    `{{refNumber}}`, `{{projectName}}`, `{{total}}` inside it — which
+    requires this function to run BEFORE those substitutions.
+
+    Falls back to `_FALLBACK_HEADER` when the workspace hasn't customized
+    a template (same reasoning as `_render_signature` — the data/settings.js
+    default lives only in the frontend's merged config; without a fallback
+    a fresh deploy would substitute `{{header}}` with `""`).
+
+    The fallback string MUST match data/settings.js::emailHeaderTemplate
+    byte-for-byte so the Send-modal preview shows the same header the
+    recipient gets. Any change to one MUST be mirrored in the other;
+    tests/test_header_block.py pins both via substring checks.
+    """
+    template = (settings_data.get("emailHeaderTemplate") or "").strip()
+    if not template:
+        template = _FALLBACK_HEADER
+    return template
+
+
 def _render_signature(
     user: models.User,
     settings_data: dict,
@@ -169,6 +195,38 @@ def _render_signature(
 # Send-modal preview renders the same image the recipient gets.
 _PHOTO_FALLBACK_URL = (
     "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
+)
+
+
+# Server-side fallback header — must stay byte-identical to the
+# data/settings.js default. Same reasoning as _FALLBACK_SIGNATURE
+# below: the data/settings.js default lives only in the frontend's
+# merged config and isn't in the DB until an admin saves settings, so
+# the first send from a fresh deploy needs a server-side default.
+#
+# Tokens inside ({{viewUrl}}, {{refNumber}}, {{projectName}}, {{total}})
+# get substituted by the outer per-recipient pass — _render_header
+# returns them as literals on purpose.
+_FALLBACK_HEADER = (
+    '<div style="padding:0px">'
+    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+    'style="width:100%;margin-top:5px">'
+    '<tbody><tr><td valign="center" style="white-space:nowrap">'
+    '<table cellspacing="0" cellpadding="0" border="0"><tbody><tr>'
+    '<td style="border-radius:3px;text-align:center;background:#ef5822">'
+    '<a style="font-size:12px;color:#ffffff;display:block;padding:8px 12px 11px;'
+    'text-decoration:none;font-weight:bold" href="{{viewUrl}}">'
+    'View &amp; Accept or Decline</a></td>'
+    '<td>&nbsp;&nbsp;</td>'
+    '<td style="font-size:12px">'
+    '<span style="font-weight:bold">{{refNumber}} - {{projectName}}</span>'
+    '<br><span>{{total}}</span></td>'
+    '</tr></tbody></table></td></tr>'
+    '<tr><td valign="center">'
+    '<hr width="100%" style="background-color:rgb(204,204,204);border:medium none;'
+    'clear:both;display:block;font-size:0px;min-height:1px;line-height:0;'
+    'margin:10px 0px">'
+    '</td></tr></tbody></table></div>'
 )
 
 
@@ -333,7 +391,16 @@ async def send_email(
     cc_tokens = [secrets.token_urlsafe(24) for _ in cc_list]
     secondary_to_tokens = [secrets.token_urlsafe(24) for _ in to_list[1:]]
 
-    # 4. Sanitize HTML, then substitute server-controlled placeholders
+    # 4. Sanitize HTML, then substitute server-controlled placeholders.
+    # {{header}} is NOT substituted here. The header HTML contains
+    # per-entity tokens ({{refNumber}}, {{projectName}}, {{total}}) that
+    # only the frontend has values for — the frontend expands {{header}}
+    # at compose time using its already-computed entity vars, then sends
+    # the expanded HTML in bodyHtml with {{viewUrl}} still literal for
+    # us to swap per-recipient. If {{header}} ever leaks here as a
+    # literal, the recipient sees the placeholder text — a visible bug
+    # that surfaces fast instead of a header with literal {{refNumber}}
+    # tokens silently going out.
     sanitized_html = email_html(body.bodyHtml)
     settings_data = await load_settings(db)
     signature_html = _render_signature(user, settings_data)

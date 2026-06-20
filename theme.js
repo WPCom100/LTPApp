@@ -402,6 +402,23 @@ window.LTP_renderSignature = function(template) {
     .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK);
 };
 
+// Render the {{header}} placeholder for the Send-modal preview. The
+// header template has four per-entity placeholders that the backend
+// resolves at send time; we substitute them here too so the user sees
+// the actual ref/project/total in the preview (not literal {{refNumber}}
+// strings). {{viewUrl}} is left blank in editor preview because the
+// real one is per-recipient — same pattern as how the body's inline
+// <a href="{{viewUrl}}"> works.
+window.LTP_renderHeader = function(template, vars) {
+  if (!template) return "";
+  vars = vars || {};
+  return template
+    .replace(/\{\{viewUrl\}\}/g, vars.viewUrl || "")
+    .replace(/\{\{refNumber\}\}/g, vars.refNumber || "")
+    .replace(/\{\{projectName\}\}/g, vars.projectName || "")
+    .replace(/\{\{total\}\}/g, vars.total || "");
+};
+
 // Build a Send-modal preview body: substitute the placeholders the
 // backend would normally fill in at send time, so the preview pane
 // shows the SAME shape the recipient gets. Real send still leaves
@@ -423,70 +440,94 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
 // The Send modal uses a WYSIWYG contentEditable rather than a textarea —
 // the user shouldn't have to look at raw HTML to tweak an email. The
 // body that gets STORED + SENT keeps placeholders intact ({{viewUrl}},
-// {{signature}}) so the backend can substitute per-recipient values.
-// The body that gets DISPLAYED has the signature substituted as a
-// non-editable marker block (so the user sees what the recipient sees
-// without being able to accidentally mangle the signature structure).
-// {{viewUrl}} stays inline in href attributes — invisible to the user
-// because it lives in attribute space, not text content.
+// {{signature}}, {{header}}) so the backend can substitute per-recipient
+// values. The body that gets DISPLAYED has signature and header
+// substituted as non-editable marker blocks (so the user sees what the
+// recipient sees without being able to accidentally mangle the
+// table-based structure). {{viewUrl}} stays inline in href attributes
+// — invisible to the user because it lives in attribute space, not
+// text content.
 //
-// `LTP_bodyToEditableHtml(rawBody, signatureTemplate)` — call when
-// opening the modal. Produces HTML safe to drop into a contentEditable.
+// `LTP_bodyToEditableHtml(rawBody, signatureTemplate, headerTemplate, headerVars)`
+//   — call when opening the modal. Produces HTML safe to drop into a
+//   contentEditable. headerVars is {viewUrl, refNumber, projectName,
+//   total} for the preview render; if missing the inner tokens stay
+//   literal (only matters in tests or call sites without entity context).
 //
 // `LTP_editableHtmlToBody(html)` — call on every input event. Reverses
-// the signature substitution so the stored body still has {{signature}}
-// for the backend to resolve.
+// both substitutions so the stored body still has {{signature}} +
+// {{header}} for the backend to resolve.
 //
-// The signature marker is a div with class="ltp-sig-block". Class is in
-// the email sanitizer allowlist; contenteditable is NOT (admin-authored
-// templates can't pre-mark blocks as non-editable). The editor component
-// re-applies contenteditable="false" via DOM API after setting innerHTML.
-window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate) {
+// MARKER WRAPPER: <section class="ltp-sig-block"> and <section
+// class="ltp-header-block">. We use <section> instead of <div> because
+// the inner template HTML for BOTH blocks contains <div>s — a non-greedy
+// /<div[^>]*class="ltp-sig-block"[^>]*>...<\/div>/ regex would match
+// the first inner </div> instead of the wrapper's close. <section> is
+// chosen because neither the signature template nor the header template
+// contains a <section> tag, so the non-greedy /<section[^>]*>...
+// <\/section>/ pattern matches exactly the wrapper. Both class and
+// section are in the email sanitizer allowlist; contenteditable is NOT
+// (admin-authored templates can't pre-mark blocks as non-editable). The
+// editor component re-applies contenteditable="false" via DOM API after
+// setting innerHTML.
+window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerTemplate, headerVars) {
   if (!rawBody) return "";
-  // 1. Paragraph-wrap FIRST, while the body still has {{signature}} as
-  //    a plain-text token. If we substituted signature first, the
-  //    rendered <table> would trigger textToHtml's block-detection
+  // 1. Paragraph-wrap FIRST, while the body still has placeholders as
+  //    plain-text tokens. If we substituted the blocks first, the
+  //    rendered <table>/<div> would trigger textToHtml's block-detection
   //    early and the surrounding plain-text paragraphs wouldn't get
   //    wrapped — collapsing all whitespace in the editor.
   var withParagraphs = window.LTP_textToHtml(String(rawBody));
-  // 2. NOW substitute {{signature}}. The table-based signature block is
-  //    block-level HTML; nesting it inside <p>...</p> produces invalid
-  //    markup (browsers auto-close the <p> at the first <table>, leaving
-  //    orphaned trailing text). We walk every <p>...</p> that contains
-  //    the placeholder and split it: text before → its own <p>, sig
-  //    block as a sibling, text after → its own <p>. Empty halves are
-  //    dropped so "<p>{{signature}}</p>" collapses to just the sig
-  //    block. Bare {{signature}} outside any <p> (admin template with
-  //    pre-authored block HTML) falls through to the final replace.
-  var sig = window.LTP_renderSignature(signatureTemplate || "");
-  var sigBlock = '<div class="ltp-sig-block">' + sig + '</div>';
-  var stripEnds = function(s) {
-    return s.replace(/^(?:\s|<br\s*\/?>)+/i, '').replace(/(?:\s|<br\s*\/?>)+$/i, '');
-  };
-  var withSig = withParagraphs.replace(/<p>([\s\S]*?)<\/p>/g, function(match, inner) {
-    if (inner.indexOf('{{signature}}') === -1) return match;
-    var pieces = inner.split('{{signature}}');
-    var out = [];
-    for (var i = 0; i < pieces.length; i++) {
-      var clean = stripEnds(pieces[i]);
-      if (clean) out.push('<p>' + clean + '</p>');
-      if (i < pieces.length - 1) out.push(sigBlock);
-    }
-    return out.join('\n');
-  }).replace(/\{\{signature\}\}/g, sigBlock);
+  // 2. Build the marker blocks.
+  var sigBlock = '<section class="ltp-sig-block">'
+    + window.LTP_renderSignature(signatureTemplate || "") + '</section>';
+  var headerBlock = '<section class="ltp-header-block">'
+    + window.LTP_renderHeader(headerTemplate || "", headerVars || {}) + '</section>';
+
+  // 3. Replace placeholders, splitting any surrounding <p> so the
+  //    block-level <section><table> isn't nested inside an inline <p>
+  //    (browsers would auto-close the <p> at the first <table>, leaving
+  //    orphaned trailing text). Empty halves are dropped so
+  //    "<p>{{token}}</p>" collapses to just the marker block.
+  function substitute(html, token, block) {
+    var stripEnds = function(s) {
+      return s.replace(/^(?:\s|<br\s*\/?>)+/i, '').replace(/(?:\s|<br\s*\/?>)+$/i, '');
+    };
+    return html.replace(/<p>([\s\S]*?)<\/p>/g, function(match, inner) {
+      if (inner.indexOf(token) === -1) return match;
+      var pieces = inner.split(token);
+      var out = [];
+      for (var i = 0; i < pieces.length; i++) {
+        var clean = stripEnds(pieces[i]);
+        if (clean) out.push('<p>' + clean + '</p>');
+        if (i < pieces.length - 1) out.push(block);
+      }
+      return out.join('\n');
+    }).split(token).join(block);  // catch any bare token outside <p>
+  }
+
+  // Order: header first (it goes at the top of the body), then signature.
+  // The order doesn't affect correctness — paragraphs are split
+  // independently — but it reads naturally top-down.
+  var withHeader = substitute(withParagraphs, '{{header}}', headerBlock);
+  var withSig = substitute(withHeader, '{{signature}}', sigBlock);
   return window.LTP_SANITIZE.emailHtml(withSig);
 };
 
 window.LTP_editableHtmlToBody = function(html) {
   if (!html) return "";
-  // Reverse the signature substitution. We accept either single OR
-  // double quoted class attribute (sanitizers and browsers can rewrite
-  // either) and we tolerate any additional attributes (e.g. the
-  // contenteditable="false" we add post-render).
-  return String(html).replace(
-    /<div\s[^>]*class\s*=\s*["']ltp-sig-block["'][^>]*>[\s\S]*?<\/div>/gi,
-    '{{signature}}'
-  );
+  // Reverse both marker substitutions. Tolerates single OR double
+  // quoted class attribute and any additional attributes (e.g.
+  // contenteditable="false" + inline styles added by the editor).
+  return String(html)
+    .replace(
+      /<section[^>]*class\s*=\s*["']ltp-header-block["'][^>]*>[\s\S]*?<\/section>/gi,
+      '{{header}}'
+    )
+    .replace(
+      /<section[^>]*class\s*=\s*["']ltp-sig-block["'][^>]*>[\s\S]*?<\/section>/gi,
+      '{{signature}}'
+    );
 };
 
 window.LTP_textToHtml = (function() {
