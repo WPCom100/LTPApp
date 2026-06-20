@@ -473,7 +473,8 @@
       // headerVars feed both the editor preview and the send-time
       // expansion in sendReceipt. viewUrl blank — backend resolves
       // per-recipient if the receipt body uses {{viewUrl}}.
-      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
+      // {{viewUrl}} stays literal — backend swaps in the per-recipient URL.
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total });
       setShowReceiptModal(true);
     }
 
@@ -587,7 +588,8 @@
       setSendCc(resolve(tmpl.cc || "", vars));
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
       setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nDue: {{dueDate}}\n\n{{signature}}", vars));
-      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
+      // {{viewUrl}} stays literal — backend swaps in the per-recipient URL.
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total });
       setShowSendModal(true);
     }
 

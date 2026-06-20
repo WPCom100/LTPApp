@@ -1151,8 +1151,9 @@
       setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find the attached quote {{refNumber}}.\n\n{{signature}}", vars));
       // headerVars feed both (a) the editor's preview render of the
       // {{header}} block and (b) the send-time expansion in executeSendQuote.
-      // viewUrl is left blank — backend resolves it per-recipient.
-      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, viewUrl: "" });
+      // {{viewUrl}} is NOT in here — it stays literal in the expanded
+      // header HTML so the backend can substitute the per-recipient URL.
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total });
       setShowSendModal(true);
     }
 

@@ -55,14 +55,15 @@ def _read(*parts):
         return f.read()
 
 
-# Python port of window.LTP_renderHeader for testing.
+# Python port of window.LTP_renderHeader for testing. {{viewUrl}} is
+# NOT substituted here — it stays literal so the backend's per-recipient
+# substitution chain can resolve it after the body reaches the server.
 def _py_render_header(template, vars):
     if not template:
         return ""
     vars = vars or {}
     return (
         template
-        .replace("{{viewUrl}}", vars.get("viewUrl", "") or "")
         .replace("{{refNumber}}", vars.get("refNumber", "") or "")
         .replace("{{projectName}}", vars.get("projectName", "") or "")
         .replace("{{total}}", vars.get("total", "") or "")
@@ -186,27 +187,44 @@ def test_backend_fallback_header_substring_pinned():
                needle in _FALLBACK_HEADER and needle in js_template)
 
 
-def test_render_header_substitutes_all_per_entity_tokens():
-    """LTP_renderHeader (frontend) and the test port must substitute
-    every per-entity token. Tested via the Python port for parity
-    with the JS one."""
-    print("test_render_header_substitutes_all_per_entity_tokens")
+def test_render_header_substitutes_per_entity_tokens_only():
+    """LTP_renderHeader substitutes ONLY the per-entity tokens
+    ({{refNumber}}, {{projectName}}, {{total}}). {{viewUrl}} stays
+    literal so the backend's per-recipient chain can swap in the
+    real URL — substituting client-side would either produce a dead
+    href="" (the bug commit 5.1 fixes) or a non-tracking URL."""
+    print("test_render_header_substitutes_per_entity_tokens_only")
     from backend.routes.email import _FALLBACK_HEADER
     vars = {
-        "viewUrl": "https://ltp.example/#/view/quote/abc?r=xyz",
         "refNumber": "QT-2026-007",
         "projectName": "Spring Showcase",
         "total": "$1,234.00",
     }
     out = _py_render_header(_FALLBACK_HEADER, vars)
-    _check("no {{viewUrl}} left after substitution", "{{viewUrl}}" not in out)
     _check("no {{refNumber}} left", "{{refNumber}}" not in out)
     _check("no {{projectName}} left", "{{projectName}}" not in out)
     _check("no {{total}} left", "{{total}}" not in out)
-    _check("real viewUrl present", vars["viewUrl"] in out)
     _check("real refNumber present", "QT-2026-007" in out)
     _check("real projectName present", "Spring Showcase" in out)
     _check("real total present", "$1,234.00" in out)
+    # The critical assertion: {{viewUrl}} is preserved for the backend.
+    _check("{{viewUrl}} stays literal — backend resolves it per-recipient",
+           'href="{{viewUrl}}"' in out,
+           "renderHeader must NOT substitute {{viewUrl}} or the "
+           "View button arrives with an empty href")
+
+
+def test_render_header_ignores_viewUrl_var_if_passed():
+    """Defensive: even if a caller passes a viewUrl in vars (e.g.
+    accidentally re-introducing the bug), the function MUST NOT
+    substitute it. Backend is the single source of per-recipient URLs."""
+    print("test_render_header_ignores_viewUrl_var_if_passed")
+    from backend.routes.email import _FALLBACK_HEADER
+    out = _py_render_header(_FALLBACK_HEADER, {"viewUrl": "https://attacker.example/"})
+    _check("attacker-controlled viewUrl is NOT substituted",
+           "https://attacker.example/" not in out)
+    _check("{{viewUrl}} still literal in output",
+           'href="{{viewUrl}}"' in out)
 
 
 def test_render_header_handles_empty_template():
@@ -416,7 +434,8 @@ def main() -> int:
     test_crew_templates_have_no_header()
     test_available_variables_list_includes_header()
     test_backend_fallback_header_substring_pinned()
-    test_render_header_substitutes_all_per_entity_tokens()
+    test_render_header_substitutes_per_entity_tokens_only()
+    test_render_header_ignores_viewUrl_var_if_passed()
     test_render_header_handles_empty_template()
     test_bleach_preserves_header_structure()
     test_bleach_strips_disallowed_attrs_from_header()

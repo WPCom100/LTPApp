@@ -402,18 +402,19 @@ window.LTP_renderSignature = function(template) {
     .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK);
 };
 
-// Render the {{header}} placeholder for the Send-modal preview. The
-// header template has four per-entity placeholders that the backend
-// resolves at send time; we substitute them here too so the user sees
-// the actual ref/project/total in the preview (not literal {{refNumber}}
-// strings). {{viewUrl}} is left blank in editor preview because the
-// real one is per-recipient — same pattern as how the body's inline
-// <a href="{{viewUrl}}"> works.
+// Render the {{header}} placeholder for the Send-modal preview AND
+// for send-time expansion. Substitutes the per-entity tokens
+// ({{refNumber}}, {{projectName}}, {{total}}) so the user sees real
+// values in the preview AND the expanded HTML carries them to the
+// backend. {{viewUrl}} is INTENTIONALLY left literal: it's per-
+// recipient (each To/CC gets a different tracking_token) and only the
+// backend knows the token. The expanded header reaches backend with
+// href="{{viewUrl}}" still literal, the backend's per-recipient
+// substitution chain swaps in the real URL just before the wire.
 window.LTP_renderHeader = function(template, vars) {
   if (!template) return "";
   vars = vars || {};
   return template
-    .replace(/\{\{viewUrl\}\}/g, vars.viewUrl || "")
     .replace(/\{\{refNumber\}\}/g, vars.refNumber || "")
     .replace(/\{\{projectName\}\}/g, vars.projectName || "")
     .replace(/\{\{total\}\}/g, vars.total || "");

@@ -84,14 +84,14 @@ def py_render_signature(template, name="Sarah", email="sarah@x.com",
 
 def py_render_header(template, vars):
     """Python port of window.LTP_renderHeader. Substitutes per-entity
-    placeholders in the customer-facing header HTML. Mirrors what the
-    Send modal does at editor-render time and at executeSendQuote time."""
+    placeholders ONLY ({{refNumber}}, {{projectName}}, {{total}}).
+    {{viewUrl}} stays literal so the backend's per-recipient chain can
+    resolve it after the body reaches the server."""
     if not template:
         return ""
     vars = vars or {}
     return (
         template
-        .replace("{{viewUrl}}", vars.get("viewUrl", "") or "")
         .replace("{{refNumber}}", vars.get("refNumber", "") or "")
         .replace("{{projectName}}", vars.get("projectName", "") or "")
         .replace("{{total}}", vars.get("total", "") or "")
