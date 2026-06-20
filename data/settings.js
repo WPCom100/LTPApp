@@ -53,15 +53,23 @@ window.LTP_DATA_SETTINGS = {
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
 
   // Email — company-level outbound config (admin-edited).
-  // Personal per-user signatures can come later via a user_preferences column.
   emailFrom: "",
   emailReplyTo: "",
+
+  // Workspace-wide signature template. Renders per-user when a body uses
+  // the {{signature}} placeholder: backend substitutes {{userName}},
+  // {{userEmail}}, {{userTitle}}, {{userPhone}} against the sender's User
+  // row. Admin edits this in Settings.
+  //
+  // Default uses simple inline HTML — no <style> blocks, since most mail
+  // clients strip them. Inline `style="..."` survives.
+  emailSignatureTemplate: '<p style="margin-top:24px;color:#5b6770">— {{userName}}<br>{{userTitle}}<br>{{userPhone}}<br><a href="mailto:{{userEmail}}">{{userEmail}}</a></p>',
 
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
   //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}},
   //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
-  //            {{quoteValidity}}
+  //            {{quoteValidity}}, {{viewUrl}}
   emailTemplates: {
     quoteSent: {
       label: "Quote Sent",

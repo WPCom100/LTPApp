@@ -51,8 +51,65 @@
     return window.DOMPurify.sanitize(String(input), CONFIG);
   }
 
+  // ─── Email allowlist ────────────────────────────────────────────────────
+  // Separate, broader allowlist for email TEMPLATES and email BODIES — admins
+  // paste templates from marketing tools (Mailchimp, Stripo) that rely on
+  // tables for layout, inline styles for typography, and anchors for the
+  // {{viewUrl}} button. This needs to MIRROR backend/sanitize.py's
+  // ALLOWED_TAGS + ALLOWED_ATTRIBUTES exactly — otherwise the live preview
+  // in the Send modal renders something different from what actually goes
+  // out to the recipient, defeating the point of a preview.
+  //
+  // Used by:
+  //   - Settings page email-template editor (preview pane)
+  //   - Send modal body preview (commit 5)
+  //   - Send modal signature template render
+  //
+  // NOT used by the rich-text editor — that stays on the narrow .html()
+  // path because it only produces a tiny subset.
+  var EMAIL_ALLOWED_TAGS = [
+    "b", "i", "u", "strong", "em", "span", "br", "small", "sub", "sup",
+    "p", "div", "h1", "h2", "h3", "h4", "blockquote", "hr",
+    "ul", "ol", "li",
+    "table", "thead", "tbody", "tfoot", "tr", "th", "td",
+    "a", "img",
+  ];
+  // DOMPurify takes ALLOWED_ATTR as a flat list (not per-tag); the resulting
+  // permission is "this attr may appear on any tag in ALLOWED_TAGS." That's
+  // looser than the backend's per-tag map but acceptable for a PREVIEW
+  // surface — the backend remains authoritative at save and send time, so
+  // any attribute drift gets normalized server-side.
+  var EMAIL_ALLOWED_ATTR = [
+    "class", "style", "title", "align",
+    "href", "target", "rel",
+    "src", "alt", "width", "height",
+    "colspan", "rowspan", "valign", "scope",
+    "border", "cellpadding", "cellspacing",
+  ];
+  var EMAIL_CONFIG = {
+    ALLOWED_TAGS: EMAIL_ALLOWED_TAGS,
+    ALLOWED_ATTR: EMAIL_ALLOWED_ATTR,
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
+    KEEP_CONTENT: true,
+    ALLOW_DATA_ATTR: false,
+    USE_PROFILES: { html: true },
+  };
+
+  function emailHtml(input) {
+    if (input == null) return "";
+    if (!window.DOMPurify) {
+      console.error("[LTP] DOMPurify not loaded — falling back to text-only render");
+      var tmp = document.createElement("div");
+      tmp.textContent = String(input);
+      return tmp.innerHTML;
+    }
+    return window.DOMPurify.sanitize(String(input), EMAIL_CONFIG);
+  }
+
   window.LTP_SANITIZE = {
     html: html,
-    ALLOWED_TAGS: ALLOWED_TAGS.slice(),  // expose for diagnostics
+    emailHtml: emailHtml,
+    ALLOWED_TAGS: ALLOWED_TAGS.slice(),                  // diagnostics
+    EMAIL_ALLOWED_TAGS: EMAIL_ALLOWED_TAGS.slice(),      // diagnostics
   };
 })();

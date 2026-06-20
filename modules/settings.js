@@ -19,8 +19,56 @@
     var [saved, setSaved] = useState(false);
     var [dlg, setDlg] = useState(null);
     var cleanRef = useRef(settings);
+    // Team Members section — fetched from /api/users (admin-only on the
+    // backend so a non-admin reaching this view sees a graceful empty list
+    // + a 403 message, not a crash). users is null while loading, [] for
+    // empty, otherwise an array of user dicts.
+    var [users, setUsers] = useState(null);
+    var [usersErr, setUsersErr] = useState(null);
 
     useEffect(function() { setDraft(Object.assign({}, settings)); cleanRef.current = settings; setIsDirty(false); }, []);
+
+    function loadUsers() {
+      fetch("/api/users")
+        .then(function(r) {
+          if (r.status === 403) { setUsers([]); setUsersErr("Admin access required to manage team members."); return null; }
+          if (!r.ok) throw new Error("HTTP " + r.status);
+          return r.json();
+        })
+        .then(function(data) { if (data) { setUsers(data); setUsersErr(null); } })
+        .catch(function(e) { setUsers([]); setUsersErr("Could not load users: " + String(e.message || e)); });
+    }
+    useEffect(loadUsers, []);
+
+    function patchUser(userId, patch) {
+      // Optimistic update — apply the patch locally so the UI doesn't feel
+      // laggy, then reconcile with the server response. On error, reload
+      // the canonical list so the optimistic change doesn't stick.
+      setUsers(function(prev) {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(function(u) { return u.id === userId ? Object.assign({}, u, patch) : u; });
+      });
+      fetch("/api/users/" + userId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      })
+        .then(function(r) {
+          if (!r.ok) return r.json().then(function(err) { throw new Error(err.detail && err.detail.reason ? err.detail.reason : "HTTP " + r.status); });
+          return r.json();
+        })
+        .then(function(saved) {
+          setUsers(function(prev) {
+            if (!Array.isArray(prev)) return prev;
+            return prev.map(function(u) { return u.id === userId ? saved : u; });
+          });
+          setUsersErr(null);
+        })
+        .catch(function(e) {
+          setUsersErr("Save failed: " + String(e.message || e));
+          loadUsers();  // reload to drop the stale optimistic patch
+        });
+    }
 
     function set(key, val) {
       setDraft(function(d) { var n = Object.assign({}, d); n[key] = val; return n; });
@@ -248,6 +296,109 @@
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } }),
           h(window.LTPInput, { label: "Reply-To Email", value: draft.emailReplyTo || "", onChange: function(v) { set("emailReplyTo", v); }, type: "email",
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } })
+        )
+      ),
+
+      // ── Email Signature Template ───────────────────────────────────────────
+      // Single workspace-wide HTML template. The send pipeline substitutes
+      // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}} against the
+      // sender's User row when an email body contains {{signature}}. Stored
+      // pre-sanitized server-side (PUT /api/settings runs email_html on it).
+      h("div", { style: sectionStyle },
+        h("div", { style: sectionTitle }, "Email Signature Template"),
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+          "HTML signature rendered per-user when a template body uses ",
+          h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{signature}}"),
+          ". Per-user values come from each team member's Title and Phone (edit below)."),
+        h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 10, border: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+            ["userName", "userEmail", "userTitle", "userPhone"].map(function(v) {
+              return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
+            }))
+        ),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+          // Left: raw HTML textarea
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "HTML"),
+            h("textarea", { value: draft.emailSignatureTemplate || "",
+              onChange: function(e) { set("emailSignatureTemplate", e.target.value); },
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "monospace", outline: "none", resize: "vertical", lineHeight: 1.5 } })
+          ),
+          // Right: sanitized preview rendered with placeholder values so the
+          // admin sees what a real send will look like
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview (sample values)"),
+            h("div", {
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
+              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(
+                (draft.emailSignatureTemplate || "")
+                  .replace(/\{\{userName\}\}/g, "Sarah Chen")
+                  .replace(/\{\{userTitle\}\}/g, "Production Manager")
+                  .replace(/\{\{userPhone\}\}/g, "(555) 123-4567")
+                  .replace(/\{\{userEmail\}\}/g, "sarah@example.com")
+              ) }
+            })
+          )
+        )
+      ),
+
+      // ── Team Members ───────────────────────────────────────────────────────
+      // Admin-only roster of users who have signed in. Editable: title,
+      // phone, role. Identity fields (name/email/picture) come from Google
+      // and refresh on every login — not editable here. Self-demotion is
+      // blocked server-side.
+      h("div", { style: sectionStyle },
+        h("div", { style: sectionTitle }, "Team Members"),
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+          "Title and Phone feed the email signature template above. Role changes take effect on the user's next request — they don't need to sign out."),
+        usersErr && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 10 } }, usersErr),
+        users === null && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Loading team members…"),
+        Array.isArray(users) && users.length === 0 && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No team members yet."),
+        // Team Members rows use raw <input> / <select> instead of LTPInput /
+        // LTPSelect deliberately: LTPInput renders an above-the-field label
+        // wrapper, which would break the single-row grid alignment. Raw
+        // controls keep all five cells on the same visual baseline.
+        Array.isArray(users) && users.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          users.map(function(u) {
+            return h("div", { key: u.id,
+              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 12px", display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 0.8fr", gap: 8, alignItems: "center" } },
+              // Identity (read-only)
+              h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0 } },
+                h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
+                h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
+                u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
+              ),
+              // Title (editable, debounce-on-blur)
+              h("input", { type: "text", value: u.title || "", placeholder: "Title",
+                onChange: function(e) {
+                  var v = e.target.value;
+                  setUsers(function(prev) { return prev.map(function(x) { return x.id === u.id ? Object.assign({}, x, { title: v }) : x; }); });
+                },
+                onBlur: function(e) { patchUser(u.id, { title: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
+              }),
+              // Phone (editable, debounce-on-blur)
+              h("input", { type: "text", value: u.phone || "", placeholder: "Phone",
+                onChange: function(e) {
+                  var v = e.target.value;
+                  setUsers(function(prev) { return prev.map(function(x) { return x.id === u.id ? Object.assign({}, x, { phone: v }) : x; }); });
+                },
+                onBlur: function(e) { patchUser(u.id, { phone: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
+              }),
+              // Role (editable, save on change)
+              h("select", { value: u.role || "member",
+                onChange: function(e) { patchUser(u.id, { role: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } },
+                h("option", { value: "member" }, "Member"),
+                h("option", { value: "admin" }, "Admin")
+              ),
+              // Last login (read-only display, helps admins spot stale accounts)
+              h("div", { style: { fontSize: "10px", color: B.textMut, textAlign: "right", whiteSpace: "nowrap" } },
+                u.lastLogin ? "Last seen " + u.lastLogin.substring(0, 10) : "Never signed in")
+            );
+          })
         )
       ),
 

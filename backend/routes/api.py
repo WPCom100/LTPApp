@@ -4,6 +4,7 @@ from sqlalchemy import select, delete
 from backend.database import get_db
 from backend import models
 from backend.auth_deps import require_session, require_admin
+from backend.sanitize import email_html
 from backend.validators import validate
 
 
@@ -239,7 +240,19 @@ async def get_settings(db: AsyncSession = Depends(get_db)):
 async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
     """Shallow-merge update. Incoming top-level keys overwrite; existing keys
     not present in the payload are preserved. Admin-only — non-admins get 403.
-    To delete a key, send it explicitly as null."""
+    To delete a key, send it explicitly as null.
+
+    Sanitizes `emailSignatureTemplate` server-side if present. Defense in
+    depth: the frontend editor already renders a sanitized preview, and the
+    send pipeline sanitizes at send time, but storing pre-sanitized HTML
+    means a future surface that reads the template without sanitizing can't
+    accidentally render an XSS payload. Idempotent — re-sanitizing a clean
+    string is a no-op."""
+    # Sanitize the email signature template BEFORE merging into storage. The
+    # admin authoring it gets the original-vs-sanitized diff visible in their
+    # preview pane (commit 4 wires that on the frontend).
+    if "emailSignatureTemplate" in data and data["emailSignatureTemplate"]:
+        data["emailSignatureTemplate"] = email_html(data["emailSignatureTemplate"])
     result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
     row = result.scalar_one_or_none()
     if not row:
@@ -251,6 +264,105 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
         row.data = merged
     await db.flush()
     return row.data
+
+
+# ── Users (admin-only management of team-member title/phone) ──────────────
+#
+# The User row is created automatically on first sign-in via Google OAuth;
+# identity (name/email/picture) is sourced from Google and refreshed on every
+# login. The only fields the admin edits in-app are:
+#   - title  (job title — feeds {{userTitle}} in the email signature template)
+#   - phone  (direct line — feeds {{userPhone}})
+#   - role   (member ↔ admin promotion)
+# Everything else (gmail_*, google_sub, last_login, created_at) is internal
+# state we deliberately do NOT expose for editing.
+
+_USER_EDITABLE_FIELDS = {"title", "phone", "role"}
+_VALID_ROLES = {"member", "admin"}
+
+
+def _user_dict(u: models.User) -> dict:
+    """Public-safe User dict for the admin user-list. Drops the OAuth token
+    columns (refresh_token / access_token) so a 'list users' response never
+    leaks credentials over the wire even to other admins. gmailConnected is
+    a derived boolean — the underlying ciphertext stays server-side."""
+    if u is None:
+        return {}
+    granted_scopes = (u.gmail_granted_scopes or "").split()
+    return {
+        "id": u.id,
+        "email": u.email,
+        "name": u.name,
+        "pictureUrl": u.picture_url,
+        "role": u.role,
+        "title": u.title or "",
+        "phone": u.phone or "",
+        "gmailConnected": bool(u.gmail_refresh_token),
+        "gmailScope": "send" if "https://www.googleapis.com/auth/gmail.send" in granted_scopes else "none",
+        "lastLogin": u.last_login.isoformat() if u.last_login else None,
+    }
+
+
+@router.get("/users", dependencies=[Depends(require_admin)])
+async def list_users(db: AsyncSession = Depends(get_db)):
+    """Admin-only. Returns every user in the workspace. Used by the Settings
+    page's Team Members section to drive the title/phone editor + role
+    management UI."""
+    result = await db.execute(select(models.User).order_by(models.User.id))
+    return [_user_dict(u) for u in result.scalars().all()]
+
+
+@router.put("/users/{user_id}", dependencies=[Depends(require_admin)])
+async def update_user(
+    user_id: int,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    actor: models.User = Depends(require_admin),
+):
+    """Admin-only patch. Updates ONLY the fields in _USER_EDITABLE_FIELDS;
+    silently ignores anything else (so a frontend that accidentally PUTs
+    the whole user dict doesn't try to overwrite email/name/picture/etc.).
+
+    Two safety rails on top of the whitelist:
+      - `role` must be one of {member, admin}.
+      - The acting admin cannot demote THEMSELVES from admin → member; doing
+        so would lock the workspace out if they're the only admin. Demoting
+        OTHER admins is fine."""
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+
+    # Track whether anything actually changed so we can skip the flush/refresh
+    # roundtrip when the client sends an empty body or only non-editable keys.
+    changed = False
+    for key, val in data.items():
+        if key not in _USER_EDITABLE_FIELDS:
+            continue
+        if key == "role":
+            if val not in _VALID_ROLES:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"field": "role", "reason": f"must be one of {sorted(_VALID_ROLES)}"},
+                )
+            if target.id == actor.id and val != "admin":
+                raise HTTPException(
+                    status_code=400,
+                    detail={"field": "role", "reason": "cannot demote yourself; ask another admin"},
+                )
+            target.role = val
+            changed = True
+        elif key == "title":
+            target.title = (val or "").strip() or None
+            changed = True
+        elif key == "phone":
+            target.phone = (val or "").strip() or None
+            changed = True
+
+    if changed:
+        await db.flush()
+        await db.refresh(target)
+    return _user_dict(target)
 
 
 # ── Bulk sync (one-shot localStorage → server migration) ─────────────────
