@@ -24,14 +24,16 @@ import asyncio
 import io
 import re
 import secrets as _secrets
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Literal, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import models
+from backend import models, view_tracking
+from backend.auth_deps import get_optional_user
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
 from backend.routes._shared import (
@@ -39,6 +41,20 @@ from backend.routes._shared import (
     load_related, load_settings,
     public_section_items, public_activity, public_settings,
 )
+
+
+# Activity entry ID prefixes — surfaced as constants so a quick grep tells
+# you where each shape comes from. RO/CV/RP/CP are paired by action ×
+# attribution: (recipient|client) × (open|pdf-download). The trailing
+# token_urlsafe(6) keeps entries globally unique within an entity's feed.
+_ID_PREFIX_RECIPIENT_OPENED = "ro-"
+_ID_PREFIX_CLIENT_VIEWED = "cv-"
+_ID_PREFIX_RECIPIENT_PDF = "rp-"
+_ID_PREFIX_CLIENT_PDF = "cp-"
+
+# action argument vocabulary for _record_open / _stamp_tracked_open
+_TrackAction = Literal["view", "pdf"]
+_TrackedEntity = Union[models.Quote, models.Invoice]
 
 
 # Public — no session dependency. Token is the credential.
@@ -94,13 +110,159 @@ def _sanitized_payload(kind: str, entity, company, contact, project, settings) -
     }
 
 
+# ── Activity stamping for view / PDF tracking ─────────────────────────────
+
+
+def _stamp_tracked_open(
+    *, entity: _TrackedEntity, kind: str, recipient: models.EmailRecipient | None,
+    ip: str, ua: str, action: _TrackAction, now: datetime,
+) -> dict:
+    """Append a tracking activity entry to the entity's activity log.
+
+    `action` is one of {"view", "pdf"} — drives which type values get used:
+      - view + recipient → recipient_opened
+      - view + no recipient → client_viewed
+      - pdf + recipient → recipient_downloaded_pdf
+      - pdf + no recipient → client_downloaded_pdf
+
+    None of the tracking types are in PUBLIC_TYPES — they're internal
+    audit only, never echoed back at the client through the sanitized
+    view payload."""
+    if action == "view":
+        type_ = "recipient_opened" if recipient else "client_viewed"
+        verb = "opened"
+    else:  # pdf
+        type_ = "recipient_downloaded_pdf" if recipient else "client_downloaded_pdf"
+        verb = "downloaded PDF"
+
+    if recipient:
+        actor_label = recipient.recipient_email
+        message = f"{kind.title()} {verb} by {recipient.recipient_email}"
+    else:
+        actor_label = "Anonymous viewer"
+        message = f"{kind.title()} {verb} (anonymous link)"
+
+    changes = []
+    if recipient:
+        changes.append({"cat": "Recipient", "detail": recipient.recipient_email})
+    if ip and ip != "unknown":
+        changes.append({"cat": "IP", "detail": ip})
+    if ua:
+        changes.append({"cat": "User-Agent", "detail": ua})
+
+    if action == "view":
+        prefix = _ID_PREFIX_RECIPIENT_OPENED if recipient else _ID_PREFIX_CLIENT_VIEWED
+    else:  # pdf
+        prefix = _ID_PREFIX_RECIPIENT_PDF if recipient else _ID_PREFIX_CLIENT_PDF
+    entry = {
+        "id": prefix + _secrets.token_urlsafe(6),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "type": type_,
+        "user": actor_label,
+        "userId": None,
+        "message": message,
+        "changes": changes,
+    }
+    entity.activity = list(entity.activity or []) + [entry]
+    flag_modified(entity, "activity")
+    return entry
+
+
+def _bump_recipient_open(recipient: models.EmailRecipient, now: datetime) -> None:
+    """Update open_count + last_opened_at on an EmailRecipient row.
+    Sets first_opened_at if it was null."""
+    recipient.open_count = (recipient.open_count or 0) + 1
+    recipient.last_opened_at = now
+    if recipient.first_opened_at is None:
+        recipient.first_opened_at = now
+
+
+def _bump_recipient_pdf(recipient: models.EmailRecipient, now: datetime) -> None:
+    """Record pdf_downloaded_at if null (first download wins). Subsequent
+    PDF downloads by the same recipient don't overwrite the first
+    download timestamp — first download is the meaningful signal."""
+    if recipient.pdf_downloaded_at is None:
+        recipient.pdf_downloaded_at = now
+
+
+async def _record_open(
+    *, db: AsyncSession, entity: _TrackedEntity, kind: str, request: Request,
+    optional_user: models.User | None, action: _TrackAction,
+) -> None:
+    """Run the 7-step gate; if it passes, look up the optional ?r=
+    recipient and stamp the appropriate activity entry.
+
+    Wrapped in try/except: tracking failures must NEVER break the view
+    render or the PDF download. We log and move on."""
+    try:
+        now = datetime.now(timezone.utc)
+        tracking_token = request.query_params.get("r")
+
+        recipient = None
+        if tracking_token:
+            recipient = await view_tracking.lookup_recipient(
+                db, tracking_token, kind, entity.id,
+            )
+
+        # Debounce key: separates per-recipient tracking from anonymous
+        # views so each recipient gets ~one entry per 24h, AND the
+        # anonymous slot also gets ~one entry per 24h. Without this
+        # split, a recipient open within 24h of an anonymous open (or
+        # vice versa) would suppress the second entry incorrectly.
+        if recipient is not None:
+            debounce_key = (kind, entity.id, action, "r", tracking_token)
+        else:
+            debounce_key = (kind, entity.id, action, "anon")
+
+        should_log = view_tracking.should_log_view(
+            request=request,
+            optional_user=optional_user,
+            entity_activity=entity.activity,
+            debounce_seen=request.app.state.client_view_seen,
+            debounce_key=debounce_key,
+            now=now,
+        )
+        if not should_log:
+            return
+
+        ip, ua = view_tracking.extract_client_meta(request)
+        _stamp_tracked_open(
+            entity=entity, kind=kind, recipient=recipient,
+            ip=ip, ua=ua, action=action, now=now,
+        )
+        if recipient is not None:
+            if action == "view":
+                _bump_recipient_open(recipient, now)
+            else:
+                _bump_recipient_pdf(recipient, now)
+        await db.flush()
+    except Exception as e:
+        # Never let tracking break the render. Log loudly so ops can
+        # diagnose if the activity feed goes mysteriously quiet.
+        print(f"[LTP] view_tracking: open-record failed for "
+              f"{kind} {getattr(entity, 'id', '?')}: {e!r}", flush=True)
+
+
 # ── GET /api/view/{token} ─────────────────────────────────────────────────
 
 @view_router.get("/{token}")
-async def get_view(token: str, db: AsyncSession = Depends(get_db)):
+async def get_view(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    optional_user: models.User | None = Depends(get_optional_user),
+):
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    # Track the open BEFORE building the response so the new activity
+    # entry (if we stamp one) is visible in this same payload — the
+    # client view's "Status" / "Activity" badges reflect immediately.
+    await _record_open(
+        db=db, entity=row, kind=kind, request=request,
+        optional_user=optional_user, action="view",
+    )
     company, contact, project = await load_related(
         db, row.company_id, row.client_contact_id, row.project_id
     )
@@ -220,14 +382,28 @@ async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db
 # ── GET /api/view/{token}/pdf ─────────────────────────────────────────────
 
 @view_router.get("/{token}/pdf")
-async def get_view_pdf(token: str, db: AsyncSession = Depends(get_db)):
+async def get_view_pdf(
+    token: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    optional_user: models.User | None = Depends(get_optional_user),
+):
     """Fresh-generate a PDF on the fly for the public client view. Not
     archived (the archive flow is for LTP-user-initiated downloads — this
     is the client just clicking 'Download PDF' on the view page; the
-    bytes always reflect the latest live state, not a frozen snapshot)."""
+    bytes always reflect the latest live state, not a frozen snapshot).
+
+    Same 7-step view-tracking gate as the JSON GET — a real PDF download
+    by a recipient stamps `recipient_downloaded_pdf` + bumps
+    `pdf_downloaded_at` on the EmailRecipient row. Anonymous downloads
+    stamp `client_downloaded_pdf`."""
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    await _record_open(
+        db=db, entity=row, kind=kind, request=request,
+        optional_user=optional_user, action="pdf",
+    )
     entity_dict = quote_dict(row) if kind == "quote" else invoice_dict(row)
     company, contact, project = await load_related(
         db, row.company_id, row.client_contact_id, row.project_id

@@ -169,7 +169,16 @@ async def generate_invoice_pdf(
 @public_pdf_router.get("/{token}")
 async def download_pdf(token: str, db: AsyncSession = Depends(get_db)):
     """Token-authenticated download. No session required — the token IS the
-    credential. Tokens are 256-bit random; brute-forcing is infeasible."""
+    credential. Tokens are 256-bit random; brute-forcing is infeasible.
+
+    NOT view-tracked (in contrast with /api/view/{token}/pdf which IS).
+    Why: the PdfArchive token is minted when an LTP user clicks "Generate
+    PDF" from inside the app, and the resulting URL is primarily for that
+    LTP user to redownload the snapshot from their entity's activity feed.
+    Outbound emails to clients embed the LIVE /api/view/{token}/pdf URL
+    (see backend/routes/email.py), not the archive URL. Logging
+    client_downloaded_pdf entries here would just record the LTP user
+    redownloading their own historical generations — noise, not signal."""
     r = await db.execute(select(models.PdfArchive).where(models.PdfArchive.token == token))
     row = r.scalar_one_or_none()
     if row is None:

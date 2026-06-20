@@ -349,18 +349,35 @@
   window.LTPClientView = function(props) {
     var token = props.route && props.route.id;
     var isPreview = props.route && props.route.query && props.route.query.preview === "1";
+    // Per-recipient tracking token. Embedded in URLs the server sends
+    // out via /api/email/send; absent for share-link-via-copy-paste opens.
+    // We forward it verbatim to the backend so it can stamp
+    // `recipient_opened` instead of anonymous `client_viewed`. The
+    // PDF download URL below also carries it.
+    var trackingToken = props.route && props.route.query && props.route.query.r;
 
     var [data, setData] = useState(null);
     var [loadErr, setLoadErr] = useState(null);
     var [showAccept, setShowAccept] = useState(false);
     var [showDecline, setShowDecline] = useState(false);
 
+    function _buildTrackingQs() {
+      // Build a query string carrying the tracking token (if any) AND
+      // the preview flag (if set). Backend reads preview to skip the
+      // log-stamping gate so an LTP user clicking Preview doesn't
+      // pollute the activity feed.
+      var parts = [];
+      if (trackingToken) parts.push("r=" + encodeURIComponent(trackingToken));
+      if (isPreview) parts.push("preview=1");
+      return parts.length ? "?" + parts.join("&") : "";
+    }
+
     function reload() {
       if (!token) {
         setLoadErr("No share token in URL.");
         return;
       }
-      fetch("/api/view/" + token)
+      fetch("/api/view/" + token + _buildTrackingQs())
         .then(function(r) {
           if (r.status === 404) throw new Error("This quote link is invalid or has been removed.");
           if (!r.ok) throw new Error("Server returned " + r.status);
@@ -411,7 +428,11 @@
     }).slice(-1)[0];
 
     function downloadPdf() {
-      window.location.href = "/api/view/" + token + "/pdf";
+      // Carry the tracking + preview flags so the backend can stamp
+      // `recipient_downloaded_pdf` instead of anonymous `client_downloaded_pdf`,
+      // and so an LTP user clicking download from Preview mode doesn't
+      // pollute the activity feed.
+      window.location.href = "/api/view/" + token + "/pdf" + _buildTrackingQs();
     }
 
     var BLUE_OUT = "#233038";

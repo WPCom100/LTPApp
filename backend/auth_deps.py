@@ -75,3 +75,44 @@ async def require_admin(
             detail="Admin role required",
         )
     return user
+
+
+async def get_optional_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> models.User | None:
+    """Non-raising session probe. Returns the User row if the request carries
+    a valid `ltp_session` cookie; returns None for missing/expired/unknown
+    sessions.
+
+    Used by public token-authenticated routes (view.py, pdf.py) that don't
+    require a session but DO want to know "is this internal-LTP-user
+    viewing the link, or an actual client?" — so they can suppress
+    client_viewed activity entries when an LTP user opens the share URL
+    (e.g. via the Preview button).
+
+    The session lookup mirrors require_session's body intentionally — the
+    extra few lines beat extracting a shared helper and then importing it
+    in two places. Anything that changes the session model should be
+    reviewed against BOTH this function and require_session."""
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+
+    result = await db.execute(
+        select(models.Session, models.User)
+        .join(models.User, models.Session.user_id == models.User.id)
+        .where(models.Session.id == token)
+    )
+    row = result.first()
+    if not row:
+        return None
+
+    session, user = row
+    expires = session.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= datetime.now(timezone.utc):
+        return None
+
+    return user

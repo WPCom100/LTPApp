@@ -63,6 +63,13 @@ async def _session_sweeper_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # In-memory debounce dict for the public view route. Keys are
+    # (entity_kind, entity_id, debounce_key) tuples; values are the
+    # most-recent view timestamp. backend/view_tracking.py manages reads
+    # and writes; we just initialize the slot here. See its DEBOUNCE_WINDOW
+    # constant for the TTL. Lost on pod restart — acceptable for audit
+    # purposes (worst case: one extra log entry per token per pod reboot).
+    app.state.client_view_seen = {}
     sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
     try:
         yield
