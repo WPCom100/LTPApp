@@ -301,7 +301,7 @@
 
       // ── Email Signature Template ───────────────────────────────────────────
       // Single workspace-wide HTML template. The send pipeline substitutes
-      // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}} against the
+      // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}}/{{userPhoto}} against the
       // sender's User row when an email body contains {{signature}}. Stored
       // pre-sanitized server-side (PUT /api/settings runs email_html on it).
       h("div", { style: sectionStyle },
@@ -313,7 +313,7 @@
         h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 10, border: "1px solid " + B.border } },
           h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
           h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-            ["userName", "userEmail", "userTitle", "userPhone"].map(function(v) {
+            ["userName", "userEmail", "userTitle", "userPhone", "userPhoto"].map(function(v) {
               return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
             }))
         ),

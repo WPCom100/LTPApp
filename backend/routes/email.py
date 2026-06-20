@@ -123,7 +123,8 @@ def _render_signature(
 ) -> str:
     """Apply the workspace signature template against the sender's profile.
     Returns the rendered HTML (or empty string if no template configured).
-    Substitutes {{userName}}, {{userEmail}}, {{userTitle}}, {{userPhone}}.
+    Substitutes {{userName}}, {{userEmail}}, {{userTitle}}, {{userPhone}},
+    {{userPhoto}}.
     User fields are HTML-escaped BEFORE substitution as defense in depth
     — the email body goes through bleach sanitization downstream too,
     but escaping here ensures a future refactor that drops one of those
