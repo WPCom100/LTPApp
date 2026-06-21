@@ -294,7 +294,15 @@
     }
 
     function cloneInvoice(inv) {
-      return {
+      // Spread the source FIRST so server-managed fields we don't normalize
+      // explicitly survive into the draft — notably the QuickBooks link
+      // (qbInvoiceId, qbSyncToken, qbSyncStatus, qbSyncedAt, qbTaxTotal,
+      // qbTotalAmt, qbLastError). Without this, re-opening an invoice (e.g.
+      // after editing its customer) dropped the qb link from the draft and the
+      // UI reverted to "Send to QuickBooks" even though the server still had
+      // it. The explicit keys below override/normalize and deep-clone the
+      // nested arrays so edits never mutate the shared list objects.
+      return Object.assign({}, inv, {
         id: inv.id, quoteId: inv.quoteId || null,
         shareToken: inv.shareToken || null,
         clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
@@ -311,7 +319,7 @@
         notes: inv.notes || "",
         payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
         activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
-      };
+      });
     }
 
     var initial = useMemo(function() {
