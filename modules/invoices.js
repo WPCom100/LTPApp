@@ -16,6 +16,12 @@
     return d.toISOString().substring(0, 10);
   }
 
+  // Exact currency (to the cent) — used for QuickBooks-computed sales tax and
+  // tax-inclusive totals, which must NOT be rounded to whole dollars.
+  function money2(n) {
+    return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
   // QuickBooks change-signature: a compact fingerprint of everything that maps
   // into the QB invoice (lines, dates, discount, recall state, taxability,
   // customer info, project name). An invoice is "in sync" iff this matches the
@@ -772,7 +778,7 @@
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
             setDlg({ title: "Sent to QuickBooks",
               message: "Invoice " + (b.action === "created" ? "created in" : "updated in") + " QuickBooks"
-                + (b.qbTaxTotal ? " — sales tax $" + Math.round(b.qbTaxTotal).toLocaleString() + " calculated by QuickBooks." : "."),
+                + (b.qbTaxTotal ? " — sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "."),
               confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
             return;
           }
@@ -1399,12 +1405,12 @@
               h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, draft.qbTaxTotal != null ? "tax via QuickBooks" : "tax pending QuickBooks")),
             // QuickBooks-computed sales tax (read-only, pulled back after push).
             draft.qbTaxTotal != null && draft.qbTaxTotal > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
-              h("span", null, "Sales Tax (QuickBooks)"), h("span", null, "$" + Math.round(draft.qbTaxTotal).toLocaleString())),
+              h("span", null, "Sales Tax (QuickBooks)"), h("span", null, money2(draft.qbTaxTotal))),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 6, fontSize: "14px", fontWeight: 700 } },
               h("span", { style: { color: B.text } }, "Total"), h("span", { style: { color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
             // QB tax-inclusive total when it differs (taxable invoices).
-            draft.qbTotalAmt != null && Math.abs((draft.qbTotalAmt || 0) - t.total) > 0.5 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
-              h("span", null, "Total incl. tax (QuickBooks)"), h("span", null, "$" + Math.round(draft.qbTotalAmt).toLocaleString())),
+            draft.qbTotalAmt != null && Math.abs((draft.qbTotalAmt || 0) - t.total) > 0.005 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
+              h("span", null, "Total incl. tax (QuickBooks)"), h("span", null, money2(draft.qbTotalAmt))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
               h("span", null, "Paid"), h("span", null, "$" + Math.round(t.paid).toLocaleString())),
             t.balance > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } },
