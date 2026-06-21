@@ -7,7 +7,11 @@ node_modules/
 .venv/
 *.local.json
 **/.claude/settings.local.json
-# Local dev sqlite + migration cache
-ltp_dev.db
-ltp_dev.db-journal
+# Local dev sqlite + migration cache. The broad *.db / *.sqlite globs keep
+# token-bearing SQLite files (Gmail/QBO refresh tokens live in the DB,
+# encrypted) from ever being committed again — see docs/SECURITY_REVIEW.md C2.
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
 alembic/versions/__pycache__/
