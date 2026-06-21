@@ -241,12 +241,13 @@ def _fake_invoice(**over):
     return types.SimpleNamespace(**base)
 
 
-async def _build(invoice, customer_taxable=True):
+async def _build(invoice, customer_taxable=True, project_name=""):
     # Patch the two collaborators that would hit QB / settings.
     qbo_sync._settings_get = AsyncMock(return_value=None)
     qbo_sync._resolve_line_item_id = AsyncMock(side_effect=lambda c, d, item, **k: "ITEM-" + item["type"])
     return await qbo_sync.build_invoice_payload(
-        None, MagicMock(), invoice, "CUST-1", customer_taxable, client_id="c", client_secret="s"
+        None, MagicMock(), invoice, "CUST-1", customer_taxable,
+        project_name=project_name, client_id="c", client_secret="s"
     )
 
 
@@ -291,6 +292,14 @@ async def test_payload_discounts():
     _check("flat discount not percent-based", tdisc[0]["DiscountLineDetail"]["PercentBased"] is False)
 
 
+async def test_payload_project_memo():
+    print("test_payload_project_memo")
+    payload = await _build(_fake_invoice(), project_name="Spring Gala")
+    memo = (payload.get("CustomerMemo") or {}).get("value", "")
+    _check("CustomerMemo includes project name", "Spring Gala" in memo)
+    _check("CustomerMemo includes notes", "Thank you" in memo)
+
+
 async def test_payload_requires_billable_line():
     print("test_payload_requires_billable_line")
     only_notes = _fake_invoice(sections=[{"id": "s1", "items": [{"type": "note", "name": "hi"}]}])
@@ -311,7 +320,7 @@ def main():
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
         test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
-        test_payload_discounts, test_payload_requires_billable_line,
+        test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
     ]
     for t in sync_tests:
         t()

@@ -27,6 +27,7 @@ from datetime import datetime, timedelta, timezone
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -180,9 +181,17 @@ async def status(
 
 # ── Push an invoice ──────────────────────────────────────────────────────────
 
+class PushRequest(BaseModel):
+    # Opaque change-signature the frontend computes at push time. Stored verbatim
+    # on the invoice so the builder shows "Update QuickBooks" only when its live
+    # signature differs (i.e. something QB-relevant changed).
+    signature: str | None = None
+
+
 @qbo_router.post("/invoices/{invoice_id}/push")
 async def push_invoice_route(
     invoice_id: int,
+    body: PushRequest | None = None,
     db: AsyncSession = Depends(get_db),
     admin: models.User = Depends(require_admin),
 ):
@@ -196,7 +205,11 @@ async def push_invoice_route(
         raise HTTPException(status_code=404, detail=f"invoice {invoice_id} not found")
 
     try:
-        return await qbo_sync.push_invoice(db, invoice, user=admin)
+        push_result = await qbo_sync.push_invoice(db, invoice, user=admin)
+        if body and body.signature:
+            invoice.qb_synced_signature = body.signature
+            push_result["qbSyncedSignature"] = body.signature
+        return push_result
     except quickbooks.QboNotConnected:
         return JSONResponse(status_code=409, content={"reason": "not_connected",
                             "error": "QuickBooks is not connected. Connect it in Settings."})

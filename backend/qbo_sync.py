@@ -23,7 +23,6 @@ Decisions baked in (confirmed with the owner):
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
     tax and we store TotalTax / TotalAmt read-only so totals always match.
 """
-import asyncio
 import os
 import secrets
 from datetime import datetime, timezone
@@ -33,12 +32,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend import crypto, models, quickbooks
-from backend.database import async_session
 from backend.quickbooks import (
     QboApiError,
     QboError,
-    QboNotConnected,
-    QboReconnectRequired,
     escape_query_value,
 )
 
@@ -50,13 +46,6 @@ _DEFAULT_TAX_CODE = "TAX"
 _DEFAULT_NON_TAX_CODE = "NON"
 
 _RECALL_NOTE = "RECALLED — MAY NOT BE UP TO DATE"
-
-# Debounce window for auto-resync: rapid successive edits to one invoice
-# coalesce into a single push this many seconds after the last edit.
-_RESYNC_COOLDOWN_SECONDS = int(os.environ.get("QBO_RESYNC_COOLDOWN_SECONDS", "20"))
-
-# Tracks invoice ids with a pending auto-resync task so we don't spawn duplicates.
-_pending_resync: set[int] = set()
 
 
 class InvoiceNotSyncable(QboError):
@@ -381,10 +370,11 @@ def _line_taxable(line: dict, customer_taxable: bool) -> bool:
     return bool(customer_taxable)
 
 
-async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, client_id, client_secret) -> dict:
+async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, project_name="", client_id, client_secret) -> dict:
     """Construct the QuickBooks Invoice JSON from an LTP invoice. Resolves QB
     item ids for each billable line (find-or-create). Raises InvoiceNotSyncable
-    if there are no billable lines."""
+    if there are no billable lines. `project_name` is surfaced on the QB invoice
+    (CustomerMemo) so a project/event rename is a real, pushable change."""
     tax_code = str(await _settings_get(db, "qboTaxableCodeId") or _DEFAULT_TAX_CODE)
     non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
 
@@ -458,8 +448,15 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
         payload["TxnDate"] = invoice.invoice_date
     if (invoice.due_date or "").strip():
         payload["DueDate"] = invoice.due_date
+    # CustomerMemo carries the project/event name (so renames push through) plus
+    # the invoice notes.
+    memo_parts = []
+    if (project_name or "").strip():
+        memo_parts.append(project_name.strip())
     if (invoice.notes or "").strip():
-        payload["CustomerMemo"] = {"value": invoice.notes[:1000]}
+        memo_parts.append(invoice.notes.strip())
+    if memo_parts:
+        payload["CustomerMemo"] = {"value": "\n".join(memo_parts)[:1000]}
 
     # Recall memo: set when the invoice is a draft that was previously sent;
     # cleared (empty string) otherwise so a re-send removes it.
@@ -472,7 +469,7 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
 
 def _actor(user):
     if user is None:
-        return "QuickBooks (auto-sync)", None
+        return "QuickBooks", None
     return (user.name or user.email), user.id
 
 
@@ -515,8 +512,15 @@ async def push_invoice(db, invoice, user=None, *, client_id=None, client_secret=
     customer_id = await find_or_create_customer(
         conn, db, party, kind, client_id=client_id, client_secret=client_secret
     )
+    project_name = ""
+    if invoice.project_id:
+        pr = await db.execute(select(models.Project).where(models.Project.id == invoice.project_id))
+        proj = pr.scalar_one_or_none()
+        if proj:
+            project_name = proj.name or ""
     payload = await build_invoice_payload(
         conn, db, invoice, customer_id, _party_taxable(party, kind),
+        project_name=project_name,
         client_id=client_id, client_secret=client_secret,
     )
 
@@ -622,58 +626,3 @@ def _apply_qb_result(invoice, resp_inv: dict) -> None:
     invoice.qb_sync_status = "synced"
     invoice.qb_synced_at = datetime.now(timezone.utc)
     invoice.qb_last_error = None
-
-
-# ── Background auto-resync (after edits) ─────────────────────────────────────
-
-def schedule_resync(invoice_id: int) -> None:
-    """Debounced background re-push of an already-linked invoice after an edit.
-    Coalesces a burst of edits into one push _RESYNC_COOLDOWN_SECONDS after the
-    last one. No-ops if a task is already pending for this invoice. Best-effort:
-    failures are logged and surfaced on the row's qb_sync_status, never raised
-    to the editing request."""
-    if invoice_id in _pending_resync:
-        return
-    _pending_resync.add(invoice_id)
-    try:
-        asyncio.create_task(_resync_after_delay(invoice_id))
-    except RuntimeError:
-        # No running loop (e.g. called from a sync context) — drop the marker.
-        _pending_resync.discard(invoice_id)
-
-
-async def _resync_after_delay(invoice_id: int) -> None:
-    try:
-        await asyncio.sleep(_RESYNC_COOLDOWN_SECONDS)
-    finally:
-        _pending_resync.discard(invoice_id)
-    async with async_session() as db:
-        try:
-            r = await db.execute(select(models.Invoice).where(models.Invoice.id == invoice_id))
-            invoice = r.scalar_one_or_none()
-            if invoice is None or not invoice.qb_invoice_id or invoice.status == "paid":
-                return
-            await push_invoice(db, invoice, user=None)
-            await db.commit()
-        except (QboNotConnected, QboReconnectRequired):
-            await db.rollback()  # nothing to do; status stays as-is
-        except QboError as e:
-            await db.rollback()
-            await _mark_resync_error(db, invoice_id, str(e))
-        except Exception as e:  # pragma: no cover - defensive
-            await db.rollback()
-            print(f"[LTP] qbo auto-resync failed for invoice {invoice_id}: {e}", flush=True)
-
-
-async def _mark_resync_error(db: AsyncSession, invoice_id: int, message: str) -> None:
-    """Record an auto-resync failure on the row without raising."""
-    try:
-        r = await db.execute(select(models.Invoice).where(models.Invoice.id == invoice_id))
-        invoice = r.scalar_one_or_none()
-        if invoice is not None:
-            invoice.qb_sync_status = "error"
-            invoice.qb_last_error = message[:300]
-            await db.commit()
-    except Exception as e:  # pragma: no cover
-        await db.rollback()
-        print(f"[LTP] qbo: could not record resync error for {invoice_id}: {e}", flush=True)

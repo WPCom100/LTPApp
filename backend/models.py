@@ -199,13 +199,19 @@ class Invoice(Base):
     # They still surface (read-only) on GET as qbInvoiceId, etc.
     qb_invoice_id = Column(String(32), nullable=True, index=True)  # QB Invoice.Id once pushed
     qb_sync_token = Column(String(16), nullable=True)              # QB SyncToken (optimistic concurrency)
-    qb_sync_status = Column(String(20), nullable=True)            # {null/not-synced, synced, out_of_date, error}
+    qb_sync_status = Column(String(20), nullable=True)            # {null/not-synced, synced, error}
     qb_synced_at = Column(DateTime(timezone=True), nullable=True) # last successful push
     qb_last_error = Column(Text, nullable=True)                   # sanitized last failure message
     # Tax is computed by QuickBooks and pulled back here read-only so the app
     # total always matches QB. qb_total_amt is the QB tax-inclusive grand total.
     qb_tax_total = Column(Float, nullable=True)
     qb_total_amt = Column(Float, nullable=True)
+    # Opaque change-signature captured by the frontend at the last successful
+    # push. The invoice is "in sync" iff the frontend's live signature matches
+    # this. Lets the UI surface "Update QuickBooks" only when something
+    # QB-relevant actually changed (lines, dates, discount, customer info,
+    # project name). Stored verbatim — server-authoritative (see _READONLY_COLS).
+    qb_synced_signature = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

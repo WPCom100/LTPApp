@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from backend.database import get_db
-from backend import models, qbo_sync
+from backend import models
 from backend.auth_deps import require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
@@ -32,7 +32,7 @@ _HIDDEN_COLS = {"created_at", "updated_at"}
 # deliberately NOT here — that one is user-editable.
 _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
-    "qb_last_error", "qb_tax_total", "qb_total_amt",
+    "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
     "qb_customer_id", "qb_item_id",
 }
 
@@ -200,16 +200,6 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                 setattr(row, key, val)
         await db.flush()
         await db.refresh(row)
-        # QuickBooks auto-resync: once an invoice is linked to a QB invoice,
-        # later edits re-sync automatically (throttled) until it's paid. Mark it
-        # out-of-date now (cheap, local — server-authoritative column) and
-        # schedule a debounced background push. A recall-to-draft flows through
-        # here too, so the RECALLED memo gets applied on the next push.
-        if model_cls is models.Invoice and row.qb_invoice_id and row.status != "paid":
-            if row.qb_sync_status != "out_of_date":
-                row.qb_sync_status = "out_of_date"
-                await db.flush()
-            qbo_sync.schedule_resync(row.id)
         return _row_to_dict(row)
 
     async def remove(item_id: int, db: AsyncSession = Depends(get_db)):

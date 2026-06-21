@@ -16,6 +16,44 @@
     return d.toISOString().substring(0, 10);
   }
 
+  // QuickBooks change-signature: a compact fingerprint of everything that maps
+  // into the QB invoice (lines, dates, discount, recall state, taxability,
+  // customer info, project name). An invoice is "in sync" iff this matches the
+  // signature stored at the last successful push (invoice.qbSyncedSignature).
+  // MUST stay aligned with backend/qbo_sync.build_invoice_payload — if a new
+  // field starts affecting the QB invoice, add it here so edits surface the
+  // "Update QuickBooks" button.
+  function qbHash(s) {
+    var h1 = 5381, h2 = 52711, i = s.length;
+    while (i--) { var c = s.charCodeAt(i); h1 = (h1 * 33) ^ c; h2 = (h2 * 33) ^ c; }
+    return (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16) + "-" + s.length;
+  }
+  function qbSignature(inv, customer, project, customerTaxable) {
+    if (!inv) return "";
+    var gd = inv.globalDiscount || {};
+    var parts = [
+      inv.invoiceDate || "", inv.dueDate || "", inv.notes || "",
+      gd.type || "none", String(gd.value || 0),
+      (inv.status === "draft" && inv.sentDate) ? "recalled" : "",
+      project ? (project.name || "") : "",
+      String(!!customerTaxable)
+    ];
+    (inv.sections || []).forEach(function(sec) {
+      (sec.items || []).forEach(function(it) {
+        if (it.type === "note") { parts.push("n:" + (it.text || "")); return; }
+        var price = it.adjustedPrice != null ? it.adjustedPrice : (it.unitPrice || 0);
+        parts.push([it.type, it.name || "", it.qty || 0, price,
+                    (typeof it.taxable === "boolean" ? it.taxable : "")].join("|"));
+      });
+    });
+    if (customer) {
+      parts.push(customer.name || ((customer.firstName || "") + " " + (customer.lastName || "")).trim());
+      parts.push(customer.address || "", customer.city || "", customer.state || "", customer.zip || "");
+      parts.push(customer.email || "", customer.phone || "");
+    }
+    return qbHash(parts.join(""));
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LIST
   // ═══════════════════════════════════════════════════════════════════════════
@@ -705,15 +743,21 @@
     }
 
     // ── QuickBooks Online ────────────────────────────────────────────────
-    // First push is this explicit button; afterwards edits auto-resync
-    // server-side (see backend/routes/api.py). qb* fields are server-
-    // authoritative — we only patch them locally for an optimistic display.
+    // Updates are explicit (this button). It only renders when the invoice is
+    // out of sync — see qbOutOfSync below. We send the live change-signature so
+    // the server can record it; qb* fields are server-authoritative and we only
+    // patch them locally for an optimistic display. qbSig is assigned during
+    // render (hoisted var) and holds the value as of the click.
+    var qbSig = "";
     function sendToQuickBooks() {
       if (draft.id == null) { showAlert("Save First", "Save the invoice before sending it to QuickBooks."); return; }
       if (!isAdmin) { showAlert("Admin Only", "Only an admin can push invoices to QuickBooks."); return; }
       if (!qbo || !qbo.connected) { showAlert("QuickBooks Not Connected", "An admin must connect QuickBooks in Settings before pushing invoices."); return; }
       setQboSyncing(true);
-      fetch("/api/qbo/invoices/" + draft.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include" })
+      fetch("/api/qbo/invoices/" + draft.id + "/push", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ signature: qbSig })
+      })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
         .then(function(resp) {
           setQboSyncing(false);
@@ -721,7 +765,8 @@
             var b = resp.body || {};
             var updated = Object.assign({}, draft, {
               qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
-              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null
+              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
+              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : qbSig
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
@@ -770,11 +815,16 @@
     var custParty = billingParty();
     var customerTaxable = draft.clientType === "contact" ? !!custParty : !!(custParty && custParty.taxable);
     var qbConnected = !!(qbo && qbo.connected);
+    // "Out of sync" = not pushed yet, OR the live change-signature differs from
+    // the one stored at the last push (captures invoice + customer + project
+    // changes). qbSig is hoisted, so sendToQuickBooks reads the current value.
+    qbSig = qbConnected ? qbSignature(draft, custParty, selectedProject, customerTaxable) : "";
+    var qbOutOfSync = !draft.qbInvoiceId || qbSig !== (draft.qbSyncedSignature || "");
     var qbPill = null;
     if (draft.id != null && qbConnected) {
       if (!draft.qbInvoiceId) qbPill = { label: "Not in QuickBooks", color: B.textMut };
       else if (draft.qbSyncStatus === "error") qbPill = { label: "QB sync error", color: B.danger };
-      else if (draft.qbSyncStatus === "out_of_date") qbPill = { label: "QB out of date", color: B.warn };
+      else if (qbOutOfSync) qbPill = { label: "QB update needed", color: B.warn };
       else qbPill = { label: "✓ In QuickBooks", color: B.success };
     }
 
@@ -1157,7 +1207,7 @@
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
           // QuickBooks status pill + push button (admin + connected)
           qbPill && h("span", { title: draft.qbLastError || "", style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "4px 9px", borderRadius: "6px", whiteSpace: "nowrap" } }, qbPill.label),
-          draft.id != null && isAdmin && qbConnected && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
+          draft.id != null && isAdmin && qbConnected && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
             style: { background: draft.qbInvoiceId ? "transparent" : "#2CA01C", border: "1px solid " + (draft.qbInvoiceId ? B.border : "#2CA01C"), borderRadius: "6px", padding: "6px 12px", color: draft.qbInvoiceId ? B.textSec : "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
             qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Send to QuickBooks")),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteInvoice }, "Delete"),

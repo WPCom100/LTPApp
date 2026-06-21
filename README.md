@@ -138,7 +138,6 @@ shell exports.
 | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | **Required for QuickBooks** | — | OAuth app credentials from the [Intuit Developer](https://developer.intuit.com) portal → your app → Keys & credentials. Reuses `LTP_TOKEN_ENCRYPTION_KEY` to encrypt the stored QuickBooks tokens at rest. |
 | `QBO_REDIRECT_URI` | **Required for QuickBooks** | — | The full `https://yourdomain/api/qbo/callback` URL. Must match a redirect URI registered on the Intuit app (add both sandbox and production variants). |
 | `QBO_ENVIRONMENT` | Optional | `sandbox` | `sandbox` or `production` — selects the QuickBooks API host. Start in `sandbox`; switch to `production` (and reconnect) when ready to go live. |
-| `QBO_RESYNC_COOLDOWN_SECONDS` | Optional | `20` | Debounce window for auto-resyncing an already-linked invoice after edits, so rapid edits coalesce into one QuickBooks push. |
 
 ## Email feature deploy notes
 
