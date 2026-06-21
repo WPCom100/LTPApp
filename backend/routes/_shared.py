@@ -74,6 +74,9 @@ def company_dict(c: models.Company) -> dict:
         "id": c.id,
         "name": c.name,
         "address": c.address,
+        "city": c.city,
+        "state": c.state,
+        "zip": c.zip,
         "website": c.website,
         "logo": c.logo,
     }
@@ -89,6 +92,10 @@ def contact_dict(c: models.Contact) -> dict:
         "email": c.email,
         "phone": c.phone,
         "role": c.role,
+        "address": c.address,
+        "city": c.city,
+        "state": c.state,
+        "zip": c.zip,
     }
 
 

@@ -487,9 +487,10 @@
             "Prepared for: " + ((company && company.name) || (contact && (contact.firstName + " " + contact.lastName).trim()) || "")),
           h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY } }, dateLabel + ": " + fmtDate(dateValue))
         ),
-        company && company.address && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, company.address.replace(/\n/g, "  ")),
+        company && window.LTP_formatAddress(company) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, window.LTP_formatAddress(company)),
         contact && (contact.firstName || contact.lastName) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } },
           (contact.firstName + " " + (contact.lastName || "")).trim() + (contact.role ? "  —  " + contact.role : "")),
+        !company && contact && window.LTP_formatAddress(contact) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, window.LTP_formatAddress(contact)),
         contact && contact.email && h("div", { style: { fontSize: "10px", color: "#8899a0", marginBottom: 16 } }, contact.email),
 
         h("div", { style: { height: 1, background: "#3a4a52", margin: "10px 0 24px" } }),

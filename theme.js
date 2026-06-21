@@ -559,6 +559,20 @@ window.LTP_textToHtml = (function() {
 })();
 
 // ── Invoice & Quote display helpers (used across modules) ────────────────
+// Format a client's billing address (Company or Contact) into one string:
+// "<street>, City, ST ZIP". `joiner` (default ", ") also replaces newlines in
+// the multi-line street field. Used everywhere a client address is displayed
+// (CRM, client view) so the structured city/state/zip fields show up too.
+window.LTP_formatAddress = function(e, joiner) {
+  if (!e) return "";
+  joiner = joiner || ", ";
+  var street = (e.address || "").replace(/\n+/g, joiner).trim();
+  var city = (e.city || "").trim(), st = (e.state || "").trim(), zip = (e.zip || "").trim();
+  var sz = [st, zip].filter(function(x) { return x; }).join(" ");
+  var cityLine = (city && sz) ? (city + ", " + sz) : (city || sz);
+  return [street, cityLine].filter(function(x) { return x; }).join(joiner);
+};
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();

@@ -18,7 +18,7 @@
           h(window.CompanyLogo, { src: company.logo, size: 48 }),
           h("div", null,
             h("div", { style: { display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" } }, typeBadges(), h(window.Badge, { status: company.status })),
-            company.address && h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 2 } }, company.address),
+            window.LTP_formatAddress(company) && h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 2 } }, window.LTP_formatAddress(company)),
             company.website && h("a", { href: company.website.startsWith("http") ? company.website : "https://" + company.website, target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none" } }, company.website + " \u2197")
           )
         ),
