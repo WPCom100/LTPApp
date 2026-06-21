@@ -883,6 +883,10 @@
       else if (qbOutOfSync) qbPill = { label: "QB update needed", color: B.warn };
       else qbPill = { label: "✓ In QuickBooks", color: B.success };
     }
+    // Deep link to the invoice inside QuickBooks (host depends on environment).
+    var qbInvoiceUrl = (draft.qbInvoiceId && qbo)
+      ? ((qbo.environment === "production" ? "https://app.qbo.intuit.com" : "https://app.sandbox.qbo.intuit.com") + "/app/invoice?txnId=" + draft.qbInvoiceId)
+      : null;
     // Money formatter for invoice totals: show exact cents once QuickBooks tax
     // applies (so the tax-inclusive total/balance are precise), whole dollars
     // otherwise (the app's convention).
@@ -1287,11 +1291,6 @@
           !isDraft && draft.id != null && h("button", { onClick: openSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Resend"),
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
-          // QuickBooks status pill + push button (admin + connected)
-          qbPill && h("span", { title: draft.qbLastError || "", style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "4px 9px", borderRadius: "6px", whiteSpace: "nowrap" } }, qbPill.label),
-          draft.id != null && isAdmin && qbConnected && qbEligible && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
-            style: { background: draft.qbInvoiceId ? "transparent" : "#2CA01C", border: "1px solid " + (draft.qbInvoiceId ? B.border : "#2CA01C"), borderRadius: "6px", padding: "6px 12px", color: draft.qbInvoiceId ? B.textSec : "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
-            qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Send to QuickBooks")),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteInvoice }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
           isDirty && !isLocked && h(window.Btn, { small: true, onClick: save }, draft.id == null ? "Save Invoice" : "Save Changes"))
@@ -1493,6 +1492,21 @@
 
         // Side panel
         h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+          // QuickBooks section — status + actions + deep link (shown once sent)
+          qbConnected && qbEligible && h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
+            h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 } }, "QuickBooks"),
+              qbPill && h("span", { style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "3px 8px", borderRadius: "5px", whiteSpace: "nowrap" } }, qbPill.label)),
+            draft.qbSyncedAt && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: (draft.qbSyncStatus === "error" ? 6 : 10) } },
+              "Last synced " + (function() { try { return new Date(draft.qbSyncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return draft.qbSyncedAt; } })()),
+            draft.qbSyncStatus === "error" && draft.qbLastError && h("div", { style: { fontSize: "10px", color: B.danger, marginBottom: 10, lineHeight: 1.4, wordBreak: "break-word" } }, draft.qbLastError),
+            h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+              isAdmin && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
+                style: { background: "#2CA01C", border: "1px solid #2CA01C", borderRadius: "6px", padding: "6px 12px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
+                qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Export to QuickBooks")),
+              qbInvoiceUrl && h("a", { href: qbInvoiceUrl, target: "_blank", rel: "noopener noreferrer",
+                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", textDecoration: "none", whiteSpace: "nowrap" } }, "View in QuickBooks ↗"))
+          ),
           // Summary
           h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 10px" } }, "Invoice Summary"),
