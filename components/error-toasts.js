@@ -162,9 +162,12 @@
     }, toasts.map(function(t) {
       var color = variantColor(t.variant);
       var icon = t.variant === "success" ? "✓" : t.variant === "info" ? "i" : "!";
-      // Error keeps the existing dark-red card; other variants use a subtle
-      // tinted background derived from the variant color.
-      var bg = t.variant === "error" ? (B.dangerBg || "#2e0f0f") : (color + "1f");
+      // Solid (opaque) per-variant background so toasts are easy to read — a
+      // translucent tint over the page content was the readability problem.
+      var bg = t.variant === "success" ? (B.successBg || "#0f2a10")
+             : t.variant === "warn"    ? (B.warnBg || "#2e2208")
+             : t.variant === "info"    ? (B.infoBg || "#0f1a2e")
+             : (B.dangerBg || "#2e0f0f");
       // Body excerpt: clip long server tracebacks so the toast stays small.
       var bodyExcerpt = t.body ? String(t.body).slice(0, 200) : null;
       var bodyTruncated = t.body && String(t.body).length > 200;
