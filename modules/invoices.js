@@ -756,9 +756,9 @@
     // render (hoisted var) and holds the value as of the click.
     var qbSig = "";
     function sendToQuickBooks() {
-      if (draft.id == null) { showAlert("Save First", "Save the invoice before sending it to QuickBooks."); return; }
-      if (!isAdmin) { showAlert("Admin Only", "Only an admin can push invoices to QuickBooks."); return; }
-      if (!qbo || !qbo.connected) { showAlert("QuickBooks Not Connected", "An admin must connect QuickBooks in Settings before pushing invoices."); return; }
+      if (draft.id == null) { window.LTP_toast("Save first", { message: "Save the invoice before sending it to QuickBooks.", variant: "warn" }); return; }
+      if (!isAdmin) { window.LTP_toast("Admin only", { message: "Only an admin can push invoices to QuickBooks.", variant: "warn" }); return; }
+      if (!qbo || !qbo.connected) { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings before pushing invoices.", variant: "warn" }); return; }
       setQboSyncing(true);
       fetch("/api/qbo/invoices/" + draft.id + "/push", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
@@ -776,18 +776,18 @@
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-            setDlg({ title: "Sent to QuickBooks",
+            window.LTP_toast(b.action === "created" ? "Sent to QuickBooks" : "Updated in QuickBooks", {
               message: "Invoice " + (b.action === "created" ? "created in" : "updated in") + " QuickBooks"
                 + (b.qbTaxTotal ? " — sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "."),
-              confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+              variant: "success" });
             return;
           }
           var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") { showAlert("Reconnect QuickBooks", "The QuickBooks connection expired. An admin should reconnect it in Settings."); return; }
-          if (resp.status === 409 && d.reason === "not_connected") { showAlert("QuickBooks Not Connected", "An admin must connect QuickBooks in Settings first."); return; }
-          showAlert("QuickBooks Sync Failed", d.error || ("HTTP " + resp.status + "."));
+          if (resp.status === 409 && d.reason === "reconnect") { window.LTP_toast("Reconnect QuickBooks", { message: "The QuickBooks connection expired. An admin should reconnect it in Settings.", variant: "error" }); return; }
+          if (resp.status === 409 && d.reason === "not_connected") { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings first.", variant: "warn" }); return; }
+          window.LTP_toast("QuickBooks sync failed", { message: d.error || ("HTTP " + resp.status + "."), variant: "error" });
         })
-        .catch(function(e) { setQboSyncing(false); showAlert("QuickBooks Sync Failed", "Network or server error: " + String(e.message || e)); });
+        .catch(function(e) { setQboSyncing(false); window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
     }
 
     function billingParty() {

@@ -88,8 +88,8 @@
         variant: "danger", confirmLabel: "Disconnect",
         onConfirm: function() {
           fetch("/api/qbo/disconnect", { method: "POST", credentials: "include" })
-            .then(function() { setDlg(null); loadQbo(); })
-            .catch(function() { setDlg(null); loadQbo(); });
+            .then(function() { setDlg(null); loadQbo(); if (window.LTP_toast) window.LTP_toast("QuickBooks disconnected", { variant: "info" }); })
+            .catch(function() { setDlg(null); loadQbo(); if (window.LTP_toast) window.LTP_toast("Disconnect failed", { message: "Could not reach the server — try again.", variant: "error" }); });
         } });
     }
 
