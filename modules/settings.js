@@ -480,7 +480,12 @@
         h("div", { style: { background: B.bg, borderRadius: "6px", padding: "8px 12px", marginBottom: 14, border: "1px solid " + B.border } },
           h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available Variables"),
           h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-            ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "lineItems", "quoteValidity", "signature", "crewName", "role", "date", "callTime", "wrapTime", "location"].map(function(v) {
+            // Keep this list in sync with the canonical Available
+            // comment in data/settings.js (above emailTemplates). The
+            // order groups by usage: entity fields → money/dates →
+            // block-level placeholders (signature/header expand to
+            // HTML) → crew-specific → quote-specific → per-recipient.
+            ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "lineItems", "signature", "header", "crewName", "role", "date", "callTime", "wrapTime", "location", "quoteValidity", "viewUrl"].map(function(v) {
               return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
             })
           )

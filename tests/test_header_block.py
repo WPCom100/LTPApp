@@ -325,6 +325,51 @@ def test_total_renders_with_cents_in_all_three_modals():
 # ── Editor + send-modal wiring ────────────────────────────────────────────
 
 
+def test_settings_email_templates_available_variables_matches_canonical():
+    """The Email Templates section's "Available Variables" chip row in
+    modules/settings.js must list every placeholder documented in
+    data/settings.js's `// Available:` comment block (the canonical
+    list). Catches drift like the commit 5 oversight where
+    {{header}} was added to the comment + default bodies but never
+    propagated to the Settings UI chip row, leaving admins editing
+    templates with no UI hint that the placeholder existed."""
+    print("test_settings_email_templates_available_variables_matches_canonical")
+    canonical_src = _read("data", "settings.js")
+    # Extract every {{token}} listed in the Available: comment.
+    available_block = canonical_src.split("// Available:")[1].split("emailTemplates")[0]
+    canonical_tokens = set(re.findall(r"\{\{(\w+)\}\}", available_block))
+
+    settings_src = _read("modules", "settings.js")
+    # The Email Templates chip-row array — find it by anchoring on the
+    # nearby "Available Variables" label (the header + signature
+    # sections also use that label but their arrays are shorter and
+    # contain different tokens).
+    chip_rows = re.findall(
+        r'\[((?:"\w+",?\s*)+)\]\.map\(function\(v\)\s*\{[\s\S]*?"\{\{"\s*\+\s*v',
+        settings_src,
+    )
+    # Pick the row that mentions companyName — that's the master list
+    # in the Email Templates section (signature row has userName etc.,
+    # header row has viewUrl/refNumber/projectName/total only).
+    master = next((r for r in chip_rows if "companyName" in r), None)
+    _check("Email Templates chip-row array found",
+           master is not None)
+    if master:
+        ui_tokens = set(re.findall(r'"(\w+)"', master))
+        missing = canonical_tokens - ui_tokens
+        _check(
+            "every canonical token has a UI chip",
+            not missing,
+            f"missing from Settings UI: {sorted(missing)}",
+        )
+        extra = ui_tokens - canonical_tokens
+        _check(
+            "no UI chips beyond the canonical list",
+            not extra,
+            f"in UI but not in data/settings.js Available: comment: {sorted(extra)}",
+        )
+
+
 def test_settings_page_has_header_template_editor():
     """The Settings page must expose a split-pane editor for
     emailHeaderTemplate so admins can customize the banner. Mirrors
@@ -470,6 +515,7 @@ def main() -> int:
     test_bleach_strips_disallowed_attrs_from_header()
     test_frontend_sanitizer_allowlist_pinned()
     test_total_renders_with_cents_in_all_three_modals()
+    test_settings_email_templates_available_variables_matches_canonical()
     test_settings_page_has_header_template_editor()
     test_email_body_editor_consumes_header_props()
     test_send_modals_wire_header_template_and_vars()
