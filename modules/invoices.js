@@ -833,6 +833,11 @@
       else if (qbOutOfSync) qbPill = { label: "QB update needed", color: B.warn };
       else qbPill = { label: "✓ In QuickBooks", color: B.success };
     }
+    // Money formatter for invoice totals: show exact cents once QuickBooks tax
+    // applies (so the tax-inclusive total/balance are precise), whole dollars
+    // otherwise (the app's convention).
+    var hasQbTax = draft.qbTaxTotal != null && draft.qbTaxTotal > 0;
+    var fmtT = function(v) { return hasQbTax ? money2(v) : ("$" + Math.round(v).toLocaleString()); };
 
     // Section helpers
     function updateItem(secId, itemId, patch) {
@@ -1428,14 +1433,11 @@
             draft.qbTaxTotal != null && draft.qbTaxTotal > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
               h("span", null, "Sales Tax (QuickBooks)"), h("span", null, money2(draft.qbTaxTotal))),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 6, fontSize: "14px", fontWeight: 700 } },
-              h("span", { style: { color: B.text } }, "Total"), h("span", { style: { color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
-            // QB tax-inclusive total when it differs (taxable invoices).
-            draft.qbTotalAmt != null && Math.abs((draft.qbTotalAmt || 0) - t.total) > 0.005 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
-              h("span", null, "Total incl. tax (QuickBooks)"), h("span", null, money2(draft.qbTotalAmt))),
+              h("span", { style: { color: B.text } }, "Total"), h("span", { style: { color: B.accent } }, fmtT(t.total))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
-              h("span", null, "Paid"), h("span", null, "$" + Math.round(t.paid).toLocaleString())),
+              h("span", null, "Paid"), h("span", null, fmtT(t.paid))),
             t.balance > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } },
-              h("span", null, "Balance Due"), h("span", null, "$" + Math.round(t.balance).toLocaleString()))
+              h("span", null, "Balance Due"), h("span", null, fmtT(t.balance)))
           )
         ),
 
@@ -1455,13 +1457,13 @@
             }),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
-              h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
+              h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, fmtT(t.total))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0" } },
               h("span", { style: { fontSize: "11px", color: B.success } }, "Paid"),
-              h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.success } }, "$" + Math.round(t.paid).toLocaleString())),
+              h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.success } }, fmtT(t.paid))),
             t.balance > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0" } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.warn } }, "Balance"),
-              h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.warn } }, "$" + Math.round(t.balance).toLocaleString()))
+              h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.warn } }, fmtT(t.balance)))
           ),
           // Notes
           h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
@@ -1635,13 +1637,13 @@
                 h("span", { style: { color: B.text } }, draft.sections.reduce(function(n, s) { return n + s.items.filter(function(i) { return i.type !== "note"; }).length; }, 0))),
               h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 4 } },
                 h("span", { style: { color: B.text } }, "Total"),
-                h("span", { style: { color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
+                h("span", { style: { color: B.accent } }, fmtT(t.total))),
               t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: 4 } },
                 h("span", { style: { color: B.success } }, "Paid"),
-                h("span", { style: { color: B.success } }, "$" + Math.round(t.paid).toLocaleString())),
+                h("span", { style: { color: B.success } }, fmtT(t.paid))),
               t.balance > 0 && t.balance !== t.total && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 700, marginTop: 4 } },
                 h("span", { style: { color: B.warn } }, "Balance"),
-                h("span", { style: { color: B.warn } }, "$" + Math.round(t.balance).toLocaleString()))
+                h("span", { style: { color: B.warn } }, fmtT(t.balance)))
             )
           ),
           // Right: Email preview

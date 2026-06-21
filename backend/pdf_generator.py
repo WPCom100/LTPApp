@@ -162,11 +162,20 @@ def _calc_totals(entity):
     gv = gd.get("value", 0) or 0
     if gt == "percent":
         after = adj * (1 - gv / 100)
-    elif gt == "amount":
+    elif gt in ("amount", "flat"):   # quotes use "amount", invoices use "flat"
         after = adj - gv
     elif gt == "target":
         after = gv
-    return {"subtotal": sub, "adjusted": adj, "total": max(after, 0), "cost": cost}
+    after = max(after, 0)
+    # QuickBooks-computed sales tax (invoices only; quotes carry none). The grand
+    # total is tax-inclusive so the PDF matches the app + client view.
+    tax_val = entity.get("qbTaxTotal")
+    try:
+        tax = float(tax_val) if tax_val is not None else 0.0
+    except (TypeError, ValueError):
+        tax = 0.0
+    return {"subtotal": sub, "adjusted": adj, "preTax": after, "tax": tax,
+            "total": after + tax, "cost": cost}
 
 
 def _draw_gradient(c, x, y, w, h, colors=None):
@@ -584,13 +593,21 @@ class _DocPDF:
 
         gd = self.entity.get("globalDiscount", {}) or {}
         gt = gd.get("type", "none")
-        disc = t["adjusted"] - t["total"]
+        disc = t["adjusted"] - t["preTax"]
         if gt != "none" and abs(disc) > 0.01:
             c.setFont("Roboto", 10)
             c.setFillColor(HexColor("#8899a0"))
             lbl = f"Discount ({gd.get('value',0)}%)" if gt == "percent" else "Discount:"
             c.drawString(xl, self.y, lbl)
             c.drawRightString(xv, self.y, f"-{_fmt_money(disc)}")
+            self.y -= 18
+
+        # Sales tax (QuickBooks-computed; invoices only)
+        if t["tax"] > 0.005:
+            c.setFont("Roboto", 10)
+            c.setFillColor(HexColor("#8899a0"))
+            c.drawString(xl, self.y, "Sales Tax:")
+            c.drawRightString(xv, self.y, _fmt_money(t["tax"]))
             self.y -= 18
 
         # Grand total

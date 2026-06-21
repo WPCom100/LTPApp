@@ -53,9 +53,13 @@
     var gt = gd.type || "none";
     var gv = Number(gd.value) || 0;
     if (gt === "percent") after = adj * (1 - gv / 100);
-    else if (gt === "amount") after = adj - gv;
+    else if (gt === "amount" || gt === "flat") after = adj - gv;  // quotes: amount, invoices: flat
     else if (gt === "target") after = gv;
-    return { subtotal: sub, adjusted: adj, total: Math.max(after, 0) };
+    after = Math.max(after, 0);
+    // QuickBooks-computed sales tax (invoices only) makes the total tax-inclusive,
+    // matching the app + PDF.
+    var tax = (entity.qbTaxTotal != null) ? (Number(entity.qbTaxTotal) || 0) : 0;
+    return { subtotal: sub, adjusted: adj, preTax: after, tax: tax, total: after + tax };
   }
 
   function settingsAddress(s) {
@@ -323,7 +327,7 @@
     var t = calcTotals(entity);
     var gd = entity.globalDiscount || {};
     var gt = gd.type || "none";
-    var disc = t.adjusted - t.total;
+    var disc = t.adjusted - t.preTax;
     var diff = t.subtotal - t.adjusted;
 
     return h("div", { style: { marginTop: 30, marginLeft: "auto", maxWidth: 340 } },
@@ -336,7 +340,10 @@
           h("span", null, (diff > 0 ? "-" : "+") + fmtMoney(Math.abs(diff)))),
         gt !== "none" && Math.abs(disc) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut, marginBottom: 6 } },
           h("span", null, gt === "percent" ? "Discount (" + (gd.value || 0) + "%):" : "Discount:"),
-          h("span", null, "-" + fmtMoney(disc)))
+          h("span", null, "-" + fmtMoney(disc))),
+        t.tax > 0.005 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut, marginBottom: 6 } },
+          h("span", null, "Sales Tax:"),
+          h("span", null, fmtMoney(t.tax)))
       ),
       h("div", { style: { borderTop: "2px solid " + B.accent, paddingTop: 14, marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "baseline" } },
         h("span", { style: { fontSize: "18px", fontWeight: 800, color: B.accent, letterSpacing: "0.04em" } }, "TOTAL:"),
