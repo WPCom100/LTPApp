@@ -188,7 +188,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services }) {
+  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, customerTaxable }) {
     if (item.type === "note") {
       return h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
         h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase" } }, "Note"),
@@ -256,6 +256,13 @@
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
         h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lt).toLocaleString())
       ),
+      // Per-line tax override — only shown for taxable customers (the common
+      // case is exempt, so we keep the row clean). Checked = taxable; unchecked
+      // = explicit exemption for this line. QuickBooks computes the actual tax.
+      isDraft && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 3, width: 42, fontSize: "9px", color: B.textMut, cursor: "pointer" } },
+        h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true,
+          onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }),
+        h("span", null, "tax")),
       // Delete (draft only)
       isDraft
         ? h("button", { onClick: function() { onDelete(sectionId, item.id); },
@@ -268,8 +275,8 @@
   //   INVOICE BUILDER
   // ═══════════════════════════════════════════════════════════════════════════
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
-                            companies, contacts, projects, quotes, setQuotes,
-                            equipment, products, services, settings }) {
+                            companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
+                            equipment, products, services, settings, isAdmin, qbo }) {
 
     function emptyInvoice() {
       var today = todayISO();
@@ -332,6 +339,7 @@
     var [showSendModal, setShowSendModal] = useState(false);
     var [sendCc, setSendCc] = useState("");
     var [sending, setSending] = useState(false);
+    var [qboSyncing, setQboSyncing] = useState(false);
     var [showReceiptModal, setShowReceiptModal] = useState(false);
     var [sendEmail, setSendEmail] = useState("");
     var [sendSubject, setSendSubject] = useState("");
@@ -688,6 +696,55 @@
       });
     }
 
+    // ── QuickBooks Online ────────────────────────────────────────────────
+    // First push is this explicit button; afterwards edits auto-resync
+    // server-side (see backend/routes/api.py). qb* fields are server-
+    // authoritative — we only patch them locally for an optimistic display.
+    function sendToQuickBooks() {
+      if (draft.id == null) { showAlert("Save First", "Save the invoice before sending it to QuickBooks."); return; }
+      if (!isAdmin) { showAlert("Admin Only", "Only an admin can push invoices to QuickBooks."); return; }
+      if (!qbo || !qbo.connected) { showAlert("QuickBooks Not Connected", "An admin must connect QuickBooks in Settings before pushing invoices."); return; }
+      setQboSyncing(true);
+      fetch("/api/qbo/invoices/" + draft.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include" })
+        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(resp) {
+          setQboSyncing(false);
+          if (resp.status === 200) {
+            var b = resp.body || {};
+            var updated = Object.assign({}, draft, {
+              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
+              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null
+            });
+            setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
+            setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+            setDlg({ title: "Sent to QuickBooks",
+              message: "Invoice " + (b.action === "created" ? "created in" : "updated in") + " QuickBooks"
+                + (b.qbTaxTotal ? " — sales tax $" + Math.round(b.qbTaxTotal).toLocaleString() + " calculated by QuickBooks." : "."),
+              confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            return;
+          }
+          var d = resp.body || {};
+          if (resp.status === 409 && d.reason === "reconnect") { showAlert("Reconnect QuickBooks", "The QuickBooks connection expired. An admin should reconnect it in Settings."); return; }
+          if (resp.status === 409 && d.reason === "not_connected") { showAlert("QuickBooks Not Connected", "An admin must connect QuickBooks in Settings first."); return; }
+          showAlert("QuickBooks Sync Failed", d.error || ("HTTP " + resp.status + "."));
+        })
+        .catch(function(e) { setQboSyncing(false); showAlert("QuickBooks Sync Failed", "Network or server error: " + String(e.message || e)); });
+    }
+
+    function billingParty() {
+      if (draft.clientType === "contact") return draft.clientContactId ? contacts.find(function(c) { return c.id === draft.clientContactId; }) : null;
+      return draft.companyId ? companies.find(function(c) { return c.id === draft.companyId; }) : null;
+    }
+    // Tax is a CUSTOMER-level flag (with per-line overrides). Toggling it edits
+    // the selected Company/Contact row so QuickBooks taxes their invoices.
+    function setCustomerTaxable(val) {
+      if (draft.clientType === "contact" && draft.clientContactId && setContacts) {
+        setContacts(function(prev) { return prev.map(function(c) { return c.id === draft.clientContactId ? Object.assign({}, c, { taxable: val }) : c; }); });
+      } else if (draft.companyId && setCompanies) {
+        setCompanies(function(prev) { return prev.map(function(c) { return c.id === draft.companyId ? Object.assign({}, c, { taxable: val }) : c; }); });
+      }
+    }
+
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); pendingRollbacks.current = []; }, [invoiceId, isNew]);
 
     function showAlert(title, msg) { setDlg({ title: title, message: msg, confirmLabel: "OK", onConfirm: function() { setDlg(null); } }); }
@@ -700,6 +757,18 @@
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "New Invoice");
     var linkedQuote = draft.quoteId ? quotes.find(function(q) { return q.id === draft.quoteId; }) : null;
     var t = window.LTP_INVOICE_TOTALS(draft);
+
+    // QuickBooks display state
+    var custParty = billingParty();
+    var customerTaxable = !!(custParty && custParty.taxable);
+    var qbConnected = !!(qbo && qbo.connected);
+    var qbPill = null;
+    if (draft.id != null && qbConnected) {
+      if (!draft.qbInvoiceId) qbPill = { label: "Not in QuickBooks", color: B.textMut };
+      else if (draft.qbSyncStatus === "error") qbPill = { label: "QB sync error", color: B.danger };
+      else if (draft.qbSyncStatus === "out_of_date") qbPill = { label: "QB out of date", color: B.warn };
+      else qbPill = { label: "✓ In QuickBooks", color: B.success };
+    }
 
     // Section helpers
     function updateItem(secId, itemId, patch) {
@@ -1078,6 +1147,11 @@
           !isDraft && draft.id != null && h("button", { onClick: openSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Resend"),
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
+          // QuickBooks status pill + push button (admin + connected)
+          qbPill && h("span", { title: draft.qbLastError || "", style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "4px 9px", borderRadius: "6px", whiteSpace: "nowrap" } }, qbPill.label),
+          draft.id != null && isAdmin && qbConnected && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
+            style: { background: draft.qbInvoiceId ? "transparent" : "#2CA01C", border: "1px solid " + (draft.qbInvoiceId ? B.border : "#2CA01C"), borderRadius: "6px", padding: "6px 12px", color: draft.qbInvoiceId ? B.textSec : "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
+            qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Send to QuickBooks")),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteInvoice }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
           isDirty && !isLocked && h(window.Btn, { small: true, onClick: save }, draft.id == null ? "Save Invoice" : "Save Changes"))
@@ -1224,7 +1298,7 @@
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
                 sec.items.length === 0 && h("div", { style: { padding: 14, textAlign: "center", color: B.textMut, fontSize: "11px", fontStyle: "italic", background: B.surface, borderRadius: "4px", border: "1px dashed " + B.border } }, "No items yet."),
                 sec.items.map(function(it) {
-                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services });
+                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, customerTaxable: customerTaxable });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },
@@ -1253,10 +1327,21 @@
                 onChange: function(e) { patchDraft({ globalDiscount: Object.assign({}, draft.globalDiscount, { value: Number(e.target.value) || 0 }) }); },
                 style: { width: 70, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
             ),
-            t.taxAmount > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
-              h("span", null, "Tax (" + t.taxRate + "%)"), h("span", null, "$" + Math.round(t.taxAmount).toLocaleString())),
+            // Customer taxability (draft) — drives whether QuickBooks taxes the
+            // lines. Most clients are exempt, so this defaults off.
+            isDraft && custParty && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", fontSize: "11px", color: B.textMut } },
+              h("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
+                h("input", { type: "checkbox", checked: customerTaxable, onChange: function(e) { setCustomerTaxable(e.target.checked); } }),
+                h("span", null, "Customer is taxable")),
+              customerTaxable && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, draft.qbTaxTotal != null ? "tax via QuickBooks" : "tax pending QuickBooks")),
+            // QuickBooks-computed sales tax (read-only, pulled back after push).
+            draft.qbTaxTotal != null && draft.qbTaxTotal > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
+              h("span", null, "Sales Tax (QuickBooks)"), h("span", null, "$" + Math.round(draft.qbTaxTotal).toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 6, fontSize: "14px", fontWeight: 700 } },
               h("span", { style: { color: B.text } }, "Total"), h("span", { style: { color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
+            // QB tax-inclusive total when it differs (taxable invoices).
+            draft.qbTotalAmt != null && Math.abs((draft.qbTotalAmt || 0) - t.total) > 0.5 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
+              h("span", null, "Total incl. tax (QuickBooks)"), h("span", null, "$" + Math.round(draft.qbTotalAmt).toLocaleString())),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
               h("span", null, "Paid"), h("span", null, "$" + Math.round(t.paid).toLocaleString())),
             t.balance > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } },
@@ -1596,10 +1681,11 @@
       return h(InvoiceBuilder, {
         invoiceId: route.id, isNew: !route.id && route.action === "new",
         invoices: props.invoices, setInvoices: props.setInvoices, getNextInvoiceId: props.getNextInvoiceId,
-        companies: props.companies, contacts: props.contacts, projects: props.projects,
+        companies: props.companies, setCompanies: props.setCompanies,
+        contacts: props.contacts, setContacts: props.setContacts, projects: props.projects,
         quotes: props.quotes, setQuotes: props.setQuotes,
         equipment: props.equipment, products: props.products, services: props.services,
-        settings: props.settings,
+        settings: props.settings, isAdmin: props.isAdmin, qbo: props.qbo,
       });
     }
     return h(InvoiceList, {

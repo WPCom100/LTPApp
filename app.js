@@ -80,6 +80,7 @@ function LTPSignedInApp(props) {
   var [globalSearch, setGlobalSearch] = useState("");
   var [searchOpen, setSearchOpen] = useState(false);
   var [searchResults, setSearchResults] = useState([]);
+  var [qboStatus, setQboStatus] = useState(null);
   var clockRef = useRef(null);
   var searchRef = useRef(null);
 
@@ -194,6 +195,16 @@ function LTPSignedInApp(props) {
     tick();
     var t = setInterval(tick, 60000);
     return function() { clearInterval(t); };
+  }, []);
+
+  // QuickBooks Online connection status — drives the "Send to QuickBooks"
+  // gate in the invoice builder and the Settings connect panel. Non-secret
+  // (booleans + masked metadata); see backend/routes/qbo.py GET /api/qbo/status.
+  useEffect(function() {
+    fetch("/api/qbo/status", { credentials: "include" })
+      .then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(s) { if (s) { setQboStatus(s); window.LTP_QBO_CONNECTED = s.connected === true; } })
+      .catch(function() {});
   }, []);
 
   useEffect(function() {
@@ -332,10 +343,10 @@ function LTPSignedInApp(props) {
       }));
       case "invoices":  return h(window.LTPErrorBoundary, { name: "Invoices" }, h(window.InvoicesView, {
         invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
-        companies: companies, contacts: contacts, projects: projects,
+        companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects,
         quotes: quotes, setQuotes: setQuotes, route: route,
         equipment: equipment, products: products, services: services, allocations: allocations,
-        settings: settings,
+        settings: settings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "labor":     return h(window.LTPErrorBoundary, { name: "Labor" }, h(window.LaborView, {
         contacts: contacts, setContacts: setContacts,

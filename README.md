@@ -135,6 +135,10 @@ shell exports.
 | `LTP_TRUST_PROXY_HOPS` | Optional | `1` | Number of trusted reverse-proxy hops sitting between the client and the app. `1` is correct for Railway with no CDN. Bump to `2` if you front Railway with Cloudflare/Fastly, `3` for two CDNs, etc. Set to `0` for purely-local dev with no proxy. **Misconfiguring higher than actual hops enables IP spoofing** — match it to your real topology. |
 | `LTP_MAX_PAYLOAD_BYTES` | Optional | `10485760` | Max request body size; rejects with 413 above this. |
 | `LTP_SESSION_SWEEP_INTERVAL_SECONDS` | Optional | `3600` | How often the background sweeper deletes expired session rows. |
+| `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | **Required for QuickBooks** | — | OAuth app credentials from the [Intuit Developer](https://developer.intuit.com) portal → your app → Keys & credentials. Reuses `LTP_TOKEN_ENCRYPTION_KEY` to encrypt the stored QuickBooks tokens at rest. |
+| `QBO_REDIRECT_URI` | **Required for QuickBooks** | — | The full `https://yourdomain/api/qbo/callback` URL. Must match a redirect URI registered on the Intuit app (add both sandbox and production variants). |
+| `QBO_ENVIRONMENT` | Optional | `sandbox` | `sandbox` or `production` — selects the QuickBooks API host. Start in `sandbox`; switch to `production` (and reconnect) when ready to go live. |
+| `QBO_RESYNC_COOLDOWN_SECONDS` | Optional | `20` | Debounce window for auto-resyncing an already-linked invoice after edits, so rapid edits coalesce into one QuickBooks push. |
 
 ## Email feature deploy notes
 

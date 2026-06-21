@@ -39,6 +39,14 @@ class Company(Base):
     website = Column(String(255), default="")
     logo = Column(Text, default="")                      # URL or data:image base64
     notes = Column(Text, default="")
+    # QuickBooks Online sync. `taxable` is the master switch deciding whether
+    # this client's invoice lines get the TAX vs NON tax code when pushed to QB
+    # (most LTP clients are tax-exempt → default False; per-line overrides live
+    # in the invoice line JSON). `qb_customer_id` caches the QB Customer.Id after
+    # the first find-or-create so we never create duplicate QB customers. It is
+    # server-authoritative — see _READONLY_COLS in backend/routes/api.py.
+    taxable = Column(Boolean, default=False)
+    qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -64,6 +72,10 @@ class Contact(Base):
     crew_departments = Column(JSON, default=list)        # list[str] — dept names, e.g. ["Lighting","Rigging"]
     crew_notes = Column(Text, default="")
     crew_status = Column(String(20), default="active")   # {active, inactive}
+    # QuickBooks Online sync — used when a Contact is the billing party
+    # (client_type="contact"). Same semantics as Company.taxable / qb_customer_id.
+    taxable = Column(Boolean, default=False)
+    qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -169,6 +181,21 @@ class Invoice(Base):
     # Same shape + security model as Quote.share_token; minted on POST.
     # NOT NULL because every Invoice has one (see create() in api.py).
     share_token = Column(String(64), nullable=False, unique=True, index=True)
+    # ── QuickBooks Online two-way sync ──────────────────────────────────────
+    # All qb_* columns are SERVER-AUTHORITATIVE: the sync engine
+    # (backend/qbo_sync.py) writes them directly on the ORM row, and
+    # _READONLY_COLS in backend/routes/api.py strips them from inbound client
+    # writes so the frontend's debounced diff-sync PUTs can't clobber them.
+    # They still surface (read-only) on GET as qbInvoiceId, etc.
+    qb_invoice_id = Column(String(32), nullable=True, index=True)  # QB Invoice.Id once pushed
+    qb_sync_token = Column(String(16), nullable=True)              # QB SyncToken (optimistic concurrency)
+    qb_sync_status = Column(String(20), nullable=True)            # {null/not-synced, synced, out_of_date, error}
+    qb_synced_at = Column(DateTime(timezone=True), nullable=True) # last successful push
+    qb_last_error = Column(Text, nullable=True)                   # sanitized last failure message
+    # Tax is computed by QuickBooks and pulled back here read-only so the app
+    # total always matches QB. qb_total_amt is the QB tax-inclusive grand total.
+    qb_tax_total = Column(Float, nullable=True)
+    qb_total_amt = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -207,6 +234,10 @@ class Equipment(Base):
                                                          # parent-level logs for NON-serialized equipment. For serialized
                                                          # items the per-unit logs live inside units[i].maintenanceLogs.
                                                          # Same shape either way; same status-roll-up semantics.
+    # QuickBooks Online item id. Equipment lines are pushed against a single
+    # generic "Equipment Rental" QB item (see backend/qbo_sync.py), so this is
+    # usually unset for equipment — it exists for parity/future per-item sync.
+    qb_item_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -224,6 +255,7 @@ class Product(Base):
     unit_price = Column(Float, default=0)                # price per unit (what we charge)
     cost = Column(Float, default=0)                      # our cost per unit (for margin)
     notes = Column(Text, default="")
+    qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -249,6 +281,7 @@ class Service(Base):
     hourly_cost = Column(Float, default=0)
     ot_cost = Column(Float, default=0)
     notes = Column(Text, default="")
+    qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -463,3 +496,35 @@ class Session(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class QboConnection(Base):
+    """The single company-wide QuickBooks Online connection (singleton row,
+    id=1). Unlike Gmail tokens — which are PER-USER because the email is sent
+    "from" the signed-in person — there is exactly ONE QuickBooks company
+    (one realm_id) for this business, and every admin pushing an invoice must
+    hit that same company with the same connection. So the tokens live here,
+    once, not on `users`.
+
+    Both token columns are Fernet ciphertext (see backend/crypto.py), same
+    at-rest protection as the Gmail tokens. The refresh token is the high-value
+    secret (~100-day life, full accounting access). This table is NEVER exposed
+    through the CRUD factory and no endpoint returns the token columns — the
+    only client-facing surface is GET /api/qbo/status (booleans + masked
+    metadata only).
+
+    `environment` selects the API host: "sandbox" → sandbox-quickbooks.api...,
+    "production" → quickbooks.api... A sandbox connection physically cannot
+    write to a production company (different host AND different realm)."""
+    __tablename__ = "qbo_connection"
+
+    id = Column(Integer, primary_key=True, default=1)        # singleton: always 1
+    realm_id = Column(String(64), nullable=False)            # QB company id; scopes every API URL
+    access_token_enc = Column(Text, nullable=False)          # Fernet ciphertext
+    refresh_token_enc = Column(Text, nullable=False)         # Fernet ciphertext
+    access_token_expires_at = Column(DateTime(timezone=True), nullable=False)
+    refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)  # ~100 days; for proactive warn
+    environment = Column(String(10), nullable=False, default="sandbox")        # {sandbox, production}
+    connected_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    connected_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

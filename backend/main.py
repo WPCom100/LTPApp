@@ -15,6 +15,7 @@ from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
 from backend.routes.email import email_router
+from backend.routes.qbo import qbo_router
 from backend.rate_limit import RateLimitMiddleware
 
 
@@ -221,7 +222,9 @@ _CSP = (
     "connect-src 'self' https://cdnjs.cloudflare.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
-    "form-action 'self' https://accounts.google.com; "
+    # appcenter.intuit.com is where /api/qbo/connect redirects the browser to
+    # start the QuickBooks OAuth consent flow (mirrors accounts.google.com).
+    "form-action 'self' https://accounts.google.com https://appcenter.intuit.com; "
     "frame-ancestors 'none'"
 )
 _SECURITY_HEADERS = [
@@ -342,6 +345,20 @@ oauth.register(
     client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
     client_kwargs={"scope": f"openid email profile {GMAIL_SEND_SCOPE}"},
 )
+# ── QuickBooks Online (Intuit) OAuth client ─────────────────────────────────
+# Company-wide accounting connection (one realm) — see backend/routes/qbo.py
+# and backend/quickbooks.py. Single least-privilege scope; no payroll/payments.
+# Tokens are exchanged + refreshed server-side and stored encrypted in the
+# qbo_connection table. Credentials come from QBO_CLIENT_ID / QBO_CLIENT_SECRET;
+# QBO_REDIRECT_URI must match the Intuit Developer app's redirect URI, and
+# QBO_ENVIRONMENT selects sandbox vs production.
+oauth.register(
+    name="intuit",
+    server_metadata_url="https://developer.api.intuit.com/.well-known/openid_configuration",
+    client_id=os.environ.get("QBO_CLIENT_ID", ""),
+    client_secret=os.environ.get("QBO_CLIENT_SECRET", ""),
+    client_kwargs={"scope": "com.intuit.quickbooks.accounting"},
+)
 app.state.oauth = oauth
 
 
@@ -363,6 +380,9 @@ app.include_router(view_router)
 # Email send: session-gated. Per-user Gmail via OAuth scope gmail.send;
 # see backend/routes/email.py for the full lifecycle.
 app.include_router(email_router)
+# QuickBooks Online: admin-managed company connection + invoice push.
+# Session/admin-gated; see backend/routes/qbo.py.
+app.include_router(qbo_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────

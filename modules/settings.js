@@ -25,6 +25,9 @@
     // empty, otherwise an array of user dicts.
     var [users, setUsers] = useState(null);
     var [usersErr, setUsersErr] = useState(null);
+    // QuickBooks Online connection status (non-secret booleans + masked
+    // metadata from /api/qbo/status). null while loading.
+    var [qbo, setQbo] = useState(null);
 
     useEffect(function() { setDraft(Object.assign({}, settings)); cleanRef.current = settings; setIsDirty(false); }, []);
 
@@ -68,6 +71,26 @@
           setUsersErr("Save failed: " + String(e.message || e));
           loadUsers();  // reload to drop the stale optimistic patch
         });
+    }
+
+    function loadQbo() {
+      fetch("/api/qbo/status", { credentials: "include" })
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(s) { if (s) setQbo(s); })
+        .catch(function() {});
+    }
+    useEffect(loadQbo, []);
+
+    function connectQbo() { window.location.href = "/api/qbo/connect"; }
+    function disconnectQbo() {
+      setDlg({ title: "Disconnect QuickBooks",
+        message: "Disconnect QuickBooks? Invoices already pushed stay in QuickBooks, but you won't be able to push or update invoices until you reconnect.",
+        variant: "danger", confirmLabel: "Disconnect",
+        onConfirm: function() {
+          fetch("/api/qbo/disconnect", { method: "POST", credentials: "include" })
+            .then(function() { setDlg(null); loadQbo(); })
+            .catch(function() { setDlg(null); loadQbo(); });
+        } });
     }
 
     function set(key, val) {
@@ -470,6 +493,33 @@
             );
           })
         )
+      ),
+
+      // ── QuickBooks Online ──────────────────────────────────────────────────
+      // Company-wide accounting connection (admin-managed). Tokens live
+      // encrypted server-side; this panel only ever sees booleans + masked
+      // metadata. See backend/routes/qbo.py.
+      h("div", { style: sectionStyle },
+        h("div", { style: sectionTitle }, "QuickBooks Online"),
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 12, lineHeight: 1.5 } },
+          "Connect your QuickBooks Online company to push generated invoices. Customers and products/services are created in QuickBooks automatically if they're missing, and QuickBooks calculates sales tax. The connection is company-wide."),
+        qbo === null && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Checking connection…"),
+        qbo && qbo.configured === false && h("div", { style: { background: B.warn + "10", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginBottom: 10 } },
+          "QuickBooks credentials are not configured on the server. Set QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REDIRECT_URI and QBO_ENVIRONMENT, then redeploy."),
+        qbo && !qbo.connected && h("button", { onClick: connectQbo, disabled: qbo.configured === false,
+          style: { background: qbo.configured === false ? B.raised : "#2CA01C", border: "1px solid " + (qbo.configured === false ? B.border : "#2CA01C"), borderRadius: "6px", padding: "8px 16px", color: qbo.configured === false ? B.textMut : "#fff", fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: qbo.configured === false ? "not-allowed" : "pointer" } }, "Connect QuickBooks"),
+        qbo && qbo.connected && h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "12px 14px" } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+            h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: qbo.needsReconnect ? B.warn : B.success, display: "inline-block" } }),
+            h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, qbo.needsReconnect ? "Reconnect required" : "Connected"),
+            h("span", { style: { fontSize: "9px", fontWeight: 700, color: qbo.environment === "production" ? B.success : B.warn, background: (qbo.environment === "production" ? B.success : B.warn) + "18", border: "1px solid " + (qbo.environment === "production" ? B.success : B.warn) + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.05em" } }, qbo.environment || "sandbox")),
+          h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.6 } },
+            h("div", null, "Company (realm): ", h("span", { style: { color: B.textSec } }, qbo.realmMasked || "—")),
+            qbo.connectedBy && h("div", null, "Connected by ", h("span", { style: { color: B.textSec } }, qbo.connectedBy), qbo.connectedAt ? " on " + qbo.connectedAt.substring(0, 10) : ""),
+            qbo.refreshTokenExpiresAt && h("div", null, "Authorization valid until ", h("span", { style: { color: B.textSec } }, qbo.refreshTokenExpiresAt.substring(0, 10)))),
+          h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
+            qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
+            h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))
       ),
 
       // ── Email Templates ────────────────────────────────────────────────────
