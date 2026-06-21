@@ -228,3 +228,28 @@ async def push_invoice_route(
                         "QuickBooks sync failed",
                         [{"cat": "Error", "detail": e.safe_message[:300]}])
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+
+
+@qbo_router.post("/invoices/{invoice_id}/delete")
+async def delete_invoice_route(
+    invoice_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Admin-only. Delete this invoice's QuickBooks counterpart. The local row is
+    deleted separately by the frontend (normal CRUD DELETE) once this succeeds.
+    Idempotent — a not-yet-synced or already-gone invoice returns 200."""
+    result = await db.execute(select(models.Invoice).where(models.Invoice.id == invoice_id))
+    invoice = result.scalar_one_or_none()
+    if invoice is None:
+        raise HTTPException(status_code=404, detail=f"invoice {invoice_id} not found")
+    try:
+        return await qbo_sync.delete_from_quickbooks(db, invoice)
+    except quickbooks.QboNotConnected:
+        return JSONResponse(status_code=409, content={"reason": "not_connected",
+                            "error": "QuickBooks is not connected."})
+    except quickbooks.QboReconnectRequired:
+        return JSONResponse(status_code=409, content={"reason": "reconnect",
+                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+    except quickbooks.QboApiError as e:
+        return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})

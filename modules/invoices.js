@@ -1099,8 +1099,28 @@
       var paymentWarning = hasPayments
         ? "\n\nThis invoice has " + draft.payments.length + " recorded payment" + (draft.payments.length > 1 ? "s" : "") + " totaling $" + Math.round((draft.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0)).toLocaleString() + ". Deleting will erase the payment records."
         : "";
-      setDlg({ title: "Delete Invoice", message: "Permanently delete " + refDisplay + "?" + (draft.quoteId ? " This will reduce invoiced quantities on the source quote." : "") + paymentWarning, variant: "danger", confirmLabel: hasPayments ? "Delete with Payments" : "Delete",
+      var qbWarning = draft.qbInvoiceId ? "\n\nThis invoice will also be deleted from QuickBooks." : "";
+      setDlg({ title: "Delete Invoice", message: "Permanently delete " + refDisplay + "?" + (draft.quoteId ? " This will reduce invoiced quantities on the source quote." : "") + qbWarning + paymentWarning, variant: "danger", confirmLabel: hasPayments ? "Delete with Payments" : "Delete",
         onConfirm: function() {
+          // For a synced invoice, delete it from QuickBooks FIRST; only remove
+          // it locally if that succeeds, so we never orphan it in QuickBooks.
+          if (draft.qbInvoiceId) {
+            fetch("/api/qbo/invoices/" + draft.id + "/delete", { method: "POST", credentials: "include" })
+              .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+              .then(function(resp) {
+                if (resp.status === 200) {
+                  if (resp.body && resp.body.deleted) window.LTP_toast("Deleted from QuickBooks", { variant: "success" });
+                  doLocalDelete();
+                } else {
+                  window.LTP_toast("Not deleted — still in QuickBooks", { message: ((resp.body && resp.body.error) || ("HTTP " + resp.status + ".")) + " The invoice was kept; resolve the issue and try again.", variant: "error" });
+                  setDlg(null);
+                }
+              })
+              .catch(function(e) { window.LTP_toast("Not deleted — still in QuickBooks", { message: "Network or server error: " + String(e.message || e) + ". The invoice was kept.", variant: "error" }); setDlg(null); });
+            return;
+          }
+          doLocalDelete();
+          function doLocalDelete() {
           // If linked to a quote, reduce invoicedQty on matching quote items
           if (draft.quoteId && setQuotes) {
             setQuotes(function(prevQuotes) {
@@ -1155,6 +1175,7 @@
           setInvoices(function(prev) { return prev.filter(function(i) { return i.id !== draft.id; }); });
           setDlg(null);
           nav("invoices");
+          }
         }
       });
     }

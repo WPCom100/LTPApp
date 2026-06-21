@@ -274,8 +274,15 @@ async def test_payload_recall_note():
     print("test_payload_recall_note")
     payload = await _build(_fake_invoice(status="draft", sent_date="2026-06-21"))
     _check("recalled draft gets RECALLED memo", payload["PrivateNote"] == qbo_sync._RECALL_NOTE)
+    # Recall banner is the FIRST line on the invoice (not just the memo).
+    line0 = payload["Line"][0]
+    _check("recall banner is the first line",
+           line0["DetailType"] == "DescriptionOnly" and "RECALLED" in line0["Description"])
     fresh = await _build(_fake_invoice(status="draft", sent_date=""))
     _check("never-sent draft has no memo", fresh["PrivateNote"] == "")
+    _check("no recall banner when not recalled",
+           not any(l.get("DetailType") == "DescriptionOnly" and "RECALLED" in (l.get("Description") or "")
+                   for l in fresh["Line"]))
 
 
 async def test_payload_discounts():
@@ -311,6 +318,25 @@ async def test_payload_requires_billable_line():
     _check("note-only invoice rejected", raised)
 
 
+# ── Delete ──────────────────────────────────────────────────────────────────
+
+async def test_delete_not_synced():
+    print("test_delete_not_synced")
+    inv = types.SimpleNamespace(qb_invoice_id=None, qb_sync_token=None)
+    result = await qbo_sync.delete_from_quickbooks(MagicMock(), inv, client_id="c", client_secret="s")
+    _check("unsynced invoice → deleted False (no QB call)", result["deleted"] is False)
+
+
+async def test_delete_synced_calls_qb():
+    print("test_delete_synced_calls_qb")
+    inv = types.SimpleNamespace(qb_invoice_id="42", qb_sync_token="3")
+    qbo_sync.quickbooks.load_connection = AsyncMock(return_value=object())
+    qbo_sync.quickbooks.delete_invoice = AsyncMock(return_value={})
+    result = await qbo_sync.delete_from_quickbooks(MagicMock(), inv, client_id="c", client_secret="s")
+    _check("synced invoice → deleted True", result["deleted"] is True)
+    _check("QB delete called once", qbo_sync.quickbooks.delete_invoice.await_count == 1)
+
+
 # ── Runner ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -321,6 +347,7 @@ def main():
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
         test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
         test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
+        test_delete_not_synced, test_delete_synced_calls_qb,
     ]
     for t in sync_tests:
         t()

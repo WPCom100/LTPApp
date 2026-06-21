@@ -46,6 +46,9 @@ _DEFAULT_TAX_CODE = "TAX"
 _DEFAULT_NON_TAX_CODE = "NON"
 
 _RECALL_NOTE = "RECALLED — MAY NOT BE UP TO DATE"
+# Shown as a prominent first line ON the QB invoice (the memo alone is easy to
+# miss). Cleared automatically once the invoice is no longer a recalled draft.
+_RECALL_LINE = "*** RECALLED — MAY NOT BE UP TO DATE — A CORRECTED INVOICE WILL FOLLOW ***"
 
 
 class InvoiceNotSyncable(QboError):
@@ -439,6 +442,13 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
                 "DiscountLineDetail": {"PercentBased": False},
             })
 
+    # Recall: a draft that was previously sent. Surface it prominently as the
+    # FIRST line on the QB invoice (a memo is easy to miss) and keep the memo
+    # too. Cleared automatically once it's no longer a recalled draft.
+    recalled = invoice.status == "draft" and bool((invoice.sent_date or "").strip())
+    if recalled:
+        lines.insert(0, {"DetailType": "DescriptionOnly", "Description": _RECALL_LINE})
+
     payload: dict = {
         "CustomerRef": {"value": str(customer_id)},
         "Line": lines,
@@ -457,10 +467,6 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
         memo_parts.append(invoice.notes.strip())
     if memo_parts:
         payload["CustomerMemo"] = {"value": "\n".join(memo_parts)[:1000]}
-
-    # Recall memo: set when the invoice is a draft that was previously sent;
-    # cleared (empty string) otherwise so a re-send removes it.
-    recalled = invoice.status == "draft" and bool((invoice.sent_date or "").strip())
     payload["PrivateNote"] = _RECALL_NOTE if recalled else ""
     return payload
 
@@ -626,3 +632,41 @@ def _apply_qb_result(invoice, resp_inv: dict) -> None:
     invoice.qb_sync_status = "synced"
     invoice.qb_synced_at = datetime.now(timezone.utc)
     invoice.qb_last_error = None
+
+
+# ── Delete ───────────────────────────────────────────────────────────────────
+
+async def delete_from_quickbooks(db, invoice, *, client_id=None, client_secret=None) -> dict:
+    """Delete this invoice's QuickBooks counterpart. Idempotent:
+      - a not-yet-synced invoice (no qb_invoice_id) → {"deleted": False}
+      - a QB invoice that's already gone → treated as deleted
+      - a stale SyncToken (5010) → refetch the current token and retry
+    Raises QboNotConnected / QboReconnectRequired / QboApiError for the route to
+    map to HTTP. Does NOT delete the local row — that's the caller's job."""
+    if not invoice.qb_invoice_id:
+        return {"ok": True, "deleted": False, "reason": "not_synced"}
+    if client_id is None or client_secret is None:
+        client_id, client_secret = creds()
+    conn = await quickbooks.load_connection(db)
+    sync_token = invoice.qb_sync_token or "0"
+    try:
+        await quickbooks.delete_invoice(
+            conn, db, invoice.qb_invoice_id, sync_token,
+            client_id=client_id, client_secret=client_secret,
+        )
+    except QboApiError as e:
+        body = (e.body or "").lower()
+        if e.fault_code == "5010":  # stale SyncToken — refetch + retry once
+            current = await quickbooks.get_invoice(
+                conn, db, invoice.qb_invoice_id, client_id=client_id, client_secret=client_secret
+            )
+            sync_token = str(current.get("SyncToken", sync_token))
+            await quickbooks.delete_invoice(
+                conn, db, invoice.qb_invoice_id, sync_token,
+                client_id=client_id, client_secret=client_secret,
+            )
+        elif e.fault_code == "610" or "not found" in body:
+            pass  # already gone in QB — idempotent success
+        else:
+            raise
+    return {"ok": True, "deleted": True, "qbInvoiceId": invoice.qb_invoice_id}
