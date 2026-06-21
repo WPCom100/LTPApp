@@ -182,7 +182,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
             h("div", { style: { flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" } },
               h("div", null,
                 h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, c.name),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, (c.address || "") + " \u00b7 " + cc + " contacts \u00b7 " + pp + " projects")),
+                h("div", { style: { fontSize: "11px", color: B.textMut } }, (window.LTP_formatAddress(c) ? window.LTP_formatAddress(c) + " \u00b7 " : "") + cc + " contacts \u00b7 " + pp + " projects")),
               h("div", { style: { display: "flex", gap: 6 } }, compTypeBadges(c), h(window.Badge, { status: c.status }))));
         })
       )

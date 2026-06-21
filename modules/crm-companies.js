@@ -18,7 +18,7 @@
           h(window.CompanyLogo, { src: company.logo, size: 48 }),
           h("div", null,
             h("div", { style: { display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" } }, typeBadges(), h(window.Badge, { status: company.status })),
-            company.address && h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 2 } }, company.address),
+            window.LTP_formatAddress(company) && h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 2 } }, window.LTP_formatAddress(company)),
             company.website && h("a", { href: company.website.startsWith("http") ? company.website : "https://" + company.website, target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none" } }, company.website + " \u2197")
           )
         ),
@@ -55,6 +55,12 @@
     var [website, setWebsite] = useState(initial ? initial.website || "" : "");
     var [logo, setLogo] = useState(initial ? initial.logo || "" : "");
     var [notes, setNotes] = useState(initial ? initial.notes || "" : "");
+    // Billing city/state/zip + taxable feed the QuickBooks customer so Automated
+    // Sales Tax can geocode the jurisdiction (see backend/qbo_sync.py).
+    var [city, setCity] = useState(initial ? initial.city || "" : "");
+    var [stateRegion, setStateRegion] = useState(initial ? initial.state || "" : "");
+    var [zip, setZip] = useState(initial ? initial.zip || "" : "");
+    var [taxable, setTaxable] = useState(initial ? !!initial.taxable : false);
     var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? "#000" : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
 
     return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true },
@@ -68,11 +74,23 @@
           )
         ),
         h(window.LTPSelect, { label: "Status", value: status, onChange: setStatus, options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }, { value: "one-time", label: "One-Time" }, { value: "prospect", label: "Prospect" }] }),
-        h(window.LTPInput, { label: "Address", value: address, onChange: setAddress, placeholder: "123 Main St, Dallas, TX 75201" }),
+        h(window.LTPInput, { label: "Street Address", value: address, onChange: setAddress, placeholder: "123 Main St" }),
+        h("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8 } },
+          h(window.LTPInput, { label: "City", value: city, onChange: setCity, placeholder: "Dallas" }),
+          h(window.LTPInput, { label: "State", value: stateRegion, onChange: setStateRegion, placeholder: "TX" }),
+          h(window.LTPInput, { label: "ZIP", value: zip, onChange: setZip, placeholder: "75201" })
+        ),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Sales Tax"),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
+            h("button", { onClick: function() { setTaxable(!taxable); }, style: cbStyle(taxable) }, taxable ? "Taxable" : "Tax-exempt"),
+            h("span", { style: { fontSize: "10px", color: B.textMut } }, "QuickBooks calculates sales tax for taxable customers")
+          )
+        ),
         h(window.LTPInput, { label: "Website", value: website, onChange: setWebsite, placeholder: "https://example.com" }),
         h(window.ImageUpload, { label: "Logo", value: logo, onChange: setLogo }),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Internal notes..." }),
-        h(window.Btn, { onClick: function() { if (!name.trim()) return; onSave({ name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, website: website, logo: logo, notes: notes }); } }, initial ? "Save Changes" : "Save Company")
+        h(window.Btn, { onClick: function() { if (!name.trim()) return; onSave({ name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, city: city, state: stateRegion, zip: zip, taxable: taxable, website: website, logo: logo, notes: notes }); } }, initial ? "Save Changes" : "Save Company")
       )
     );
   };

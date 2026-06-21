@@ -63,6 +63,9 @@ def invoice_dict(inv: models.Invoice) -> dict:
         "payments": inv.payments or [],
         "activity": inv.activity or [],
         "shareToken": inv.share_token,
+        # QuickBooks-computed sales tax (read-only). Drives the tax line + the
+        # tax-inclusive total on the client view and PDF, matching the app.
+        "qbTaxTotal": inv.qb_tax_total,
         "createdDate": inv.created_at.isoformat()[:10] if inv.created_at else "",
     }
 
@@ -74,6 +77,9 @@ def company_dict(c: models.Company) -> dict:
         "id": c.id,
         "name": c.name,
         "address": c.address,
+        "city": c.city,
+        "state": c.state,
+        "zip": c.zip,
         "website": c.website,
         "logo": c.logo,
     }
@@ -89,6 +95,10 @@ def contact_dict(c: models.Contact) -> dict:
         "email": c.email,
         "phone": c.phone,
         "role": c.role,
+        "address": c.address,
+        "city": c.city,
+        "state": c.state,
+        "zip": c.zip,
     }
 
 

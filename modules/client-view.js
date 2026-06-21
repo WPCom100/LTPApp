@@ -53,9 +53,13 @@
     var gt = gd.type || "none";
     var gv = Number(gd.value) || 0;
     if (gt === "percent") after = adj * (1 - gv / 100);
-    else if (gt === "amount") after = adj - gv;
+    else if (gt === "amount" || gt === "flat") after = adj - gv;  // quotes: amount, invoices: flat
     else if (gt === "target") after = gv;
-    return { subtotal: sub, adjusted: adj, total: Math.max(after, 0) };
+    after = Math.max(after, 0);
+    // QuickBooks-computed sales tax (invoices only) makes the total tax-inclusive,
+    // matching the app + PDF.
+    var tax = (entity.qbTaxTotal != null) ? (Number(entity.qbTaxTotal) || 0) : 0;
+    return { subtotal: sub, adjusted: adj, preTax: after, tax: tax, total: after + tax };
   }
 
   function settingsAddress(s) {
@@ -323,7 +327,7 @@
     var t = calcTotals(entity);
     var gd = entity.globalDiscount || {};
     var gt = gd.type || "none";
-    var disc = t.adjusted - t.total;
+    var disc = t.adjusted - t.preTax;
     var diff = t.subtotal - t.adjusted;
 
     return h("div", { style: { marginTop: 30, marginLeft: "auto", maxWidth: 340 } },
@@ -336,7 +340,10 @@
           h("span", null, (diff > 0 ? "-" : "+") + fmtMoney(Math.abs(diff)))),
         gt !== "none" && Math.abs(disc) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut, marginBottom: 6 } },
           h("span", null, gt === "percent" ? "Discount (" + (gd.value || 0) + "%):" : "Discount:"),
-          h("span", null, "-" + fmtMoney(disc)))
+          h("span", null, "-" + fmtMoney(disc))),
+        t.tax > 0.005 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut, marginBottom: 6 } },
+          h("span", null, "Sales Tax:"),
+          h("span", null, fmtMoney(t.tax)))
       ),
       h("div", { style: { borderTop: "2px solid " + B.accent, paddingTop: 14, marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "baseline" } },
         h("span", { style: { fontSize: "18px", fontWeight: 800, color: B.accent, letterSpacing: "0.04em" } }, "TOTAL:"),
@@ -388,6 +395,19 @@
     }
 
     useEffect(reload, [token]);
+
+    // The app shell sets `body { overflow: hidden }` (index.html) for its
+    // fixed-height, internally-scrolled layout. This public client view is a
+    // normal top-to-bottom scrolling document, so that rule clips everything
+    // below the fold — including the Accept / Decline buttons — and the
+    // customer can't reach them. Re-enable body scroll while this view is
+    // mounted; restore the prior value on unmount so navigating back into the
+    // app shell (e.g. from Preview mode) keeps its layout intact.
+    useEffect(function() {
+      var prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "auto";
+      return function() { document.body.style.overflow = prevOverflow; };
+    }, []);
 
     // Loading state
     if (!data && !loadErr) {
@@ -474,9 +494,10 @@
             "Prepared for: " + ((company && company.name) || (contact && (contact.firstName + " " + contact.lastName).trim()) || "")),
           h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY } }, dateLabel + ": " + fmtDate(dateValue))
         ),
-        company && company.address && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, company.address.replace(/\n/g, "  ")),
+        company && window.LTP_formatAddress(company) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, window.LTP_formatAddress(company)),
         contact && (contact.firstName || contact.lastName) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } },
           (contact.firstName + " " + (contact.lastName || "")).trim() + (contact.role ? "  —  " + contact.role : "")),
+        !company && contact && window.LTP_formatAddress(contact) && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginBottom: 4 } }, window.LTP_formatAddress(contact)),
         contact && contact.email && h("div", { style: { fontSize: "10px", color: "#8899a0", marginBottom: 16 } }, contact.email),
 
         h("div", { style: { height: 1, background: "#3a4a52", margin: "10px 0 24px" } }),

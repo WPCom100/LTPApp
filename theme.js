@@ -559,6 +559,20 @@ window.LTP_textToHtml = (function() {
 })();
 
 // ── Invoice & Quote display helpers (used across modules) ────────────────
+// Format a client's billing address (Company or Contact) into one string:
+// "<street>, City, ST ZIP". `joiner` (default ", ") also replaces newlines in
+// the multi-line street field. Used everywhere a client address is displayed
+// (CRM, client view) so the structured city/state/zip fields show up too.
+window.LTP_formatAddress = function(e, joiner) {
+  if (!e) return "";
+  joiner = joiner || ", ";
+  var street = (e.address || "").replace(/\n+/g, joiner).trim();
+  var city = (e.city || "").trim(), st = (e.state || "").trim(), zip = (e.zip || "").trim();
+  var sz = [st, zip].filter(function(x) { return x; }).join(" ");
+  var cityLine = (city && sz) ? (city + ", " + sz) : (city || sz);
+  return [street, cityLine].filter(function(x) { return x; }).join(joiner);
+};
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();
@@ -589,8 +603,12 @@ window.LTP_INVOICE_TOTALS = function(inv) {
   else if (gd.type === "flat") discount = gd.value || 0;
   else if (gd.type === "target") discount = Math.max(0, subtotal - (gd.value || 0));
   var afterDiscount = subtotal - discount;
+  // Tax is QuickBooks-authoritative: once the invoice has been pushed, QB
+  // computes the sales tax (qbTaxTotal) and the whole-invoice total reflects it
+  // everywhere LTP_INVOICE_TOTALS is consumed (builder, list, dashboard, client
+  // view, PDF). Before any push, qbTaxTotal is null and tax is 0.
   var taxRate = window.LTP_TAX_RATE || 0;
-  var tax = afterDiscount * taxRate / 100;
+  var tax = (inv.qbTaxTotal != null) ? (Number(inv.qbTaxTotal) || 0) : (afterDiscount * taxRate / 100);
   var total = afterDiscount + tax;
   var paid = (inv.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
   return { subtotal: subtotal, discount: discount, tax: tax, total: total, paid: paid, balance: Math.max(0, total - paid) };

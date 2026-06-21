@@ -85,6 +85,12 @@
     var [phone, setPhone] = useState(initial ? initial.phone : "");
     var [role, setRole] = useState(initial ? initial.role : "");
     var [compIds, setCompIds] = useState(initial ? initial.companyIds : []);
+    // Billing address — only relevant when this contact is invoiced directly
+    // (client_type="contact"). Feeds the QuickBooks customer for sales tax.
+    var [cAddress, setCAddress] = useState(initial ? initial.address || "" : "");
+    var [cCity, setCCity] = useState(initial ? initial.city || "" : "");
+    var [cState, setCState] = useState(initial ? initial.state || "" : "");
+    var [cZip, setCZip] = useState(initial ? initial.zip || "" : "");
     var [errors, setErrors] = useState({});
     function validate() { var e = {}; if (!fn.trim()) e.fn = 1; if (!ln.trim()) e.ln = 1; if (!email.trim()) e.email = 1; if (!phone.trim()) e.phone = 1; if (!role.trim()) e.role = 1; setErrors(e); return Object.keys(e).length === 0; }
     return h(window.LTPModal, { title: initial ? "Edit Contact" : "Add Contact", onClose: onClose, disableBackdrop: true },
@@ -102,9 +108,20 @@
         h(window.LTPInput, { label: "Role / Title *", value: role, onChange: setRole, placeholder: "e.g. Technical Director" }),
         (errors.email || errors.phone || errors.role) && h("div", { style: { fontSize: "10px", color: B.danger } }, "* All starred fields are required."),
         h(window.SearchSelect, { label: "Link to Companies (optional)", items: ctx.companies, selectedIds: compIds, onChange: setCompIds, nameField: "name" }),
+        // Billing address — for contacts invoiced directly. Feeds QuickBooks tax.
+        h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 10 } },
+          h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 } }, "Billing Address (for direct invoicing)"),
+          h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "Directly-billed contacts are always taxable in QuickBooks."),
+          h(window.LTPInput, { label: "Street Address", value: cAddress, onChange: setCAddress, placeholder: "123 Main St" }),
+          h("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 8, marginTop: 8 } },
+            h(window.LTPInput, { label: "City", value: cCity, onChange: setCCity, placeholder: "Dallas" }),
+            h(window.LTPInput, { label: "State", value: cState, onChange: setCState, placeholder: "TX" }),
+            h(window.LTPInput, { label: "ZIP", value: cZip, onChange: setCZip, placeholder: "75201" })
+          )
+        ),
         initial && h("div", { style: { display: "flex", justifyContent: "flex-end" } },
           h(window.Btn, { small: true, variant: "danger", onClick: function() { ctx.setDeleteConfirm({ type: "contact", id: initial.id, name: initial.firstName + " " + initial.lastName }); onClose(); } }, "Delete Contact")),
-        h(window.Btn, { onClick: function() { if (!validate()) return; onSave({ firstName: fn, lastName: ln, email: email, phone: phone, role: role, companyIds: compIds }); } }, initial ? "Save Changes" : "Save Contact")
+        h(window.Btn, { onClick: function() { if (!validate()) return; onSave({ firstName: fn, lastName: ln, email: email, phone: phone, role: role, companyIds: compIds, address: cAddress, city: cCity, state: cState, zip: cZip }); } }, initial ? "Save Changes" : "Save Contact")
       )
     );
   };

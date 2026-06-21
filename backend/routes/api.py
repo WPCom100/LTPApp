@@ -23,6 +23,19 @@ def _camel_to_snake(s):
 # Auto-managed columns the client should never send/receive.
 _HIDDEN_COLS = {"created_at", "updated_at"}
 
+# Server-authoritative columns the client may READ (they're returned on GET)
+# but must never WRITE. These are populated only by the QuickBooks sync engine
+# (backend/qbo_sync.py). Stripping them on the way IN protects against the
+# frontend's debounced diff-sync echoing a stale value (e.g. nulling a cached
+# qb_customer_id captured before the row was synced). The names are globally
+# unique across tables, so a single flat set is sufficient. NOTE: `taxable` is
+# deliberately NOT here — that one is user-editable.
+_READONLY_COLS = {
+    "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
+    "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
+    "qb_customer_id", "qb_item_id",
+}
+
 
 def _row_to_dict(row):
     """Convert SQLAlchemy row to camelCase dict for frontend compatibility.
@@ -43,7 +56,7 @@ def _dict_to_row(data, model_cls):
     valid_cols = {c.name for c in model_cls.__table__.columns}
     for key, val in data.items():
         snake = _camel_to_snake(key)
-        if snake in valid_cols and snake not in _HIDDEN_COLS:
+        if snake in valid_cols and snake not in _HIDDEN_COLS and snake not in _READONLY_COLS:
             mapped[snake] = val
     return mapped
 
