@@ -162,24 +162,27 @@ async def refresh_if_needed(
         # Google's standard "invalid_grant" response — user revoked, token
         # rotated by us but lost, or app credentials changed. Clear stored
         # tokens so future probes return gmailConnected=False and the
-        # frontend prompts reconnect. We swallow any error body details
-        # from logs — they're useful internally but not for the user.
-        body = resp.text
-        print(f"[LTP] gmail: refresh rejected by Google: {body[:200]}", flush=True)
+        # frontend prompts reconnect. Log a truncated snippet server-side
+        # only; the exception message is reflected to the client by the email
+        # route, so it must not carry the raw provider body
+        # (SECURITY_REVIEW.md H10).
+        print(f"[LTP] gmail: refresh rejected by Google: {resp.text[:200]}", flush=True)
         user.gmail_refresh_token = None
         user.gmail_access_token = None
         user.gmail_token_expires_at = None
         await db.flush()
-        raise GmailReconnectRequired(f"google refused refresh: {body[:200]}")
+        raise GmailReconnectRequired("Google refused the token refresh; reconnect required.")
     if resp.status_code != 200:
         # Network blip, 5xx from Google — surface so caller can decide
         # whether to retry. Don't clear tokens; the refresh might work next time.
-        raise GmailSendError(resp.status_code, f"refresh endpoint: {resp.text}")
+        print(f"[LTP] gmail: refresh endpoint returned {resp.status_code}: "
+              f"{resp.text[:200]}", flush=True)
+        raise GmailSendError(resp.status_code, "Google token endpoint returned an error.")
 
     data = resp.json()
     new_access = data.get("access_token")
     if not new_access:
-        raise GmailSendError(200, f"refresh response missing access_token: {data}")
+        raise GmailSendError(200, "Google token refresh returned no access token.")
 
     user.gmail_access_token = crypto.encrypt_token(new_access)
     expires_in = int(data.get("expires_in", 3600))
