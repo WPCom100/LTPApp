@@ -360,6 +360,19 @@ async def create_customer(conn, db, payload, *, client_id, client_secret, httpx_
                           client_secret=client_secret, json=payload, httpx_client=httpx_client)
 
 
+async def get_customer(conn, db, customer_id, *, client_id, client_secret, httpx_client=None) -> dict:
+    data = await _request(conn, db, "GET", f"customer/{customer_id}", client_id=client_id,
+                          client_secret=client_secret, httpx_client=httpx_client)
+    return data.get("Customer", {}) or {}
+
+
+async def update_customer(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    """Update a customer. Pass sparse=True + Id + SyncToken in the payload to
+    patch only the supplied fields (leaving everything else untouched)."""
+    return await _request(conn, db, "POST", "customer", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
 async def create_item(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
     return await _request(conn, db, "POST", "item", client_id=client_id,
                           client_secret=client_secret, json=payload, httpx_client=httpx_client)

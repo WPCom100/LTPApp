@@ -123,6 +123,9 @@ def _build_rules():
             "name":    _str_max(255),
             "status":  _enum("company_status"),
             "website": _str_max(255),
+            "city":    _str_max(100),
+            "state":   _str_max(50),
+            "zip":     _str_max(20),
         },
         models.Contact: {
             "firstName":  _str_max(100),
@@ -131,6 +134,9 @@ def _build_rules():
             "phone":      _str_max(50),
             "role":       _str_max(100),
             "crewStatus": _enum("crew_status"),
+            "city":       _str_max(100),
+            "state":      _str_max(50),
+            "zip":        _str_max(20),
         },
         models.Project: {
             "name":      _str_max(255),

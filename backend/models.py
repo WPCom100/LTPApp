@@ -35,7 +35,10 @@ class Company(Base):
     is_client = Column(Boolean, default=False)
     is_vendor = Column(Boolean, default=False)
     status = Column(String(50), default="active")        # {active, inactive, prospect}
-    address = Column(Text, default="")                   # multi-line street address
+    address = Column(Text, default="")                   # street address (Line1/Line2); city/state/zip below
+    city = Column(String(100), default="")               # billing city — feeds QuickBooks BillAddr for sales-tax geocoding
+    state = Column(String(50), default="")               # billing state/province code, e.g. "TX"
+    zip = Column(String(20), default="")                 # billing postal code
     website = Column(String(255), default="")
     logo = Column(Text, default="")                      # URL or data:image base64
     notes = Column(Text, default="")
@@ -66,15 +69,22 @@ class Contact(Base):
     email = Column(String(255), default="")
     phone = Column(String(50), default="")
     role = Column(String(100), default="")               # job title shown in CRM, e.g. "Production Director"
+    # Billing address — used when a Contact is billed directly (client_type="contact").
+    # Feeds the QuickBooks customer BillAddr so Automated Sales Tax can geocode it.
+    address = Column(Text, default="")                   # billing street (Line1/Line2)
+    city = Column(String(100), default="")               # billing city
+    state = Column(String(50), default="")               # billing state/province code, e.g. "TX"
+    zip = Column(String(20), default="")                 # billing postal code
     company_ids = Column(JSON, default=list)             # list[int] — company.id references
     is_crew = Column(Boolean, default=False)
     crew_roles = Column(JSON, default=list)              # list[str] — role codes from LTP_DATA_SETTINGS.crewRoleOptions, e.g. ["L1","L3","RIG"]
     crew_departments = Column(JSON, default=list)        # list[str] — dept names, e.g. ["Lighting","Rigging"]
     crew_notes = Column(Text, default="")
     crew_status = Column(String(20), default="active")   # {active, inactive}
-    # QuickBooks Online sync — used when a Contact is the billing party
-    # (client_type="contact"). Same semantics as Company.taxable / qb_customer_id.
-    taxable = Column(Boolean, default=False)
+    # QuickBooks Online customer link — used when a Contact is billed directly
+    # (client_type="contact"). Taxability is a company-level concept, so there is
+    # deliberately no `taxable` flag here; directly-billed contacts are treated
+    # as tax-exempt (see backend/qbo_sync.py).
     qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

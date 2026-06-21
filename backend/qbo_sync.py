@@ -147,33 +147,99 @@ async def _billing_party(db: AsyncSession, invoice: models.Invoice):
     return None, None
 
 
-async def find_or_create_customer(conn, db, party, kind, *, client_id, client_secret) -> str:
-    """Resolve `party` (Company or Contact row) to a QB Customer id, caching it
-    on the row. Matches by stored id, then by DisplayName, then creates."""
-    if party.qb_customer_id:
-        return party.qb_customer_id
+def _bill_addr(party) -> dict | None:
+    """Structured QuickBooks BillAddr from the party's address fields, or None
+    if nothing is set. Automated Sales Tax geocodes the jurisdiction from City /
+    CountrySubDivisionCode (state) / PostalCode (+ Line1), which is why the
+    free-form `address` alone couldn't drive tax."""
+    line = (getattr(party, "address", "") or "").strip()
+    city = (getattr(party, "city", "") or "").strip()
+    state = (getattr(party, "state", "") or "").strip()
+    postal = (getattr(party, "zip", "") or "").strip()
+    if not (line or city or state or postal):
+        return None
+    addr: dict = {}
+    if line:
+        parts = [p.strip() for p in line.splitlines() if p.strip()]
+        if parts:
+            addr["Line1"] = parts[0][:500]
+            if len(parts) > 1:
+                addr["Line2"] = " ".join(parts[1:])[:500]
+    if city:
+        addr["City"] = city[:255]
+    if state:
+        addr["CountrySubDivisionCode"] = state[:255]
+    if postal:
+        addr["PostalCode"] = postal[:30]
+    addr["Country"] = "US"
+    return addr
 
+
+def _party_taxable(party, kind) -> bool:
+    """Default taxability for a billing party's invoice lines. Directly-billed
+    contacts (individuals) are ALWAYS taxable; companies carry an explicit
+    `taxable` flag (many are exempt — resellers, non-profits). Per-line
+    overrides still apply on top of this in build_invoice_payload."""
+    if kind == "contact":
+        return True
+    return bool(getattr(party, "taxable", False))
+
+
+def _customer_fields(party, kind) -> tuple[str, dict]:
+    """Return (display_name, fields) for a QB Customer built from the party.
+    `fields` holds the syncable attributes (name parts, contact info, BillAddr,
+    Taxable) WITHOUT DisplayName — DisplayName is added only on create, so a
+    sparse update of an existing customer can never trip a duplicate-name (6240)
+    conflict by trying to rename it."""
     if kind == "company":
         display_name = _safe_name(party.name, 100)
-        payload = {"DisplayName": display_name, "CompanyName": (party.name or "")[:100]}
-        if (party.address or "").strip():
-            payload["BillAddr"] = {"Line1": party.address[:500]}
-    else:  # contact
+        fields: dict = {"CompanyName": (party.name or "")[:100]}
+    else:
         full = f"{party.first_name or ''} {party.last_name or ''}".strip()
         display_name = _safe_name(full or party.email or f"Contact {party.id}", 100)
-        payload = {
-            "DisplayName": display_name,
+        fields = {
             "GivenName": (party.first_name or "")[:100],
             "FamilyName": (party.last_name or "")[:100],
         }
         if (party.email or "").strip():
-            payload["PrimaryEmailAddr"] = {"Address": party.email}
+            fields["PrimaryEmailAddr"] = {"Address": party.email}
         if (party.phone or "").strip():
-            payload["PrimaryPhone"] = {"FreeFormNumber": party.phone}
+            fields["PrimaryPhone"] = {"FreeFormNumber": party.phone}
+    addr = _bill_addr(party)
+    if addr:
+        fields["BillAddr"] = addr
+    fields["Taxable"] = _party_taxable(party, kind)
+    return display_name, fields
 
-    payload["Taxable"] = bool(party.taxable)
 
-    # Match an existing customer by DisplayName.
+async def find_or_create_customer(conn, db, party, kind, *, client_id, client_secret) -> str:
+    """Resolve `party` (Company or Contact row) to a QB Customer id, caching it
+    on the row. When the customer already exists, keep its billing address +
+    Taxable flag in sync with the app on each push (so a client moved into a
+    taxable area, or toggled taxable, reflects in QuickBooks and tax computes).
+    The customer sync is best-effort — a hiccup there must not block the push."""
+    display_name, fields = _customer_fields(party, kind)
+
+    if party.qb_customer_id:
+        try:
+            current = await quickbooks.get_customer(
+                conn, db, party.qb_customer_id, client_id=client_id, client_secret=client_secret
+            )
+            if current.get("Id"):
+                update = dict(fields)
+                update["Id"] = str(current["Id"])
+                update["SyncToken"] = str(current.get("SyncToken", "0"))
+                update["sparse"] = True
+                await quickbooks.update_customer(
+                    conn, db, update, client_id=client_id, client_secret=client_secret
+                )
+        except QboApiError as e:
+            print(f"[LTP] qbo: customer sync skipped for {party.qb_customer_id} ({e.safe_message})", flush=True)
+        return party.qb_customer_id
+
+    # No cached id — match an existing customer by DisplayName, else create.
+    payload = dict(fields)
+    payload["DisplayName"] = display_name
     found = await quickbooks.query(
         conn, db,
         f"SELECT Id, DisplayName FROM Customer WHERE DisplayName = '{escape_query_value(display_name)}'",
@@ -450,7 +516,7 @@ async def push_invoice(db, invoice, user=None, *, client_id=None, client_secret=
         conn, db, party, kind, client_id=client_id, client_secret=client_secret
     )
     payload = await build_invoice_payload(
-        conn, db, invoice, customer_id, bool(party.taxable),
+        conn, db, invoice, customer_id, _party_taxable(party, kind),
         client_id=client_id, client_secret=client_secret,
     )
 

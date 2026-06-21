@@ -188,6 +188,41 @@ async def test_api_error_on_fault():
     _check("safe_message set", raised is not None and "Bad" in raised.safe_message)
 
 
+# ── Customer address + fields ────────────────────────────────────────────────
+
+def test_customer_billaddr_and_fields():
+    print("test_customer_billaddr_and_fields")
+    company = types.SimpleNamespace(name="Acme Corp", address="123 Main St\nSuite 4",
+                                    city="Dallas", state="TX", zip="75001", taxable=True)
+    addr = qbo_sync._bill_addr(company)
+    _check("Line1 from first address line", addr["Line1"] == "123 Main St")
+    _check("Line2 from remaining lines", addr["Line2"] == "Suite 4")
+    _check("City mapped", addr["City"] == "Dallas")
+    _check("state → CountrySubDivisionCode", addr["CountrySubDivisionCode"] == "TX")
+    _check("zip → PostalCode", addr["PostalCode"] == "75001")
+
+    name, fields = qbo_sync._customer_fields(company, "company")
+    _check("display name from company name", name == "Acme Corp")
+    _check("Taxable carried into fields", fields["Taxable"] is True)
+    _check("BillAddr included", "BillAddr" in fields)
+    # DisplayName must NOT be in fields — it's added only on create so a sparse
+    # update can never trip a duplicate-name conflict by renaming.
+    _check("DisplayName excluded from sync fields", "DisplayName" not in fields)
+
+    bare = types.SimpleNamespace(name="X", address="", city="", state="", zip="", taxable=False)
+    _check("no address → None BillAddr", qbo_sync._bill_addr(bare) is None)
+    _, f2 = qbo_sync._customer_fields(bare, "company")
+    _check("no BillAddr when address empty", "BillAddr" not in f2)
+
+    # Directly-billed contacts are ALWAYS taxable (companies carry the flag).
+    contact = types.SimpleNamespace(first_name="Jo", last_name="Lee", email="j@x.com",
+                                    phone="", id=5, address="", city="", state="", zip="")
+    _, cf = qbo_sync._customer_fields(contact, "contact")
+    _check("directly-billed contact → Taxable True", cf["Taxable"] is True)
+    _check("company taxable=False → Taxable False", qbo_sync._party_taxable(bare, "company") is False)
+    _check("contact → _party_taxable True", qbo_sync._party_taxable(contact, "contact") is True)
+
+
 # ── Payload mapping ─────────────────────────────────────────────────────────
 
 def _fake_invoice(**over):
@@ -270,7 +305,8 @@ async def test_payload_requires_billable_line():
 # ── Runner ──────────────────────────────────────────────────────────────────
 
 def main():
-    sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped]
+    sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
+                  test_customer_billaddr_and_fields]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,

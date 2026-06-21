@@ -743,12 +743,11 @@
       if (draft.clientType === "contact") return draft.clientContactId ? contacts.find(function(c) { return c.id === draft.clientContactId; }) : null;
       return draft.companyId ? companies.find(function(c) { return c.id === draft.companyId; }) : null;
     }
-    // Tax is a CUSTOMER-level flag (with per-line overrides). Toggling it edits
-    // the selected Company/Contact row so QuickBooks taxes their invoices.
+    // Tax is a COMPANY-level flag (with per-line overrides). Toggling it edits
+    // the selected company so QuickBooks taxes their invoices. Contacts billed
+    // directly are always tax-exempt, so there's nothing to toggle for them.
     function setCustomerTaxable(val) {
-      if (draft.clientType === "contact" && draft.clientContactId && setContacts) {
-        setContacts(function(prev) { return prev.map(function(c) { return c.id === draft.clientContactId ? Object.assign({}, c, { taxable: val }) : c; }); });
-      } else if (draft.companyId && setCompanies) {
+      if (draft.companyId && setCompanies) {
         setCompanies(function(prev) { return prev.map(function(c) { return c.id === draft.companyId ? Object.assign({}, c, { taxable: val }) : c; }); });
       }
     }
@@ -766,9 +765,10 @@
     var linkedQuote = draft.quoteId ? quotes.find(function(q) { return q.id === draft.quoteId; }) : null;
     var t = window.LTP_INVOICE_TOTALS(draft);
 
-    // QuickBooks display state
+    // QuickBooks display state. Directly-billed contacts are always taxable;
+    // companies use their own taxable flag.
     var custParty = billingParty();
-    var customerTaxable = !!(custParty && custParty.taxable);
+    var customerTaxable = draft.clientType === "contact" ? !!custParty : !!(custParty && custParty.taxable);
     var qbConnected = !!(qbo && qbo.connected);
     var qbPill = null;
     if (draft.id != null && qbConnected) {
@@ -1336,12 +1336,17 @@
                 style: { width: 70, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
             ),
             // Customer taxability (draft) — drives whether QuickBooks taxes the
-            // lines. Most clients are exempt, so this defaults off.
-            isDraft && custParty && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", fontSize: "11px", color: B.textMut } },
+            // lines. Company-level only (contacts billed directly are exempt);
+            // most clients are exempt, so this defaults off.
+            isDraft && draft.clientType === "company" && custParty && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", fontSize: "11px", color: B.textMut } },
               h("label", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer" } },
                 h("input", { type: "checkbox", checked: customerTaxable, onChange: function(e) { setCustomerTaxable(e.target.checked); } }),
                 h("span", null, "Customer is taxable")),
               customerTaxable && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, draft.qbTaxTotal != null ? "tax via QuickBooks" : "tax pending QuickBooks")),
+            // Directly-billed contacts are always taxable — informational, no toggle.
+            isDraft && draft.clientType === "contact" && custParty && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", fontSize: "11px", color: B.textMut } },
+              h("span", null, "Taxable (billed directly)"),
+              h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, draft.qbTaxTotal != null ? "tax via QuickBooks" : "tax pending QuickBooks")),
             // QuickBooks-computed sales tax (read-only, pulled back after push).
             draft.qbTaxTotal != null && draft.qbTaxTotal > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
               h("span", null, "Sales Tax (QuickBooks)"), h("span", null, "$" + Math.round(draft.qbTaxTotal).toLocaleString())),
