@@ -692,6 +692,9 @@
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+            // Auto-export to QuickBooks on every send (first time + resends). The
+            // invoice is now "sent", which is what makes it eligible to export.
+            if (isAdmin && qbConnected) { persistAndPushQbo(updated); }
             setShowSendModal(false);
             setDlg({ title: isResend ? "Invoice Resent" : "Invoice Sent", message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
             return;
@@ -743,6 +746,8 @@
           var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
           if (draft.id != null) { setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); }); }
           setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+          // Immediately push the recall notice to QuickBooks (only if already exported there).
+          if (isAdmin && qbConnected && updated.qbInvoiceId) { persistAndPushQbo(updated); }
           setDlg(null);
         }
       });
@@ -757,6 +762,7 @@
     var qbSig = "";
     function sendToQuickBooks() {
       if (draft.id == null) { window.LTP_toast("Save first", { message: "Save the invoice before sending it to QuickBooks.", variant: "warn" }); return; }
+      if (!draft.sentDate && !draft.qbInvoiceId) { window.LTP_toast("Send the invoice first", { message: "Invoices export to QuickBooks once they've been sent.", variant: "warn" }); return; }
       if (!isAdmin) { window.LTP_toast("Admin only", { message: "Only an admin can push invoices to QuickBooks.", variant: "warn" }); return; }
       if (!qbo || !qbo.connected) { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings before pushing invoices.", variant: "warn" }); return; }
       setQboSyncing(true);
@@ -788,6 +794,47 @@
           window.LTP_toast("QuickBooks sync failed", { message: d.error || ("HTTP " + resp.status + "."), variant: "error" });
         })
         .catch(function(e) { setQboSyncing(false); window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
+    }
+
+    // Persist the invoice, THEN export/update it in QuickBooks. Used by the
+    // auto-export on send and the recall auto-push: the push reads the invoice
+    // from the server, so the new status/sentDate must be saved first (e.g. the
+    // recall banner depends on the persisted status=draft). Best-effort — a sync
+    // failure toasts but never blocks the send/recall.
+    function persistAndPushQbo(invoiceObj) {
+      var party = (invoiceObj.clientType === "contact")
+        ? (invoiceObj.clientContactId ? contacts.find(function(c) { return c.id === invoiceObj.clientContactId; }) : null)
+        : (invoiceObj.companyId ? companies.find(function(c) { return c.id === invoiceObj.companyId; }) : null);
+      var proj = invoiceObj.projectId ? projects.find(function(p) { return p.id === invoiceObj.projectId; }) : null;
+      var taxable = invoiceObj.clientType === "contact" ? !!party : !!(party && party.taxable);
+      var sig = qbSignature(invoiceObj, party, proj, taxable);
+      return fetch("/api/invoices/" + invoiceObj.id, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(invoiceObj) })
+        .then(function(r) { if (!r.ok) throw new Error("save failed (" + r.status + ")"); })
+        .then(function() {
+          return fetch("/api/qbo/invoices/" + invoiceObj.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ signature: sig }) });
+        })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          if (resp.status === 200) {
+            var b = resp.body || {};
+            var withQb = Object.assign({}, invoiceObj, {
+              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
+              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
+              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : sig
+            });
+            setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
+            setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
+            if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;
+            window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
+              { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
+            return;
+          }
+          var d = resp.body || {};
+          if (resp.status === 409 && d.reason === "reconnect") { window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" }); return; }
+          if (resp.status === 409 && d.reason === "not_connected") { return; }
+          window.LTP_toast("QuickBooks sync failed", { message: (d.error || ("HTTP " + resp.status)) + " — open the invoice and use Update QuickBooks to retry.", variant: "error" });
+        })
+        .catch(function(e) { window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
     }
 
     function billingParty() {
@@ -826,8 +873,11 @@
     // changes). qbSig is hoisted, so sendToQuickBooks reads the current value.
     qbSig = qbConnected ? qbSignature(draft, custParty, selectedProject, customerTaxable) : "";
     var qbOutOfSync = !draft.qbInvoiceId || qbSig !== (draft.qbSyncedSignature || "");
+    // QB status/controls only apply once the invoice has been sent (export is
+    // gated to sent — see item 5; auto-export happens on send).
+    var qbEligible = !!(draft.sentDate || draft.qbInvoiceId);
     var qbPill = null;
-    if (draft.id != null && qbConnected) {
+    if (draft.id != null && qbConnected && qbEligible) {
       if (!draft.qbInvoiceId) qbPill = { label: "Not in QuickBooks", color: B.textMut };
       else if (draft.qbSyncStatus === "error") qbPill = { label: "QB sync error", color: B.danger };
       else if (qbOutOfSync) qbPill = { label: "QB update needed", color: B.warn };
@@ -1239,7 +1289,7 @@
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
           // QuickBooks status pill + push button (admin + connected)
           qbPill && h("span", { title: draft.qbLastError || "", style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "4px 9px", borderRadius: "6px", whiteSpace: "nowrap" } }, qbPill.label),
-          draft.id != null && isAdmin && qbConnected && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
+          draft.id != null && isAdmin && qbConnected && qbEligible && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
             style: { background: draft.qbInvoiceId ? "transparent" : "#2CA01C", border: "1px solid " + (draft.qbInvoiceId ? B.border : "#2CA01C"), borderRadius: "6px", padding: "6px 12px", color: draft.qbInvoiceId ? B.textSec : "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
             qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Send to QuickBooks")),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteInvoice }, "Delete"),
