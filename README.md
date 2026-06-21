@@ -174,6 +174,87 @@ logo as a fallback. The Team Members section in Settings shows each
 user's photo as a small circular avatar so admins can verify what each
 team member's signature will display.
 
+## QuickBooks Online integration
+
+The app pushes generated invoices to a QuickBooks Online company so the books
+stay in sync. It's a **company-wide** connection (one QB company / realm),
+managed by an admin, with all tokens stored encrypted server-side. Mirrors the
+Gmail integration's security posture.
+
+### One-time setup
+
+1. Create an app at [Intuit Developer](https://developer.intuit.com) → **My
+   Apps** → **Create an app** → **QuickBooks Online and Payments**. It needs the
+   single scope **`com.intuit.quickbooks.accounting`** (no payroll, no payments).
+2. On the app's **Keys & credentials** page — note there's a separate set for
+   **Development** (sandbox) and **Production** — copy the Client ID + Secret and
+   add a **Redirect URI** of `https://<your-app>/api/qbo/callback`.
+3. Set the env vars (see the table above): `QBO_CLIENT_ID`, `QBO_CLIENT_SECRET`,
+   `QBO_REDIRECT_URI`, and `QBO_ENVIRONMENT` (`sandbox` to start).
+   `LTP_TOKEN_ENCRYPTION_KEY` must also be set — it encrypts the QB tokens at
+   rest (same key as Gmail).
+4. Redeploy, then go to **Settings → QuickBooks Online → Connect** and
+   authorize. An admin does this once; the connection is shared by the whole
+   workspace.
+
+The `redirect_uri` the app sends and the one registered on the Intuit app must
+match **exactly**, and the **Development** keys pair with sandbox while
+**Production** keys pair with production. (If you authorize through Intuit's
+OAuth 2.0 Playground instead of the app's **Connect** button, you'll land back
+on the Playground — always use the app's button.)
+
+### How invoices sync
+
+- **Export is tied to sending.** An invoice reaches QuickBooks only once it has
+  been **sent**. Sending it — the first time and every resend — **auto-exports**
+  it; there's no separate manual push in the normal flow.
+- **Out-of-sync detection.** Once an invoice is in QB, the **QuickBooks** card on
+  the invoice (above the summary) shows its status and a **View in QuickBooks ↗**
+  deep link. It surfaces an **Update QuickBooks** button only when something
+  QB-relevant has changed since the last push — line items, dates, discount,
+  taxability, the customer's info, or the project name.
+- **Recall.** Recalling a sent invoice immediately pushes a prominent *"RECALLED
+  — MAY NOT BE UP TO DATE"* notice (a banner as the first line on the QB invoice,
+  plus a private note); re-sending the corrected invoice clears it.
+- **Delete.** Deleting an invoice deletes its QuickBooks counterpart too (the
+  confirmation dialog says so when it's synced). The local invoice is removed
+  only if the QB delete succeeds, so it's never orphaned.
+- **Customers & items** are created in QuickBooks automatically the first time
+  they're referenced (matched by name, then cached by id) — no pre-creation
+  needed. Equipment lines map to one generic "Equipment Rental" item; each
+  product/service maps to its own item.
+
+### Sales tax
+
+QuickBooks is authoritative for sales tax: it computes the tax from the
+customer's billing address (Automated Sales Tax), and the app stores the result
+and folds it into the invoice total everywhere (builder, list, client view,
+PDF).
+
+- **Company customers** carry an optional **Taxable** flag (most clients are
+  exempt). **Contacts billed directly are always taxable.** Per-line overrides
+  are available on taxable invoices.
+- For QB to find the right jurisdiction the customer needs a **structured
+  billing address** — set **City / State / ZIP** on the company (or contact) in
+  CRM. These sync to the QB customer on every push, so moving a client into a
+  taxable area and re-pushing recomputes the tax.
+
+### Sandbox → production
+
+Start in `sandbox` against an Intuit test company. To go live: switch
+`QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` to the app's **Production** keys, set
+`QBO_ENVIRONMENT=production`, make sure the production redirect URI is
+registered, redeploy, and **reconnect** from Settings. (Your Intuit app must
+pass Intuit's production review before the production keys work.)
+
+### Security
+
+Access + refresh tokens are stored as Fernet ciphertext in the `qbo_connection`
+table and never exposed to the browser; the client secret stays in env vars;
+every Intuit call is server-side; **connect / disconnect / push / delete are
+admin-only**; and `GET /api/qbo/status` returns booleans + a masked realm id
+only.
+
 ## API Endpoints
 
 All entities follow REST conventions:
@@ -191,6 +272,12 @@ Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
 - `POST /api/sync` — Bulk import from localStorage
+
+QuickBooks Online (admin-only except `status`):
+- `GET /api/qbo/status` — connection status (booleans + masked realm; any signed-in user)
+- `GET /api/qbo/connect` · `GET /api/qbo/callback` · `POST /api/qbo/disconnect` — manage the connection
+- `POST /api/qbo/invoices/{id}/push` — export/update an invoice in QuickBooks
+- `POST /api/qbo/invoices/{id}/delete` — delete an invoice's QuickBooks counterpart
 
 ## Migrating Data from localStorage
 
@@ -219,11 +306,15 @@ fetch('/api/sync', {
 ```
 ltp-app/
 ├── backend/
-│   ├── main.py           # FastAPI app entry point
+│   ├── main.py            # FastAPI app entry point
 │   ├── database.py        # Async SQLAlchemy setup
-│   ├── models.py          # Database models (9 tables)
+│   ├── models.py          # Database models
+│   ├── quickbooks.py      # QuickBooks Online REST client (OAuth + transport)
+│   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
+│   ├── pdf_generator.py   # Quote/invoice PDF rendering
 │   └── routes/
-│       └── api.py         # REST API routes + /sync
+│       ├── api.py         # REST API routes + /sync
+│       └── qbo.py         # QuickBooks connect/callback/status/push/delete
 ├── components/            # Frontend: shared React components
 ├── modules/               # Frontend: page modules
 ├── data/                  # Frontend: default/seed data
