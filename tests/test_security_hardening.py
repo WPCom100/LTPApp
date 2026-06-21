@@ -71,3 +71,41 @@ def test_missing_base64_marker_rejected():
     # data:image/png,<raw> (no ;base64) — reject; we require base64 encoding.
     with pytest.raises(HTTPException):
         _validate_signature_data_url("data:image/png,iVBORw0KGgo")
+
+
+# ── H2: rate-limit rule matching ───────────────────────────────────────────
+# The previously-unthrottled families (public view, PDF, email relay, bulk
+# sync, QBO callback) must now resolve to a limit, while ordinary /api routes
+# stay unmatched, and prefixes must match on path segments (no /auth/loginX).
+
+from backend.rate_limit import _match_rule
+
+
+@pytest.mark.parametrize("path,expected_key", [
+    ("/auth/login", "/auth/login"),
+    ("/auth/callback", "/auth/callback"),
+    ("/api/qbo/callback", "/api/qbo/callback"),
+    ("/api/view/sometoken", "/api/view"),
+    ("/api/view/sometoken/accept", "/api/view"),
+    ("/api/view/sometoken/pdf", "/api/view"),
+    ("/pdf/sometoken", "/pdf"),
+    ("/api/email/send", "/api/email/send"),
+    ("/api/sync", "/api/sync"),
+])
+def test_rate_limited_routes_match(path, expected_key):
+    rule = _match_rule(path)
+    assert rule is not None, f"{path} should be rate-limited"
+    assert rule[0] == expected_key
+    assert rule[1] > 0
+
+
+@pytest.mark.parametrize("path", [
+    "/api/companies",
+    "/api/invoices/5",
+    "/auth/loginX",        # not a path-segment prefix of /auth/login
+    "/api/viewer",         # not a path-segment prefix of /api/view
+    "/static/app.js",
+    "/",
+])
+def test_unlimited_routes_pass_through(path):
+    assert _match_rule(path) is None
