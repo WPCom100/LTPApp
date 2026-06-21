@@ -285,7 +285,12 @@
     var rawQty      = eq.serialized ? (eq.units || []).length : (eq.qty || 0);  // all physical units
     var maintQty    = eq.serialized
       ? (eq.units || []).filter(function(u) { return u.status === "under-maintenance"; }).length
-      : (eq.status === "under-maintenance" ? (eq.qty || 0) : 0);
+      // Non-serialized: full decommission (eq.status flag) takes
+      // priority and reports the whole qty; otherwise sum the open-log
+      // partial-out qtys via the canonical helper.
+      : (eq.status === "under-maintenance"
+          ? (eq.qty || 0)
+          : R.outOfServiceQty(eq));
     var eqAllocs    = allocations.filter(function(a) { return a.equipmentId === eq.id; });
     var activeAllocs = eqAllocs.filter(function(a) { return a.state !== "returned"; });
     var currentAllocs = eqAllocs.filter(function(a) { return a.startDate <= td && a.endDate >= td && a.state !== "returned"; });
@@ -478,11 +483,16 @@
           ? h(window.EmptyState, { text: "No maintenance history." })
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
               (eq.serialized ? allUnitLogs : lineLogs).slice().sort(function(a, b) { return a.date > b.date ? -1 : 1; }).map(function(log) {
+                // Non-serialized partial-out: show "×N" alongside the
+                // date so the user can see at a glance how many units
+                // each log is consuming. Legacy logs (no qty) omit it.
+                var logQty = !eq.serialized && Number(log.qty) > 0 ? Number(log.qty) : null;
                 return h("div", { key: log.id, style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + (log.status === "open" ? B.dangerBd : B.border) } },
                   h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 } },
                     h("div", null,
                       eq.serialized && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 2 } }, log.unitLabel),
-                      h("span", { style: { fontSize: "11px", color: B.textMut } }, fmt(log.date))),
+                      h("span", { style: { fontSize: "11px", color: B.textMut } },
+                        fmt(log.date) + (logQty ? " · ×" + logQty + " unit" + (logQty !== 1 ? "s" : "") : ""))),
                     h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
                       h("span", { style: { fontSize: "10px", fontWeight: 700, color: log.status === "open" ? B.danger : B.success, textTransform: "uppercase" } }, log.status),
                       log.status === "open" && h("button", { onClick: function() { onMainResolve(log.id, log.unitId || null); },
@@ -499,6 +509,11 @@
           onClose: function() { setShowMaint(false); },
           serialized: eq.serialized,
           selectedUnit: eq.serialized ? (eq.units || []).find(function(u) { return u.id === maintUnit; }) : null,
+          // Non-serialized: tell the form how many units are still
+          // available so it can clamp the qty input. R.eqQty already
+          // accounts for prior open logs' qty + the full-decommission
+          // eq.status flag, so this is the exact ceiling.
+          availableQty: !eq.serialized ? R.eqQty(eq) : null,
           onSave: function(d, setUnderMaint) {
             onMainLog(d, eq.serialized ? maintUnit : null);
             if (setUnderMaint) onSetUnderMaintenance(eq.serialized ? maintUnit : null);

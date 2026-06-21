@@ -40,17 +40,38 @@
     return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 8px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" } }, label);
   }
 
-  // Get total qty for an equipment item (serialized = unit count, non-serialized = qty field)
-  // Total rentable qty — excludes units/items that are under-maintenance or retired
+  // Sum of qty across open maintenance logs on a non-serialized item.
+  // Per-log qty is the new partial-out-of-service mechanism: a single
+  // log row can mark 2 of 10 units down (e.g. "two hazers leaking")
+  // without flipping the whole line to under-maintenance. Legacy logs
+  // (created before the qty field existed) have qty === undefined and
+  // contribute 0 — they were already informational-only.
+  function outOfServiceQty(eq) {
+    if (!eq || eq.serialized) return 0;
+    return (eq.maintenanceLogs || []).reduce(function(sum, l) {
+      if (!l || l.status !== "open") return sum;
+      // Clamp negative qty at the source — backend doesn't validate
+      // nested JSON shapes, so a stale or malicious PUT with qty=-5
+      // would otherwise INFLATE availability (eqQty would add 5).
+      // eqQty also floors the final result at 0, but defense in depth.
+      return sum + Math.max(0, Number(l.qty) || 0);
+    }, 0);
+  }
+
+  // Get total rentable qty for an equipment item.
+  //   Serialized: count units NOT in under-maintenance/retired.
+  //   Non-serialized: qty MINUS open-log qty. Legacy parent-level
+  //     status === "under-maintenance" / "retired" still forces 0
+  //     (full decommission; preserved for back-compat with rows that
+  //     used the old all-or-nothing toggle before qty-aware logs).
   function eqQty(eq) {
     if (eq.serialized) {
       return (eq.units || []).filter(function(u) {
         return u.status !== "under-maintenance" && u.status !== "retired";
       }).length;
     }
-    // Non-serialized: if the line itself is under maintenance, nothing is available
     if (eq.status === "under-maintenance" || eq.status === "retired") return 0;
-    return eq.qty || 0;
+    return Math.max(0, (eq.qty || 0) - outOfServiceQty(eq));
   }
 
   // How many units consumed in date range (excluding exId allocation)
@@ -92,9 +113,10 @@
     LBL:           LBL,
     Field:         Field,
     allocBadge:    allocBadge,
-    eqQty:         eqQty,
-    allocatedQty:  allocatedQty,
-    availableQty:  availableQty,
+    eqQty:            eqQty,
+    outOfServiceQty:  outOfServiceQty,
+    allocatedQty:     allocatedQty,
+    availableQty:     availableQty,
     baseRate:      baseRate,
     today:         today,
     addDays:       addDays,

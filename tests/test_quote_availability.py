@@ -52,8 +52,32 @@ def _check(label: str, cond: bool, detail: str = "") -> None:
 # semantics, update these too.
 
 
+def py_out_of_service_qty(eq):
+    """Port of LTP_RENTALS.outOfServiceQty — sum of qty across OPEN
+    maintenance logs on a non-serialized item. Legacy logs without
+    a qty field contribute 0 (they were informational-only).
+    Negative qty values are clamped at 0 (defense in depth — the
+    backend doesn't validate nested JSON, so a stale or malicious
+    PUT with qty=-5 must not INFLATE availability)."""
+    if not eq or eq.get("serialized"):
+        return 0
+    total = 0
+    for l in (eq.get("maintenanceLogs") or []):
+        if not l or l.get("status") != "open":
+            continue
+        try:
+            total += max(0, int(l.get("qty") or 0))
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
 def py_eq_qty(eq):
-    """Port of LTP_RENTALS.eqQty."""
+    """Port of LTP_RENTALS.eqQty.
+
+    Non-serialized: qty MINUS the open-log qty sum, floored at 0. The
+    legacy `eq.status === "under-maintenance"` parent flag still forces
+    0 (full decommission preserved for back-compat)."""
     if eq.get("serialized"):
         return sum(
             1 for u in (eq.get("units") or [])
@@ -61,7 +85,7 @@ def py_eq_qty(eq):
         )
     if eq.get("status") in ("under-maintenance", "retired"):
         return 0
-    return eq.get("qty") or 0
+    return max(0, (eq.get("qty") or 0) - py_out_of_service_qty(eq))
 
 
 def py_allocated_qty(allocations, equipment_id, start_date, end_date, ex_id=None):
@@ -223,6 +247,212 @@ def test_quote_picker_matches_checker_on_under_maintenance():
 # ── Structural: quote builder uses the canonical helpers ─────────────────
 
 
+def test_partial_out_of_service_subtracts_per_log_qty():
+    """Non-serialized fixture, qty=10. Two open logs: one took 2 units
+    out, one took 3 units out. Available pool = 10 - (2 + 3) = 5."""
+    print("test_partial_out_of_service_subtracts_per_log_qty")
+    eq = {"id": 40, "name": "Hazer", "serialized": False, "qty": 10,
+          "status": "available",
+          "maintenanceLogs": [
+              {"id": 1, "date": "2026-06-20", "issue": "fan stuck",
+               "qty": 2, "status": "open", "resolvedDate": None},
+              {"id": 2, "date": "2026-06-21", "issue": "leak",
+               "qty": 3, "status": "open", "resolvedDate": None},
+          ]}
+    _check("outOfServiceQty sums open logs", py_out_of_service_qty(eq) == 5)
+    _check("eqQty subtracts the sum from total qty",
+           py_eq_qty(eq) == 5, f"got {py_eq_qty(eq)}")
+
+
+def test_resolved_logs_restore_availability_automatically():
+    """Resolving a log flips its status to 'resolved' — outOfServiceQty
+    counts ONLY open logs, so the resolved entry's qty stops
+    consuming the pool. No separate restore step needed."""
+    print("test_resolved_logs_restore_availability_automatically")
+    eq = {"id": 41, "name": "Hazer", "serialized": False, "qty": 10,
+          "status": "available",
+          "maintenanceLogs": [
+              {"id": 1, "qty": 2, "status": "resolved",
+               "resolvedDate": "2026-06-21"},
+              {"id": 2, "qty": 3, "status": "open", "resolvedDate": None},
+          ]}
+    _check("resolved log NOT counted; only the open 3 subtracts",
+           py_out_of_service_qty(eq) == 3)
+    _check("eqQty reflects only open consumption",
+           py_eq_qty(eq) == 7)
+
+
+def test_legacy_logs_without_qty_count_as_zero():
+    """A log entry created before the qty field existed has no `qty`
+    key. It must NOT crash eqQty and must contribute 0 — those legacy
+    entries were informational-only."""
+    print("test_legacy_logs_without_qty_count_as_zero")
+    eq = {"id": 42, "name": "Old Console", "serialized": False, "qty": 5,
+          "status": "available",
+          "maintenanceLogs": [
+              {"id": 1, "issue": "scratch", "status": "open",
+               "resolvedDate": None},  # no qty field
+          ]}
+    _check("missing qty field treated as 0", py_out_of_service_qty(eq) == 0)
+    _check("eqQty unaffected by legacy log",
+           py_eq_qty(eq) == 5)
+
+
+def test_full_decommission_overrides_per_log_calculation():
+    """If eq.status is flipped to 'under-maintenance' (full decommission
+    via the confirm-dialog path, or via legacy data), eqQty must return
+    0 regardless of per-log qty arithmetic. The two mechanisms coexist:
+    eq.status is the explicit override, logs are the partial path."""
+    print("test_full_decommission_overrides_per_log_calculation")
+    eq = {"id": 43, "name": "Hazer", "serialized": False, "qty": 10,
+          "status": "under-maintenance",
+          "maintenanceLogs": [
+              # Even with a smaller open log, the parent status wins.
+              {"id": 1, "qty": 1, "status": "open", "resolvedDate": None},
+          ]}
+    _check("eq.status under-maintenance forces eqQty 0",
+           py_eq_qty(eq) == 0)
+
+
+def test_out_of_service_qty_does_not_overcount_past_total():
+    """Defensive: if open-log qty sum somehow exceeds eq.qty (data
+    corruption, manual edit, paginated edits across stale views),
+    eqQty must floor at 0 — never go negative."""
+    print("test_out_of_service_qty_does_not_overcount_past_total")
+    eq = {"id": 44, "name": "Hazer", "serialized": False, "qty": 5,
+          "status": "available",
+          "maintenanceLogs": [
+              {"id": 1, "qty": 4, "status": "open", "resolvedDate": None},
+              {"id": 2, "qty": 4, "status": "open", "resolvedDate": None},
+          ]}
+    _check("outOfServiceQty sums faithfully",
+           py_out_of_service_qty(eq) == 8)
+    _check("eqQty floors at 0 (never negative)",
+           py_eq_qty(eq) == 0, f"got {py_eq_qty(eq)}")
+
+
+def test_negative_qty_in_log_is_clamped_at_source():
+    """REGRESSION GUARD: backend doesn't validate nested JSON shapes,
+    so a stale or malicious PUT could land a maintenance log with
+    qty=-5. Without the source-level clamp, outOfServiceQty would
+    sum -5 and eqQty would INFLATE availability beyond the actual
+    qty (max(0, 10 - (-5)) = 15). The clamp at the source keeps
+    outOfServiceQty honest even before eqQty's final floor kicks in."""
+    print("test_negative_qty_in_log_is_clamped_at_source")
+    eq = {"id": 46, "name": "Hazer", "serialized": False, "qty": 10,
+          "status": "available",
+          "maintenanceLogs": [
+              {"id": 1, "qty": -5, "status": "open"},
+              {"id": 2, "qty": 2, "status": "open"},
+          ]}
+    _check("negative qty contributes 0, not -5",
+           py_out_of_service_qty(eq) == 2,
+           f"got {py_out_of_service_qty(eq)}")
+    _check("eqQty unaffected by negative qty (would inflate without clamp)",
+           py_eq_qty(eq) == 8,
+           f"got {py_eq_qty(eq)}")
+
+
+def test_rentals_utils_clamps_negative_qty_at_source():
+    """Structural: outOfServiceQty in rentals-utils.js must apply
+    Math.max(0, ...) inside the reducer — not just at eqQty. Catches
+    a future revert that removes the source-level clamp on the
+    assumption that eqQty's floor is sufficient (it isn't — a single
+    negative log would still inflate the sum visible to other callers
+    that read outOfServiceQty directly, e.g. the maintQty display)."""
+    print("test_rentals_utils_clamps_negative_qty_at_source")
+    with open(os.path.join(_root, "modules", "rentals-utils.js"),
+              encoding="utf-8") as f:
+        src = f.read()
+    # Find the outOfServiceQty function body and assert it clamps.
+    m = re.search(
+        r"function outOfServiceQty\(eq\)\s*\{([\s\S]*?)\n  \}",
+        src,
+    )
+    _check("outOfServiceQty function body found", m is not None)
+    if m:
+        body = m.group(1)
+        _check("reducer clamps with Math.max(0, ...) on Number(l.qty)",
+               "Math.max(0," in body and "Number(l.qty)" in body)
+
+
+def test_serialized_path_ignores_outOfServiceQty():
+    """outOfServiceQty is a non-serialized concept — serialized items
+    track each unit's status individually. The helper must return 0
+    for serialized so a stray maintenanceLogs array at the parent
+    level (legacy data shape) doesn't double-count."""
+    print("test_serialized_path_ignores_outOfServiceQty")
+    eq = {"id": 45, "name": "Mac Quantum", "serialized": True,
+          "units": [
+              {"id": 1, "status": "available"},
+              {"id": 2, "status": "under-maintenance"},
+          ],
+          # Stray parent-level logs — should be ignored for serialized.
+          "maintenanceLogs": [
+              {"id": 99, "qty": 5, "status": "open"},
+          ]}
+    _check("serialized fixture ignores parent maintenanceLogs",
+           py_out_of_service_qty(eq) == 0)
+    _check("serialized eqQty still derives from units[]",
+           py_eq_qty(eq) == 1)
+
+
+# ── Structural: maintenance form + utils wiring ──────────────────────────
+
+
+def test_rentals_utils_exposes_outOfServiceQty():
+    """LTP_RENTALS namespace must export the new helper so calling
+    code (rentals-equipment.js, future quote-screen indicators) can
+    reach it without re-implementing the calculation."""
+    print("test_rentals_utils_exposes_outOfServiceQty")
+    with open(os.path.join(_root, "modules", "rentals-utils.js"),
+              encoding="utf-8") as f:
+        src = f.read()
+    _check("outOfServiceQty function defined",
+           "function outOfServiceQty(eq)" in src)
+    # rsplit so we look AFTER the actual window.LTP_RENTALS = { ... }
+    # assignment, not a comment header that mentions the namespace.
+    _check("outOfServiceQty exposed on LTP_RENTALS",
+           "outOfServiceQty:" in src
+           and "outOfServiceQty:" in src.rsplit("window.LTP_RENTALS", 1)[1])
+    _check("eqQty subtracts outOfServiceQty for non-serialized",
+           "outOfServiceQty(eq)" in src
+           and "Math.max(0," in src)
+
+
+def test_maintenance_form_accepts_qty_input():
+    """RentalsMaintenanceForm must accept the new availableQty prop
+    and store per-log qty for non-serialized items. Structural guard
+    so a future refactor that drops the prop / qty plumbing fails
+    here before users notice the qty input disappearing."""
+    print("test_maintenance_form_accepts_qty_input")
+    with open(os.path.join(_root, "modules", "rentals-maintenance.js"),
+              encoding="utf-8") as f:
+        src = f.read()
+    _check("form destructures availableQty prop",
+           "availableQty" in src)
+    _check("form clamps the qty input to maxQty",
+           "setClampedQty" in src)
+    _check("non-serialized log entry includes qty",
+           "entry.qty" in src)
+    _check("toggle defaults to ON",
+           "useState(true)" in src
+           and "takeOutOfSvc" in src)
+
+
+def test_equipment_detail_passes_availableQty_to_form():
+    """The form is wired in rentals-equipment.js — confirm the caller
+    passes the current availableQty (via R.eqQty) so the qty input's
+    max value reflects the actual remaining pool."""
+    print("test_equipment_detail_passes_availableQty_to_form")
+    with open(os.path.join(_root, "modules", "rentals-equipment.js"),
+              encoding="utf-8") as f:
+        src = f.read()
+    _check("availableQty prop passed to RentalsMaintenanceForm",
+           "availableQty:" in src
+           and "R.eqQty(eq)" in src)
+
+
 def test_quote_builder_delegates_to_canonical_helpers():
     """The fix is a delegation — quotes-builder.js must call into
     LTP_RENTALS.eqQty + LTP_RENTALS.allocatedQty inside getAvailability,
@@ -275,6 +505,17 @@ def main() -> int:
     test_allocation_under_maintenance_state_does_not_consume_qty()
     test_allocation_date_range_overlap()
     test_quote_picker_matches_checker_on_under_maintenance()
+    test_partial_out_of_service_subtracts_per_log_qty()
+    test_resolved_logs_restore_availability_automatically()
+    test_legacy_logs_without_qty_count_as_zero()
+    test_full_decommission_overrides_per_log_calculation()
+    test_out_of_service_qty_does_not_overcount_past_total()
+    test_negative_qty_in_log_is_clamped_at_source()
+    test_rentals_utils_clamps_negative_qty_at_source()
+    test_serialized_path_ignores_outOfServiceQty()
+    test_rentals_utils_exposes_outOfServiceQty()
+    test_maintenance_form_accepts_qty_input()
+    test_equipment_detail_passes_availableQty_to_form()
     test_quote_builder_delegates_to_canonical_helpers()
 
     fail_count = sum(1 for _, ok in _results if not ok)
