@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -24,16 +26,23 @@ def _camel_to_snake(s):
 _HIDDEN_COLS = {"created_at", "updated_at"}
 
 # Server-authoritative columns the client may READ (they're returned on GET)
-# but must never WRITE. These are populated only by the QuickBooks sync engine
+# but must never WRITE. Most are populated only by the QuickBooks sync engine
 # (backend/qbo_sync.py). Stripping them on the way IN protects against the
 # frontend's debounced diff-sync echoing a stale value (e.g. nulling a cached
 # qb_customer_id captured before the row was synced). The names are globally
 # unique across tables, so a single flat set is sufficient. NOTE: `taxable` is
 # deliberately NOT here — that one is user-editable.
+#
+# `share_token` is here for a different reason: it is the PUBLIC, unauthenticated
+# client-view credential. Letting a member set or rotate it via the normal write
+# path is a mass-assignment hole (SECURITY_REVIEW.md H3) — it could be pinned to
+# a guessable value or silently changed. It is minted server-side on create
+# (see `create` below) and never written from client input thereafter.
 _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
     "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
     "qb_customer_id", "qb_item_id",
+    "share_token",
 }
 
 
@@ -153,17 +162,14 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         validate(model_cls, data)
         if has_activity:
             data = _stamp_activity(data, user)
-        # Mint share_token for entities that have one (Quote, Invoice) if the
-        # client didn't supply one. This is the credential the public client
-        # view uses — generated lazily on creation so it's available the
-        # moment the entity exists, but never overwritten if already set
-        # (i.e. on a /sync re-import we preserve the existing token).
-        if "share_token" in {c.name for c in model_cls.__table__.columns}:
-            if not data.get("shareToken") and not data.get("share_token"):
-                import secrets as _secrets
-                data["shareToken"] = _secrets.token_urlsafe(32)
         mapped = _dict_to_row(data, model_cls)
         row = model_cls(**mapped)
+        # share_token is the PUBLIC client-view credential and is server-
+        # authoritative: any client-supplied value was already stripped by
+        # _dict_to_row (it's in _READONLY_COLS), so mint a strong one here for
+        # token-bearing entities (Quote, Invoice). SECURITY_REVIEW.md H3.
+        if hasattr(row, "share_token") and not getattr(row, "share_token"):
+            row.share_token = secrets.token_urlsafe(32)
         db.add(row)
         await db.flush()
         await db.refresh(row)
@@ -408,7 +414,14 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
         await db.execute(delete(model_cls))
         for item in items:
             mapped = _dict_to_row(item, model_cls)
-            db.add(model_cls(**mapped))
+            row = model_cls(**mapped)
+            # share_token is server-authoritative (stripped by _dict_to_row).
+            # Mint one for token-bearing rows so the NOT NULL invariant holds; a
+            # full re-import regenerates share links, which is acceptable for
+            # this one-time wipe-and-reseed migration. SECURITY_REVIEW.md H3.
+            if hasattr(row, "share_token") and not getattr(row, "share_token"):
+                row.share_token = secrets.token_urlsafe(32)
+            db.add(row)
         counts[key] = len(items)
 
     if "settings" in payload:

@@ -109,3 +109,28 @@ def test_rate_limited_routes_match(path, expected_key):
 ])
 def test_unlimited_routes_pass_through(path):
     assert _match_rule(path) is None
+
+
+# ── H3: share_token is server-authoritative ────────────────────────────────
+# A client-supplied share_token (the public client-view credential) must be
+# stripped by the write layer so a member can't pin it to a guessable value or
+# rotate it. The token is minted server-side on create instead.
+
+from backend.routes.api import _dict_to_row, _READONLY_COLS
+from backend import models
+
+
+def test_share_token_in_readonly_cols():
+    assert "share_token" in _READONLY_COLS
+
+
+def test_share_token_stripped_from_quote_writes():
+    mapped = _dict_to_row({"shareToken": "attacker-chosen", "status": "draft"}, models.Quote)
+    assert "share_token" not in mapped       # stripped
+    assert mapped.get("status") == "draft"   # ordinary fields still write
+
+
+def test_share_token_snake_case_also_stripped():
+    # Defense against a client that sends the snake_case name directly.
+    mapped = _dict_to_row({"share_token": "attacker-chosen"}, models.Invoice)
+    assert "share_token" not in mapped
