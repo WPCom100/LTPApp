@@ -10,6 +10,16 @@
   var genId = window.LTP_genId, todayISO = window.LTP_todayISO;
   var calcRate = window.LTP_calcLaborRate, calcHours = window.LTP_calcHours, calcTier = window.LTP_calcLaborTier;
 
+  // Escape a string for safe interpolation into markup written via
+  // document.write (the print window below). project/company/crew names and
+  // schedule titles are user-controlled; document.write executes script, so
+  // every dynamic value MUST be escaped. SECURITY_REVIEW.md H1.
+  function escAttr(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
   window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, companies, quotes, setQuotes, getNextQuoteId }) {
     var company = companies.find(function(c) { return c.id === project.companyId; });
 
@@ -156,12 +166,12 @@
         var dur = window.LTP_calcDuration(s.date, s.time, s.endDate || s.date, s.endTime);
         var posText = (s.positions || []).map(function(p) {
           var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-          return (p.role || "?") + (cm ? ": " + cm.firstName + " " + cm.lastName : " (open)");
+          return escAttr(p.role || "?") + (cm ? ": " + escAttr(cm.firstName + " " + cm.lastName) : " (open)");
         }).join(", ") || "\u2014";
-        return "<tr><td>" + s.title + "</td><td>" + fmt(s.date) + "</td><td>" + ft(s.time) + " \u2192 " + ft(s.endTime) + "</td><td>" + (dur || "\u2014") + "</td><td>" + posText + "</td></tr>";
+        return "<tr><td>" + escAttr(s.title) + "</td><td>" + fmt(s.date) + "</td><td>" + ft(s.time) + " \u2192 " + ft(s.endTime) + "</td><td>" + (dur || "\u2014") + "</td><td>" + posText + "</td></tr>";
       }).join("");
       var w = window.open("", "_blank");
-      w.document.write("<html><head><title>" + project.name + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + project.name + " \u2014 Schedule</h1><h2>" + (company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table><div class='footer'><span>" + (window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
+      w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table><div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
       w.document.close(); w.print();
     }
 
