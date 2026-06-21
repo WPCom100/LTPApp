@@ -174,18 +174,21 @@
       });
     });
 
-    // Equipment availability: count total units, count allocated/checked-out during quote dates
+    // Equipment availability: total rentable qty minus allocations
+    // overlapping the quote dates. Delegates to the canonical helpers in
+    // rentals-utils.js so this stays in lockstep with the Availability
+    // Checker + the Items detail screen. A prior inline duplicate let
+    // non-serialized "under-maintenance" lines show as available in the
+    // picker even when both other surfaces correctly reported 0 — see
+    // tests/test_quote_availability.py for the regression guard.
     function getAvailability(eq) {
-      var totalQty = eq.serialized ? (eq.units || []).filter(function(u) { return u.status !== "under-maintenance" && u.status !== "retired"; }).length : (eq.qty || 0);
-      if (!quoteDates || !quoteDates.start || !quoteDates.end) return { total: totalQty, allocated: 0, available: totalQty };
-      var start = quoteDates.start, end = quoteDates.end;
-      var allocated = 0;
-      (allocations || []).forEach(function(a) {
-        if (a.equipmentId !== eq.id) return;
-        if (a.state === "returned" || a.state === "cancelled") return;
-        // Check date overlap
-        if (a.startDate <= end && a.endDate >= start) allocated += (a.qty || 1);
-      });
+      var totalQty = window.LTP_RENTALS.eqQty(eq);
+      if (!quoteDates || !quoteDates.start || !quoteDates.end) {
+        return { total: totalQty, allocated: 0, available: totalQty };
+      }
+      var allocated = window.LTP_RENTALS.allocatedQty(
+        allocations, eq.id, quoteDates.start, quoteDates.end
+      );
       return { total: totalQty, allocated: allocated, available: totalQty - allocated };
     }
 
