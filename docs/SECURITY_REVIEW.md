@@ -12,9 +12,11 @@ PII; injection & XSS; email & SSRF; HTTP/infra; frontend & dependencies).
 Their findings were de-duplicated, cross-checked against the source, and
 ranked below.
 
-> **Status: review only.** This document is a plan, not a set of applied
-> changes. No code has been modified. Nothing here should be treated as
-> fixed until it is implemented and verified.
+> **Status: partially implemented.** This started as a review-only plan.
+> Phase 0 and the exploitable-holes portion of Phase 1 have since been
+> implemented and tested on the `claude/security-hardening` branch — see
+> [§ Implementation status](#implementation-status). Findings not marked
+> ✅ remain proposals awaiting sign-off.
 
 ---
 
@@ -78,6 +80,35 @@ The findings cluster around **eight cross-cutting themes**:
    signature is non-binding. Plus two dependency bumps.
 
 A suggested remediation order is in [§ Roadmap](#remediation-roadmap).
+
+---
+
+## Implementation status
+
+Implemented and tested on `claude/security-hardening` (each its own commit;
+the suite passes 204/204 when run file-by-file — see
+[§ Notes on method](#notes-on-method--limits)):
+
+| ID | Finding | Commit |
+|----|---------|--------|
+| **C2** | Remove committed token-bearing `.db` files; ignore all `*.db` | `7d2abcc` |
+| **H6** | Fail-fast on missing/weak `LTP_SESSION_SECRET` | `d20b0ef` (+ test default `57cf6a5`) |
+| **H10** | Stop reflecting OAuth provider error bodies to clients | `f78fbf5` |
+| **C1 / H1** | Eliminate both `document.write` XSS sinks; validate signatures server-side | `f4da2b7` |
+| **H2** | Prefix-based rate limiting for public/PDF/email/sync routes | `0e091a5` |
+| **H4** | Cap recipients per send on the email relay | `486fe1f` |
+| **H3** | `share_token` server-authoritative | `98f75c9` |
+
+**Operator follow-ups still required for C2** (cannot be done in-repo): revoke
+the exposed Gmail OAuth grant, rotate `LTP_TOKEN_ENCRYPTION_KEY`, and purge the
+`.db` files from git history (a coordinated rewrite — it touches the open PR
+branches).
+
+**Still proposals, awaiting sign-off:** H5, H7, H8, H9, H11, H12; all MEDIUM
+(M1–M7) and LOW (L1–L10), including the dependency bumps. Note H3's
+implementation was scoped to the `share_token` credential specifically — FK
+existence/ownership validation (M5) and the broader allow-list refactor remain
+open.
 
 ---
 
@@ -564,19 +595,20 @@ A suggested order. Each phase is independently shippable; nothing here is
 implemented yet — these are proposals for your sign-off.
 
 ### Phase 0 — Contain exposure (do first, low effort)
-- **C2** — rotate the Gmail grant + encryption key; remove the `.db` files;
-  fix `.gitignore`; purge history; add a secret-scan guard.
-- **H6** — fail-fast on missing/weak `LTP_SESSION_SECRET`.
+- ✅ **C2** — removed the `.db` files; fixed `.gitignore` (`7d2abcc`). Operator
+  follow-up: rotate the Gmail grant + encryption key, purge history.
+- ✅ **H6** — fail-fast on missing/weak `LTP_SESSION_SECRET` (`d20b0ef`).
 
 ### Phase 1 — Close the exploitable holes
-- **C1 + H1** — eliminate both `document.write` XSS sinks; validate signatures
-  as real images server-side.
-- **H3** — allow-list write layer; make `share_token` server-only; lock FKs and
-  classification flags.
-- **H2** — prefix-based rate limiting with anonymous buckets for public/PDF/
-  email/sync routes.
-- **H4** — recipient cap + throttle + recipient constraints on `/api/email/send`.
-- **H10** — stop reflecting provider error bodies to the client.
+- ✅ **C1 + H1** — eliminated both `document.write` XSS sinks; signatures
+  validated as real images server-side (`f4da2b7`).
+- ✅ **H3** — `share_token` made server-only (`98f75c9`). The broader allow-list
+  write-layer refactor + FK locking (M5) remain open by design (see the finding).
+- ✅ **H2** — prefix-based rate limiting with anonymous buckets for public/PDF/
+  email/sync routes (`0e091a5`).
+- ✅ **H4** — recipient cap on `/api/email/send` (`486fe1f`); per-IP throttle via
+  H2. Recipient-to-known-contacts constraint deferred to Phase 2.
+- ✅ **H10** — stopped reflecting provider error bodies to the client (`f78fbf5`).
 
 ### Phase 2 — Structural hardening
 - **H5** (`bulk_sync` through the validated pipeline), **H7** (transport from
@@ -593,7 +625,15 @@ implemented yet — these are proposals for your sign-off.
 
 ## Notes on method & limits
 
-- All eight agents ran **read-only**; no code was changed during the audit.
+- All eight agents ran **read-only**; no code was changed *during the audit*.
+  The Phase 0 / Phase 1 fixes listed in [§ Implementation status](#implementation-status)
+  were made afterward, each as its own commit.
+- **Test verification:** the suite uses on-disk per-module SQLite DBs seeded via
+  module-level `os.environ.setdefault`, so a single combined `pytest` process
+  cross-contaminates (a pre-existing artifact, confirmed identical on the
+  pre-security baseline). Run **file-by-file** it is green — 204/204 including
+  the new `tests/test_security_hardening.py` and the added email recipient-cap
+  test. Invoke with `pytest -o asyncio_mode=auto tests/<file>.py`.
 - Findings were cross-checked against the source at the cited line numbers
   before inclusion; a handful of agent reports overlapped and were merged
   (the two `document.write` sinks; the rate-limit gap seen from three angles;
