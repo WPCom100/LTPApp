@@ -389,6 +389,19 @@
 
     useEffect(reload, [token]);
 
+    // The app shell sets `body { overflow: hidden }` (index.html) for its
+    // fixed-height, internally-scrolled layout. This public client view is a
+    // normal top-to-bottom scrolling document, so that rule clips everything
+    // below the fold — including the Accept / Decline buttons — and the
+    // customer can't reach them. Re-enable body scroll while this view is
+    // mounted; restore the prior value on unmount so navigating back into the
+    // app shell (e.g. from Preview mode) keeps its layout intact.
+    useEffect(function() {
+      var prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = "auto";
+      return function() { document.body.style.overflow = prevOverflow; };
+    }, []);
+
     // Loading state
     if (!data && !loadErr) {
       return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#233038", color: "#D1DBDA", fontFamily: "'DM Sans', sans-serif", fontSize: "13px" } }, "Loading…");
