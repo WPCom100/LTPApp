@@ -165,6 +165,38 @@ def test_request_shape_quote_200():
     _check("recipients listed (to + cc)", len(body.get("recipients", [])) == 2)
 
 
+def test_too_many_recipients_rejected():
+    """H4: a send whose To+CC exceeds the per-send recipient cap is rejected
+    with 400 BEFORE any Gmail call, so the relay can't blast hundreds of
+    addresses from the company mailbox. Uses bare asserts (the file's _check
+    helper does not raise, so it wouldn't fail the pytest run on its own)."""
+    print("test_too_many_recipients_rejected")
+    client, sess_tok, q_id, _ = _setup()
+    many = ", ".join(f"user{i}@biz.com" for i in range(26))  # 26 > cap of 25
+    gmail_called = {"hit": False}
+
+    async def _spy(**_kw):
+        gmail_called["hit"] = True
+        return _gmail_send_ok()
+
+    with patch("backend.gmail.send", new=AsyncMock(side_effect=_spy)):
+        r = client.post(
+            "/api/email/send",
+            json={
+                "entityType": "quote",
+                "entityId": q_id,
+                "to": many,
+                "subject": "blast",
+                "bodyHtml": "<p>x</p>",
+            },
+            cookies={"ltp_session": sess_tok},
+        )
+    _check("400 rejected", r.status_code == 400, f"got {r.status_code}: {r.text[:200]}")
+    assert r.status_code == 400, f"expected 400, got {r.status_code}: {r.text[:200]}"
+    assert r.json().get("detail", {}).get("field") == "recipients", r.text[:200]
+    assert gmail_called["hit"] is False, "Gmail must not be called when over the cap"
+
+
 def test_email_sent_activity_entry_shape():
     """Confirms the activity entry the frontend renders has the right shape."""
     print("test_email_sent_activity_entry_shape")
@@ -371,6 +403,7 @@ def test_app_js_exposes_gmail_globals():
 def main() -> int:
     try:
         test_request_shape_quote_200()
+        test_too_many_recipients_rejected()
         test_email_sent_activity_entry_shape()
         test_cc_whitespace_only_skipped()
         test_409_reconnect_response_shape()
