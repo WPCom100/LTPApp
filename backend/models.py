@@ -203,6 +203,10 @@ class Equipment(Base):
                                                          #       purchaseDate: str, purchaseVendorId: int, purchaseCost: float,
                                                          #       status: "available"|"rented"|"under-maintenance",
                                                          #       maintenanceLogs: list[{id, date, issue, status, resolvedDate}]}]
+    maintenance_logs = Column(JSON, default=list)        # list[{id, date, issue, status, resolvedDate}] —
+                                                         # parent-level logs for NON-serialized equipment. For serialized
+                                                         # items the per-unit logs live inside units[i].maintenanceLogs.
+                                                         # Same shape either way; same status-roll-up semantics.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -293,7 +297,12 @@ class Container(Base):
     rates = Column(JSON, default=dict)                   # {threeDay, week, month} — same shape as Equipment.rates
     rental_rate = Column(Float, nullable=True)           # legacy: single threeDay rate; None = bundled into the equipment rate
     status = Column(String(50), default="available")     # {available, in-use, under-maintenance}
-    maintenance_logs = Column(JSON, default=list)        # list[{id, date, issue, status, resolvedDate}] — same shape as Equipment.units[i].maintenanceLogs
+    maintenance_logs = Column(JSON, default=list)        # parent-level logs for NON-serialized containers.
+                                                         # list[{id, date, issue, status, resolvedDate}] — same shape as Equipment.maintenance_logs.
+    units = Column(JSON, default=list)                   # list[{id, serial, barcode, purchaseDate, purchaseVendorId,
+                                                         #       purchaseCost, status, maintenanceLogs: [...]}] —
+                                                         # per-unit records for SERIALIZED containers, mirroring
+                                                         # Equipment.units. Each unit holds its own maintenanceLogs.
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
