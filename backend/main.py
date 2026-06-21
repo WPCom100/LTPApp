@@ -295,17 +295,38 @@ app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
 # real app session lives in the `ltp_session` cookie + `sessions` DB table.
 # `LTP_SESSION_SECRET` should be a long random hex string — generate with
 # `python -c "import secrets; print(secrets.token_hex(32))"`.
+# The secret signs the Starlette session cookie that round-trips the OAuth
+# state/nonce — the primary OAuth-CSRF defense. Requirements:
+#   - Production (HTTPS deploy): MUST be set and strong, or we refuse to boot.
+#     The old behaviour generated an ephemeral per-process key and continued,
+#     which silently broke OAuth across restarts/workers and masked the
+#     misconfiguration until logins started failing (SECURITY_REVIEW.md H6).
+#   - When a value IS provided (any environment): enforce a minimum length so
+#     a weak/guessable secret can't slip through.
+#   - Local dev only (non-HTTPS, unset): fall back to an ephemeral key with a
+#     loud warning, so running locally Just Works without ceremony.
+_MIN_SESSION_SECRET_LEN = 32  # chars; token_hex(32) → 64, token_urlsafe(32) → 43
 _session_secret = os.environ.get("LTP_SESSION_SECRET", "")
-if not _session_secret:
-    # Last-resort fallback for local dev; production MUST set this. We loudly
-    # warn in production-looking deployments (HTTPS redirect URI) and fail
-    # fast on the next OAuth attempt since the state cookie won't validate.
-    if _IS_HTTPS:
-        print("[LTP] ERROR: LTP_SESSION_SECRET not set in HTTPS environment — "
-              "OAuth flow WILL fail until you set this env var.", flush=True)
-    else:
-        print("[LTP] WARNING: LTP_SESSION_SECRET not set — using ephemeral dev key. "
-              "Sessions will break across restarts.", flush=True)
+if _session_secret:
+    if len(_session_secret) < _MIN_SESSION_SECRET_LEN:
+        raise RuntimeError(
+            f"LTP_SESSION_SECRET is too short ({len(_session_secret)} chars); "
+            f"need >= {_MIN_SESSION_SECRET_LEN}. Generate one with "
+            f'`python -c "import secrets; print(secrets.token_hex(32))"`.'
+        )
+elif _IS_HTTPS:
+    # Fail fast at boot rather than booting with an ephemeral key that breaks
+    # OAuth later in a way that looks like an app bug, not a config error.
+    raise RuntimeError(
+        "LTP_SESSION_SECRET is not set. It is required in production "
+        "(an HTTPS LTP_OAUTH_REDIRECT_URI was detected). Generate one with "
+        '`python -c "import secrets; print(secrets.token_hex(32))"` and set it '
+        "in the environment."
+    )
+else:
+    print("[LTP] WARNING: LTP_SESSION_SECRET not set — using ephemeral dev key. "
+          "Sessions will break across restarts. Set it for any shared/HTTPS "
+          "deployment.", flush=True)
     import secrets as _secrets
     _session_secret = _secrets.token_hex(32)
 
