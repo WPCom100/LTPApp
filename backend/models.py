@@ -117,6 +117,8 @@ class Project(Base):
     schedule = Column(JSON, default=list)                # list[{id: str, title: str, date: str, time: str, endTime: str, addToCalendar: bool,
                                                          #       breaks: list[{id, startTime, endTime, type:"paid"|"unpaid"}],
                                                          #       positions: list[{id, role, serviceId, crewId, status}]}]
+    schedule_notes = Column(Text, default="")            # free-text notes shown in the schedule builder
+    schedule_activity = Column(JSON, default=list)       # list[{id, date, time, type, message, user, userId, changes}] — schedule save log
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
