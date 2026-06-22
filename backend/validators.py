@@ -35,7 +35,14 @@ ENUMS = {
     "quote_status":     {"draft", "sent", "accepted", "declined", "converted"},
     "invoice_status":   {"draft", "sent", "partial", "paid", "overdue"},
     "project_status":   {"upcoming", "in-progress", "completed", "cancelled"},
-    "project_category": {"rental", "labor", "service", "full-production"},
+    # Accepts BOTH the lowercase keys (status-enums.js PROJECT_CATEGORY) and the
+    # human labels. The project form (theme.js LTP_PROJECT_CATS) stores the LABEL
+    # as the category and only converts to a key for Badge styling
+    # (LTP_CAT_KEYS), so a normal "create project" sends e.g. "Rental" /
+    # "Full Production". Accept both so saves round-trip and existing
+    # label-formatted rows stay valid.
+    "project_category": {"rental", "labor", "service", "full-production",
+                         "Rental", "Labor", "Service", "Full Production"},
     "client_type":      {"company", "contact"},
     "allocation_state": {"reserved", "allocated", "checked-out", "returned", "under-maintenance"},
     "crew_status":      {"active", "inactive"},
