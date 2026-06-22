@@ -249,27 +249,24 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
 
 
 def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str) -> str:
-    """Themed Accept/Decline call-to-action card. Both buttons open the crew
-    landing page (where the actual, lockable response + comment happen)."""
+    """Themed call-to-action card with a single accent button that opens the
+    crew landing page (where Accept / Decline + the note actually happen).
+    One button — both responses live on the same page, so two links here would
+    be redundant."""
     url = escape(view_url)
     n = str(shift_count) + " shift" + ("" if shift_count == 1 else "s")
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
-        '<tr><td style="padding:20px 22px;text-align:center">'
+        '<tr><td style="padding:22px;text-align:center">'
         '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">You\'re requested for</div>'
         '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + escape(project_name or "Project") + '</div>'
-        '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + n + ' — please review &amp; respond</div>'
+        '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + n + ' — review the details and respond</div>'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
-        '<td style="background-color:#2e9e5b;border-radius:7px">'
-        '<a href="' + url + '" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:bold;'
-        'color:#ffffff;text-decoration:none">&#10003;&nbsp; Accept</a></td>'
-        '<td style="width:14px;font-size:0;line-height:0">&nbsp;</td>'
-        '<td style="border:2px solid #d6584c;border-radius:7px">'
-        '<a href="' + url + '" style="display:inline-block;padding:11px 26px;font-size:14px;font-weight:bold;'
-        'color:#d6584c;text-decoration:none">Decline</a></td>'
+        '<td style="background-color:' + accent + ';border-radius:7px">'
+        '<a href="' + url + '" style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:bold;'
+        'color:#ffffff;text-decoration:none">View &amp; Respond</a></td>'
         '</tr></table>'
-        '<div style="font-size:11px;color:#a7b0b8;margin-top:14px">or open your personal link to respond with a note</div>'
         '</td></tr></table>'
     )
 
@@ -293,8 +290,8 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
     accent = brand["accent"]
     company = escape(brand["company"])
     if brand["logo"]:
-        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="148" '
-                    'style="display:block;border:0;height:auto;max-height:62px;margin:0 auto">')
+        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" height="58" '
+                    'style="display:block;border:0;width:auto;max-width:100%;margin:0 auto">')
     else:
         masthead = ('<span style="font-size:21px;font-weight:bold;color:' + accent + ';'
                     'letter-spacing:0.03em">' + company + '</span>')

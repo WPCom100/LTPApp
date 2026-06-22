@@ -25,6 +25,13 @@
 
   // ── Helpers ──────────────────────────────────────────────────────────────
 
+  // Deterministic names — do NOT use toLocaleString({weekday,month}): on a JS
+  // engine without full Intl/ICU data it emits fallback junk like
+  // "Thu (month: July)" instead of "Thu, July".
+  var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  var _MONTHS = ["January", "February", "March", "April", "May", "June",
+                 "July", "August", "September", "October", "November", "December"];
+
   function fmtDate(iso) {
     if (!iso) return "";
     var d = new Date(iso + "T00:00:00");
@@ -32,7 +39,7 @@
     var day = d.getDate();
     var sfx = (day >= 11 && day <= 13) ? "th"
             : ({ 1: "st", 2: "nd", 3: "rd" }[day % 10] || "th");
-    return d.toLocaleString("en-US", { weekday: "short", month: "long" }) + " " + day + sfx + ", " + d.getFullYear();
+    return _WEEKDAYS[d.getDay()] + ", " + _MONTHS[d.getMonth()] + " " + day + sfx + ", " + d.getFullYear();
   }
 
   function fmtTime(t) {
@@ -111,14 +118,16 @@
         h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.text, marginBottom: 4 } }, title),
         h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 20 } },
           isAccept ? "We'll let the production team know you're confirmed for these shifts."
-                   : "Let the team know if you'd like — this is optional."),
+                   : "If you can't make some or all of these shifts, let us know which ones (or the whole request) — it helps us re-staff."),
 
         h("label", { style: { display: "block", fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase" } }, "Comment (optional)"),
         h("textarea", {
           value: comment,
           onChange: function(e) { setComment(e.target.value); },
           maxLength: 1000,
-          placeholder: isAccept ? "Anything the team should know" : "Reason (optional)",
+          placeholder: isAccept
+            ? "Anything the team should know"
+            : "e.g. I can't do the Saturday load-in but the rest works — or I'm unavailable for all of these",
           style: { width: "100%", minHeight: 70, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 14, resize: "vertical" }
         }),
 

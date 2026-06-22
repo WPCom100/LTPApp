@@ -359,7 +359,7 @@ def test_send_emails_crew_member_when_gmail_connected():
     # The crew landing link, an Accept/Decline section, and the resolved shift
     # role label are all present in the rendered email.
     assert ("/#/crew/" + body["token"]) in html
-    assert "Accept" in html and "Decline" in html
+    assert "Respond" in html          # single CTA button → the crew landing page
     assert "Lead Lighting Tech" in html
     # Themed, branded shell: default accent (accentColor) + rounded card.
     assert "#E8731A" in html
