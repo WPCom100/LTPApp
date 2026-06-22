@@ -19,7 +19,7 @@
       ),
       h("div", { style: { position: "relative" } },
         h("input", { type: "text", value: query, placeholder: "Search...", onChange: function(e) { setQuery(e.target.value); }, onFocus: function() { setFocused(true); }, onBlur: function() { setTimeout(function() { setFocused(false); }, 200); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", width: "100%" } }),
-        focused && filtered.length > 0 && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 180, overflow: "auto", zIndex: 10 } },
+        focused && query.length > 0 && filtered.length > 0 && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 180, overflow: "auto", zIndex: 10 } },
           filtered.map(function(item) { var id = item.id, isSel = selectedIds.includes(id); return h("div", { key: id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { if (isSel) onChange(selectedIds.filter(function(x) { return x !== id; })); else onChange(selectedIds.concat([id])); setQuery(""); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: isSel ? B.accent : B.text, background: isSel ? B.accentMuted : "transparent", borderBottom: "1px solid " + B.border } }, (isSel ? "\u2713 " : "") + getName(item)); }))
       )
     );

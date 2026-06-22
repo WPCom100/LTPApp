@@ -503,7 +503,19 @@ async def serve_frontend(full_path: str):
 
     static = _resolve_static(full_path)
     if static:
-        return FileResponse(static)
+        resp = FileResponse(static)
+        # App code (HTML/JS/CSS) is served from un-versioned filenames
+        # (e.g. /theme.js), so without this a browser's heuristic cache could
+        # keep serving a stale copy AFTER a deploy — masking frontend fixes
+        # until a manual hard-refresh. `no-cache` forces revalidation on every
+        # load; FileResponse's ETag makes that a cheap 304 when unchanged and a
+        # fresh 200 when the deploy changed the file. Fonts/images keep the
+        # default (revalidated) caching.
+        if static.endswith((".js", ".css", ".html")):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
     # SPA fallback for any unknown path
-    return FileResponse(os.path.join(frontend_dir, "index.html"))
+    resp = FileResponse(os.path.join(frontend_dir, "index.html"))
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp

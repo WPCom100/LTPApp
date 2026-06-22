@@ -70,6 +70,7 @@
   S.COMPANY = {
     ACTIVE:   "active",
     INACTIVE: "inactive",
+    ONE_TIME: "one-time",
     PROSPECT: "prospect",
   };
 

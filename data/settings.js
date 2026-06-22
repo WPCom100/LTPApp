@@ -33,7 +33,7 @@ window.LTP_DATA_SETTINGS = {
     // Crew status
     open: "#666666", requested: "#F5A623", confirmed: "#3B82F6",
     // CRM
-    active: "#4CAF50", inactive: "#888888", client: "#4CAF50", vendor: "#3B82F6", prospect: "#F5A623",
+    active: "#4CAF50", inactive: "#888888", "one-time": "#3B82F6", client: "#4CAF50", vendor: "#3B82F6", prospect: "#F5A623",
     // Project categories
     rental: "#3B82F6", labor: "#F5A623", service: "#4CAF50", "full-production": "#E8731A",
     // Other

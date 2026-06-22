@@ -577,6 +577,25 @@ window.LTP_safeUrl = function(url) {
   return s;
 };
 
+// A schedule row is worth keeping if ANYTHING was entered into the day — a
+// title, date, end-date, start/end time, crew positions, or breaks. Titles
+// are optional and a day added via "Add Day" starts with an empty date, so
+// filtering on title (or even title/date/crew) alone silently discarded days
+// that had only times entered. Only a truly empty row object is dropped.
+// Used by the schedule builder and the project form's Save + validation.
+window.LTP_scheduleRowHasContent = function(s) {
+  if (!s) return false;
+  return !!(
+    (s.title && String(s.title).trim()) ||
+    (s.date && String(s.date).trim()) ||
+    (s.endDate && String(s.endDate).trim()) ||
+    (s.time && String(s.time).trim()) ||
+    (s.endTime && String(s.endTime).trim()) ||
+    (Array.isArray(s.positions) && s.positions.length > 0) ||
+    (Array.isArray(s.breaks) && s.breaks.length > 0)
+  );
+};
+
 window.LTP_formatAddress = function(e, joiner) {
   if (!e) return "";
   joiner = joiner || ", ";
@@ -712,3 +731,20 @@ window.LTP_QUOTE_REF = function(q) {
   var year = (q.createdDate || "").substring(0, 4) || String(new Date().getFullYear());
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
 };
+
+// Select a number field's contents when it gains focus, so the user's first
+// keystroke replaces the current value (e.g. a default 0) instead of
+// appending to it — no more "type, then go back and delete the leading 0".
+// Bound once at the document level (event delegation) so it covers EVERY
+// numeric input app-wide, regardless of which component renders it (LTPInput,
+// the rentals R.INP inputs, raw <input type="number">, etc.). The setTimeout
+// lets the browser's own click cursor-placement settle first, then we select.
+if (typeof document !== "undefined" && !window.__LTP_NUM_SELECT_BOUND) {
+  window.__LTP_NUM_SELECT_BOUND = true;
+  document.addEventListener("focusin", function(e) {
+    var el = e.target;
+    if (el && el.tagName === "INPUT" && el.type === "number") {
+      setTimeout(function() { try { el.select(); } catch (_e) {} }, 0);
+    }
+  });
+}

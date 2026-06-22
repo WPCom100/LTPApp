@@ -135,7 +135,9 @@
       var saveMsg = "Schedule saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
       var newActivity = (draft.scheduleActivity || []).concat([saveEntry]);
-      var cleanSchedule = draft.schedule.filter(function(s) { return s.title.trim(); });
+      // Keep any row with real content (title/date/crew/breaks), not just
+      // titled rows — unlabeled-but-real days were being dropped on save.
+      var cleanSchedule = draft.schedule.filter(window.LTP_scheduleRowHasContent);
 
       setProjects(function(prev) {
         return prev.map(function(p) {

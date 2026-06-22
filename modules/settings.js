@@ -19,6 +19,10 @@
     var [saved, setSaved] = useState(false);
     var [dlg, setDlg] = useState(null);
     var cleanRef = useRef(settings);
+    // Clean snapshot of the team-member rows — used to diff which users
+    // changed on Save and to revert them on Discard. Team-member edits now
+    // flow through the page's Save button instead of auto-saving on blur.
+    var usersCleanRef = useRef(null);
     // Team Members section — fetched from /api/users (admin-only on the
     // backend so a non-admin reaching this view sees a graceful empty list
     // + a 403 message, not a crash). users is null while loading, [] for
@@ -38,7 +42,7 @@
           if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
-        .then(function(data) { if (data) { setUsers(data); setUsersErr(null); } })
+        .then(function(data) { if (data) { setUsers(data); usersCleanRef.current = data.map(function(u) { return Object.assign({}, u); }); setUsersErr(null); } })
         .catch(function(e) { setUsers([]); setUsersErr("Could not load users: " + String(e.message || e)); });
     }
     useEffect(loadUsers, []);
@@ -65,12 +69,28 @@
             if (!Array.isArray(prev)) return prev;
             return prev.map(function(u) { return u.id === userId ? saved : u; });
           });
+          // Reconcile the clean snapshot to the authoritative server row so a
+          // later edit diffs against what's actually persisted.
+          if (Array.isArray(usersCleanRef.current)) {
+            usersCleanRef.current = usersCleanRef.current.map(function(u) { return u.id === userId ? saved : u; });
+          }
           setUsersErr(null);
         })
         .catch(function(e) {
           setUsersErr("Save failed: " + String(e.message || e));
           loadUsers();  // reload to drop the stale optimistic patch
         });
+    }
+
+    // Apply a team-member edit to local state and mark the page dirty (the PUT
+    // is deferred to Save, so title/phone/role join the page's Save/Discard
+    // flow instead of auto-saving on blur).
+    function editUser(userId, patch) {
+      setUsers(function(prev) {
+        if (!Array.isArray(prev)) return prev;
+        return prev.map(function(u) { return u.id === userId ? Object.assign({}, u, patch) : u; });
+      });
+      setIsDirty(true);
     }
 
     function loadQbo() {
@@ -101,6 +121,22 @@
     function save() {
       setSettings(draft);
       cleanRef.current = draft;
+      // Persist team-member edits (title/phone/role) that differ from the
+      // loaded snapshot. Each PUT goes through patchUser, which reconciles
+      // users + usersCleanRef on success and surfaces an error + reloads on
+      // failure (e.g. a rejected role change).
+      var clean = usersCleanRef.current;
+      if (Array.isArray(users) && Array.isArray(clean)) {
+        users.forEach(function(u) {
+          var c = clean.find(function(x) { return x.id === u.id; });
+          if (!c) return;
+          var patch = {};
+          if ((u.title || "") !== (c.title || "")) patch.title = u.title || "";
+          if ((u.phone || "") !== (c.phone || "")) patch.phone = u.phone || "";
+          if ((u.role || "member") !== (c.role || "member")) patch.role = u.role || "member";
+          if (Object.keys(patch).length > 0) patchUser(u.id, patch);
+        });
+      }
       setIsDirty(false);
       setSaved(true);
       setTimeout(function() { setSaved(false); }, 2000);
@@ -108,6 +144,10 @@
 
     function discard() {
       setDraft(Object.assign({}, cleanRef.current));
+      // Revert team-member edits to the loaded snapshot as well.
+      if (Array.isArray(usersCleanRef.current)) {
+        setUsers(usersCleanRef.current.map(function(u) { return Object.assign({}, u); }));
+      }
       setIsDirty(false);
     }
 
@@ -462,27 +502,19 @@
                   u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
                 )
               ),
-              // Title (editable, debounce-on-blur)
+              // Title (editable — joins the page's Save/Discard flow)
               h("input", { type: "text", value: u.title || "", placeholder: "Title",
-                onChange: function(e) {
-                  var v = e.target.value;
-                  setUsers(function(prev) { return prev.map(function(x) { return x.id === u.id ? Object.assign({}, x, { title: v }) : x; }); });
-                },
-                onBlur: function(e) { patchUser(u.id, { title: e.target.value }); },
+                onChange: function(e) { editUser(u.id, { title: e.target.value }); },
                 style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
               }),
-              // Phone (editable, debounce-on-blur)
+              // Phone (editable — joins the page's Save/Discard flow)
               h("input", { type: "text", value: u.phone || "", placeholder: "Phone",
-                onChange: function(e) {
-                  var v = e.target.value;
-                  setUsers(function(prev) { return prev.map(function(x) { return x.id === u.id ? Object.assign({}, x, { phone: v }) : x; }); });
-                },
-                onBlur: function(e) { patchUser(u.id, { phone: e.target.value }); },
+                onChange: function(e) { editUser(u.id, { phone: e.target.value }); },
                 style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
               }),
-              // Role (editable, save on change)
+              // Role (editable — joins the page's Save/Discard flow)
               h("select", { value: u.role || "member",
-                onChange: function(e) { patchUser(u.id, { role: e.target.value }); },
+                onChange: function(e) { editUser(u.id, { role: e.target.value }); },
                 style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } },
                 h("option", { value: "member" }, "Member"),
                 h("option", { value: "admin" }, "Admin")
