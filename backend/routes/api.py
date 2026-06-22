@@ -8,6 +8,7 @@ from backend import models
 from backend.auth_deps import require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
+from backend.email_validate import parse_recipients, RecipientError
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
@@ -68,6 +69,28 @@ def _dict_to_row(data, model_cls):
         if snake in valid_cols and snake not in _HIDDEN_COLS and snake not in _READONLY_COLS:
             mapped[snake] = val
     return mapped
+
+
+async def _validate_fks(mapped: dict, model_cls, db: AsyncSession) -> None:
+    """Reject writes whose foreign-key columns point at non-existent rows.
+    SQLite doesn't enforce FKs (silent corruption) and Postgres surfaces an
+    ugly 500 IntegrityError — validate here for a clean 400 either way
+    (SECURITY_REVIEW.md M5). Only non-null FK values are checked; nullable FKs
+    left unset are fine."""
+    for col in model_cls.__table__.columns:
+        if not col.foreign_keys:
+            continue
+        val = mapped.get(col.name)
+        if val is None:
+            continue
+        target_col = next(iter(col.foreign_keys)).column  # e.g. companies.id
+        found = await db.execute(select(target_col).where(target_col == val).limit(1))
+        if found.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": _snake_to_camel(col.name),
+                        "reason": f"references a {target_col.table.name} row that does not exist"},
+            )
 
 
 def _stamp_activity(data: dict, user: models.User) -> dict:
@@ -163,6 +186,7 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         if has_activity:
             data = _stamp_activity(data, user)
         mapped = _dict_to_row(data, model_cls)
+        await _validate_fks(mapped, model_cls, db)
         row = model_cls(**mapped)
         # share_token is the PUBLIC client-view credential and is server-
         # authoritative: any client-supplied value was already stripped by
@@ -201,6 +225,7 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         mapped = _dict_to_row(data, model_cls)
+        await _validate_fks(mapped, model_cls, db)
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)
@@ -274,6 +299,20 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
         data["emailSignatureTemplate"] = email_html(data["emailSignatureTemplate"])
     if "emailHeaderTemplate" in data and data["emailHeaderTemplate"]:
         data["emailHeaderTemplate"] = email_html(data["emailHeaderTemplate"])
+    # Validate emailReplyTo at write time. An invalid value would otherwise sit
+    # in settings and blow up every send with an uncaught ValueError, orphaning
+    # recipient rows (SECURITY_REVIEW.md M6). Must be a single address (or empty
+    # to clear it).
+    if data.get("emailReplyTo"):
+        try:
+            reply_addrs = parse_recipients(data["emailReplyTo"], allow_empty=True)
+        except RecipientError as e:
+            raise HTTPException(status_code=400, detail={"field": "emailReplyTo", "reason": str(e)})
+        if len(reply_addrs) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": "emailReplyTo", "reason": "must be a single email address"},
+            )
     result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
     row = result.scalar_one_or_none()
     if not row:
@@ -413,6 +452,13 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
             continue
         await db.execute(delete(model_cls))
         for item in items:
+            # Run the same field validation as the per-entity create path so a
+            # bulk import can't seed forged enum/date/length values
+            # (SECURITY_REVIEW.md H5). Activity attribution is intentionally NOT
+            # re-stamped here — this is a one-time migration of the admin's own
+            # data and rewriting every historical actor to the importer would
+            # lose the original attribution.
+            validate(model_cls, item)
             mapped = _dict_to_row(item, model_cls)
             row = model_cls(**mapped)
             # share_token is server-authoritative (stripped by _dict_to_row).
