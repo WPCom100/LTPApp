@@ -227,8 +227,12 @@ _IMG_SRC = (
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; "
+    # Fonts are self-hosted (assets/fonts.css + assets/fonts/*.woff2), so style
+    # and font sources are 'self' only — no fonts.googleapis.com / gstatic.com
+    # (SECURITY_REVIEW.md L8). style-src keeps 'unsafe-inline' (React inline
+    # styles + sanitized email preview).
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self'; "
     + _IMG_SRC +
     # connect-src governs fetch/XHR AND source-map fetches DevTools makes for
     # external scripts. Allowing cdnjs here prevents the console-error noise

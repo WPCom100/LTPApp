@@ -4,7 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>LTP Business Suite</title>
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Self-hosted fonts (Playfair Display + DM Sans). Served from our own
+       origin so the CSP can drop fonts.googleapis.com / fonts.gstatic.com.
+       See assets/fonts.css and docs/SECURITY_REVIEW.md L8. -->
+  <link href="/assets/fonts.css" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; }
