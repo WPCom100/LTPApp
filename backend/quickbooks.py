@@ -178,9 +178,19 @@ async def refresh_if_needed(
     that case so status reflects "disconnected"."""
     try:
         refresh_token = crypto.decrypt_token(conn.refresh_token_enc)
-    except InvalidToken as e:
-        await _drop_connection(conn, db)
-        raise QboReconnectRequired(f"stored refresh token unreadable: {e}")
+    except InvalidToken:
+        # A LOCAL decrypt failure (e.g. a key rotation that didn't re-encrypt
+        # this row, or a removed key) is NOT the same as the user revoking
+        # access. Do NOT delete the connection -- keep realm_id + ciphertext so
+        # restoring the key (or running backend.rotate_encryption_key) recovers
+        # access; deleting would lose the realm and force a full re-auth.
+        # SECURITY_REVIEW.md M3.
+        print("[LTP] qbo: refresh token failed to decrypt (encryption key "
+              "mismatch?); keeping connection row for recovery", flush=True)
+        raise QboReconnectRequired(
+            "QuickBooks token could not be decrypted; restore the encryption "
+            "key or reconnect QuickBooks."
+        )
 
     now = datetime.now(timezone.utc)
     expires_at = _aware(conn.access_token_expires_at)

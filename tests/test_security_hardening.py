@@ -222,3 +222,17 @@ def test_public_payload_omits_share_token_and_payments():
     # FK ids are stripped too (existing behavior we rely on).
     for k in ("companyId", "clientContactId", "projectId", "quoteId"):
         assert k not in entity
+
+
+# ── M3: key-rotation re-encryption helper ──────────────────────────────────
+
+from backend import crypto as _crypto
+from backend.rotate_encryption_key import _reencrypt
+
+
+def test_reencrypt_roundtrip_preserves_plaintext():
+    ct = _crypto.encrypt_token("a-secret-refresh-token")
+    ct2 = _reencrypt(ct)
+    assert _crypto.decrypt_token(ct2) == "a-secret-refresh-token"
+    assert _reencrypt(None) is None
+    assert _reencrypt("") is None
