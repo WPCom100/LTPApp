@@ -23,6 +23,12 @@ window.LTPApp = function() {
     return h(window.LTPClientView, { route: route });
   }
 
+  // Public crew-request landing page — same deal: the token in #/crew/<token>
+  // is the credential, no LTP session required (see modules/crew-view.js).
+  if (route.module === "crew") {
+    return h(window.LTPCrewView, { route: route });
+  }
+
   // Re-render when auth.js publishes the result.
   var pair = useState(window.LTP_AUTH_USER);
   var authUser = pair[0], setAuthUser = pair[1];

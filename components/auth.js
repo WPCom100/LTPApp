@@ -24,13 +24,15 @@
     } catch (e) { /* CustomEvent unsupported in very old browsers */ }
   }
 
-  // Public client-view routes (#view/quote/<token>, #view/invoice/<token>)
-  // are intentionally unauthenticated — the share_token is the credential.
+  // Public token surfaces are intentionally unauthenticated — the token in the
+  // URL is the credential:
+  //   #/view/quote|invoice/<share_token>   (modules/client-view.js)
+  //   #/crew/<token>                        (modules/crew-view.js)
   // Don't fire /auth/me on those: it'd 401, costing a round-trip and
   // (more importantly) data-state.js would see a 401 and bounce to
-  // /auth/login, breaking the public page for the actual client.
+  // /auth/login, breaking the public page for the actual visitor.
   var hash = (window.location.hash || "").replace(/^#\/?/, "");
-  if (hash.indexOf("view/") === 0) {
+  if (hash.indexOf("view/") === 0 || hash.indexOf("crew/") === 0) {
     window.LTP_AUTH_USER = null;
     // Defer so listeners attached later this tick still see the event.
     setTimeout(dispatchReady, 0);
