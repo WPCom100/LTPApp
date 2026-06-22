@@ -140,6 +140,11 @@ def _sanitized_payload(kind: str, entity, company, contact, project, settings) -
     # No FK ids in the public response
     for k in ("companyId", "clientContactId", "projectId", "quoteId"):
         entity_d.pop(k, None)
+    # The share_token IS the credential (the client already holds it in the
+    # URL) — never echo it back. The payments ledger is internal financial
+    # detail the client view doesn't consume. SECURITY_REVIEW.md M1.
+    for k in ("shareToken", "share_token", "payments"):
+        entity_d.pop(k, None)
     return {
         "kind": kind,
         "entity": entity_d,

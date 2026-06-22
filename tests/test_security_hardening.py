@@ -17,7 +17,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 import pytest
 from fastapi import HTTPException
 
-from backend.routes.view import _validate_signature_data_url
+from backend.routes.view import _validate_signature_data_url, _sanitized_payload
 
 # A real 1x1 transparent PNG (decodes to bytes starting with the PNG magic).
 _PNG_1x1 = (
@@ -205,3 +205,20 @@ def test_csrf_ignores_safe_methods():
 def test_csrf_falls_back_to_referer():
     called, status = _run_csrf("DELETE", {"host": "app.example.com", "referer": "https://evil.com/x"})
     assert called is False and status == 403
+
+
+# ── M1: public view payload doesn't leak the token or payments ledger ──────
+
+def test_public_payload_omits_share_token_and_payments():
+    inv = models.Invoice(
+        id=1, status="sent", share_token="super-secret-share-token",
+        payments=[{"amount": 500, "method": "wire"}],
+        sections=[], activity=[],
+    )
+    payload = _sanitized_payload("invoice", inv, {}, {}, {}, {})
+    entity = payload["entity"]
+    assert "shareToken" not in entity and "share_token" not in entity
+    assert "payments" not in entity
+    # FK ids are stripped too (existing behavior we rely on).
+    for k in ("companyId", "clientContactId", "projectId", "quoteId"):
+        assert k not in entity
