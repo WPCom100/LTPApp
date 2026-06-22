@@ -85,9 +85,11 @@ A suggested remediation order is in [§ Roadmap](#remediation-roadmap).
 
 ## Implementation status
 
-**All CRITICAL/HIGH/MEDIUM findings and all but one LOW are implemented and
-tested** on `claude/security-hardening` (each its own commit; the suite passes
-215/215 when run file-by-file — see [§ Notes on method](#notes-on-method--limits)).
+**Every CRITICAL / HIGH / MEDIUM / LOW finding is implemented and tested** on
+`claude/security-hardening` (each its own commit; the suite passes 215/215 when
+run file-by-file — see [§ Notes on method](#notes-on-method--limits)). The only
+items not coded are `style-src 'unsafe-inline'` (future work — needs a CSP nonce
+architecture) and **L4** (accepted as-is); both are explained below.
 
 **Phase 0 — contain exposure**
 
@@ -128,6 +130,7 @@ tested** on `claude/security-hardening` (each its own commit; the suite passes
 | **L2 / L3** | Session idle timeout; delete audit logging | `86295d8` |
 | **M7 / L7** | Client-side email sanitize; `meetLink` protocol guard | `ac307cc` |
 | **L10** | Bump `authlib` 1.3.2→1.7.2 and `cryptography` 42→49 | `802b421` |
+| **L8** | Self-host web fonts; drop Google font hosts from the CSP | `8828144` |
 
 **Operator follow-ups still required for C2** (cannot be done in-repo): revoke
 the exposed Gmail OAuth grant, rotate `LTP_TOKEN_ENCRYPTION_KEY` (use the new
@@ -135,13 +138,6 @@ the exposed Gmail OAuth grant, rotate `LTP_TOKEN_ENCRYPTION_KEY` (use the new
 history (a coordinated rewrite — it touches the open PR branches).
 
 **Deliberately deferred / accepted (with rationale):**
-- **L8 (self-host web fonts)** — not done. The vendored `assets/fonts` are
-  Roboto/Saira (for the PDF), not the app's Playfair/DM Sans web fonts, so this
-  needs deliberate asset work (download all weights, verify rendering). SRI on
-  the Google Fonts CSS link is unreliable (UA-variant responses). Residual risk
-  is LOW and CSP-bounded: `font-src`/`style-src` are restricted to Google's font
-  hosts and `script-src` blocks any JS, so a Google-Fonts compromise could only
-  inject CSS. Recommend self-hosting as a deliberate follow-up.
 - **`style-src 'unsafe-inline'`** (the second half of M2) — kept. React inline
   styles and the sanitized email preview depend on it; removing it requires a
   CSP nonce architecture. Tracked as future work.
@@ -659,14 +655,13 @@ implemented yet — these are proposals for your sign-off.
   **M4** (session lifecycle / access allowlist), **M5** (FK validation),
   **M6** (`emailReplyTo`).
 
-### Phase 3 — Defense-in-depth & hygiene — ✅ done (one deferral)
+### Phase 3 — Defense-in-depth & hygiene — ✅ done
 - ✅ **M2** (CSP `img-src` tightened; `style-src 'unsafe-inline'` kept — needs a
   nonce architecture), **M7** (client-side sanitize), **L1** (hashed session
   tokens), **L2** (idle timeout), **L3** (delete audit), **L5/L6** (noopener +
-  headers), **L7** (`meetLink` guard), **L9** (generic OAuth error),
-  **L10** (dependency bumps).
-- ⏸️ **L8** (self-host web fonts) — deferred; LOW + CSP-bounded (see
-  [§ Implementation status](#implementation-status)). **L4** accepted as-is.
+  headers), **L7** (`meetLink` guard), **L8** (self-hosted web fonts),
+  **L9** (generic OAuth error), **L10** (dependency bumps).
+- **L4** accepted as-is (DB-lookup model; advisory audit metadata).
 
 ---
 
