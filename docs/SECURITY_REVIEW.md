@@ -85,30 +85,71 @@ A suggested remediation order is in [§ Roadmap](#remediation-roadmap).
 
 ## Implementation status
 
-Implemented and tested on `claude/security-hardening` (each its own commit;
-the suite passes 204/204 when run file-by-file — see
-[§ Notes on method](#notes-on-method--limits)):
+**All CRITICAL/HIGH/MEDIUM findings and all but one LOW are implemented and
+tested** on `claude/security-hardening` (each its own commit; the suite passes
+215/215 when run file-by-file — see [§ Notes on method](#notes-on-method--limits)).
+
+**Phase 0 — contain exposure**
 
 | ID | Finding | Commit |
 |----|---------|--------|
 | **C2** | Remove committed token-bearing `.db` files; ignore all `*.db` | `7d2abcc` |
 | **H6** | Fail-fast on missing/weak `LTP_SESSION_SECRET` | `d20b0ef` (+ test default `57cf6a5`) |
-| **H10** | Stop reflecting OAuth provider error bodies to clients | `f78fbf5` |
+
+**Phase 1 — close the exploitable holes**
+
+| ID | Finding | Commit |
+|----|---------|--------|
 | **C1 / H1** | Eliminate both `document.write` XSS sinks; validate signatures server-side | `f4da2b7` |
+| **H3** | `share_token` server-authoritative | `98f75c9` |
 | **H2** | Prefix-based rate limiting for public/PDF/email/sync routes | `0e091a5` |
 | **H4** | Cap recipients per send on the email relay | `486fe1f` |
-| **H3** | `share_token` server-authoritative | `98f75c9` |
+| **H10** | Stop reflecting OAuth provider error bodies to clients | `f78fbf5` |
+
+**Phase 2 — structural hardening**
+
+| ID | Finding | Commit |
+|----|---------|--------|
+| **L1 / M4 / L9 / H11** | Hashed session tokens; access allowlist + strict `email_verified`; generic OAuth error; logout session-kill (documented) | `6ab3640` |
+| **H8** | Origin/Referer CSRF middleware for unsafe methods | `21ed917` |
+| **H7** | Fail-safe transport detection (cookies/HSTS) | `0767e6a` |
+| **H9** | Pin QuickBooks realm on reconnect | `8d8e0a6` |
+| **H5 / M5 / M6** | `bulk_sync` validation; FK validation; `emailReplyTo` validation | `9398eee` |
+| **M1** | Drop `share_token` + payments from public view payload | `5eff894` |
+| **M3** | Key-rotation CLI + decrypt-vs-revoke fix | `6ad1770` |
+| **H12** | Audit metadata on accept/decline | `5c5174b` |
+
+**Phase 3 — defense-in-depth & hygiene**
+
+| ID | Finding | Commit |
+|----|---------|--------|
+| **M2** | Tighten CSP `img-src` (drop `https:` wildcard) | `a9a79f3` |
+| **L5 / L6** | `rel=noopener` email anchors; CORP + Permissions-Policy headers | `b41cced` |
+| **L2 / L3** | Session idle timeout; delete audit logging | `86295d8` |
+| **M7 / L7** | Client-side email sanitize; `meetLink` protocol guard | `ac307cc` |
+| **L10** | Bump `authlib` 1.3.2→1.7.2 and `cryptography` 42→49 | `802b421` |
 
 **Operator follow-ups still required for C2** (cannot be done in-repo): revoke
-the exposed Gmail OAuth grant, rotate `LTP_TOKEN_ENCRYPTION_KEY`, and purge the
-`.db` files from git history (a coordinated rewrite — it touches the open PR
-branches).
+the exposed Gmail OAuth grant, rotate `LTP_TOKEN_ENCRYPTION_KEY` (use the new
+`backend/rotate_encryption_key.py` from M3), and purge the `.db` files from git
+history (a coordinated rewrite — it touches the open PR branches).
 
-**Still proposals, awaiting sign-off:** H5, H7, H8, H9, H11, H12; all MEDIUM
-(M1–M7) and LOW (L1–L10), including the dependency bumps. Note H3's
-implementation was scoped to the `share_token` credential specifically — FK
-existence/ownership validation (M5) and the broader allow-list refactor remain
-open.
+**Deliberately deferred / accepted (with rationale):**
+- **L8 (self-host web fonts)** — not done. The vendored `assets/fonts` are
+  Roboto/Saira (for the PDF), not the app's Playfair/DM Sans web fonts, so this
+  needs deliberate asset work (download all weights, verify rendering). SRI on
+  the Google Fonts CSS link is unreliable (UA-variant responses). Residual risk
+  is LOW and CSP-bounded: `font-src`/`style-src` are restricted to Google's font
+  hosts and `script-src` blocks any JS, so a Google-Fonts compromise could only
+  inject CSS. Recommend self-hosting as a deliberate follow-up.
+- **`style-src 'unsafe-inline'`** (the second half of M2) — kept. React inline
+  styles and the sanitized email preview depend on it; removing it requires a
+  CSP nonce architecture. Tracked as future work.
+- **L4** (non-constant-time token lookup; spoofable audit IP/UA) — accepted as
+  noted in the original finding (DB-lookup model; audit metadata is advisory).
+- **H3 scope** — implemented for the `share_token` credential specifically; FKs
+  stay client-writable by design in this single-tenant tool, but are now
+  existence-validated (M5).
 
 ---
 
@@ -610,30 +651,37 @@ implemented yet — these are proposals for your sign-off.
   H2. Recipient-to-known-contacts constraint deferred to Phase 2.
 - ✅ **H10** — stopped reflecting provider error bodies to the client (`f78fbf5`).
 
-### Phase 2 — Structural hardening
-- **H5** (`bulk_sync` through the validated pipeline), **H7** (transport from
-  real scheme), **H8** (Origin/CSRF), **H9** (QBO callback state/realm binding),
-  **H11** (logout semantics + session kill), **H12** (binding accept/decline).
-- **M1** (allow-list public payload), **M3** (key rotation tooling), **M4**
-  (session lifecycle), **M5** (FK validation), **M6** (`emailReplyTo`).
+### Phase 2 — Structural hardening — ✅ done
+- ✅ **H5** (`bulk_sync` validation), **H7** (transport from real scheme),
+  **H8** (Origin/CSRF), **H9** (QBO realm pinning), **H11** (logout
+  session-kill, documented), **H12** (accept/decline audit binding).
+- ✅ **M1** (public payload trim), **M3** (key rotation tooling + decrypt fix),
+  **M4** (session lifecycle / access allowlist), **M5** (FK validation),
+  **M6** (`emailReplyTo`).
 
-### Phase 3 — Defense-in-depth & hygiene
-- **M2** (tighten CSP `img-src`/`style-src`), **M7** (client-side sanitize),
-  and the **L1–L10** items, including the **dependency bumps**.
+### Phase 3 — Defense-in-depth & hygiene — ✅ done (one deferral)
+- ✅ **M2** (CSP `img-src` tightened; `style-src 'unsafe-inline'` kept — needs a
+  nonce architecture), **M7** (client-side sanitize), **L1** (hashed session
+  tokens), **L2** (idle timeout), **L3** (delete audit), **L5/L6** (noopener +
+  headers), **L7** (`meetLink` guard), **L9** (generic OAuth error),
+  **L10** (dependency bumps).
+- ⏸️ **L8** (self-host web fonts) — deferred; LOW + CSP-bounded (see
+  [§ Implementation status](#implementation-status)). **L4** accepted as-is.
 
 ---
 
 ## Notes on method & limits
 
 - All eight agents ran **read-only**; no code was changed *during the audit*.
-  The Phase 0 / Phase 1 fixes listed in [§ Implementation status](#implementation-status)
+  The Phase 0–3 fixes listed in [§ Implementation status](#implementation-status)
   were made afterward, each as its own commit.
 - **Test verification:** the suite uses on-disk per-module SQLite DBs seeded via
   module-level `os.environ.setdefault`, so a single combined `pytest` process
   cross-contaminates (a pre-existing artifact, confirmed identical on the
-  pre-security baseline). Run **file-by-file** it is green — 204/204 including
-  the new `tests/test_security_hardening.py` and the added email recipient-cap
-  test. Invoke with `pytest -o asyncio_mode=auto tests/<file>.py`.
+  pre-security baseline). Run **file-by-file** it is green — 215/215 including
+  the new `tests/test_security_hardening.py` (signature/rate-limit/share_token/
+  CSRF/session-hash/public-payload/key-rotation/audit/noopener coverage).
+  Invoke with `pytest -o asyncio_mode=auto tests/<file>.py`.
 - Findings were cross-checked against the source at the cited line numbers
   before inclusion; a handful of agent reports overlapped and were merged
   (the two `document.write` sinks; the rate-limit gap seen from three angles;
