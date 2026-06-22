@@ -17,6 +17,7 @@ from backend.routes.view import view_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.rate_limit import RateLimitMiddleware
+from backend.csrf import CsrfOriginMiddleware
 
 
 # ── Session sweeper ────────────────────────────────────────────────────────
@@ -278,14 +279,16 @@ class SecurityHeadersMiddleware:
 # the way IN and inner-first on the way OUT. Last-added = outermost. We want
 # this execution order on incoming requests:
 #   1. SecurityHeaders   — wraps EVERY response (including rejections below)
-#   2. RateLimit         — reject /auth/* floods before they hit OAuth
-#   3. PayloadSizeLimit  — reject oversize bodies before SessionMiddleware
+#   2. CsrfOrigin        — reject cross-origin state-changing requests (H8)
+#   3. RateLimit         — reject /auth/* floods before they hit OAuth
+#   4. PayloadSizeLimit  — reject oversize bodies before SessionMiddleware
 #                          tries to read cookies (cookies are small; body isn't)
-#   4. SessionMiddleware — Authlib's signed state cookie
-#   5. (routes)
+#   5. SessionMiddleware — Authlib's signed state cookie
+#   6. (routes)
 # Therefore add in reverse order (innermost first):
 app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=MAX_PAYLOAD_BYTES)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CsrfOriginMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
 
 

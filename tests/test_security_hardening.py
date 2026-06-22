@@ -147,3 +147,61 @@ def test_session_token_hash_deterministic_hex64():
     assert len(a) == 64 and all(c in "0123456789abcdef" for c in a)
     assert a != hash_session_token("a-raw-session-tokeN")    # input-sensitive
     assert a != "a-raw-session-token"                        # not the raw value
+
+
+# ── H8: Origin/Referer CSRF middleware ─────────────────────────────────────
+
+import asyncio
+
+from backend.csrf import CsrfOriginMiddleware
+
+
+def _run_csrf(method, headers):
+    """Drive the middleware directly. Returns (inner_was_called, status_or_None)."""
+    state = {"called": False}
+
+    async def inner(scope, receive, send):
+        state["called"] = True
+
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg):
+        sent.append(msg)
+
+    scope = {
+        "type": "http",
+        "method": method,
+        "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in headers.items()],
+    }
+    asyncio.run(CsrfOriginMiddleware(inner)(scope, receive, send))
+    status = next((m["status"] for m in sent if m.get("type") == "http.response.start"), None)
+    return state["called"], status
+
+
+def test_csrf_blocks_cross_origin_post():
+    called, status = _run_csrf("POST", {"host": "app.example.com", "origin": "https://evil.com"})
+    assert called is False and status == 403
+
+
+def test_csrf_allows_same_origin_post():
+    called, _ = _run_csrf("POST", {"host": "app.example.com", "origin": "https://app.example.com"})
+    assert called is True
+
+
+def test_csrf_allows_post_without_origin_or_referer():
+    # server-to-server / curl / test client — no browser CSRF is possible
+    called, _ = _run_csrf("POST", {"host": "app.example.com"})
+    assert called is True
+
+
+def test_csrf_ignores_safe_methods():
+    called, _ = _run_csrf("GET", {"host": "app.example.com", "origin": "https://evil.com"})
+    assert called is True
+
+
+def test_csrf_falls_back_to_referer():
+    called, status = _run_csrf("DELETE", {"host": "app.example.com", "referer": "https://evil.com/x"})
+    assert called is False and status == 403
