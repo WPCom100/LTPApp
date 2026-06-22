@@ -14,6 +14,7 @@ from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
+from backend.routes.crew import crew_public_router, crew_admin_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.rate_limit import RateLimitMiddleware
@@ -440,6 +441,13 @@ app.include_router(public_pdf_router)
 # existing catch-all early-return (api/ prefix) covers it; we don't need a
 # separate prefix exclusion.
 app.include_router(view_router)
+# Crew requests: crew_public_router is token-only (no session) under
+# /api/crew/* — the crew member's accept/decline landing page; crew_admin_router
+# is session-gated under /api/crew-requests/* — the producer's send/withdraw/
+# list. Both sit under /api/ so the static catch-all's api/ early-return covers
+# unmatched sub-paths. See backend/routes/crew.py.
+app.include_router(crew_public_router)
+app.include_router(crew_admin_router)
 # Email send: session-gated. Per-user Gmail via OAuth scope gmail.send;
 # see backend/routes/email.py for the full lifecycle.
 app.include_router(email_router)

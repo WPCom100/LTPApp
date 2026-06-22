@@ -46,6 +46,12 @@ _RULES = [
     # tight buckets: blunt share-token enumeration and, for /pdf,
     # unauthenticated PDF-generation DoS (every hit runs ReportLab).
     ("/api/view",         60),
+    # Crew accept/decline landing page — same class as /api/view (token is the
+    # credential, no session). Note: this rule covers /api/crew/<token>/... but
+    # NOT the session-gated producer routes at /api/crew-requests/... — the
+    # longest-prefix matcher treats "/api/crew-requests" as a separate path
+    # ("/api/crew" only matches "/api/crew" or "/api/crew/...").
+    ("/api/crew",         60),
     ("/pdf",              30),
     # Authenticated but sensitive. Per-IP backstop on top of the recipient cap
     # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.

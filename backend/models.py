@@ -477,6 +477,64 @@ class EmailRecipient(Base):
     pdf_downloaded_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class CrewRequest(Base):
+    """A request sent to a crew member asking them to accept or decline a set
+    of shift positions on a project. The crew member responds from a tokenized
+    PUBLIC landing page (#/crew/{token}) with no login — `token` IS the
+    credential, exactly like Quote.share_token / PdfArchive.token. Anyone with
+    the token can hit /api/crew/{token} and accept/decline.
+
+    One row per (crew member × request group). By default a request covers
+    EVERY position the crew member is penciled into on the project, but the
+    producer can split a project into multiple requests — each covering a
+    subset of `position_ids` — so one person can have several requests for the
+    same project (accept some shifts, decline others). Accept/decline is
+    per-REQUEST; finer granularity comes from how the producer groups
+    positions into requests at send time.
+
+    Positions themselves live in Project.schedule[].positions[] (JSON). This
+    table references them by their string `id`; the backend updates each
+    referenced position's `status` on the project row when the request is
+    sent / answered / withdrawn. The state machine (mirrors the POSITION enum
+    in components/status-enums.js):
+
+        send     → positions open      → requested ; status pending
+        accept   → positions requested → accepted  ; status accepted
+        decline  → positions requested → declined  ; status declined
+        withdraw → positions requested → open      ; status withdrawn
+
+    Accept lands the position at `accepted`, NOT `confirmed`: the producer
+    still confirms accepted → confirmed manually in the Labor module, so the
+    existing two-step hire flow is preserved. Decline leaves the crew member
+    attached to the (now `declined`) position for the producer to handle —
+    nothing reopens automatically.
+    """
+    __tablename__ = "crew_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # Opaque public credential — minted server-side on send (see
+    # backend/routes/crew.py), never accepted from client input. ~256 bits via
+    # secrets.token_urlsafe(32). Same security model as Quote.share_token: it
+    # is NEVER echoed on the public /api/crew/{token} payload (the holder
+    # already has it in their URL) and is read-only on every producer write.
+    token = Column(String(64), nullable=False, unique=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    position_ids = Column(JSON, default=list)            # list[str] — schedule position ids this request covers
+    status = Column(String(20), default="pending")       # {pending, accepted, declined, withdrawn}
+    comment = Column(Text, default="")                   # optional note the crew member leaves on response
+    sent_at = Column(DateTime(timezone=True), server_default=func.now())
+    responded_at = Column(DateTime(timezone=True), nullable=True)  # set when the crew member accepts/declines
+    sent_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Non-repudiation audit for the crew member's response. Internal-only —
+    # never surfaced on the public payload (mirrors the IP/UA capture on the
+    # quote accept/decline activity entries, SECURITY_REVIEW.md H12).
+    respondent_ip = Column(String(64), nullable=True)
+    respondent_ua = Column(String(300), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class PdfArchive(Base):
     """A snapshot of a generated Quote/Invoice PDF. Each generation creates
     one row — historical iterations stay downloadable from the entity's
