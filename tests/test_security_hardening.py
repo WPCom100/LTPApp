@@ -257,3 +257,19 @@ def test_public_activity_strips_audit_and_internal_fields():
     for leaked in ("ip", "userAgent", "userId"):
         assert leaked not in out[0]
     assert out[0]["user"] == "Client Name"  # the name is still shown
+
+
+# ── L5: rel=noopener on target=_blank email anchors ────────────────────────
+
+from backend.sanitize import email_html
+
+
+def test_email_html_adds_noopener_to_target_blank():
+    out = email_html('<a href="https://x.com" target="_blank">x</a>')
+    assert 'rel="noopener noreferrer"' in out
+    assert email_html(out).count("rel=") == 1  # idempotent — no double rel
+
+
+def test_email_html_leaves_non_blank_anchor_alone():
+    out = email_html('<a href="https://x.com">x</a>')
+    assert "rel=" not in out

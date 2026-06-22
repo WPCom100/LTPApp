@@ -251,6 +251,15 @@ _SECURITY_HEADERS = [
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
     (b"cross-origin-opener-policy", b"same-origin"),
+    # Isolate our resources from cross-origin embedding (SECURITY_REVIEW.md L6).
+    # COEP is deliberately NOT set — require-corp would break the CDN-loaded
+    # React/DOMPurify scripts.
+    (b"cross-origin-resource-policy", b"same-origin"),
+    # Drop access to browser features the app never uses, so an injected script
+    # can't reach them either.
+    (b"permissions-policy",
+     b"geolocation=(), microphone=(), camera=(), payment=(), usb=(), "
+     b"magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()"),
 ]
 if _IS_HTTPS:
     # 1 year, include subdomains. No `preload` — that submits the domain to
