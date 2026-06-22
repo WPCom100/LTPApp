@@ -31,6 +31,7 @@ Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
 from datetime import datetime, timezone
 from html import escape
 import os
+import re
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -168,11 +169,20 @@ def _request_dict(r: models.CrewRequest) -> dict:
 # sends a sensible email. {{header}}/{{shifts}}/{{signature}} are HTML fragments
 # substituted after the text→HTML pass; {{crewName}}/{{projectName}} are text.
 _FALLBACK_CREW_BODY = (
-    "{{header}}\n\nHi {{crewName}},\n\n"
-    "We'd like to book you for {{projectName}}. Here are the shifts we have for you:\n\n"
-    "{{shifts}}\n\n"
-    "Use the buttons above to review the details and let us know if you can take it.\n\n"
+    "Hi {{crewName}},\n\n"
+    "We'd like to book you for an upcoming project. Please review the details "
+    "below and let us know if you can take it.\n\n"
+    "{{header}}\n\n{{shifts}}\n\n"
+    "Questions? Just reply to this email and we'll be glad to help.\n\n"
     "{{signature}}"
+)
+
+# Brand defaults — mirror data/settings.js (accentColor, logoUrl) so a themed
+# email still renders before any Settings save. The LTP stacked logo doubles as
+# the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
+_DEFAULT_ACCENT = "#E8731A"
+_LTP_LOGO_URL = (
+    "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
 )
 
 
@@ -194,46 +204,73 @@ def _fmt_hhmm(t: str) -> str:
         return t or ""
 
 
-def _shifts_html(shifts: list) -> str:
+def _safe_color(c: str, fallback: str) -> str:
+    """Only let a #-hex color into inline styles (defense in depth — the value
+    is admin-set in Settings and email_html also sanitizes CSS, but validating
+    here keeps a malformed value from quietly breaking the layout)."""
+    c = (c or "").strip()
+    return c if re.match(r"^#[0-9a-fA-F]{3,8}$", c) else fallback
+
+
+def _safe_url(u: str, fallback: str = "") -> str:
+    u = (u or "").strip()
+    return u if u[:8].lower() == "https://" or u[:7].lower() == "http://" else fallback
+
+
+def _email_brand(settings_data: dict) -> dict:
+    """Workspace branding for themed crew emails, from the proper Settings
+    variables (accentColor, logoUrl, companyName, website)."""
+    return {
+        "accent": _safe_color(settings_data.get("accentColor"), _DEFAULT_ACCENT),
+        "logo": _safe_url(settings_data.get("logoUrl"), _LTP_LOGO_URL),
+        "company": (settings_data.get("companyName") or "").strip() or "Luminary Technology & Productions",
+        "website": (settings_data.get("website") or "").strip(),
+    }
+
+
+def _crew_shifts_html(shifts: list, accent: str) -> str:
+    """Themed shift list — one accent-edged card per shift."""
     rows = []
     for s in shifts:
         when = _fmt_iso_date(s.get("date"))
         rng = " – ".join([x for x in (_fmt_hhmm(s.get("startTime")), _fmt_hhmm(s.get("endTime"))) if x])
-        meta = "  ·  ".join([escape(x) for x in (when, rng, s.get("shiftTitle") or "") if x])
+        meta = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (when, rng, s.get("shiftTitle") or "") if x])
         rows.append(
-            '<tr><td style="padding:7px 0;border-bottom:1px solid #eee;font-size:13px;color:#233038">'
-            '<strong>' + escape(s.get("roleLabel") or "Crew") + '</strong><br>'
-            '<span style="color:#667777">' + meta + '</span></td></tr>'
+            '<tr><td style="padding:11px 14px;border:1px solid #eceef0;border-left:3px solid ' + accent + ';'
+            'background-color:#ffffff;border-radius:6px">'
+            '<div style="font-size:14px;font-weight:bold;color:#233038">' + escape(s.get("roleLabel") or "Crew") + '</div>'
+            '<div style="font-size:12px;color:#7a838c;margin-top:3px">' + meta + '</div>'
+            '</td></tr><tr><td style="font-size:0;line-height:0;padding:0">&nbsp;</td></tr>'
         )
     if not rows:
         return ""
-    return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
-            'style="width:100%;margin:4px 0">' + "".join(rows) + "</table>")
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+            'style="width:100%;margin:8px 0 2px">' + "".join(rows) + "</table>")
 
 
-def _crew_header_html(project_name: str, shift_count: int, view_url: str) -> str:
-    """The Accept/Decline section at the top of the email. Both buttons open the
-    crew landing page (where the actual, lockable response + comment happen)."""
+def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str) -> str:
+    """Themed Accept/Decline call-to-action card. Both buttons open the crew
+    landing page (where the actual, lockable response + comment happen)."""
     url = escape(view_url)
+    n = str(shift_count) + " shift" + ("" if shift_count == 1 else "s")
     return (
-        '<div style="padding:0">'
-        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin-top:5px">'
-        '<tbody><tr><td valign="center" style="white-space:nowrap">'
-        '<table cellspacing="0" cellpadding="0" border="0"><tbody><tr>'
-        '<td style="border-radius:3px;text-align:center;background:#4CAF50">'
-        '<a style="font-size:12px;color:#ffffff;display:block;padding:8px 14px 11px;text-decoration:none;font-weight:bold" '
-        'href="' + url + '">&#10003; View &amp; Accept</a></td>'
-        '<td>&nbsp;&nbsp;</td>'
-        '<td style="border-radius:3px;text-align:center;border:1px solid #E74C3C">'
-        '<a style="font-size:12px;color:#E74C3C;display:block;padding:7px 14px 10px;text-decoration:none;font-weight:bold" '
-        'href="' + url + '">View &amp; Decline</a></td>'
-        '</tr></tbody></table></td></tr>'
-        '<tr><td valign="center" style="padding-top:8px;font-size:12px">'
-        '<span style="font-weight:bold">' + escape(project_name or "Project") + '</span>'
-        '<br><span>' + str(shift_count) + ' shift' + ("" if shift_count == 1 else "s") + ' — review &amp; respond</span></td></tr>'
-        '<tr><td valign="center"><hr width="100%" style="background-color:#cccccc;border:medium none;'
-        'clear:both;display:block;font-size:0px;min-height:1px;line-height:0;margin:10px 0px"></td></tr>'
-        '</tbody></table></div>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
+        '<tr><td style="padding:20px 22px;text-align:center">'
+        '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">You\'re requested for</div>'
+        '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + escape(project_name or "Project") + '</div>'
+        '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + n + ' — please review &amp; respond</div>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
+        '<td style="background-color:#2e9e5b;border-radius:7px">'
+        '<a href="' + url + '" style="display:inline-block;padding:13px 28px;font-size:14px;font-weight:bold;'
+        'color:#ffffff;text-decoration:none">&#10003;&nbsp; Accept</a></td>'
+        '<td style="width:14px;font-size:0;line-height:0">&nbsp;</td>'
+        '<td style="border:2px solid #d6584c;border-radius:7px">'
+        '<a href="' + url + '" style="display:inline-block;padding:11px 26px;font-size:14px;font-weight:bold;'
+        'color:#d6584c;text-decoration:none">Decline</a></td>'
+        '</tr></table>'
+        '<div style="font-size:11px;color:#a7b0b8;margin-top:14px">or open your personal link to respond with a note</div>'
+        '</td></tr></table>'
     )
 
 
@@ -245,9 +282,53 @@ def _text_to_html(text: str) -> str:
     for para in escape(text or "").split("\n\n"):
         if para.strip() == "":
             continue
-        html += ('<p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#233038">'
+        html += ('<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#3d4852">'
                  + para.replace("\n", "<br>") + "</p>")
     return html
+
+
+def _crew_email_shell(inner_html: str, brand: dict) -> str:
+    """Wrap composed crew-email content in the themed, branded responsive
+    layout (light canvas, centered 600px card, logo masthead, footer)."""
+    accent = brand["accent"]
+    company = escape(brand["company"])
+    if brand["logo"]:
+        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="148" '
+                    'style="display:block;border:0;height:auto;max-height:62px;margin:0 auto">')
+    else:
+        masthead = ('<span style="font-size:21px;font-weight:bold;color:' + accent + ';'
+                    'letter-spacing:0.03em">' + company + '</span>')
+    footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
+    return (
+        '<div style="background-color:#f1f3f5;padding:26px 12px;'
+        "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif\">"
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f1f3f5">'
+        '<tr><td align="center">'
+        '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
+        '<tr><td style="padding:26px 30px 18px;text-align:center;border-bottom:3px solid ' + accent + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:24px 30px 28px">' + inner_html + '</td></tr>'
+        '</table>'
+        '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px">'
+        '<tr><td style="padding:16px 30px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">' + footer + '</td></tr>'
+        '</table>'
+        '</td></tr></table></div>'
+    )
+
+
+def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html) -> str:
+    """Compose the inner (card) HTML for a crew request: template body →
+    paragraphs, with the themed {{header}} CTA, {{shifts}} list, and
+    {{signature}} substituted in."""
+    body = ((body_tmpl or _FALLBACK_CREW_BODY)
+            .replace("{{crewName}}", crew_name)
+            .replace("{{projectName}}", project_name)
+            .replace("{{companyName}}", company))
+    html = _text_to_html(body)
+    return (html
+            .replace("{{header}}", _crew_header_html(project_name, len(shifts), view_url, brand["accent"]))
+            .replace("{{shifts}}", _crew_shifts_html(shifts, brand["accent"]))
+            .replace("{{signature}}", signature_html))
 
 
 async def _send_crew_email(db, user, contact, project, shifts, token, settings_data) -> dict:
@@ -257,7 +338,8 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
     link instead). emailStatus.needsReconnect drives the UI's reconnect hint."""
     try:
         tmpl = ((settings_data.get("emailTemplates") or {}).get("crewRequest") or {})
-        company = settings_data.get("companyName") or "LTP"
+        brand = _email_brand(settings_data)
+        company = brand["company"]
         crew_name = ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there"
         project_name = (project.name if project else "") or "Project"
         view_url = (_app_origin() or "") + "/#/crew/" + token
@@ -267,16 +349,12 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
                    .replace("{{crewName}}", crew_name)
                    .replace("{{companyName}}", company))
 
-        body = ((tmpl.get("body") or _FALLBACK_CREW_BODY)
-                .replace("{{crewName}}", crew_name)
-                .replace("{{projectName}}", project_name)
-                .replace("{{companyName}}", company))
-        html = _text_to_html(body)
-        html = (html
-                .replace("{{header}}", _crew_header_html(project_name, len(shifts), view_url))
-                .replace("{{shifts}}", _shifts_html(shifts))
-                .replace("{{signature}}", _render_signature(user, settings_data)))
-        final_html = email_html(html)
+        inner = _render_crew_request_body(
+            tmpl.get("body"), crew_name=crew_name, project_name=project_name,
+            company=company, brand=brand, shifts=shifts, view_url=view_url,
+            signature_html=_render_signature(user, settings_data),
+        )
+        final_html = email_html(_crew_email_shell(inner, brand))
 
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
@@ -312,9 +390,10 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         return {"emailed": False, "error": "no email on file"}
     try:
         tmpl = ((settings_data.get("emailTemplates") or {}).get(template_key) or {})
+        brand = _email_brand(settings_data)
         first = shifts[0] if shifts else {}
         repl = {
-            "{{companyName}}": settings_data.get("companyName") or "LTP",
+            "{{companyName}}": brand["company"],
             "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
             "{{projectName}}": (project.name if project else "") or "Project",
             "{{role}}": first.get("roleLabel") or "",
@@ -330,8 +409,8 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             return t
 
         subject = _sub(tmpl.get("subject") or "{{projectName}}")
-        html = _text_to_html(_sub(tmpl.get("body") or "")).replace("{{signature}}", _render_signature(user, settings_data))
-        final_html = email_html(html)
+        inner = _text_to_html(_sub(tmpl.get("body") or "")).replace("{{signature}}", _render_signature(user, settings_data))
+        final_html = email_html(_crew_email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
             user=user, db=db,

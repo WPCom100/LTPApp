@@ -361,6 +361,9 @@ def test_send_emails_crew_member_when_gmail_connected():
     assert ("/#/crew/" + body["token"]) in html
     assert "Accept" in html and "Decline" in html
     assert "Lead Lighting Tech" in html
+    # Themed, branded shell: default accent (accentColor) + rounded card.
+    assert "#E8731A" in html
+    assert "border-radius" in html
 
 
 def test_send_without_gmail_still_creates_request_and_reports_reconnect():

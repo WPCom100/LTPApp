@@ -141,7 +141,7 @@ window.LTP_DATA_SETTINGS = {
       // renders the shift list. Both, plus {{signature}}, are substituted
       // server-side by backend/routes/crew.py at send time.
       subject: "Crew request: {{projectName}} — {{companyName}}",
-      body: "{{header}}\n\nHi {{crewName}},\n\nWe'd like to book you for {{projectName}}. Here are the shifts we have for you:\n\n{{shifts}}\n\nUse the buttons above to review the details and let us know if you can take it.\n\n{{signature}}"
+      body: "Hi {{crewName}},\n\nWe'd like to book you for an upcoming project. Please review the details below and let us know if you can take it.\n\n{{header}}\n\n{{shifts}}\n\nQuestions? Just reply to this email and we'll be glad to help.\n\n{{signature}}"
     },
     crewConfirmed: {
       label: "Crew Position Confirmed",
