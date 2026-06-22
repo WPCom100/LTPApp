@@ -577,16 +577,20 @@ window.LTP_safeUrl = function(url) {
   return s;
 };
 
-// A schedule row is worth keeping if it has ANY real content — a title, a
-// date, crew positions, or breaks. Titles are optional in the editor (a day
-// can have dates/times/crew but no label), so filtering on title alone on
-// save silently discarded unlabeled days and saved an empty schedule. Used by
-// both the schedule builder and the project form's Save.
+// A schedule row is worth keeping if ANYTHING was entered into the day — a
+// title, date, end-date, start/end time, crew positions, or breaks. Titles
+// are optional and a day added via "Add Day" starts with an empty date, so
+// filtering on title (or even title/date/crew) alone silently discarded days
+// that had only times entered. Only a truly empty row object is dropped.
+// Used by the schedule builder and the project form's Save + validation.
 window.LTP_scheduleRowHasContent = function(s) {
   if (!s) return false;
   return !!(
     (s.title && String(s.title).trim()) ||
     (s.date && String(s.date).trim()) ||
+    (s.endDate && String(s.endDate).trim()) ||
+    (s.time && String(s.time).trim()) ||
+    (s.endTime && String(s.endTime).trim()) ||
     (Array.isArray(s.positions) && s.positions.length > 0) ||
     (Array.isArray(s.breaks) && s.breaks.length > 0)
   );
