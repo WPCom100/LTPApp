@@ -45,6 +45,8 @@ URLs instead. Easy to revisit if business need arises.
 """
 import bleach
 from bleach.css_sanitizer import CSSSanitizer
+from bleach.html5lib_shim import Filter as _Html5Filter
+from bleach.sanitizer import Cleaner as _Cleaner
 
 
 ALLOWED_TAGS = frozenset({
@@ -112,25 +114,48 @@ _ALLOWED_CSS_PROPERTIES = (
 _css_sanitizer = CSSSanitizer(allowed_css_properties=_ALLOWED_CSS_PROPERTIES)
 
 
+class _AnchorRelFilter(_Html5Filter):
+    """Add rel="noopener noreferrer" to any <a target="_blank"> that lacks a
+    rel. Without it, the opened page can reach back through window.opener
+    (reverse tabnabbing) in any surface that renders this HTML — notably the
+    in-app Send preview. SECURITY_REVIEW.md L5. Runs after sanitization, so it
+    only ever sees already-allowlisted anchors."""
+
+    def __iter__(self):
+        for token in super().__iter__():
+            if token.get("type") in ("StartTag", "EmptyTag") and token.get("name") == "a":
+                data = token.get("data")
+                if data:
+                    is_blank = any(n == "target" and v == "_blank" for (_ns, n), v in data.items())
+                    has_rel = any(n == "rel" for (_ns, n), v in data.items())
+                    if is_blank and not has_rel:
+                        data[(None, "rel")] = "noopener noreferrer"
+            yield token
+
+
+# Cleaner == bleach.clean's engine, plus our post-sanitization rel filter.
+_cleaner = _Cleaner(
+    tags=ALLOWED_TAGS,
+    attributes=ALLOWED_ATTRIBUTES,
+    protocols=ALLOWED_PROTOCOLS,
+    css_sanitizer=_css_sanitizer,
+    strip=True,  # drop disallowed tags rather than HTML-escape them
+    filters=[_AnchorRelFilter],
+)
+
+
 def email_html(html: str) -> str:
     """Sanitize HTML for outbound email or stored email templates.
 
     Returns clean HTML. Drops disallowed tags entirely (their text content
     is preserved), strips disallowed attributes, rejects anchors with
-    unsafe protocols, and runs `style=""` values through CSS allowlist
-    sanitization. Idempotent — running the output through this function
-    again is a no-op.
+    unsafe protocols, runs `style=""` values through CSS allowlist
+    sanitization, and adds rel="noopener noreferrer" to target=_blank anchors.
+    Idempotent — running the output through this function again is a no-op.
 
     Empty / whitespace input is preserved as-is; callers decide whether to
     treat that as an error or as "skip the HTML alternative."
     """
     if not html:
         return html
-    return bleach.clean(
-        html,
-        tags=ALLOWED_TAGS,
-        attributes=ALLOWED_ATTRIBUTES,
-        protocols=ALLOWED_PROTOCOLS,
-        css_sanitizer=_css_sanitizer,
-        strip=True,  # drop disallowed tags rather than HTML-escape them
-    )
+    return _cleaner.clean(html)

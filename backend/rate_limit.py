@@ -25,14 +25,49 @@ from typing import Optional
 from fastapi import Response
 
 
-# Per-(ip, route) limits. Tuned for: one human signs in ~once per day; bots
-# loop hundreds of times per minute. 10/min per IP gives humans 60x headroom
-# while making bot floods useless.
+# Per-(ip, route-bucket) limits, requests per WINDOW_SECONDS. Tuned for: one
+# human acts a handful of times per minute; bots loop hundreds of times per
+# minute. The limits below give humans ample headroom while making floods
+# useless.
+#
+# Rules are matched by longest PATH-SEGMENT PREFIX (see _match_rule), so a
+# single rule covers a whole route family — e.g. "/api/view" buckets every
+# "/api/view/<token>/..." sub-path together. This closes the prior gap where
+# only the two exact /auth paths were limited and every public token route,
+# the PDF generator, the email relay, and the bulk-sync wipe were unthrottled
+# (SECURITY_REVIEW.md H2).
 WINDOW_SECONDS = 60
-LIMITS = {
-    "/auth/login":    10,   # initiating OAuth — cheap for us
-    "/auth/callback": 10,   # exchanging code — costs us a Google API call
-}
+_RULES = [
+    # OAuth: cheap to initiate, costs a provider call to exchange the code.
+    ("/auth/login",       10),
+    ("/auth/callback",    10),
+    ("/api/qbo/callback", 10),   # QuickBooks OAuth callback — same class
+    # Public, UNAUTHENTICATED token surfaces. No login cost to an attacker, so
+    # tight buckets: blunt share-token enumeration and, for /pdf,
+    # unauthenticated PDF-generation DoS (every hit runs ReportLab).
+    ("/api/view",         60),
+    ("/pdf",              30),
+    # Authenticated but sensitive. Per-IP backstop on top of the recipient cap
+    # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.
+    ("/api/email/send",   20),
+    ("/api/sync",         10),
+]
+
+
+def _match_rule(path: str):
+    """Return (route_key, limit) for the longest matching path-segment prefix,
+    or None if no rule applies. A rule prefix P matches `path` when the path
+    equals P or starts with P + "/", so "/auth/login" won't match
+    "/auth/loginX" and "/api/view" covers "/api/view/<token>" but not an
+    unrelated "/api/viewer". The matched prefix becomes the counter bucket
+    key, so all sub-paths of a family share one limit."""
+    best = None
+    best_len = -1
+    for prefix, limit in _RULES:
+        if (path == prefix or path.startswith(prefix + "/")) and len(prefix) > best_len:
+            best = (prefix, limit)
+            best_len = len(prefix)
+    return best
 
 
 class _RateLimitState:
@@ -132,9 +167,9 @@ def _client_ip(scope) -> str:
 
 
 class RateLimitMiddleware:
-    """Pure ASGI middleware. Applies LIMITS only to the routes named there;
-    every other path passes through untouched. Returns 429 with a
-    Retry-After header when the limit is exceeded."""
+    """Pure ASGI middleware. Applies the longest-matching rule from `_RULES`
+    to each request; paths matching no rule pass through untouched. Returns
+    429 with a Retry-After header when the limit is exceeded."""
 
     def __init__(self, app):
         self.app = app
@@ -144,12 +179,15 @@ class RateLimitMiddleware:
             return await self.app(scope, receive, send)
 
         path = scope.get("path", "")
-        limit = LIMITS.get(path)
-        if limit is None:
+        rule = _match_rule(path)
+        if rule is None:
             return await self.app(scope, receive, send)
+        route_key, limit = rule
 
         ip = _client_ip(scope)
-        allowed, retry_after = _state.hit(ip, path, limit)
+        # Bucket on the matched prefix (not the full path) so every sub-path of
+        # a route family shares one counter.
+        allowed, retry_after = _state.hit(ip, route_key, limit)
         if allowed:
             return await self.app(scope, receive, send)
 

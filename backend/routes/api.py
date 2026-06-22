@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -6,6 +8,7 @@ from backend import models
 from backend.auth_deps import require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
+from backend.email_validate import parse_recipients, RecipientError
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
@@ -24,16 +27,23 @@ def _camel_to_snake(s):
 _HIDDEN_COLS = {"created_at", "updated_at"}
 
 # Server-authoritative columns the client may READ (they're returned on GET)
-# but must never WRITE. These are populated only by the QuickBooks sync engine
+# but must never WRITE. Most are populated only by the QuickBooks sync engine
 # (backend/qbo_sync.py). Stripping them on the way IN protects against the
 # frontend's debounced diff-sync echoing a stale value (e.g. nulling a cached
 # qb_customer_id captured before the row was synced). The names are globally
 # unique across tables, so a single flat set is sufficient. NOTE: `taxable` is
 # deliberately NOT here — that one is user-editable.
+#
+# `share_token` is here for a different reason: it is the PUBLIC, unauthenticated
+# client-view credential. Letting a member set or rotate it via the normal write
+# path is a mass-assignment hole (SECURITY_REVIEW.md H3) — it could be pinned to
+# a guessable value or silently changed. It is minted server-side on create
+# (see `create` below) and never written from client input thereafter.
 _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
     "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
     "qb_customer_id", "qb_item_id",
+    "share_token",
 }
 
 
@@ -59,6 +69,28 @@ def _dict_to_row(data, model_cls):
         if snake in valid_cols and snake not in _HIDDEN_COLS and snake not in _READONLY_COLS:
             mapped[snake] = val
     return mapped
+
+
+async def _validate_fks(mapped: dict, model_cls, db: AsyncSession) -> None:
+    """Reject writes whose foreign-key columns point at non-existent rows.
+    SQLite doesn't enforce FKs (silent corruption) and Postgres surfaces an
+    ugly 500 IntegrityError — validate here for a clean 400 either way
+    (SECURITY_REVIEW.md M5). Only non-null FK values are checked; nullable FKs
+    left unset are fine."""
+    for col in model_cls.__table__.columns:
+        if not col.foreign_keys:
+            continue
+        val = mapped.get(col.name)
+        if val is None:
+            continue
+        target_col = next(iter(col.foreign_keys)).column  # e.g. companies.id
+        found = await db.execute(select(target_col).where(target_col == val).limit(1))
+        if found.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": _snake_to_camel(col.name),
+                        "reason": f"references a {target_col.table.name} row that does not exist"},
+            )
 
 
 def _stamp_activity(data: dict, user: models.User) -> dict:
@@ -153,17 +185,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         validate(model_cls, data)
         if has_activity:
             data = _stamp_activity(data, user)
-        # Mint share_token for entities that have one (Quote, Invoice) if the
-        # client didn't supply one. This is the credential the public client
-        # view uses — generated lazily on creation so it's available the
-        # moment the entity exists, but never overwritten if already set
-        # (i.e. on a /sync re-import we preserve the existing token).
-        if "share_token" in {c.name for c in model_cls.__table__.columns}:
-            if not data.get("shareToken") and not data.get("share_token"):
-                import secrets as _secrets
-                data["shareToken"] = _secrets.token_urlsafe(32)
         mapped = _dict_to_row(data, model_cls)
+        await _validate_fks(mapped, model_cls, db)
         row = model_cls(**mapped)
+        # share_token is the PUBLIC client-view credential and is server-
+        # authoritative: any client-supplied value was already stripped by
+        # _dict_to_row (it's in _READONLY_COLS), so mint a strong one here for
+        # token-bearing entities (Quote, Invoice). SECURITY_REVIEW.md H3.
+        if hasattr(row, "share_token") and not getattr(row, "share_token"):
+            row.share_token = secrets.token_urlsafe(32)
         db.add(row)
         await db.flush()
         await db.refresh(row)
@@ -195,6 +225,7 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         mapped = _dict_to_row(data, model_cls)
+        await _validate_fks(mapped, model_cls, db)
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)
@@ -202,12 +233,18 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         await db.refresh(row)
         return _row_to_dict(row)
 
-    async def remove(item_id: int, db: AsyncSession = Depends(get_db)):
+    async def remove(item_id: int, db: AsyncSession = Depends(get_db),
+                     user: models.User = Depends(require_session)):
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
             return {"ok": True, "id": item_id}  # idempotent delete
         await db.delete(row)
+        # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
+        # level by design (trusted staff delete their own drafts) but are now
+        # attributable in the server log: who deleted what, when.
+        print(f"[LTP] audit: user id={user.id} ({user.email}) deleted "
+              f"{path} id={item_id}", flush=True)
         return {"ok": True, "id": item_id}
 
     router.add_api_route(f"/{path}",             get_all, methods=["GET"])
@@ -268,6 +305,20 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
         data["emailSignatureTemplate"] = email_html(data["emailSignatureTemplate"])
     if "emailHeaderTemplate" in data and data["emailHeaderTemplate"]:
         data["emailHeaderTemplate"] = email_html(data["emailHeaderTemplate"])
+    # Validate emailReplyTo at write time. An invalid value would otherwise sit
+    # in settings and blow up every send with an uncaught ValueError, orphaning
+    # recipient rows (SECURITY_REVIEW.md M6). Must be a single address (or empty
+    # to clear it).
+    if data.get("emailReplyTo"):
+        try:
+            reply_addrs = parse_recipients(data["emailReplyTo"], allow_empty=True)
+        except RecipientError as e:
+            raise HTTPException(status_code=400, detail={"field": "emailReplyTo", "reason": str(e)})
+        if len(reply_addrs) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail={"field": "emailReplyTo", "reason": "must be a single email address"},
+            )
     result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
     row = result.scalar_one_or_none()
     if not row:
@@ -407,8 +458,22 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
             continue
         await db.execute(delete(model_cls))
         for item in items:
+            # Run the same field validation as the per-entity create path so a
+            # bulk import can't seed forged enum/date/length values
+            # (SECURITY_REVIEW.md H5). Activity attribution is intentionally NOT
+            # re-stamped here — this is a one-time migration of the admin's own
+            # data and rewriting every historical actor to the importer would
+            # lose the original attribution.
+            validate(model_cls, item)
             mapped = _dict_to_row(item, model_cls)
-            db.add(model_cls(**mapped))
+            row = model_cls(**mapped)
+            # share_token is server-authoritative (stripped by _dict_to_row).
+            # Mint one for token-bearing rows so the NOT NULL invariant holds; a
+            # full re-import regenerates share links, which is acceptable for
+            # this one-time wipe-and-reseed migration. SECURITY_REVIEW.md H3.
+            if hasattr(row, "share_token") and not getattr(row, "share_token"):
+                row.share_token = secrets.token_urlsafe(32)
+            db.add(row)
         counts[key] = len(items)
 
     if "settings" in payload:

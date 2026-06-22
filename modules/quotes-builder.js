@@ -1930,9 +1930,28 @@
                         onClick: function(e) {
                           e.stopPropagation();
                           var w = window.open("", "_blank", "width=420,height=240");
-                          if (w) {
-                            w.document.write('<title>Signature \u2014 ' + (a.user || "client") + '</title><body style="margin:0;background:#fff;display:flex;align-items:center;justify-content:center;height:100vh"><img src="' + a.signatureDataUrl + '" alt="signature" style="max-width:100%;max-height:100%"></body>');
-                          }
+                          if (!w) return;
+                          // Build the popup via DOM APIs with PROPERTY assignment
+                          // (title as text, img.src as a property) instead of
+                          // document.write of concatenated markup. a.user and
+                          // a.signatureDataUrl are client-supplied on an
+                          // unauthenticated accept; interpolating them into
+                          // markup is a stored-XSS sink. SECURITY_REVIEW.md C1.
+                          var d = w.document;
+                          d.title = "Signature \u2014 " + (a.user || "client");
+                          var b = d.body;
+                          b.style.margin = "0";
+                          b.style.background = "#fff";
+                          b.style.display = "flex";
+                          b.style.alignItems = "center";
+                          b.style.justifyContent = "center";
+                          b.style.height = "100vh";
+                          var img = d.createElement("img");
+                          img.alt = "signature";
+                          img.style.maxWidth = "100%";
+                          img.style.maxHeight = "100%";
+                          img.src = a.signatureDataUrl;
+                          b.appendChild(img);
                         },
                         style: { fontSize: "10px", color: B.accent, fontWeight: 600, background: "transparent", border: "1px solid " + B.accent, borderRadius: "4px", padding: "1px 6px", cursor: "pointer", fontFamily: "inherit" }
                       }, "View signature")

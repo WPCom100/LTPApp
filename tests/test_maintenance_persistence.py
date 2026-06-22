@@ -40,6 +40,7 @@ if os.path.exists(_db_path):
     os.remove(_db_path)
 
 from backend import models  # noqa: E402
+from backend.auth_deps import hash_session_token  # noqa: E402
 
 
 _results: list[tuple[str, bool]] = []
@@ -80,7 +81,7 @@ def _setup_test_client():
                 db.add(admin)
                 await db.flush()
                 session = models.Session(
-                    id=_admin_session_id, user_id=admin.id,
+                    id=hash_session_token(_admin_session_id), user_id=admin.id,
                     expires_at=datetime.now(timezone.utc) + timedelta(days=7),
                 )
                 db.add(session)

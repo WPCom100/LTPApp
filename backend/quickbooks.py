@@ -178,9 +178,19 @@ async def refresh_if_needed(
     that case so status reflects "disconnected"."""
     try:
         refresh_token = crypto.decrypt_token(conn.refresh_token_enc)
-    except InvalidToken as e:
-        await _drop_connection(conn, db)
-        raise QboReconnectRequired(f"stored refresh token unreadable: {e}")
+    except InvalidToken:
+        # A LOCAL decrypt failure (e.g. a key rotation that didn't re-encrypt
+        # this row, or a removed key) is NOT the same as the user revoking
+        # access. Do NOT delete the connection -- keep realm_id + ciphertext so
+        # restoring the key (or running backend.rotate_encryption_key) recovers
+        # access; deleting would lose the realm and force a full re-auth.
+        # SECURITY_REVIEW.md M3.
+        print("[LTP] qbo: refresh token failed to decrypt (encryption key "
+              "mismatch?); keeping connection row for recovery", flush=True)
+        raise QboReconnectRequired(
+            "QuickBooks token could not be decrypted; restore the encryption "
+            "key or reconnect QuickBooks."
+        )
 
     now = datetime.now(timezone.utc)
     expires_at = _aware(conn.access_token_expires_at)
@@ -209,19 +219,23 @@ async def refresh_if_needed(
 
     if resp.status_code == 400:
         # invalid_grant — refresh token expired/revoked or credentials changed.
-        body = resp.text
-        print(f"[LTP] qbo: refresh rejected by Intuit: {body[:200]}", flush=True)
+        # Log a truncated snippet server-side for ops; never put the raw
+        # provider body in the exception message, which is reflected to the
+        # client by the routes (SECURITY_REVIEW.md H10).
+        print(f"[LTP] qbo: refresh rejected by Intuit: {resp.text[:200]}", flush=True)
         await _drop_connection(conn, db)
-        raise QboReconnectRequired(f"intuit refused refresh: {body[:200]}")
+        raise QboReconnectRequired("Intuit refused the token refresh; reconnect required.")
     if resp.status_code != 200:
         # Network blip / 5xx — surface so caller can decide. Don't drop the
         # connection; the refresh may succeed next time.
-        raise QboApiError(resp.status_code, f"token endpoint: {resp.text}")
+        print(f"[LTP] qbo: token endpoint returned {resp.status_code}: "
+              f"{resp.text[:200]}", flush=True)
+        raise QboApiError(resp.status_code, "QuickBooks token endpoint returned an error.")
 
     data = resp.json()
     new_access = data.get("access_token")
     if not new_access:
-        raise QboApiError(200, f"refresh response missing access_token: {data}")
+        raise QboApiError(200, "QuickBooks token refresh returned no access token.")
 
     conn.access_token_enc = crypto.encrypt_token(new_access)
     expires_in = int(data.get("expires_in", 3600))

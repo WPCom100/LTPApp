@@ -79,6 +79,13 @@ from backend.sanitize import email_html
 
 email_router = APIRouter(prefix="/api/email", tags=["email"])
 
+# Hard cap on total recipients (To + CC) per send. A quote/invoice email goes
+# to a handful of people; an unbounded list turns this endpoint -- which sends
+# as the authenticated company Gmail account (passes SPF/DKIM/DMARC) -- into a
+# spam/phishing relay (SECURITY_REVIEW.md H4). Per-IP throttling of the
+# endpoint is handled separately by the rate limiter (H2).
+_MAX_RECIPIENTS_PER_SEND = 25
+
 
 # ── Request model ──────────────────────────────────────────────────────────
 
@@ -378,6 +385,14 @@ async def send_email(
         raise HTTPException(status_code=400, detail={"reason": "validation", "field": "to", "error": "at least one To: recipient required"})
     if not subject:
         raise HTTPException(status_code=400, detail={"reason": "validation", "field": "subject", "error": "subject required"})
+    total_recipients = len(to_list) + len(cc_list)
+    if total_recipients > _MAX_RECIPIENTS_PER_SEND:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason": "validation", "field": "recipients",
+                    "error": f"too many recipients ({total_recipients}); "
+                             f"max {_MAX_RECIPIENTS_PER_SEND} per send"},
+        )
 
     # 2. Load entity (defensive — raises 404 / 400 if bad)
     entity = await _load_entity(db, body.entityType, body.entityId)

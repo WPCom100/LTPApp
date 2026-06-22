@@ -17,6 +17,7 @@ from backend.routes.view import view_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.rate_limit import RateLimitMiddleware
+from backend.csrf import CsrfOriginMiddleware
 
 
 # ── Session sweeper ────────────────────────────────────────────────────────
@@ -196,24 +197,43 @@ class PayloadSizeLimitMiddleware:
 # style-src — acceptable risk (CSS XSS is much less powerful than JS XSS).
 # The inline <script> mount was extracted to /mount.js precisely so we can
 # keep script-src strict (no 'unsafe-inline').
-_IS_HTTPS = os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
+# Whether we serve over HTTPS — drives Secure cookies, SessionMiddleware
+# https_only, and HSTS. TWO independent signals so a single misconfigured env
+# var can't silently turn transport security OFF (SECURITY_REVIEW.md H7): an
+# explicit LTP_FORCE_HTTPS switch (set this in production), OR an https://
+# redirect URI. Per-request transport (X-Forwarded-Proto) is additionally
+# honored for the app-session cookie in routes/auth.py.
+_FORCE_HTTPS = os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on")
+_IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
+# img-src: tightened from a bare `https:` wildcard (an easy XSS data-exfil
+# channel — encode stolen data into an image URL to an attacker host) to a host
+# allowlist (SECURITY_REVIEW.md M2). Covers Google profile avatars, the storage
+# host used by email-signature icons in the Send preview, and the LTP logo
+# host. `data:` stays for canvas signatures + base64-pasted logos (a data: URL
+# issues no network request, so it is not an exfil vector). A deploy whose
+# Settings.logoUrl lives on another host adds it via LTP_IMG_SRC_EXTRA
+# (space-separated origins). style-src keeps 'unsafe-inline' — React inline
+# styles and the sanitized email preview rely on it; removing it needs a nonce
+# architecture (tracked as future work).
+_IMG_SRC_EXTRA = os.environ.get("LTP_IMG_SRC_EXTRA", "").strip()
+_IMG_SRC = (
+    "img-src 'self' data: "
+    "https://*.googleusercontent.com https://googleusercontent.com "
+    "https://storage.googleapis.com "
+    "https://www.luminarytechnology.productions https://luminarytechnology.productions"
+    + ((" " + _IMG_SRC_EXTRA) if _IMG_SRC_EXTRA else "")
+    + "; "
+)
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; "
-    # img-src: allow any HTTPS image, not just Google avatars. Reasoning:
-    #   1. Google's profile-picture URLs come from multiple hosts
-    #      (lh3.googleusercontent.com mostly, but also lh4/lh5/lh6/bare-host
-    #      depending on account type). A wildcard over googleusercontent.com
-    #      misses the bare host; explicitly listing every variant is brittle.
-    #   2. Settings.logoUrl is user-configurable — could be any HTTPS URL.
-    #   3. <img> elements don't execute code; loading from an arbitrary HTTPS
-    #      origin only reveals the user's IP and a "this app is in use" signal
-    #      to whoever owns the image. The XSS path that would let an attacker
-    #      inject <img> is already blocked by DOMPurify in sanitize.js.
-    # data: is also allowed for inline/embedded images (logo pasted as base64).
-    "img-src 'self' data: https:; "
+    # Fonts are self-hosted (assets/fonts.css + assets/fonts/*.woff2), so style
+    # and font sources are 'self' only — no fonts.googleapis.com / gstatic.com
+    # (SECURITY_REVIEW.md L8). style-src keeps 'unsafe-inline' (React inline
+    # styles + sanitized email preview).
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self'; "
+    + _IMG_SRC +
     # connect-src governs fetch/XHR AND source-map fetches DevTools makes for
     # external scripts. Allowing cdnjs here prevents the console-error noise
     # when DevTools tries to grab .map files for the React/DOMPurify scripts.
@@ -235,6 +255,15 @@ _SECURITY_HEADERS = [
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
     (b"cross-origin-opener-policy", b"same-origin"),
+    # Isolate our resources from cross-origin embedding (SECURITY_REVIEW.md L6).
+    # COEP is deliberately NOT set — require-corp would break the CDN-loaded
+    # React/DOMPurify scripts.
+    (b"cross-origin-resource-policy", b"same-origin"),
+    # Drop access to browser features the app never uses, so an injected script
+    # can't reach them either.
+    (b"permissions-policy",
+     b"geolocation=(), microphone=(), camera=(), payment=(), usb=(), "
+     b"magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()"),
 ]
 if _IS_HTTPS:
     # 1 year, include subdomains. No `preload` — that submits the domain to
@@ -278,14 +307,16 @@ class SecurityHeadersMiddleware:
 # the way IN and inner-first on the way OUT. Last-added = outermost. We want
 # this execution order on incoming requests:
 #   1. SecurityHeaders   — wraps EVERY response (including rejections below)
-#   2. RateLimit         — reject /auth/* floods before they hit OAuth
-#   3. PayloadSizeLimit  — reject oversize bodies before SessionMiddleware
+#   2. CsrfOrigin        — reject cross-origin state-changing requests (H8)
+#   3. RateLimit         — reject /auth/* floods before they hit OAuth
+#   4. PayloadSizeLimit  — reject oversize bodies before SessionMiddleware
 #                          tries to read cookies (cookies are small; body isn't)
-#   4. SessionMiddleware — Authlib's signed state cookie
-#   5. (routes)
+#   5. SessionMiddleware — Authlib's signed state cookie
+#   6. (routes)
 # Therefore add in reverse order (innermost first):
 app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=MAX_PAYLOAD_BYTES)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(CsrfOriginMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
 
 
@@ -295,17 +326,38 @@ app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
 # real app session lives in the `ltp_session` cookie + `sessions` DB table.
 # `LTP_SESSION_SECRET` should be a long random hex string — generate with
 # `python -c "import secrets; print(secrets.token_hex(32))"`.
+# The secret signs the Starlette session cookie that round-trips the OAuth
+# state/nonce — the primary OAuth-CSRF defense. Requirements:
+#   - Production (HTTPS deploy): MUST be set and strong, or we refuse to boot.
+#     The old behaviour generated an ephemeral per-process key and continued,
+#     which silently broke OAuth across restarts/workers and masked the
+#     misconfiguration until logins started failing (SECURITY_REVIEW.md H6).
+#   - When a value IS provided (any environment): enforce a minimum length so
+#     a weak/guessable secret can't slip through.
+#   - Local dev only (non-HTTPS, unset): fall back to an ephemeral key with a
+#     loud warning, so running locally Just Works without ceremony.
+_MIN_SESSION_SECRET_LEN = 32  # chars; token_hex(32) → 64, token_urlsafe(32) → 43
 _session_secret = os.environ.get("LTP_SESSION_SECRET", "")
-if not _session_secret:
-    # Last-resort fallback for local dev; production MUST set this. We loudly
-    # warn in production-looking deployments (HTTPS redirect URI) and fail
-    # fast on the next OAuth attempt since the state cookie won't validate.
-    if _IS_HTTPS:
-        print("[LTP] ERROR: LTP_SESSION_SECRET not set in HTTPS environment — "
-              "OAuth flow WILL fail until you set this env var.", flush=True)
-    else:
-        print("[LTP] WARNING: LTP_SESSION_SECRET not set — using ephemeral dev key. "
-              "Sessions will break across restarts.", flush=True)
+if _session_secret:
+    if len(_session_secret) < _MIN_SESSION_SECRET_LEN:
+        raise RuntimeError(
+            f"LTP_SESSION_SECRET is too short ({len(_session_secret)} chars); "
+            f"need >= {_MIN_SESSION_SECRET_LEN}. Generate one with "
+            f'`python -c "import secrets; print(secrets.token_hex(32))"`.'
+        )
+elif _IS_HTTPS:
+    # Fail fast at boot rather than booting with an ephemeral key that breaks
+    # OAuth later in a way that looks like an app bug, not a config error.
+    raise RuntimeError(
+        "LTP_SESSION_SECRET is not set. It is required in production "
+        "(an HTTPS LTP_OAUTH_REDIRECT_URI was detected). Generate one with "
+        '`python -c "import secrets; print(secrets.token_hex(32))"` and set it '
+        "in the environment."
+    )
+else:
+    print("[LTP] WARNING: LTP_SESSION_SECRET not set — using ephemeral dev key. "
+          "Sessions will break across restarts. Set it for any shared/HTTPS "
+          "deployment.", flush=True)
     import secrets as _secrets
     _session_secret = _secrets.token_hex(32)
 
@@ -318,6 +370,17 @@ app.add_middleware(
 
 print(f"[LTP] payload size limit: {MAX_PAYLOAD_BYTES} bytes "
       f"({MAX_PAYLOAD_BYTES // 1024 // 1024} MB)", flush=True)
+
+# Access-control posture warning. If neither allowlist is configured, ANY Google
+# account can sign in (and on a brand-new deployment the first sign-in becomes
+# admin). We warn loudly rather than fail closed, because hard-requiring an
+# allowlist could lock out an owner on a shared domain like gmail.com
+# (SECURITY_REVIEW.md M4). Set LTP_ALLOWED_DOMAIN and/or LTP_ALLOWED_EMAILS.
+if not (os.environ.get("LTP_ALLOWED_DOMAIN", "").strip()
+        or os.environ.get("LTP_ALLOWED_EMAILS", "").strip()):
+    print("[LTP] WARNING: neither LTP_ALLOWED_DOMAIN nor LTP_ALLOWED_EMAILS is "
+          "set — any Google account can sign in. Set one to restrict access.",
+          flush=True)
 
 
 # ── Authlib OAuth client ────────────────────────────────────────────────────

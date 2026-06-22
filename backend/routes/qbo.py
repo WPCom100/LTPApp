@@ -104,6 +104,15 @@ async def callback(
 
     result = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
     conn = result.scalar_one_or_none()
+    if conn is not None and conn.realm_id and conn.realm_id != str(realm_id):
+        # Realm pinning: an existing connection is bound to ONE QuickBooks
+        # company. Refuse to silently re-point it to a different realmId — a
+        # crafted/replayed callback could otherwise swap which company we sync
+        # to. Require an explicit Disconnect first. SECURITY_REVIEW.md H9.
+        print(f"[LTP] qbo: callback realmId mismatch "
+              f"(bound …{conn.realm_id[-4:]}, got …{str(realm_id)[-4:]}); refusing",
+              flush=True)
+        return RedirectResponse(url="/#/settings?qbo=realm_mismatch", status_code=302)
     if conn is None:
         conn = models.QboConnection(id=1)
         db.add(conn)

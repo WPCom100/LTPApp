@@ -35,6 +35,7 @@ if os.path.exists(_db_path):
     os.remove(_db_path)
 
 from backend import models, crypto  # noqa: E402
+from backend.auth_deps import hash_session_token  # noqa: E402
 
 
 _results: list[tuple[str, bool]] = []
@@ -89,11 +90,11 @@ def _setup_test_client():
             db.add_all([admin, member])
             await db.flush()
             admin_session = models.Session(
-                id=f"admin-session-{tag}", user_id=admin.id,
+                id=hash_session_token(f"admin-session-{tag}"), user_id=admin.id,
                 expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             )
             member_session = models.Session(
-                id=f"member-session-{tag}", user_id=member.id,
+                id=hash_session_token(f"member-session-{tag}"), user_id=member.id,
                 expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             )
             db.add_all([admin_session, member_session])

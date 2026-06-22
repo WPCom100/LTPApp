@@ -21,6 +21,8 @@ build the activity entry directly from the client-submitted form, then
 append + flush.
 """
 import asyncio
+import base64
+import binascii
 import io
 import re
 import secrets as _secrets
@@ -84,6 +86,45 @@ def _safe_filename(stem: str) -> str:
     return f"{safe}.pdf" if not safe.lower().endswith(".pdf") else safe
 
 
+# Magic-number prefixes for the raster formats a signature pad can emit. SVG
+# is deliberately absent — image/svg+xml is the one image/* type that can carry
+# script, and the signature canvas only ever produces PNG anyway.
+_IMAGE_MAGIC = (
+    b"\x89PNG\r\n\x1a\n",   # PNG
+    b"\xff\xd8\xff",         # JPEG
+    b"GIF87a", b"GIF89a",   # GIF
+    b"RIFF",                 # WEBP container (RIFF....WEBP)
+)
+
+
+def _validate_signature_data_url(signature: str) -> None:
+    """Confirm `signature` is a real base64-encoded raster image data URL.
+
+    The signature is stored on the quote's activity log and later rendered in a
+    staff-facing popup. A prefix+length check alone ('starts with data:image/')
+    lets an attacker break out of the popup's img `src` attribute or smuggle an
+    image/svg+xml payload — both XSS vectors. We decode the base64 and require a
+    known raster magic number, and reject SVG outright (SECURITY_REVIEW.md C1).
+
+    Raises HTTPException(400) on any failure; returns None on success.
+    """
+    field = "signatureDataUrl"
+    try:
+        header, payload = signature.split(",", 1)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"field": field, "reason": "malformed data URL"})
+    if not header.startswith("data:image/") or ";base64" not in header:
+        raise HTTPException(status_code=400, detail={"field": field, "reason": "must be a base64-encoded data:image/ URL"})
+    if "image/svg" in header:
+        raise HTTPException(status_code=400, detail={"field": field, "reason": "SVG signatures are not allowed"})
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail={"field": field, "reason": "invalid base64 image data"})
+    if not raw.startswith(_IMAGE_MAGIC):
+        raise HTTPException(status_code=400, detail={"field": field, "reason": "not a recognized image"})
+
+
 def _sanitized_payload(kind: str, entity, company, contact, project, settings) -> dict:
     """Build the public response body for GET /api/view/{token}. Strips
     cost columns from line items, filters activity to public milestones,
@@ -98,6 +139,11 @@ def _sanitized_payload(kind: str, entity, company, contact, project, settings) -
         entity_d.pop(k, None)
     # No FK ids in the public response
     for k in ("companyId", "clientContactId", "projectId", "quoteId"):
+        entity_d.pop(k, None)
+    # The share_token IS the credential (the client already holds it in the
+    # URL) — never echo it back. The payments ledger is internal financial
+    # detail the client view doesn't consume. SECURITY_REVIEW.md M1.
+    for k in ("shareToken", "share_token", "payments"):
         entity_d.pop(k, None)
     return {
         "kind": kind,
@@ -273,10 +319,16 @@ async def get_view(
 # ── POST /api/view/{token}/accept ─────────────────────────────────────────
 
 @view_router.post("/{token}/accept")
-async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def post_accept(token: str, body: dict, request: Request, db: AsyncSession = Depends(get_db)):
     """Client-driven accept. Only valid on Quotes; invoices 400. Idempotent-
     ish: if the quote is already accepted/declined/converted, 409 with the
-    current status so the client UI can update without flipping anything."""
+    current status so the client UI can update without flipping anything.
+
+    Replay/forgery hardening (SECURITY_REVIEW.md H12): the signature is
+    validated as a real image (C1), the terminal-status check below blocks
+    re-decision, the endpoint is rate-limited (H2), and we capture the client
+    IP/User-Agent on the activity entry for non-repudiation (internal-only —
+    public_activity does not echo these fields back)."""
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -304,6 +356,10 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
         raise HTTPException(status_code=400, detail={"field": "signatureDataUrl", "reason": "looks blank — please sign"})
     if len(signature) > 200_000:  # ~200KB of base64 = ~150KB image. Generous.
         raise HTTPException(status_code=400, detail={"field": "signatureDataUrl", "reason": "too large (>200 KB)"})
+    # Beyond the shape/size checks above, confirm the payload decodes to a real
+    # raster image (not SVG, not an attribute-breakout string) before we store
+    # something the staff signature popup will render. SECURITY_REVIEW.md C1.
+    _validate_signature_data_url(signature)
     comment = (body.get("comment") or "").strip()
     if len(comment) > 1000:
         raise HTTPException(status_code=400, detail={"field": "comment", "reason": "max 1000 chars"})
@@ -317,6 +373,7 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
 
     # Append activity + flip status
     now = datetime.now()
+    ip, ua = view_tracking.extract_client_meta(request)
     entry = {
         "id": "ca-" + _secrets.token_urlsafe(6),
         "date": now.strftime("%Y-%m-%d"),
@@ -327,6 +384,9 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
         "message": "Quote accepted by client",
         "comment": comment or None,
         "signatureDataUrl": signature,
+        # Internal audit metadata (not echoed by public_activity).
+        "ip": ip or None,
+        "userAgent": (ua or "")[:300] or None,
     }
     row.activity = list(row.activity or []) + [entry]
     flag_modified(row, "activity")
@@ -338,7 +398,7 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
 # ── POST /api/view/{token}/decline ────────────────────────────────────────
 
 @view_router.post("/{token}/decline")
-async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def post_decline(token: str, body: dict, request: Request, db: AsyncSession = Depends(get_db)):
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -362,6 +422,7 @@ async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db
         )
 
     now = datetime.now()
+    ip, ua = view_tracking.extract_client_meta(request)
     entry = {
         "id": "cd-" + _secrets.token_urlsafe(6),
         "date": now.strftime("%Y-%m-%d"),
@@ -371,6 +432,9 @@ async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db
         "userId": None,
         "message": "Quote declined by client",
         "comment": comment or None,
+        # Internal audit metadata (not echoed by public_activity).
+        "ip": ip or None,
+        "userAgent": (ua or "")[:300] or None,
     }
     row.activity = list(row.activity or []) + [entry]
     flag_modified(row, "activity")
