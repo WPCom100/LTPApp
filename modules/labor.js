@@ -976,8 +976,15 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
-  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings }) {
-    var [tab, setTab] = useState("assignments");
+  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route }) {
+    // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
+    // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
+    //   labor            → assignments (default)
+    //   labor/roster     → Crew Roster
+    //   labor/calendar   → Calendar
+    //   labor/schedule   → Weekly Schedule
+    var validTabs = { assignments: 1, roster: 1, calendar: 1, schedule: 1 };
+    var tab = (route && validTabs[route.sub]) ? route.sub : "assignments";
     var crew = contacts.filter(function(c) { return c.isCrew; });
 
     var allPositions = useMemo(function() {
@@ -990,20 +997,17 @@
 
     var conflictCount = Object.keys(crewConflicts).length;
 
-    var tabs = [
-      { id: "assignments", label: "Assignments", count: allPositions.length },
-      { id: "roster",      label: "Crew Roster", count: crew.length },
-      { id: "calendar",    label: "Calendar" },
-      { id: "schedule",    label: "Weekly Schedule" },
-    ];
+    var tabTitle = tab === "roster" ? "Crew Roster"
+      : tab === "calendar" ? "Crew Calendar"
+      : tab === "schedule" ? "Weekly Schedule"
+      : "Crew Assignments";
 
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, "Crew & Labor"),
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, tabTitle),
         conflictCount > 0 && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
           "\u26a0 " + conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
-      h(window.LTPTabs, { tabs: tabs, active: tab, onChange: setTab }),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
