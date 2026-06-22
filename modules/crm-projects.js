@@ -233,7 +233,7 @@
 
     function validateSchedule() {
       if (!start || !end) return true; // no project dates to check against
-      var validItems = sched.filter(function(s) { return s.title.trim(); });
+      var validItems = sched.filter(window.LTP_scheduleRowHasContent);
       for (var i = 0; i < validItems.length; i++) {
         var s = validItems[i];
         if (s.date && (s.date < start || s.date > end)) {
@@ -271,7 +271,7 @@
         ),
         h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services }),
         schedError && h("div", { style: { fontSize: "12px", color: B.danger, padding: "8px 12px", background: B.dangerBg, borderRadius: "6px", border: "1px solid " + B.dangerBd } }, schedError),
-        h(window.Btn, { onClick: function() { if (!name.trim() || !compId) return; if (!validateSchedule()) return; onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(function(s) { return s.title.trim(); }) }); } }, initial ? "Save Changes" : "Create Project")
+        h(window.Btn, { onClick: function() { if (!name.trim() || !compId) return; if (!validateSchedule()) return; onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) }); } }, initial ? "Save Changes" : "Create Project")
       )
     );
   };

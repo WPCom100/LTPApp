@@ -577,6 +577,21 @@ window.LTP_safeUrl = function(url) {
   return s;
 };
 
+// A schedule row is worth keeping if it has ANY real content — a title, a
+// date, crew positions, or breaks. Titles are optional in the editor (a day
+// can have dates/times/crew but no label), so filtering on title alone on
+// save silently discarded unlabeled days and saved an empty schedule. Used by
+// both the schedule builder and the project form's Save.
+window.LTP_scheduleRowHasContent = function(s) {
+  if (!s) return false;
+  return !!(
+    (s.title && String(s.title).trim()) ||
+    (s.date && String(s.date).trim()) ||
+    (Array.isArray(s.positions) && s.positions.length > 0) ||
+    (Array.isArray(s.breaks) && s.breaks.length > 0)
+  );
+};
+
 window.LTP_formatAddress = function(e, joiner) {
   if (!e) return "";
   joiner = joiner || ", ";
