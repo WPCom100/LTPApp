@@ -205,23 +205,31 @@ class PayloadSizeLimitMiddleware:
 # honored for the app-session cookie in routes/auth.py.
 _FORCE_HTTPS = os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on")
 _IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
+# img-src: tightened from a bare `https:` wildcard (an easy XSS data-exfil
+# channel — encode stolen data into an image URL to an attacker host) to a host
+# allowlist (SECURITY_REVIEW.md M2). Covers Google profile avatars, the storage
+# host used by email-signature icons in the Send preview, and the LTP logo
+# host. `data:` stays for canvas signatures + base64-pasted logos (a data: URL
+# issues no network request, so it is not an exfil vector). A deploy whose
+# Settings.logoUrl lives on another host adds it via LTP_IMG_SRC_EXTRA
+# (space-separated origins). style-src keeps 'unsafe-inline' — React inline
+# styles and the sanitized email preview rely on it; removing it needs a nonce
+# architecture (tracked as future work).
+_IMG_SRC_EXTRA = os.environ.get("LTP_IMG_SRC_EXTRA", "").strip()
+_IMG_SRC = (
+    "img-src 'self' data: "
+    "https://*.googleusercontent.com https://googleusercontent.com "
+    "https://storage.googleapis.com "
+    "https://www.luminarytechnology.productions https://luminarytechnology.productions"
+    + ((" " + _IMG_SRC_EXTRA) if _IMG_SRC_EXTRA else "")
+    + "; "
+)
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
     "font-src 'self' https://fonts.gstatic.com; "
-    # img-src: allow any HTTPS image, not just Google avatars. Reasoning:
-    #   1. Google's profile-picture URLs come from multiple hosts
-    #      (lh3.googleusercontent.com mostly, but also lh4/lh5/lh6/bare-host
-    #      depending on account type). A wildcard over googleusercontent.com
-    #      misses the bare host; explicitly listing every variant is brittle.
-    #   2. Settings.logoUrl is user-configurable — could be any HTTPS URL.
-    #   3. <img> elements don't execute code; loading from an arbitrary HTTPS
-    #      origin only reveals the user's IP and a "this app is in use" signal
-    #      to whoever owns the image. The XSS path that would let an attacker
-    #      inject <img> is already blocked by DOMPurify in sanitize.js.
-    # data: is also allowed for inline/embedded images (logo pasted as base64).
-    "img-src 'self' data: https:; "
+    + _IMG_SRC +
     # connect-src governs fetch/XHR AND source-map fetches DevTools makes for
     # external scripts. Allowing cdnjs here prevents the console-error noise
     # when DevTools tries to grab .map files for the React/DOMPurify scripts.
