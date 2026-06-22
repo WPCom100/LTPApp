@@ -180,17 +180,24 @@ producer can withdraw + re-send.
 
 ## 9. Build order
 
-0. **Nav restructure** — Labor parent + sub-nav, route-driven tabs.
-1. **Model + migration + backend** — `crew_requests`, public crew routes
-   (GET/accept/decline) with security, producer send/withdraw routes, status
-   automation on project positions.
-2. **Crew landing page** — `crew-view.js`, router route, branding, accept/decline
-   + comment + confirmation + audit.
-3. **Email** — `crew_request` template + accept/decline section + substitution;
-   default template; Settings editor support; wire the send pipeline.
-4. **Producer UI** — send flow (whole project / select shifts), response
-   tracking, withdraw/resend, surface accepted → confirm.
-5. **Verification** — tests + end-to-end.
+0. ✅ **Nav restructure** — Labor parent + route-driven sub-nav (Assignments /
+   Crew Roster / Calendar / Weekly Schedule).
+1. ✅ **Model + migration + backend** — `crew_requests` (rev `d5e6f7a8b9c0`),
+   public crew routes (GET/accept/decline) with security, producer
+   send/withdraw/list routes, position status automation, `/api/crew` rate rule.
+2. ✅ **Crew landing page** — `modules/crew-view.js` at `#/crew/{token}`,
+   router + auth-skip + outer-gate wiring, branding, accept/decline + comment +
+   locked terminal states.
+3. ✅ **Email** — `crewRequest` template redesigned (Accept/Decline section +
+   `{{shifts}}`), composed + sent server-side from the send route (best-effort;
+   reconnect-aware), reuses the Gmail pipeline + workspace signature.
+4. ✅ **Producer UI** — Labor → Assignments: send creates real tokenized
+   requests (one per crew per project), optimistic position flip, Crew Requests
+   panel (live status + copy-link + withdraw), reconciles responses on load.
+5. ◧ **Verification** — backend: 13 pytest cases (full state machine, email,
+   security, list shape); full suite green file-by-file (248 tests). Frontend:
+   syntax-checked + logic-reviewed; live visual pass pending (no browser in the
+   build sandbox).
 
 ## 10. Verification
 

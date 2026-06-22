@@ -96,10 +96,12 @@ window.LTP_DATA_SETTINGS = {
   //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
   //            {{quoteValidity}}, {{viewUrl}}
   //
-  // {{header}} renders the customer-facing header block (View button +
-  // refNumber + projectName + total). Only customer templates (quotes
-  // + invoices + receipts) prepend it; crew templates omit it since
-  // crew emails don't have a per-recipient view link.
+  // {{header}} renders an action header block. For customer templates (quotes
+  // + invoices + receipts) it's the "View & Accept or Decline" button +
+  // refNumber/projectName/total. For crewRequest it's the Accept/Decline
+  // buttons (linking to the crew landing page #/crew/{token}) + project +
+  // shift-count summary; {{shifts}} renders that request's shift list. Both are
+  // substituted server-side (backend/routes/crew.py) at send time.
   emailTemplates: {
     quoteSent: {
       label: "Quote Sent",
@@ -132,10 +134,14 @@ window.LTP_DATA_SETTINGS = {
       body: "{{header}}\n\nHi {{clientName}},\n\nThank you! We have received your payment for {{refNumber}} ({{projectName}}).\n\n{{lineItems}}\n\nBalance: $0.00 — Paid in Full\n\nThis email serves as your receipt. Please keep it for your records.\n\n{{signature}}"
     },
     crewRequest: {
-      label: "Crew Availability Request",
+      label: "Crew Request",
       cc: "",
-      subject: "Availability Check: {{projectName}} — {{date}}",
-      body: "Hi {{crewName}},\n\nWe have an upcoming project and would like to check your availability.\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease let us know if you're available and interested.\n\n{{signature}}"
+      // Multi-shift tokenized request. {{header}} renders the Accept/Decline
+      // buttons (linking to the crew landing page) + project summary; {{shifts}}
+      // renders the shift list. Both, plus {{signature}}, are substituted
+      // server-side by backend/routes/crew.py at send time.
+      subject: "Crew request: {{projectName}} — {{companyName}}",
+      body: "{{header}}\n\nHi {{crewName}},\n\nWe'd like to book you for {{projectName}}. Here are the shifts we have for you:\n\n{{shifts}}\n\nUse the buttons above to review the details and let us know if you can take it.\n\n{{signature}}"
     },
     crewConfirmed: {
       label: "Crew Position Confirmed",

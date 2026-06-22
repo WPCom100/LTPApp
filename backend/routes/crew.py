@@ -29,6 +29,8 @@ Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
   - /api/crew is rate-limited (backend/rate_limit.py) like /api/view.
 """
 from datetime import datetime, timezone
+from html import escape
+import os
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -36,10 +38,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import models, view_tracking
+from backend import gmail, models, view_tracking
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.routes._shared import load_settings, public_settings
+from backend.routes.email import _render_signature, _app_origin
+from backend.sanitize import email_html
 
 
 # Public — no session dependency. Token is the credential.
@@ -148,6 +152,148 @@ def _request_dict(r: models.CrewRequest) -> dict:
         "respondedAt": r.responded_at.isoformat() if r.responded_at else None,
         "sentByUserId": r.sent_by_user_id,
     }
+
+
+# ── Crew-request email (composed server-side, sent best-effort) ─────────────
+#
+# Unlike the quote/invoice pipeline (frontend composes, /api/email/send relays
+# with per-recipient tracking), the crew email is rendered entirely server-side
+# from the workspace `crewRequest` template and sent as the producer who clicked
+# Send. There's no per-recipient open-tracking row — the request token already
+# identifies the crew member. Delivery is BEST-EFFORT: a failure never rolls
+# back the request (the producer can still copy the crew link).
+
+# Server-side fallback body — keep in sync with data/settings.js
+# emailTemplates.crewRequest.body so a fresh deploy (settings never saved) still
+# sends a sensible email. {{header}}/{{shifts}}/{{signature}} are HTML fragments
+# substituted after the text→HTML pass; {{crewName}}/{{projectName}} are text.
+_FALLBACK_CREW_BODY = (
+    "{{header}}\n\nHi {{crewName}},\n\n"
+    "We'd like to book you for {{projectName}}. Here are the shifts we have for you:\n\n"
+    "{{shifts}}\n\n"
+    "Use the buttons above to review the details and let us know if you can take it.\n\n"
+    "{{signature}}"
+)
+
+
+def _fmt_iso_date(iso: str) -> str:
+    try:
+        from datetime import date
+        y, m, d = (int(x) for x in (iso or "").split("-"))
+        return date(y, m, d).strftime("%a, %b ") + str(d) + ", " + str(y)
+    except Exception:
+        return iso or ""
+
+
+def _fmt_hhmm(t: str) -> str:
+    try:
+        hh, mm = (t or "").split(":")[:2]
+        hh = int(hh)
+        return f"{hh % 12 or 12}:{mm} {'AM' if hh < 12 else 'PM'}"
+    except Exception:
+        return t or ""
+
+
+def _shifts_html(shifts: list) -> str:
+    rows = []
+    for s in shifts:
+        when = _fmt_iso_date(s.get("date"))
+        rng = " – ".join([x for x in (_fmt_hhmm(s.get("startTime")), _fmt_hhmm(s.get("endTime"))) if x])
+        meta = "  ·  ".join([escape(x) for x in (when, rng, s.get("shiftTitle") or "") if x])
+        rows.append(
+            '<tr><td style="padding:7px 0;border-bottom:1px solid #eee;font-size:13px;color:#233038">'
+            '<strong>' + escape(s.get("roleLabel") or "Crew") + '</strong><br>'
+            '<span style="color:#667777">' + meta + '</span></td></tr>'
+        )
+    if not rows:
+        return ""
+    return ('<table role="presentation" cellpadding="0" cellspacing="0" border="0" '
+            'style="width:100%;margin:4px 0">' + "".join(rows) + "</table>")
+
+
+def _crew_header_html(project_name: str, shift_count: int, view_url: str) -> str:
+    """The Accept/Decline section at the top of the email. Both buttons open the
+    crew landing page (where the actual, lockable response + comment happen)."""
+    url = escape(view_url)
+    return (
+        '<div style="padding:0">'
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" style="width:100%;margin-top:5px">'
+        '<tbody><tr><td valign="center" style="white-space:nowrap">'
+        '<table cellspacing="0" cellpadding="0" border="0"><tbody><tr>'
+        '<td style="border-radius:3px;text-align:center;background:#4CAF50">'
+        '<a style="font-size:12px;color:#ffffff;display:block;padding:8px 14px 11px;text-decoration:none;font-weight:bold" '
+        'href="' + url + '">&#10003; View &amp; Accept</a></td>'
+        '<td>&nbsp;&nbsp;</td>'
+        '<td style="border-radius:3px;text-align:center;border:1px solid #E74C3C">'
+        '<a style="font-size:12px;color:#E74C3C;display:block;padding:7px 14px 10px;text-decoration:none;font-weight:bold" '
+        'href="' + url + '">View &amp; Decline</a></td>'
+        '</tr></tbody></table></td></tr>'
+        '<tr><td valign="center" style="padding-top:8px;font-size:12px">'
+        '<span style="font-weight:bold">' + escape(project_name or "Project") + '</span>'
+        '<br><span>' + str(shift_count) + ' shift' + ("" if shift_count == 1 else "s") + ' — review &amp; respond</span></td></tr>'
+        '<tr><td valign="center"><hr width="100%" style="background-color:#cccccc;border:medium none;'
+        'clear:both;display:block;font-size:0px;min-height:1px;line-height:0;margin:10px 0px"></td></tr>'
+        '</tbody></table></div>'
+    )
+
+
+def _text_to_html(text: str) -> str:
+    """Minimal plain-text → HTML for the crew email body. Escapes the text (a
+    name with & or < stays safe) but leaves {{token}} markers intact for the
+    HTML-fragment substitution that follows. Blank lines split paragraphs."""
+    html = ""
+    for para in escape(text or "").split("\n\n"):
+        if para.strip() == "":
+            continue
+        html += ('<p style="margin:0 0 12px;font-size:13px;line-height:1.5;color:#233038">'
+                 + para.replace("\n", "<br>") + "</p>")
+    return html
+
+
+async def _send_crew_email(db, user, contact, project, shifts, token, settings_data) -> dict:
+    """Render + send the crew-request email as `user`. Returns an email-status
+    dict; NEVER raises — delivery is best-effort so a Gmail outage or a
+    not-yet-connected sender doesn't undo the request (producer copies the
+    link instead). emailStatus.needsReconnect drives the UI's reconnect hint."""
+    try:
+        tmpl = ((settings_data.get("emailTemplates") or {}).get("crewRequest") or {})
+        company = settings_data.get("companyName") or "LTP"
+        crew_name = ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there"
+        project_name = (project.name if project else "") or "Project"
+        view_url = (_app_origin() or "") + "/#/crew/" + token
+
+        subject = ((tmpl.get("subject") or "Crew request: {{projectName}}")
+                   .replace("{{projectName}}", project_name)
+                   .replace("{{crewName}}", crew_name)
+                   .replace("{{companyName}}", company))
+
+        body = ((tmpl.get("body") or _FALLBACK_CREW_BODY)
+                .replace("{{crewName}}", crew_name)
+                .replace("{{projectName}}", project_name)
+                .replace("{{companyName}}", company))
+        html = _text_to_html(body)
+        html = (html
+                .replace("{{header}}", _crew_header_html(project_name, len(shifts), view_url))
+                .replace("{{shifts}}", _shifts_html(shifts))
+                .replace("{{signature}}", _render_signature(user, settings_data)))
+        final_html = email_html(html)
+
+        reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
+        await gmail.send(
+            user=user, db=db,
+            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
+            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+            to=[contact.email], cc=[], subject=subject,
+            html_body=final_html, text_body=None, reply_to=reply_to,
+        )
+        return {"emailed": True, "to": contact.email}
+    except gmail.GmailReconnectRequired as e:
+        return {"emailed": False, "needsReconnect": True, "error": str(e)}
+    except gmail.GmailSendError as e:
+        return {"emailed": False, "error": str(e)}
+    except Exception as e:
+        print(f"[LTP] crew email send failed: {e!r}", flush=True)
+        return {"emailed": False, "error": "unexpected error sending email"}
 
 
 # ── PUBLIC: GET /api/crew/{token} ───────────────────────────────────────────
@@ -318,7 +464,19 @@ async def send_crew_request(
     _update_positions(project, sendable, to_status="requested", require_from=_SENDABLE_FROM)
     await db.flush()
     await db.refresh(req)
-    return _request_dict(req)
+
+    # Compose + send the crew-request email (best-effort). A delivery failure
+    # (e.g. the sender hasn't connected Gmail) leaves the request intact — the
+    # producer can copy the crew link from the response/Labor UI instead.
+    services = (await db.execute(select(models.Service))).scalars().all()
+    services_by_id = {s.id: s for s in services}
+    shifts = _crew_shifts(project, sendable, services_by_id)
+    settings_data = await load_settings(db)
+    email_status = await _send_crew_email(db, user, contact, project, shifts, req.token, settings_data)
+
+    out = _request_dict(req)
+    out["emailStatus"] = email_status
+    return out
 
 
 # ── PRODUCER: POST /api/crew-requests/{id}/withdraw ─────────────────────────

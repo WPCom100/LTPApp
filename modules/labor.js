@@ -233,6 +233,100 @@
     var [confirmDlg, setConfirmDlg] = useState(null); // posId → true/false
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
+    // ── Crew requests (tokenized accept/decline) ────────────────────────────
+    // Loaded from /api/crew-requests (the producer's own data — includes the
+    // token so we can surface/copy the crew link). Reloaded after send/withdraw.
+    // Crew responses (accept/decline) flow back as POSITION status changes on
+    // the project, which the existing grouped view already reflects on refresh.
+    var [crewRequests, setCrewRequests] = useState([]);
+    var [sendResult, setSendResult] = useState(null);   // post-send summary banner
+    var [copiedId, setCopiedId] = useState(null);        // copy-link feedback
+
+    function loadCrewRequests() {
+      fetch("/api/crew-requests", { credentials: "include" })
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(d) {
+          var list = Array.isArray(d) ? d : [];
+          setCrewRequests(list);
+          reconcileFromRequests(list);
+        })
+        .catch(function() {});
+    }
+    React.useEffect(loadCrewRequests, []);
+
+    // The app doesn't poll `projects` for inbound server changes, so a crew
+    // member's accept/decline (which the backend writes to the position status)
+    // wouldn't show in the grouped view until a full reload. Bridge that: when
+    // we fetch the requests, advance any still-"requested" position to match
+    // its request's answer. Only advances FROM "requested" so a producer's
+    // manual changes (confirmed, released) are never disturbed.
+    function reconcileFromRequests(reqs) {
+      var byProject = {};
+      reqs.forEach(function(r) {
+        var target = r.status === "accepted" ? "accepted" : (r.status === "declined" ? "declined" : null);
+        if (!target) return;
+        byProject[r.projectId] = byProject[r.projectId] || {};
+        (r.positionIds || []).forEach(function(pid) { byProject[r.projectId][pid] = target; });
+      });
+      if (Object.keys(byProject).length === 0) return;
+      setProjects(function(prev) {
+        var changed = false;
+        var next = prev.map(function(proj) {
+          var map = byProject[proj.id];
+          if (!map) return proj;
+          return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+              if (map[pos.id] && pos.status === "requested") { changed = true; return Object.assign({}, pos, { status: map[pos.id] }); }
+              return pos;
+            }) });
+          }) });
+        });
+        return changed ? next : prev;
+      });
+    }
+
+    function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
+    function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
+
+    function copyCrewLink(req) {
+      var url = window.location.origin + "/#/crew/" + req.token;
+      function flash() { setCopiedId(req.id); setTimeout(function() { setCopiedId(null); }, 1500); }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(flash, function() { window.prompt("Copy this crew link:", url); });
+      } else {
+        window.prompt("Copy this crew link:", url);
+      }
+    }
+
+    // Optimistically move a set of positions to a status locally, only when
+    // they're currently at `fromStatus`. Mirrors what the server already did
+    // (send/withdraw mutate positions server-side); keeps the UI in sync without
+    // a project refetch. Same-result writes converge with the debounced PUT.
+    function flipPositionsLocal(projectId, posIds, fromStatus, toStatus) {
+      var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
+      setProjects(function(prev) {
+        return prev.map(function(proj) {
+          if (projectId != null && proj.id !== projectId) return proj;
+          return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+              if (idSet[pos.id] && pos.status === fromStatus) return Object.assign({}, pos, { status: toStatus });
+              return pos;
+            }) });
+          }) });
+        });
+      });
+    }
+
+    function withdrawRequest(req) {
+      fetch("/api/crew-requests/" + req.id + "/withdraw", { method: "POST", credentials: "include" })
+        .then(function(r) { if (!r.ok) throw new Error("withdraw failed"); return r.json(); })
+        .then(function() {
+          flipPositionsLocal(req.projectId, req.positionIds, "requested", "open");
+          loadCrewRequests();
+        })
+        .catch(function() { loadCrewRequests(); });
+    }
+
     // Backward status moves that need confirmation
     var SEVERITY = { confirmed: 4, accepted: 3, requested: 2, open: 1, declined: 0 };
 
@@ -393,16 +487,23 @@
     };
 
     var pendingSend = allPositions.filter(function(p) { return p.crewId && p.status === "open"; });
-    // Count unique crew+day for send button label
-    var pendingSendUnique = countUnique(pendingSend);
+    // Count unique crew+PROJECT combos for the send button label — that's how
+    // many requests will be created (one per crew member per project).
+    var pendingSendUnique = (function() {
+      var seen = {}, n = 0;
+      pendingSend.forEach(function(p) { var k = p.crewId + "|" + p.projectId; if (!seen[k]) { seen[k] = true; n++; } });
+      return n;
+    })();
     var pendingConfirm = countUnique(allPositions, function(p) { return p.status === "accepted"; });
 
+    // One request per crew member per project (the chosen default) — so the
+    // selection is keyed by crewId|projectId, collapsing all of a person's open
+    // shifts on a project into a single request.
     function openSendPanel() {
-      // Build deduplicated list: one entry per crewId+date+project
       var sel = {};
       var seen = {};
       pendingSend.forEach(function(p) {
-        var key = p.crewId + "|" + (p.date || "_") + "|" + p.projectId;
+        var key = p.crewId + "|" + p.projectId;
         if (!seen[key]) { seen[key] = true; sel[key] = true; }
       });
       setSendSelection(sel);
@@ -417,38 +518,59 @@
       var sel = {};
       var seen = {};
       pendingSend.forEach(function(p) {
-        var key = p.crewId + "|" + (p.date || "_") + "|" + p.projectId;
+        var key = p.crewId + "|" + p.projectId;
         if (!seen[key]) { seen[key] = true; sel[key] = val; }
       });
       setSendSelection(sel);
     }
 
     function sendSelected() {
-      // Build set of selected crewId+date+project combos
+      // Build one request per selected (crew, project), collecting that
+      // person's open positions on the project. POST /api/crew-requests/send
+      // creates the tokenized request, flips the positions server-side, and
+      // emails the crew member (best-effort) their Accept/Decline link.
       var selectedKeys = {};
       Object.keys(sendSelection).forEach(function(k) { if (k !== "_previewIdx" && sendSelection[k]) selectedKeys[k] = true; });
-      setProjects(function(prev) {
-        return prev.map(function(proj) {
-          var projSent = 0;
-          var updated = Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-              if (pos.crewId && pos.status === "open") {
-                var key = pos.crewId + "|" + (s.date || "_") + "|" + proj.id;
-                if (selectedKeys[key]) { projSent++; return Object.assign({}, pos, { status: "requested" }); }
-              }
-              return pos;
-            })});
-          })});
-          if (projSent > 0) {
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "saved", user: (window.LTP_CURRENT_USER || "User"), message: projSent + " crew request" + (projSent > 1 ? "s" : "") + " sent",
-              changes: [{ cat: "Crew Requests", detail: projSent + " position" + (projSent > 1 ? "s" : "") + " moved from open \u2192 requested" }] };
-            updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
-          }
-          return updated;
-        });
+      var groups = {};
+      pendingSend.forEach(function(p) {
+        var key = p.crewId + "|" + p.projectId;
+        if (!selectedKeys[key]) return;
+        if (!groups[key]) groups[key] = { projectId: p.projectId, contactId: p.crewId, positionIds: [] };
+        groups[key].positionIds.push(p.posId);
       });
+      var groupList = Object.keys(groups).map(function(k) { return groups[k]; });
+      if (groupList.length === 0) { setShowSendPanel(false); return; }
+
+      // Optimistically reflect the open \u2192 requested move locally (the server
+      // does the same), so the grouped view updates without a project refetch.
+      var allIds = [];
+      groupList.forEach(function(g) { allIds = allIds.concat(g.positionIds); });
+      flipPositionsLocal(null, allIds, "open", "requested");
+
       setShowSendPanel(false);
+      Promise.all(groupList.map(function(g) {
+        return fetch("/api/crew-requests/send", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" }, body: JSON.stringify(g),
+        }).then(function(r) {
+          return r.json().then(function(j) { return { ok: r.ok, body: j, group: g }; },
+                               function() { return { ok: r.ok, body: {}, group: g }; });
+        }).catch(function(e) { return { ok: false, body: { error: String(e) }, group: g }; });
+      })).then(function(results) {
+        var sent = 0, reconnect = false, errors = [];
+        results.forEach(function(res) {
+          if (res.ok) {
+            sent++;
+            if (res.body && res.body.emailStatus && res.body.emailStatus.needsReconnect) reconnect = true;
+          } else {
+            var detail = (res.body && res.body.detail) || (res.body && res.body.error) || "send failed";
+            if (typeof detail === "object") detail = detail.reason || detail.message || "send failed";
+            errors.push(crewLabel(res.group.contactId) + ": " + detail);
+          }
+        });
+        setSendResult({ sent: sent, reconnect: reconnect, errors: errors });
+        loadCrewRequests();
+      });
     }
 
     function confirmAllAccepted() {
@@ -564,6 +686,42 @@
         pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
           style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
       ),
+
+      // Post-send result banner \u2014 sent count + email-reconnect hint + errors.
+      sendResult && h("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "8px 12px", borderRadius: "6px", background: (sendResult.errors.length ? B.danger : B.success) + "12", border: "1px solid " + (sendResult.errors.length ? B.danger : B.success) + "44" } },
+        h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec, lineHeight: 1.5 } },
+          h("span", { style: { fontWeight: 700, color: sendResult.errors.length ? B.danger : B.success } },
+            sendResult.sent > 0 ? "\u2713 " + sendResult.sent + " request" + (sendResult.sent !== 1 ? "s" : "") + " sent" : "No requests sent"),
+          sendResult.reconnect && h("span", { style: { color: B.warn } }, "  \u00b7  Email not sent \u2014 connect Google in Settings, or copy links below."),
+          sendResult.errors.length > 0 && h("div", { style: { color: B.danger, marginTop: 4 } }, sendResult.errors.join("; "))),
+        h("button", { onClick: function() { setSendResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "\u00d7")),
+
+      // \u2500\u2500 Crew Requests panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+      // Sent tokenized requests with live status + copy-link + withdraw. Crew
+      // responses arrive as POSITION status changes (reflected in the groups
+      // below); this panel tracks the request envelope itself.
+      crewRequests.length > 0 && function() {
+        var STBADGE = { pending: B.warn, accepted: B.success, declined: B.danger, withdrawn: B.textMut };
+        var active = crewRequests.filter(function(r) { return r.status !== "withdrawn"; });
+        if (active.length === 0) return null;
+        return h("div", { style: { marginBottom: 16, border: "1px solid " + B.border, borderRadius: "8px", overflow: "hidden" } },
+          h("div", { style: { padding: "8px 14px", background: B.surface, borderBottom: "1px solid " + B.border, fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } },
+            "Crew Requests (" + active.length + ")"),
+          active.map(function(r, i) {
+            var st = r.status || "pending";
+            return h("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
+              h("div", { style: { flex: 1, minWidth: 0 } },
+                h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
+                h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  \u00b7  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : ""))),
+              h("span", { style: { fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
+              h("button", { onClick: function() { copyCrewLink(r); },
+                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: copiedId === r.id ? B.success : B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, copiedId === r.id ? "\u2713 Copied" : "Copy link"),
+              st === "pending" && h("button", { onClick: function() { withdrawRequest(r); },
+                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
+            );
+          }));
+      }(),
+
       // Grouped by project
       projectGroups.length === 0 && h(window.EmptyState, { text: "No positions found. Add positions to project schedules." }),
       projectGroups.map(function(pg) {
@@ -772,37 +930,36 @@
       showSendPanel && h(window.LTPModal, { title: "Send Crew Requests", onClose: function() { setShowSendPanel(false); }, wide: true },
         function() {
           var selectedCount = Object.keys(sendSelection).filter(function(k) { return k !== "_previewIdx" && sendSelection[k]; }).length;
+          // One entry per crew+project (the chosen default): all of a person's
+          // open shifts on a project collapse into a single tokenized request.
           var allEntries = [];
           var entrySeen = {};
           pendingSend.forEach(function(p) {
-            var key = p.crewId + "|" + (p.date || "_") + "|" + p.projectId;
+            var key = p.crewId + "|" + p.projectId;
             if (!entrySeen[key]) {
-              entrySeen[key] = { key: key, pos: p, items: [], posCount: 0 };
+              entrySeen[key] = { key: key, crewId: p.crewId, projectId: p.projectId, projectName: p.projectName, shifts: [] };
               allEntries.push(entrySeen[key]);
             }
-            entrySeen[key].items.push(p.schedTitle);
-            entrySeen[key].posCount++;
+            entrySeen[key].shifts.push(p);
           });
           var previewIdx = Math.max(0, Math.min(sendSelection._previewIdx || 0, allEntries.length - 1));
           var pe = allEntries[previewIdx];
-          var previewSubject = "", previewBody = "", previewTo = "";
+          var s = settings || {};
+          var previewSubject = "", previewTo = "", peShifts = [];
           if (pe) {
-            var pcm = contacts.find(function(c) { return c.id === pe.pos.crewId; });
-            var s = settings || {};
+            var pcm = contacts.find(function(c) { return c.id === pe.crewId; });
             var tmpl = (s.emailTemplates || {}).crewRequest || { subject: "", body: "" };
-            var proj = (projects || []).find(function(pr) { return pr.id === pe.pos.projectId; });
-            var vars = { companyName: s.companyName || "LTP", crewName: pcm ? pcm.firstName : "there",
-              projectName: pe.pos.projectName || "", role: pe.pos.svcName || "",
-              date: pe.pos.date ? fmt(pe.pos.date) : "", callTime: pe.pos.dayCall ? ft(pe.pos.dayCall) : "",
-              wrapTime: pe.pos.dayWrap ? ft(pe.pos.dayWrap) : "", location: proj ? proj.venue || "" : "",
-              signature: s.emailSignature || "" };
-            previewSubject = window.LTP_resolveTemplate(tmpl.subject, vars);
-            previewBody = window.LTP_resolveTemplate(tmpl.body, vars);
-            previewTo = pcm ? pcm.email || "(no email)" : "?";
+            previewSubject = window.LTP_resolveTemplate(tmpl.subject || "", {
+              companyName: s.companyName || "LTP",
+              crewName: pcm ? pcm.firstName : "there",
+              projectName: pe.projectName || "",
+            });
+            previewTo = pcm ? (pcm.email || "(no email on file)") : "?";
+            peShifts = pe.shifts.slice().sort(function(a, b) { return (a.date + (a.callTime || "")) > (b.date + (b.callTime || "")) ? 1 : -1; });
           }
           return h("div", null,
             h("div", { style: { display: "flex", gap: 16, minHeight: 360 } },
-              // Left: crew selection list
+              // Left: crew+project selection list
               h("div", { style: { flex: "0 0 300px", display: "flex", flexDirection: "column" } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
                   h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Recipients (" + allEntries.length + ")"),
@@ -815,7 +972,7 @@
                   allEntries.map(function(entry, ei) {
                     var isSelected = sendSelection[entry.key];
                     var isPreviewed = ei === previewIdx;
-                    var cm = contacts.find(function(c) { return c.id === entry.pos.crewId; });
+                    var cm = contacts.find(function(c) { return c.id === entry.crewId; });
                     return h("div", { key: entry.key, style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 8px",
                       background: isPreviewed ? B.accent + "18" : (isSelected ? B.success + "0a" : B.surface),
                       border: "1px solid " + (isPreviewed ? B.accent + "55" : isSelected ? B.success + "33" : B.border), borderRadius: "4px", cursor: "pointer", userSelect: "none" } },
@@ -824,30 +981,41 @@
                         isSelected && h("span", { style: { color: "#000", fontSize: "10px", fontWeight: 700 } }, "\u2713")),
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
-                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.pos.projectName + " \u00b7 " + (entry.pos.date ? fmt(entry.pos.date) : ""))),
-                      !cm || !cm.email ? h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "\u26a0") : null
+                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
+                      !cm || !cm.email ? h("span", { title: "No email on file", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "\u26a0") : null
                     );
                   }))
               ),
-              // Right: email preview
+              // Right: what-will-be-sent summary. The email itself is composed
+              // server-side from the crewRequest template (Accept/Decline buttons
+              // linking to each crew member's private page), so we summarize
+              // rather than render a drift-prone client copy.
               h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
                 h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-                  h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
+                  h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Request Summary"),
                   h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
                     h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
                     h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, previewTo)),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
-                    h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                    h("span", { style: { fontSize: "11px", color: B.textMut } }, (settings || {}).emailFrom || "")),
                   h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                     h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                     h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, previewSubject))),
                 h("div", { style: { flex: 1, padding: "14px", overflowY: "auto" } },
-                  h("pre", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6, fontFamily: "inherit", margin: 0, whiteSpace: "pre-wrap" } }, previewBody))
+                  h("div", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+                    "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
+                    " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
+                    " private page will be sent. They can accept or decline and leave a note."),
+                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Shifts in this request (" + peShifts.length + ")"),
+                  peShifts.length === 0
+                    ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
+                    : peShifts.map(function(sp, i) {
+                        return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
+                          h("span", { style: { fontWeight: 600 } }, sp.svcName || sp.role || "Crew"),
+                          h("span", { style: { color: B.textMut } }, "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
+                      }))
               )
             ),
             h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center" } },
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, selectedCount + " of " + allEntries.length + " selected"),
+              h("div", { style: { fontSize: "11px", color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length),
               h("div", { style: { display: "flex", gap: 8 } },
                 h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); } }, "Cancel"),
                 h(window.Btn, { onClick: selectedCount > 0 ? sendSelected : undefined,

@@ -58,6 +58,9 @@ P_WITHDRAW = 7005   # withdraw pending
 P_ANSWERED = 7006   # withdraw-after-answer (409)
 P_SPLIT    = 7007   # subset send
 P_CONFIRM  = 7008   # no-sendable (already confirmed)
+P_EMAIL    = 7009   # email composition (mocked Gmail)
+P_RECONN   = 7010   # email best-effort: needsReconnect, request still created
+P_LIST     = 7011   # GET /api/crew-requests list shape + project filter
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -135,6 +138,15 @@ def _setup():
                 db.add(models.Project(id=P_CONFIRM, name="Gala Confirm", schedule=[
                     _shift("s8", "Show", "2026-07-18",
                            [_pos("p8a", C1, service=S1, status="confirmed")]),
+                ]))
+                db.add(models.Project(id=P_EMAIL, name="Gala Email", schedule=[
+                    _shift("s9", "Load In", "2026-07-20", [_pos("p9a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_RECONN, name="Gala Reconnect", schedule=[
+                    _shift("s10", "Show", "2026-07-22", [_pos("p10a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_LIST, name="Gala List", schedule=[
+                    _shift("s11", "Show", "2026-07-24", [_pos("p11a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -307,6 +319,65 @@ def test_split_sends_only_selected_positions():
     assert _pos_status(proj, "p7b") == "open"   # unsent → stays open
 
 
+# ── email (best-effort, composed server-side) ──────────────────────────────
+
+def test_send_emails_crew_member_when_gmail_connected():
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kwargs):
+        captured.update(kwargs)
+        return {"id": "msg-123"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send   # crew.py calls gmail.send(...) at runtime
+    try:
+        r = _send(client, tok, P_EMAIL, C1)
+    finally:
+        gmailmod.send = orig
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["emailStatus"]["emailed"] is True
+    # Sent to the crew member; subject carries the project name.
+    assert captured["to"] == ["casey@crew.com"]
+    assert "Gala Email" in captured["subject"]
+    html = captured["html_body"]
+    # The crew landing link, an Accept/Decline section, and the resolved shift
+    # role label are all present in the rendered email.
+    assert ("/#/crew/" + body["token"]) in html
+    assert "Accept" in html and "Decline" in html
+    assert "Lead Lighting Tech" in html
+
+
+def test_send_without_gmail_still_creates_request_and_reports_reconnect():
+    client, tok = _setup()
+    r = _send(client, tok, P_RECONN, C1)   # admin has no Gmail token
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "pending"               # request created
+    assert body["emailStatus"]["emailed"] is False
+    assert body["emailStatus"].get("needsReconnect") is True
+    # Positions still moved to requested despite the email not going out.
+    assert _pos_status(_project(client, tok, P_RECONN), "p10a") == "requested"
+
+
+def test_list_crew_requests_shape_and_filter():
+    client, tok = _setup()
+    created = _send(client, tok, P_LIST, C1).json()
+    # Full list includes the new request with the producer-facing shape.
+    allreqs = client.get("/api/crew-requests", cookies={"ltp_session": tok}).json()
+    assert isinstance(allreqs, list)
+    mine = [r for r in allreqs if r["id"] == created["id"]]
+    assert len(mine) == 1
+    for k in ("id", "token", "projectId", "contactId", "positionIds", "status", "sentAt"):
+        assert k in mine[0], k
+    # ?projectId= narrows to that project only.
+    filtered = client.get("/api/crew-requests?projectId=" + str(P_LIST), cookies={"ltp_session": tok}).json()
+    assert filtered and all(r["projectId"] == P_LIST for r in filtered)
+
+
 def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
@@ -319,6 +390,9 @@ def main() -> int:
         test_withdraw_pending_reopens_positions,
         test_withdraw_after_answer_is_blocked,
         test_split_sends_only_selected_positions,
+        test_send_emails_crew_member_when_gmail_connected,
+        test_send_without_gmail_still_creates_request_and_reports_reconnect,
+        test_list_crew_requests_shape_and_filter,
     ]
     failed = 0
     try:
