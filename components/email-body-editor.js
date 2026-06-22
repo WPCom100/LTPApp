@@ -91,8 +91,13 @@
       // Extract the current display HTML and reverse the marker-block
       // substitutions. The stored body keeps {{signature}} + {{header}}
       // so the backend can render per-user / per-recipient at send time.
-      var raw = ref.current.innerHTML;
-      onChange(window.LTP_editableHtmlToBody(raw));
+      // Defense-in-depth (SECURITY_REVIEW.md M7): run the reversed body through
+      // the email allowlist before storing it, so pasted/typed markup is
+      // scrubbed client-side too — not just by the server's authoritative pass
+      // at save/send. The {{signature}}/{{header}}/{{viewUrl}} placeholders
+      // survive the allowlist.
+      var body = window.LTP_editableHtmlToBody(ref.current.innerHTML);
+      onChange(window.LTP_SANITIZE.emailHtml(body));
     }
 
     // Paste handling: when users paste rich content from Word/Gmail,

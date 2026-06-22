@@ -563,6 +563,20 @@ window.LTP_textToHtml = (function() {
 // "<street>, City, ST ZIP". `joiner` (default ", ") also replaces newlines in
 // the multi-line street field. Used everywhere a client address is displayed
 // (CRM, client view) so the structured city/state/zip fields show up too.
+// Protocol-guard a user/calendar-supplied URL before using it as an href.
+// Anything with an explicit scheme other than http/https/mailto/tel (notably
+// javascript:) becomes "" so the link is inert; relative/scheme-relative URLs
+// pass (they can't carry a javascript: payload). Control chars are stripped
+// first so "java\tscript:" can't slip past. SECURITY_REVIEW.md L7.
+window.LTP_safeUrl = function(url) {
+  if (!url) return "";
+  var s = String(url).replace(/[\x00-\x1f\x7f]/g, "").trim();
+  if (/^[a-z][a-z0-9+.\-]*:/i.test(s)) {
+    return /^(https?|mailto|tel):/i.test(s) ? s : "";
+  }
+  return s;
+};
+
 window.LTP_formatAddress = function(e, joiner) {
   if (!e) return "";
   joiner = joiner || ", ";
