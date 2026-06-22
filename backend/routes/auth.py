@@ -24,7 +24,7 @@ from authlib.integrations.starlette_client import OAuthError
 
 from backend.database import get_db
 from backend import models
-from backend.auth_deps import require_session, SESSION_COOKIE_NAME
+from backend.auth_deps import require_session, SESSION_COOKIE_NAME, hash_session_token
 from backend import crypto
 
 # Scope string for the per-user Gmail send feature. Mirrored from
@@ -110,11 +110,13 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     oauth = request.app.state.oauth
     try:
         token = await oauth.google.authorize_access_token(request)
-    except OAuthError as e:
-        # Common cases: state mismatch, user denied consent
+    except OAuthError:
+        # Common cases: state mismatch, user denied consent. Don't reflect the
+        # provider's raw error detail to the client (SECURITY_REVIEW.md L9/H10).
         return JSONResponse(
             status_code=400,
-            content={"error": "oauth_error", "detail": str(e)},
+            content={"error": "oauth_error",
+                     "detail": "Sign-in could not be completed. Please try again."},
         )
 
     # Authlib parses and verifies the ID token automatically when scope includes openid.
@@ -132,18 +134,33 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     if not google_sub or not email:
         raise HTTPException(status_code=400, detail="Google did not return required user info")
 
-    # Domain check
+    # Access control. Two optional, complementary allowlists:
+    #   LTP_ALLOWED_DOMAIN  — a single workspace domain (e.g. "acme.com")
+    #   LTP_ALLOWED_EMAILS  — comma-separated explicit addresses (lets a
+    #                         gmail.com owner restrict access without a domain)
+    # If EITHER is configured, the sign-in email must satisfy at least one. If
+    # NEITHER is set, any Google account can sign in — main.py logs a loud boot
+    # warning in that case (SECURITY_REVIEW.md M4).
     allowed_domain = os.environ.get("LTP_ALLOWED_DOMAIN", "").strip().lower()
-    if allowed_domain:
+    allowed_emails = {
+        e.strip().lower()
+        for e in os.environ.get("LTP_ALLOWED_EMAILS", "").split(",")
+        if e.strip()
+    }
+    if allowed_domain or allowed_emails:
         email_domain = email.rsplit("@", 1)[-1] if "@" in email else ""
-        if email_domain != allowed_domain:
+        domain_ok = bool(allowed_domain) and email_domain == allowed_domain
+        email_ok = email in allowed_emails
+        if not (domain_ok or email_ok):
             raise HTTPException(
                 status_code=403,
-                detail=f"Sign-in restricted to @{allowed_domain} accounts (you signed in as {email}).",
+                detail=f"Sign-in is restricted; {email} is not on the allow list.",
             )
 
-    # Email-verified check (Google returns this as a boolean)
-    if userinfo.get("email_verified") is False:
+    # Email-verified check. Treat the email as verified ONLY when Google
+    # explicitly says True — the previous `is False` check let a missing/None
+    # value through (SECURITY_REVIEW.md M4).
+    if userinfo.get("email_verified") is not True:
         raise HTTPException(status_code=403, detail="Google reports your email is not verified.")
 
     # Upsert user. First user becomes admin. We count inside the transaction to
@@ -196,10 +213,12 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     _persist_gmail_tokens(user, token, now)
     await db.flush()
 
-    # Mint session
+    # Mint session. The raw token goes in the cookie; we persist only its
+    # SHA-256 hash so a DB disclosure yields no usable tokens
+    # (SECURITY_REVIEW.md L1).
     session_token = secrets.token_urlsafe(48)  # ~64 chars
     session_row = models.Session(
-        id=session_token,
+        id=hash_session_token(session_token),
         user_id=user.id,
         expires_at=now + SESSION_LIFETIME,
     )
@@ -216,11 +235,20 @@ async def logout(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    """Delete the current session (if any) and clear the cookie. Idempotent —
-    works whether the user is currently signed in or not."""
+    """Delete the current session row (if any) and clear the cookie. Idempotent
+    — works whether the user is currently signed in or not.
+
+    Scope note (SECURITY_REVIEW.md H11): logout ends the SESSION only. The Gmail
+    (per-user) and QuickBooks (company-wide) OAuth tokens are deliberately left
+    intact — they're long-lived integration grants with their own explicit
+    Disconnect controls, and revoking them on every logout would force a
+    reconnect dance (and, for QBO, disrupt other users). Deleting the session
+    row here means the cookie can't be replayed even if it was captured."""
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if token:
-        await db.execute(delete(models.Session).where(models.Session.id == token))
+        await db.execute(
+            delete(models.Session).where(models.Session.id == hash_session_token(token))
+        )
         await db.flush()
     response = Response(status_code=204)
     _clear_session_cookie(response)

@@ -340,6 +340,17 @@ app.add_middleware(
 print(f"[LTP] payload size limit: {MAX_PAYLOAD_BYTES} bytes "
       f"({MAX_PAYLOAD_BYTES // 1024 // 1024} MB)", flush=True)
 
+# Access-control posture warning. If neither allowlist is configured, ANY Google
+# account can sign in (and on a brand-new deployment the first sign-in becomes
+# admin). We warn loudly rather than fail closed, because hard-requiring an
+# allowlist could lock out an owner on a shared domain like gmail.com
+# (SECURITY_REVIEW.md M4). Set LTP_ALLOWED_DOMAIN and/or LTP_ALLOWED_EMAILS.
+if not (os.environ.get("LTP_ALLOWED_DOMAIN", "").strip()
+        or os.environ.get("LTP_ALLOWED_EMAILS", "").strip()):
+    print("[LTP] WARNING: neither LTP_ALLOWED_DOMAIN nor LTP_ALLOWED_EMAILS is "
+          "set — any Google account can sign in. Set one to restrict access.",
+          flush=True)
+
 
 # ── Authlib OAuth client ────────────────────────────────────────────────────
 # Stashed on app.state so routes/auth.py can pull it via the Request.

@@ -6,6 +6,7 @@
 These are async FastAPI Depends helpers — wire them with `Depends(require_session)`
 on a router or individual endpoint. See backend/routes/api.py for usage.
 """
+import hashlib
 from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,40 @@ from backend import models
 SESSION_COOKIE_NAME = "ltp_session"
 
 
+def hash_session_token(token: str) -> str:
+    """SHA-256 hex digest of a raw session token. This is what we store in
+    sessions.id; the raw token lives only in the cookie and is never persisted,
+    so a database disclosure yields no usable session tokens
+    (SECURITY_REVIEW.md L1). Always 64 hex chars."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+async def _load_session_user(db: AsyncSession, token: str | None):
+    """Resolve a raw session-cookie token to its User, or None when the token
+    is missing / unknown / expired. Single source of truth for session
+    validation — shared by require_session (raising) and get_optional_user
+    (non-raising). Review any session-model change here once."""
+    if not token:
+        return None
+    result = await db.execute(
+        select(models.Session, models.User)
+        .join(models.User, models.Session.user_id == models.User.id)
+        .where(models.Session.id == hash_session_token(token))
+    )
+    row = result.first()
+    if not row:
+        return None
+    session, user = row
+    # SQLite drops tzinfo on DateTime(timezone=True) reads; Postgres keeps it.
+    # Normalize to UTC-aware before comparing so both backends behave the same.
+    expires = session.expires_at
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=timezone.utc)
+    if expires <= datetime.now(timezone.utc):
+        return None
+    return user
+
+
 async def require_session(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -26,41 +61,13 @@ async def require_session(
 
     Note: expired sessions are NOT auto-deleted here (kept simple — a sweeper
     job can do that later). They just stop authenticating, same effect."""
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
+    user = await _load_session_user(db, request.cookies.get(SESSION_COOKIE_NAME))
+    if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not signed in",
             headers={"WWW-Authenticate": "Cookie"},
         )
-
-    result = await db.execute(
-        select(models.Session, models.User)
-        .join(models.User, models.Session.user_id == models.User.id)
-        .where(models.Session.id == token)
-    )
-    row = result.first()
-    if not row:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session",
-            headers={"WWW-Authenticate": "Cookie"},
-        )
-
-    session, user = row
-    # SQLite drops tzinfo on DateTime(timezone=True) columns when reading back.
-    # Postgres preserves it. Normalize to UTC-aware before comparing so both
-    # backends behave identically.
-    expires = session.expires_at
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires <= datetime.now(timezone.utc):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired",
-            headers={"WWW-Authenticate": "Cookie"},
-        )
-
     return user
 
 
@@ -91,28 +98,6 @@ async def get_optional_user(
     client_viewed activity entries when an LTP user opens the share URL
     (e.g. via the Preview button).
 
-    The session lookup mirrors require_session's body intentionally — the
-    extra few lines beat extracting a shared helper and then importing it
-    in two places. Anything that changes the session model should be
-    reviewed against BOTH this function and require_session."""
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
-        return None
-
-    result = await db.execute(
-        select(models.Session, models.User)
-        .join(models.User, models.Session.user_id == models.User.id)
-        .where(models.Session.id == token)
-    )
-    row = result.first()
-    if not row:
-        return None
-
-    session, user = row
-    expires = session.expires_at
-    if expires.tzinfo is None:
-        expires = expires.replace(tzinfo=timezone.utc)
-    if expires <= datetime.now(timezone.utc):
-        return None
-
-    return user
+    Shares the same validation as require_session via _load_session_user, so
+    the two can never drift."""
+    return await _load_session_user(db, request.cookies.get(SESSION_COOKIE_NAME))

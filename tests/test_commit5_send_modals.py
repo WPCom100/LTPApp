@@ -43,6 +43,7 @@ if os.path.exists(_db_path):
     os.remove(_db_path)
 
 from backend import crypto, models  # noqa: E402
+from backend.auth_deps import hash_session_token  # noqa: E402
 
 
 _results: list[tuple[str, bool]] = []
@@ -90,7 +91,7 @@ def _setup():
             db.add(sender)
             await db.flush()
             sess = models.Session(
-                id=f"sess-{tag}",
+                id=hash_session_token(f"sess-{tag}"),
                 user_id=sender.id,
                 expires_at=datetime.now(timezone.utc) + timedelta(days=7),
             )

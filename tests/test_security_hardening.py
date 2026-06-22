@@ -134,3 +134,16 @@ def test_share_token_snake_case_also_stripped():
     # Defense against a client that sends the snake_case name directly.
     mapped = _dict_to_row({"share_token": "attacker-chosen"}, models.Invoice)
     assert "share_token" not in mapped
+
+
+# ── L1: session tokens are hashed at rest ──────────────────────────────────
+
+from backend.auth_deps import hash_session_token
+
+
+def test_session_token_hash_deterministic_hex64():
+    a = hash_session_token("a-raw-session-token")
+    assert a == hash_session_token("a-raw-session-token")   # deterministic
+    assert len(a) == 64 and all(c in "0123456789abcdef" for c in a)
+    assert a != hash_session_token("a-raw-session-tokeN")    # input-sensitive
+    assert a != "a-raw-session-token"                        # not the raw value
