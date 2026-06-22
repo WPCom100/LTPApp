@@ -233,12 +233,18 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         await db.refresh(row)
         return _row_to_dict(row)
 
-    async def remove(item_id: int, db: AsyncSession = Depends(get_db)):
+    async def remove(item_id: int, db: AsyncSession = Depends(get_db),
+                     user: models.User = Depends(require_session)):
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
             return {"ok": True, "id": item_id}  # idempotent delete
         await db.delete(row)
+        # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
+        # level by design (trusted staff delete their own drafts) but are now
+        # attributable in the server log: who deleted what, when.
+        print(f"[LTP] audit: user id={user.id} ({user.email}) deleted "
+              f"{path} id={item_id}", flush=True)
         return {"ok": True, "id": item_id}
 
     router.add_api_route(f"/{path}",             get_all, methods=["GET"])

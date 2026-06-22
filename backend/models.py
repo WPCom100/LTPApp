@@ -512,6 +512,10 @@ class Session(Base):
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Last request that used this session — drives the idle timeout in
+    # auth_deps (SECURITY_REVIEW.md L2). Nullable for rows created before the
+    # column existed; populated on next use.
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
 
 
 class QboConnection(Base):

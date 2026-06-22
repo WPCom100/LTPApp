@@ -7,7 +7,7 @@ These are async FastAPI Depends helpers — wire them with `Depends(require_sess
 on a router or individual endpoint. See backend/routes/api.py for usage.
 """
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -16,6 +16,13 @@ from backend import models
 
 
 SESSION_COOKIE_NAME = "ltp_session"
+
+# Idle timeout: a session unused for this long stops authenticating, even
+# though its 30-day absolute lifetime hasn't elapsed (SECURITY_REVIEW.md L2).
+# last_used_at is refreshed at most once per throttle window to avoid a DB
+# write on every request.
+_IDLE_TIMEOUT = timedelta(days=7)
+_LAST_USED_THROTTLE = timedelta(minutes=15)
 
 
 def hash_session_token(token: str) -> str:
@@ -42,13 +49,25 @@ async def _load_session_user(db: AsyncSession, token: str | None):
     if not row:
         return None
     session, user = row
+    now = datetime.now(timezone.utc)
     # SQLite drops tzinfo on DateTime(timezone=True) reads; Postgres keeps it.
     # Normalize to UTC-aware before comparing so both backends behave the same.
     expires = session.expires_at
     if expires.tzinfo is None:
         expires = expires.replace(tzinfo=timezone.utc)
-    if expires <= datetime.now(timezone.utc):
+    if expires <= now:
         return None
+    # Idle timeout (L2): reject a session untouched for longer than the window.
+    last_used = session.last_used_at
+    if last_used is not None:
+        if last_used.tzinfo is None:
+            last_used = last_used.replace(tzinfo=timezone.utc)
+        if now - last_used > _IDLE_TIMEOUT:
+            return None
+    # Refresh last_used at most once per throttle window (the surrounding
+    # get_db commits it). Skips a write on every request.
+    if last_used is None or (now - last_used) > _LAST_USED_THROTTLE:
+        session.last_used_at = now
     return user
 
 
