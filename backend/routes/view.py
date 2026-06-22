@@ -319,10 +319,16 @@ async def get_view(
 # ── POST /api/view/{token}/accept ─────────────────────────────────────────
 
 @view_router.post("/{token}/accept")
-async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def post_accept(token: str, body: dict, request: Request, db: AsyncSession = Depends(get_db)):
     """Client-driven accept. Only valid on Quotes; invoices 400. Idempotent-
     ish: if the quote is already accepted/declined/converted, 409 with the
-    current status so the client UI can update without flipping anything."""
+    current status so the client UI can update without flipping anything.
+
+    Replay/forgery hardening (SECURITY_REVIEW.md H12): the signature is
+    validated as a real image (C1), the terminal-status check below blocks
+    re-decision, the endpoint is rate-limited (H2), and we capture the client
+    IP/User-Agent on the activity entry for non-repudiation (internal-only —
+    public_activity does not echo these fields back)."""
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -367,6 +373,7 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
 
     # Append activity + flip status
     now = datetime.now()
+    ip, ua = view_tracking.extract_client_meta(request)
     entry = {
         "id": "ca-" + _secrets.token_urlsafe(6),
         "date": now.strftime("%Y-%m-%d"),
@@ -377,6 +384,9 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
         "message": "Quote accepted by client",
         "comment": comment or None,
         "signatureDataUrl": signature,
+        # Internal audit metadata (not echoed by public_activity).
+        "ip": ip or None,
+        "userAgent": (ua or "")[:300] or None,
     }
     row.activity = list(row.activity or []) + [entry]
     flag_modified(row, "activity")
@@ -388,7 +398,7 @@ async def post_accept(token: str, body: dict, db: AsyncSession = Depends(get_db)
 # ── POST /api/view/{token}/decline ────────────────────────────────────────
 
 @view_router.post("/{token}/decline")
-async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db)):
+async def post_decline(token: str, body: dict, request: Request, db: AsyncSession = Depends(get_db)):
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -412,6 +422,7 @@ async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db
         )
 
     now = datetime.now()
+    ip, ua = view_tracking.extract_client_meta(request)
     entry = {
         "id": "cd-" + _secrets.token_urlsafe(6),
         "date": now.strftime("%Y-%m-%d"),
@@ -421,6 +432,9 @@ async def post_decline(token: str, body: dict, db: AsyncSession = Depends(get_db
         "userId": None,
         "message": "Quote declined by client",
         "comment": comment or None,
+        # Internal audit metadata (not echoed by public_activity).
+        "ip": ip or None,
+        "userAgent": (ua or "")[:300] or None,
     }
     row.activity = list(row.activity or []) + [entry]
     flag_modified(row, "activity")

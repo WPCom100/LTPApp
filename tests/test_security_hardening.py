@@ -236,3 +236,24 @@ def test_reencrypt_roundtrip_preserves_plaintext():
     assert _crypto.decrypt_token(ct2) == "a-secret-refresh-token"
     assert _reencrypt(None) is None
     assert _reencrypt("") is None
+
+
+# ── H12: accept/decline audit metadata stays internal ──────────────────────
+
+from backend.routes._shared import public_activity
+
+
+def test_public_activity_strips_audit_and_internal_fields():
+    entries = [{
+        "id": "ca-x", "date": "2026-01-01", "time": "10:00",
+        "type": "client_accepted", "user": "Client Name",
+        "message": "Quote accepted by client",
+        "signatureDataUrl": "data:image/png;base64,xxx", "comment": "ok",
+        "ip": "1.2.3.4", "userAgent": "some-agent", "userId": 7,
+    }]
+    out = public_activity(entries)
+    assert len(out) == 1
+    # IP / User-Agent / internal user id never reach the public payload.
+    for leaked in ("ip", "userAgent", "userId"):
+        assert leaked not in out[0]
+    assert out[0]["user"] == "Client Name"  # the name is still shown
