@@ -731,3 +731,20 @@ window.LTP_QUOTE_REF = function(q) {
   var year = (q.createdDate || "").substring(0, 4) || String(new Date().getFullYear());
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
 };
+
+// Select a number field's contents when it gains focus, so the user's first
+// keystroke replaces the current value (e.g. a default 0) instead of
+// appending to it — no more "type, then go back and delete the leading 0".
+// Bound once at the document level (event delegation) so it covers EVERY
+// numeric input app-wide, regardless of which component renders it (LTPInput,
+// the rentals R.INP inputs, raw <input type="number">, etc.). The setTimeout
+// lets the browser's own click cursor-placement settle first, then we select.
+if (typeof document !== "undefined" && !window.__LTP_NUM_SELECT_BOUND) {
+  window.__LTP_NUM_SELECT_BOUND = true;
+  document.addEventListener("focusin", function(e) {
+    var el = e.target;
+    if (el && el.tagName === "INPUT" && el.type === "number") {
+      setTimeout(function() { try { el.select(); } catch (_e) {} }, 0);
+    }
+  });
+}

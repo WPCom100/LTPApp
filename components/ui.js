@@ -53,10 +53,17 @@
       setTouched(true);
       if (onBlurProp) onBlurProp(value);
     }
+    // Number fields: show a 0 value as an empty field (with a "0" placeholder)
+    // so the user types into a blank box instead of fighting a stuck leading
+    // zero, and can clear it back to empty. select-on-focus (theme.js, global)
+    // also lets a non-zero value be overtyped without manual deleting.
+    var isNum = (type === "number");
+    var shownValue = (isNum && (value === 0 || value === "0")) ? "" : value;
+    var shownPlaceholder = (isNum && (placeholder == null || placeholder === "")) ? "0" : placeholder;
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: error ? B.danger : B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
       textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onBlur: handleBlur, placeholder: placeholder, rows: 3, style: Object.assign({}, fs, { resize: "vertical" }) })
-               : h("input", { type: type || "text", value: value, onChange: function(e) { onChange(e.target.value); }, onBlur: handleBlur, placeholder: placeholder, style: fs }),
+               : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onBlur: handleBlur, placeholder: shownPlaceholder, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
   };
