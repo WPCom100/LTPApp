@@ -155,16 +155,14 @@
 
   function renderShift(s, i) {
     var timeRange = [fmtTime(s.startTime), fmtTime(s.endTime)].filter(function(x) { return x; }).join(" – ");
-    return h("div", { key: s.positionId || i, style: { display: "flex", alignItems: "center", gap: 14, padding: "12px 16px", background: "#2a3a42", border: "1px solid #3a4a52", borderRadius: "8px", marginBottom: 8 } },
-      h("div", { style: { flex: 1, minWidth: 0 } },
-        h("div", { style: { fontSize: "14px", fontWeight: 700, color: "#fff", marginBottom: 3 } }, s.roleLabel || "Crew"),
-        h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY } },
-          (s.shiftTitle ? s.shiftTitle + "  ·  " : "") + (s.department || ""))
-      ),
-      h("div", { style: { textAlign: "right", flexShrink: 0 } },
-        h("div", { style: { fontSize: "12px", fontWeight: 600, color: BACKUP_ORANGE } }, fmtDate(s.date)),
-        timeRange && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginTop: 2 } }, timeRange)
-      )
+    // Stacked (not two-column): role, then date · time, then the day
+    // description beneath the times — keeps each line short so nothing wraps.
+    var dateTime = [fmtDate(s.date), timeRange].filter(function(x) { return x; }).join("  ·  ");
+    var desc = [s.shiftTitle, s.department].filter(function(x) { return x; }).join("  ·  ");
+    return h("div", { key: s.positionId || i, style: { padding: "12px 16px", background: "#2a3a42", border: "1px solid #3a4a52", borderLeft: "3px solid " + BACKUP_ORANGE, borderRadius: "8px", marginBottom: 8 } },
+      h("div", { style: { fontSize: "14px", fontWeight: 700, color: "#fff" } }, s.roleLabel || "Crew"),
+      dateTime && h("div", { style: { fontSize: "12px", fontWeight: 600, color: BACKUP_ORANGE, marginTop: 3 } }, dateTime),
+      desc && h("div", { style: { fontSize: "11px", color: FULL_UP_GRAY, marginTop: 2 } }, desc)
     );
   }
 

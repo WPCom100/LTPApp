@@ -181,9 +181,19 @@ _FALLBACK_CREW_BODY = (
 # email still renders before any Settings save. The LTP stacked logo doubles as
 # the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
 _DEFAULT_ACCENT = "#E8731A"
+# The brand's vibrant orange used on the primary CTA button (same hue as the
+# quote/invoice "View & Accept or Decline" button) — punchier than the muted
+# accent used for borders/edges.
+_CTA_ORANGE = "#EF5822"
 _LTP_LOGO_URL = (
     "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
 )
+
+# Shared body-paragraph style — explicit font-family so template text renders
+# identically everywhere (don't rely on inheritance across table boundaries,
+# which some mail clients drop).
+_BODY_P_STYLE = ("margin:0 0 14px;font-size:14px;line-height:1.6;color:#3d4852;"
+                 "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif")
 
 
 def _fmt_iso_date(iso: str) -> str:
@@ -229,17 +239,22 @@ def _email_brand(settings_data: dict) -> dict:
 
 
 def _crew_shifts_html(shifts: list, accent: str) -> str:
-    """Themed shift list — one accent-edged card per shift."""
+    """Themed shift list — one accent-edged card per shift. Date + time on one
+    line, the day description (shiftTitle) on its own line beneath so a long
+    row doesn't wrap onto two lines."""
     rows = []
     for s in shifts:
         when = _fmt_iso_date(s.get("date"))
         rng = " – ".join([x for x in (_fmt_hhmm(s.get("startTime")), _fmt_hhmm(s.get("endTime"))) if x])
-        meta = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (when, rng, s.get("shiftTitle") or "") if x])
+        when_time = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (when, rng) if x])
+        title = escape(s.get("shiftTitle") or "")
+        line_dt = ('<div style="font-size:12px;color:#7a838c;margin-top:3px">' + when_time + '</div>') if when_time else ""
+        line_title = ('<div style="font-size:12px;font-weight:600;color:#9aa3ab;margin-top:2px">' + title + '</div>') if title else ""
         rows.append(
             '<tr><td style="padding:11px 14px;border:1px solid #eceef0;border-left:3px solid ' + accent + ';'
             'background-color:#ffffff;border-radius:6px">'
             '<div style="font-size:14px;font-weight:bold;color:#233038">' + escape(s.get("roleLabel") or "Crew") + '</div>'
-            '<div style="font-size:12px;color:#7a838c;margin-top:3px">' + meta + '</div>'
+            + line_dt + line_title +
             '</td></tr><tr><td style="font-size:0;line-height:0;padding:0">&nbsp;</td></tr>'
         )
     if not rows:
@@ -263,25 +278,36 @@ def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent
         '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + escape(project_name or "Project") + '</div>'
         '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + n + ' — review the details and respond</div>'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
-        '<td style="background-color:' + accent + ';border-radius:7px">'
-        '<a href="' + url + '" style="display:inline-block;padding:14px 36px;font-size:15px;font-weight:bold;'
+        '<td style="background-color:' + _CTA_ORANGE + ';border-radius:7px">'
+        '<a href="' + url + '" style="display:inline-block;padding:14px 38px;font-size:15px;font-weight:bold;'
         'color:#ffffff;text-decoration:none">View &amp; Respond</a></td>'
         '</tr></table>'
         '</td></tr></table>'
     )
 
 
-def _text_to_html(text: str) -> str:
-    """Minimal plain-text → HTML for the crew email body. Escapes the text (a
-    name with & or < stays safe) but leaves {{token}} markers intact for the
-    HTML-fragment substitution that follows. Blank lines split paragraphs."""
-    html = ""
-    for para in escape(text or "").split("\n\n"):
-        if para.strip() == "":
+def _paragraphs_to_html(text: str, blocks: dict | None = None) -> str:
+    """Plain-text body → HTML. Blank lines split paragraphs; text is escaped.
+    A paragraph that is *exactly* a block token (e.g. "{{shifts}}") is emitted
+    as that block's HTML — a sibling, NOT wrapped in <p>. That avoids both the
+    invalid table-inside-<p> the sanitizer would hoist apart AND the empty
+    <p></p> gaps it left behind, which made spacing look inconsistent above vs.
+    below the header. Inline tokens (a token mid-sentence) are still substituted."""
+    blocks = blocks or {}
+    out = []
+    for para in (text or "").split("\n\n"):
+        p = para.strip()
+        if p == "":
             continue
-        html += ('<p style="margin:0 0 14px;font-size:14px;line-height:1.6;color:#3d4852">'
-                 + para.replace("\n", "<br>") + "</p>")
-    return html
+        if p in blocks:
+            out.append(blocks[p])
+            continue
+        html_p = '<p style="' + _BODY_P_STYLE + '">' + escape(p).replace("\n", "<br>") + "</p>"
+        for tok, frag in blocks.items():
+            if tok in html_p:
+                html_p = html_p.replace(tok, frag)
+        out.append(html_p)
+    return "".join(out)
 
 
 def _crew_email_shell(inner_html: str, brand: dict) -> str:
@@ -290,24 +316,26 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
     accent = brand["accent"]
     company = escape(brand["company"])
     if brand["logo"]:
-        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" height="58" '
+        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" height="72" '
                     'style="display:block;border:0;width:auto;max-width:100%;margin:0 auto">')
     else:
-        masthead = ('<span style="font-size:21px;font-weight:bold;color:' + accent + ';'
+        masthead = ('<span style="font-size:22px;font-weight:bold;color:' + accent + ';'
                     'letter-spacing:0.03em">' + company + '</span>')
     footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
+    # width:100% + max-width (NOT a fixed width:600px) so the card fills a phone
+    # screen and stays centered — a hard 600px overflows and looks off-center.
     return (
-        '<div style="background-color:#f1f3f5;padding:26px 12px;'
+        '<div style="background-color:#f1f3f5;padding:24px 10px;'
         "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif\">"
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f1f3f5">'
         '<tr><td align="center">'
-        '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" '
-        'style="width:600px;max-width:600px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:26px 30px 18px;text-align:center;border-bottom:3px solid ' + accent + '">' + masthead + '</td></tr>'
-        '<tr><td style="padding:24px 30px 28px">' + inner_html + '</td></tr>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
+        'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
+        '<tr><td style="padding:24px 28px 16px;text-align:center;border-bottom:3px solid ' + accent + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:22px 28px 26px">' + inner_html + '</td></tr>'
         '</table>'
-        '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px">'
-        '<tr><td style="padding:16px 30px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">' + footer + '</td></tr>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
+        '<tr><td style="padding:16px 28px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">' + footer + '</td></tr>'
         '</table>'
         '</td></tr></table></div>'
     )
@@ -321,11 +349,11 @@ def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, br
             .replace("{{crewName}}", crew_name)
             .replace("{{projectName}}", project_name)
             .replace("{{companyName}}", company))
-    html = _text_to_html(body)
-    return (html
-            .replace("{{header}}", _crew_header_html(project_name, len(shifts), view_url, brand["accent"]))
-            .replace("{{shifts}}", _crew_shifts_html(shifts, brand["accent"]))
-            .replace("{{signature}}", signature_html))
+    return _paragraphs_to_html(body, {
+        "{{header}}": _crew_header_html(project_name, len(shifts), view_url, brand["accent"]),
+        "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]),
+        "{{signature}}": signature_html,
+    })
 
 
 async def _send_crew_email(db, user, contact, project, shifts, token, settings_data) -> dict:
@@ -406,7 +434,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             return t
 
         subject = _sub(tmpl.get("subject") or "{{projectName}}")
-        inner = _text_to_html(_sub(tmpl.get("body") or "")).replace("{{signature}}", _render_signature(user, settings_data))
+        inner = _paragraphs_to_html(_sub(tmpl.get("body") or ""), {"{{signature}}": _render_signature(user, settings_data)})
         final_html = email_html(_crew_email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
