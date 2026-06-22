@@ -197,7 +197,14 @@ class PayloadSizeLimitMiddleware:
 # style-src — acceptable risk (CSS XSS is much less powerful than JS XSS).
 # The inline <script> mount was extracted to /mount.js precisely so we can
 # keep script-src strict (no 'unsafe-inline').
-_IS_HTTPS = os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
+# Whether we serve over HTTPS — drives Secure cookies, SessionMiddleware
+# https_only, and HSTS. TWO independent signals so a single misconfigured env
+# var can't silently turn transport security OFF (SECURITY_REVIEW.md H7): an
+# explicit LTP_FORCE_HTTPS switch (set this in production), OR an https://
+# redirect URI. Per-request transport (X-Forwarded-Proto) is additionally
+# honored for the app-session cookie in routes/auth.py.
+_FORCE_HTTPS = os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on")
+_IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "

@@ -40,30 +40,44 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SESSION_LIFETIME = timedelta(days=30)
 
 
-def _cookie_secure() -> bool:
-    """Use Secure cookie attribute only when serving over HTTPS. Without this
-    check, the cookie wouldn't be set on http://localhost during dev."""
-    redirect = os.environ.get("LTP_OAUTH_REDIRECT_URI", "")
-    return redirect.startswith("https://")
+def _cookie_secure(request: Request | None = None) -> bool:
+    """Whether to set the Secure cookie attribute. Fail-safe: any one signal
+    being true => Secure (SECURITY_REVIEW.md H7):
+      - explicit LTP_FORCE_HTTPS switch (production),
+      - an https:// LTP_OAUTH_REDIRECT_URI,
+      - the actual request transport (scheme / X-Forwarded-Proto) — so a real
+        HTTPS request gets a Secure cookie even if the config is wrong.
+    Returns False only in genuine http dev, where Secure would drop the cookie."""
+    if os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    if os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://"):
+        return True
+    if request is not None:
+        if request.url.scheme == "https":
+            return True
+        xfp = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+        if xfp == "https":
+            return True
+    return False
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _set_session_cookie(response: Response, token: str, request: Request | None = None) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         max_age=int(SESSION_LIFETIME.total_seconds()),
         httponly=True,
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="lax",
         path="/",
     )
 
 
-def _clear_session_cookie(response: Response) -> None:
+def _clear_session_cookie(response: Response, request: Request | None = None) -> None:
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
         path="/",
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         samesite="lax",
     )
 
@@ -226,7 +240,7 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     await db.flush()
 
     response = RedirectResponse(url="/", status_code=302)
-    _set_session_cookie(response, session_token)
+    _set_session_cookie(response, session_token, request)
     return response
 
 
@@ -251,7 +265,7 @@ async def logout(
         )
         await db.flush()
     response = Response(status_code=204)
-    _clear_session_cookie(response)
+    _clear_session_cookie(response, request)
     return response
 
 
