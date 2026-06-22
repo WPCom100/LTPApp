@@ -46,7 +46,7 @@ ENUMS = {
     "client_type":      {"company", "contact"},
     "allocation_state": {"reserved", "allocated", "checked-out", "returned", "under-maintenance"},
     "crew_status":      {"active", "inactive"},
-    "company_status":   {"active", "inactive", "prospect"},
+    "company_status":   {"active", "inactive", "one-time", "prospect"},
     "equipment_status": {"available", "rented", "under-maintenance"},
 }
 
