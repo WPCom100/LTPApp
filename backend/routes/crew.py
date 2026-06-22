@@ -296,6 +296,60 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
         return {"emailed": False, "error": "unexpected error sending email"}
 
 
+# Informational crew notifications (confirmed / cancelled / not-selected). Unlike
+# the request email these carry NO Accept/Decline header — they're one-way — and
+# resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
+# from a representative position, so the shipped template bodies AND their
+# Settings previews stay valid without a redesign.
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected"}
+
+
+async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data) -> dict:
+    """Best-effort send of a crew notification email. NEVER raises (mirrors
+    _send_crew_email): a delivery failure must not undo the producer's
+    confirm/release/cancel, which already happened client-side."""
+    if not (contact and contact.email):
+        return {"emailed": False, "error": "no email on file"}
+    try:
+        tmpl = ((settings_data.get("emailTemplates") or {}).get(template_key) or {})
+        first = shifts[0] if shifts else {}
+        repl = {
+            "{{companyName}}": settings_data.get("companyName") or "LTP",
+            "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
+            "{{projectName}}": (project.name if project else "") or "Project",
+            "{{role}}": first.get("roleLabel") or "",
+            "{{date}}": _fmt_iso_date(first.get("date")) if first.get("date") else "",
+            "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
+            "{{wrapTime}}": _fmt_hhmm(first.get("endTime")) if first.get("endTime") else "",
+            "{{location}}": (project.venue if project else "") or "",
+        }
+
+        def _sub(t):
+            for k, v in repl.items():
+                t = t.replace(k, v)
+            return t
+
+        subject = _sub(tmpl.get("subject") or "{{projectName}}")
+        html = _text_to_html(_sub(tmpl.get("body") or "")).replace("{{signature}}", _render_signature(user, settings_data))
+        final_html = email_html(html)
+        reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
+        await gmail.send(
+            user=user, db=db,
+            client_id=os.environ.get("GOOGLE_CLIENT_ID", ""),
+            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET", ""),
+            to=[contact.email], cc=[], subject=subject,
+            html_body=final_html, text_body=None, reply_to=reply_to,
+        )
+        return {"emailed": True, "to": contact.email}
+    except gmail.GmailReconnectRequired as e:
+        return {"emailed": False, "needsReconnect": True, "error": str(e)}
+    except gmail.GmailSendError as e:
+        return {"emailed": False, "error": str(e)}
+    except Exception as e:
+        print(f"[LTP] crew notify ({template_key}) failed: {e!r}", flush=True)
+        return {"emailed": False, "error": "unexpected error sending email"}
+
+
 # ── PUBLIC: GET /api/crew/{token} ───────────────────────────────────────────
 
 @crew_public_router.get("/{token}")
@@ -405,8 +459,9 @@ async def send_crew_request(
     project, flip those positions open/declined → requested, and return the
     request (with token + crew link). Defaults to the WHOLE project; pass
     `positionIds` to send only a subset (split a project into multiple
-    requests). The crew-request EMAIL is wired in a later phase — for now the
-    request + token exist and the producer can copy the crew link.
+    requests). Emails the crew member their Accept/Decline link (best-effort —
+    a delivery failure leaves the request intact; see emailStatus in the
+    response).
 
     Validates the crew member exists, is crew, and has an email on file."""
     if not isinstance(body, dict):
@@ -510,3 +565,76 @@ async def withdraw_crew_request(
     await db.flush()
     await db.refresh(req)
     return _request_dict(req)
+
+
+# ── PRODUCER: POST /api/crew-requests/{id}/resend ───────────────────────────
+
+@crew_admin_router.post("/{req_id}/resend")
+async def resend_crew_request(
+    req_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: models.User = Depends(require_session),
+):
+    """Re-send the request email for a still-PENDING request (same token, same
+    shifts) — for when the crew member lost the original. No new request is
+    created and positions are untouched. 409 if the request was already
+    answered or withdrawn (nothing to chase). Returns the request + emailStatus."""
+    r = await db.execute(select(models.CrewRequest).where(models.CrewRequest.id == req_id))
+    req = r.scalar_one_or_none()
+    if req is None:
+        raise HTTPException(status_code=404, detail="not found")
+    if req.status != "pending":
+        raise HTTPException(
+            status_code=409,
+            detail={"status": req.status, "message": f"cannot resend a {req.status} request"},
+        )
+    project = await _load_project(db, req.project_id)
+    contact = (await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=404, detail="crew contact not found")
+    services = (await db.execute(select(models.Service))).scalars().all()
+    shifts = _crew_shifts(project, req.position_ids, {s.id: s for s in services}) if project else []
+    settings_data = await load_settings(db)
+    email_status = await _send_crew_email(db, user, contact, project, shifts, req.token, settings_data)
+    out = _request_dict(req)
+    out["emailStatus"] = email_status
+    return out
+
+
+# ── PRODUCER: POST /api/crew-requests/notify ────────────────────────────────
+
+@crew_admin_router.post("/notify")
+async def crew_notify(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user: models.User = Depends(require_session),
+):
+    """Send an informational crew email (confirmed / cancelled / not-selected)
+    to a crew member as the producer. Composed server-side from the named
+    template; delivery is best-effort (returns emailStatus, never rolls back
+    the producer's status change). Body: {contactId, projectId, template,
+    positionIds?}."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
+    contact_id = body.get("contactId")
+    project_id = body.get("projectId")
+    template = body.get("template")
+    position_ids = body.get("positionIds") or []
+    if not isinstance(contact_id, int) or isinstance(contact_id, bool):
+        raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "required integer"})
+    if not isinstance(project_id, int) or isinstance(project_id, bool):
+        raise HTTPException(status_code=400, detail={"field": "projectId", "reason": "required integer"})
+    if template not in _CREW_NOTIFY_TEMPLATES:
+        raise HTTPException(status_code=400, detail={"field": "template", "reason": f"must be one of {sorted(_CREW_NOTIFY_TEMPLATES)}"})
+
+    project = await _load_project(db, project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    contact = (await db.execute(select(models.Contact).where(models.Contact.id == contact_id))).scalar_one_or_none()
+    if contact is None:
+        raise HTTPException(status_code=404, detail="crew contact not found")
+    services = (await db.execute(select(models.Service))).scalars().all()
+    shifts = _crew_shifts(project, position_ids, {s.id: s for s in services})
+    settings_data = await load_settings(db)
+    email_status = await _send_crew_notify(db, user, contact, project, shifts, template, settings_data)
+    return {"emailStatus": email_status}

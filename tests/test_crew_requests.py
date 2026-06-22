@@ -61,6 +61,9 @@ P_CONFIRM  = 7008   # no-sendable (already confirmed)
 P_EMAIL    = 7009   # email composition (mocked Gmail)
 P_RECONN   = 7010   # email best-effort: needsReconnect, request still created
 P_LIST     = 7011   # GET /api/crew-requests list shape + project filter
+P_RESEND   = 7012   # resend re-emails a pending request
+P_RESEND2  = 7013   # resend on a non-pending request → 409
+P_NOTIFY   = 7014   # /notify informational template emails
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -147,6 +150,15 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_LIST, name="Gala List", schedule=[
                     _shift("s11", "Show", "2026-07-24", [_pos("p11a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_RESEND, name="Gala Resend", schedule=[
+                    _shift("s12", "Show", "2026-07-26", [_pos("p12a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_RESEND2, name="Gala Resend2", schedule=[
+                    _shift("s13", "Show", "2026-07-28", [_pos("p13a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_NOTIFY, name="Gala Notify", schedule=[
+                    _shift("s14", "Show", "2026-07-30", [_pos("p14a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -378,6 +390,75 @@ def test_list_crew_requests_shape_and_filter():
     assert filtered and all(r["projectId"] == P_LIST for r in filtered)
 
 
+# ── resend + notify (best-effort, mocked Gmail) ─────────────────────────────
+
+def test_resend_pending_reemails_same_token():
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    created = _send(client, tok, P_RESEND, C1).json()   # admin has no Gmail → pending, not emailed
+    assert created["status"] == "pending"
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "rm-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/" + str(created["id"]) + "/resend", cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "pending"            # unchanged — no new request
+    assert body["token"] == created["token"]      # same token re-used
+    assert body["emailStatus"]["emailed"] is True
+    assert captured["to"] == ["casey@crew.com"]
+    assert ("/#/crew/" + created["token"]) in captured["html_body"]
+
+
+def test_resend_non_pending_is_409():
+    client, tok = _setup()
+    created = _send(client, tok, P_RESEND2, C1).json()
+    client.post("/api/crew/" + created["token"] + "/accept", json={})   # now accepted
+    r = client.post("/api/crew-requests/" + str(created["id"]) + "/resend", cookies={"ltp_session": tok})
+    assert r.status_code == 409
+
+
+def test_notify_sends_named_template_email():
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "nm-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": P_NOTIFY, "template": "crewConfirmed", "positionIds": ["p14a"]},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    assert captured["to"] == ["casey@crew.com"]
+    assert "Gala Notify" in captured["subject"]
+    # Informational — carries NO Accept/Decline crew link.
+    assert "/#/crew/" not in captured["html_body"]
+
+
+def test_notify_rejects_unknown_template():
+    client, tok = _setup()
+    r = client.post("/api/crew-requests/notify",
+                    json={"contactId": C1, "projectId": P_NOTIFY, "template": "bogus"},
+                    cookies={"ltp_session": tok})
+    assert r.status_code == 400
+
+
 def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
@@ -393,6 +474,10 @@ def main() -> int:
         test_send_emails_crew_member_when_gmail_connected,
         test_send_without_gmail_still_creates_request_and_reports_reconnect,
         test_list_crew_requests_shape_and_filter,
+        test_resend_pending_reemails_same_token,
+        test_resend_non_pending_is_409,
+        test_notify_sends_named_template_email,
+        test_notify_rejects_unknown_template,
     ]
     failed = 0
     try:

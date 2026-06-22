@@ -193,11 +193,18 @@ producer can withdraw + re-send.
    reconnect-aware), reuses the Gmail pipeline + workspace signature.
 4. ✅ **Producer UI** — Labor → Assignments: send creates real tokenized
    requests (one per crew per project), optimistic position flip, Crew Requests
-   panel (live status + copy-link + withdraw), reconciles responses on load.
-5. ◧ **Verification** — backend: 13 pytest cases (full state machine, email,
-   security, list shape); full suite green file-by-file (248 tests). Frontend:
-   syntax-checked + logic-reviewed; live visual pass pending (no browser in the
-   build sandbox).
+   panel (live status + the crew's note + copy-link + **resend** + withdraw),
+   reconciles responses on load.
+4b. ✅ **Notifications + resend** — `POST /api/crew-requests/{id}/resend`
+   re-emails a pending request (same token); `POST /api/crew-requests/notify`
+   sends the informational `crewConfirmed` / `crewCancelled` / `crewNotSelected`
+   templates (no Accept/Decline header), wired to "Confirm & Notify" /
+   "Release & Notify" / "Cancel & Notify". The crew's accept/decline note is
+   surfaced in the producer panel.
+5. ◧ **Verification** — backend: 17 pytest cases (full state machine, email,
+   resend, notify + template allow-list, security, list shape); full suite green
+   file-by-file (252 tests). Frontend: syntax-checked + logic-reviewed; live
+   visual pass pending (no browser in the build sandbox).
 
 ## 10. Verification
 

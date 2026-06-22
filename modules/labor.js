@@ -327,6 +327,38 @@
         .catch(function() { loadCrewRequests(); });
     }
 
+    function resendRequest(req) {
+      fetch("/api/crew-requests/" + req.id + "/resend", { method: "POST", credentials: "include" })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+        .then(function(res) {
+          var es = (res.ok && res.body.emailStatus) || {};
+          setSendResult(es.emailed
+            ? { sent: 1, reconnect: false, errors: [], headline: "✓ Email re-sent to " + crewLabel(req.contactId) }
+            : { sent: 0, reconnect: !!es.needsReconnect, errors: es.needsReconnect ? [] : [crewLabel(req.contactId) + ": " + ((res.body && res.body.detail && res.body.detail.message) || es.error || "resend failed")], headline: "Email not re-sent" });
+          loadCrewRequests();
+        })
+        .catch(function() { loadCrewRequests(); });
+    }
+
+    // Best-effort informational crew email (confirmed / cancelled / not-selected).
+    // The status change already happened locally; surface only email failures so
+    // the producer knows to reconnect Gmail / follow up manually.
+    function crewNotify(contactId, projectId, template, positionIds) {
+      fetch("/api/crew-requests/notify", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contactId: contactId, projectId: projectId, template: template, positionIds: positionIds || [] }),
+      }).then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+        .then(function(res) {
+          var es = (res.ok && res.body.emailStatus) || {};
+          if (!es.emailed) {
+            setSendResult({ sent: 0, reconnect: !!es.needsReconnect,
+              errors: es.needsReconnect ? [] : [crewLabel(contactId) + ": " + (es.error || "email not sent")],
+              headline: "Status saved — notification email not sent" });
+          }
+        })
+        .catch(function() {});
+    }
+
     // Backward status moves that need confirmation
     var SEVERITY = { confirmed: 4, accepted: 3, requested: 2, open: 1, declined: 0 };
 
@@ -362,11 +394,18 @@
       updatePosition(setProjects, pos.projectId, pos.schedItemId, pos.posId, { status: newStatus });
     }
 
-    function executeStatusChange() {
+    function executeStatusChange(notify) {
       if (!statusDlg) return;
       var pos = statusDlg.pos;
       var newStatus = statusDlg.newStatus;
       var clearCrew = statusDlg.clearCrew;
+      // Notify the crew member of the change (best-effort) when requested.
+      // pos.status is still the PRE-change status here: accepted → "not
+      // selected", confirmed → "cancelled". Withdraw (requested) sends nothing.
+      if (notify) {
+        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : (pos.status === "confirmed" ? "crewCancelled" : null);
+        if (ntmpl) crewNotify(pos.crewId, pos.projectId, ntmpl, [pos.posId]);
+      }
       // Cascade to ALL positions for this crew on this date in this project
       setProjects(function(prev) {
         return prev.map(function(p) {
@@ -616,7 +655,9 @@
 
     function executeConfirm(notify) {
       if (!confirmDlg) return;
-      confirmDayBooking(confirmDlg.pos);
+      var p = confirmDlg.pos;
+      confirmDayBooking(p);
+      if (notify) crewNotify(p.crewId, p.projectId, "crewConfirmed", [p.posId]);
       setConfirmDlg(null);
     }
 
@@ -691,7 +732,7 @@
       sendResult && h("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "8px 12px", borderRadius: "6px", background: (sendResult.errors.length ? B.danger : B.success) + "12", border: "1px solid " + (sendResult.errors.length ? B.danger : B.success) + "44" } },
         h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec, lineHeight: 1.5 } },
           h("span", { style: { fontWeight: 700, color: sendResult.errors.length ? B.danger : B.success } },
-            sendResult.sent > 0 ? "\u2713 " + sendResult.sent + " request" + (sendResult.sent !== 1 ? "s" : "") + " sent" : "No requests sent"),
+            sendResult.headline || (sendResult.sent > 0 ? "\u2713 " + sendResult.sent + " request" + (sendResult.sent !== 1 ? "s" : "") + " sent" : "No requests sent")),
           sendResult.reconnect && h("span", { style: { color: B.warn } }, "  \u00b7  Email not sent \u2014 connect Google in Settings, or copy links below."),
           sendResult.errors.length > 0 && h("div", { style: { color: B.danger, marginTop: 4 } }, sendResult.errors.join("; "))),
         h("button", { onClick: function() { setSendResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "\u00d7")),
@@ -709,15 +750,19 @@
             "Crew Requests (" + active.length + ")"),
           active.map(function(r, i) {
             var st = r.status || "pending";
-            return h("div", { key: r.id, style: { display: "flex", alignItems: "center", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
+            return h("div", { key: r.id, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  \u00b7  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : ""))),
-              h("span", { style: { fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
+                h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  \u00b7  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                // Note the crew member left when they accepted/declined.
+                r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "\u201c" + r.comment + "\u201d")),
+              h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
               h("button", { onClick: function() { copyCrewLink(r); },
-                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: copiedId === r.id ? B.success : B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, copiedId === r.id ? "\u2713 Copied" : "Copy link"),
+                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: copiedId === r.id ? B.success : B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, copiedId === r.id ? "\u2713 Copied" : "Copy link"),
+              st === "pending" && h("button", { onClick: function() { resendRequest(r); },
+                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
               st === "pending" && h("button", { onClick: function() { withdrawRequest(r); },
-                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
+                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
             );
           }));
       }(),
@@ -920,8 +965,8 @@
             ),
             h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
               h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
-              showEmail && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(); } }, statusDlg.pos.status === "confirmed" ? "Cancel Without Email" : "Release Quietly"),
-              h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(); } }, statusDlg.actionLabel))
+              showEmail && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, statusDlg.pos.status === "confirmed" ? "Cancel Without Email" : "Release Quietly"),
+              h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(showEmail); } }, statusDlg.actionLabel))
           );
         }()
       ),
