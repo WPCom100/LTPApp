@@ -420,6 +420,24 @@ window.LTP_renderHeader = function(template, vars) {
     .replace(/\{\{total\}\}/g, vars.total || "");
 };
 
+// Render the {{masthead}} placeholder for the Send-modal preview. FRONTEND
+// counterpart of backend/routes/crew.py::render_masthead — the authoritative
+// substitution happens server-side at send time (email.py). The masthead is the
+// self-hosted linear lockup butting a 4px brand-orange rule that starts at the
+// mask's left edge and bleeds to the right edge. The logo is served by the app
+// itself, so window.location.origin gives the right absolute URL in preview.
+// MUST stay in sync with the backend (tests/test_masthead_block.py pins both).
+window.LTP_renderMasthead = function() {
+  var origin = (window.location && window.location.origin) || "";
+  var company = ((window.LTP_DATA_SETTINGS || {}).companyName) || "Luminary Technology & Productions";
+  var logo = '<img src="' + origin + '/assets/logos/luminary-masthead.png" alt="' + company + '" width="380" '
+    + 'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">';
+  return '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr>'
+    + '<td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td>'
+    + '<td style="padding:26px 30px 0 0;border-bottom:4px solid #f15927;font-size:0;line-height:0">' + logo + '</td>'
+    + '</tr></table>';
+};
+
 // Build a Send-modal preview body: substitute the placeholders the
 // backend would normally fill in at send time, so the preview pane
 // shows the SAME shape the recipient gets. Real send still leaves
@@ -434,7 +452,8 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
   var sig = window.LTP_renderSignature(signatureTemplate || "");
   return String(body)
     .replace(/\{\{viewUrl\}\}/g, viewUrl || "")
-    .replace(/\{\{signature\}\}/g, sig);
+    .replace(/\{\{signature\}\}/g, sig)
+    .replace(/\{\{masthead\}\}/g, window.LTP_renderMasthead());
 };
 
 // ── EmailBodyEditor bidirectional conversion ─────────────────────────────

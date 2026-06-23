@@ -312,20 +312,40 @@ def _paragraphs_to_html(text: str, blocks: dict | None = None) -> str:
     return "".join(out)
 
 
+def render_masthead(brand: dict) -> str:
+    """Self-contained branded masthead block: the linear logo butting a 4px
+    color-matched rule that begins at the mask's left edge (after a 31px spacer)
+    and bleeds to the right edge. Reusable as the {{masthead}} email token
+    (substituted server-side at send time, like {{signature}}) and by the crew
+    email shell.
+
+    The rule is the logo cell's OWN border-bottom (no separate row to leak a
+    seam); border-collapse + font-size/line-height:0 kill the residual gap some
+    email clients (Gmail) render below a scaled image; the img's -1px bottom
+    margin adds overlap where clients keep it.
+
+    MUST stay in sync with theme.js::window.LTP_renderMasthead (the Send-modal
+    preview); tests/test_masthead_block.py pins both via substring checks.
+    """
+    company = escape(brand["company"])
+    if brand["logo"]:
+        logo = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
+                'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">')
+    else:
+        logo = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
+                'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr>'
+        '<td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td>'
+        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">' + logo + '</td>'
+        '</tr></table>'
+    )
+
+
 def _crew_email_shell(inner_html: str, brand: dict) -> str:
     """Wrap composed crew-email content in the themed, branded responsive
-    layout (light canvas, centered 600px card, logo masthead, footer)."""
+    layout (light canvas, centered 580px card, masthead, footer)."""
     company = escape(brand["company"])
-    # Masthead: the linear lockup, left-aligned and butting flush against a 4px
-    # rule below it (display:block + zero bottom padding → the bottom-trimmed
-    # artwork sits on the rule; rule is the logo's exact orange, so the mask
-    # reads as poking up out of one shape). width:100%/max-width stays responsive.
-    if brand["logo"]:
-        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
-                    'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">')
-    else:
-        masthead = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
-                    'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
     footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
     # width:100% + max-width (NOT a fixed width:600px) so the card fills a phone
     # screen and stays centered — a hard 600px overflows and looks off-center.
@@ -336,18 +356,7 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        # Masthead: a 31px spacer cell, then the logo in a cell whose OWN
-        # border-bottom is the 4px rule — line sits directly beneath the artwork
-        # (no separate row to leak a seam). border-collapse + font-size/line-
-        # height:0 kill the residual gap some email clients (Gmail) render below
-        # a scaled image even with display:block; the img's -1px bottom margin
-        # adds overlap in clients that keep it. Rule starts at the mask's left
-        # edge (after the spacer) and bleeds to the right card edge.
-        '<tr><td style="padding:0">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>'
-        '<td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td>'
-        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">' + masthead + '</td>'
-        '</tr></table></td></tr>'
+        '<tr><td style="padding:0">' + render_masthead(brand) + '</td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'

@@ -92,9 +92,15 @@ window.LTP_DATA_SETTINGS = {
 
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
-  //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}}, {{header}},
+  //            {{total}}, {{dueDate}}, {{lineItems}}, {{masthead}}, {{signature}}, {{header}},
   //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
   //            {{quoteValidity}}, {{viewUrl}}
+  //
+  // {{masthead}} renders the branded masthead (the linear Luminary logo butting
+  // a color-matched horizontal rule) at the top of any email. Substituted
+  // server-side at send time (backend/routes/crew.py::render_masthead, wired in
+  // email.py) — the same block the crew emails use — so it's shared across all
+  // templates. Insert it at the very top of a template body.
   //
   // {{header}} renders an action header block. For customer templates (quotes
   // + invoices + receipts) it's the "View & Accept or Decline" button +
