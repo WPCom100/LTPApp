@@ -321,8 +321,8 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
     # mask reads as poking up out of one continuous shape. width:100%/max-width
     # keeps it responsive without squashing.
     if brand["logo"]:
-        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="420" '
-                    'style="display:block;border:0;width:100%;max-width:420px;height:auto;margin:0 auto">')
+        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
+                    'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0">')
     else:
         masthead = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
                     'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
@@ -336,7 +336,7 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:28px 30px 0;text-align:center;border-bottom:2px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:26px 30px 0;text-align:left;border-bottom:2px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
