@@ -223,17 +223,18 @@ def _safe_color(c: str, fallback: str) -> str:
     return c if re.match(r"^#[0-9a-fA-F]{3,8}$", c) else fallback
 
 
-def _safe_url(u: str, fallback: str = "") -> str:
-    u = (u or "").strip()
-    return u if u[:8].lower() == "https://" or u[:7].lower() == "http://" else fallback
-
-
 def _email_brand(settings_data: dict) -> dict:
-    """Workspace branding for themed crew emails, from the proper Settings
-    variables (accentColor, logoUrl, companyName, website)."""
+    """Workspace branding for the themed crew-email masthead.
+
+    The masthead deliberately uses the dedicated linear lockup
+    (assets/logos/luminary-linear.png) — NOT settings.logoUrl. logoUrl is the
+    full-size company logo (PDFs, portal, etc.); the crew masthead is its own
+    treatment (mask + horizontal rule). Quote/invoice emails are a separate path
+    (email.py / emailHeaderTemplate) and are intentionally left unchanged for now.
+    """
     return {
         "accent": _safe_color(settings_data.get("accentColor"), _DEFAULT_ACCENT),
-        "logo": _safe_url(settings_data.get("logoUrl"), (_app_origin() or "") + _LOGO_ASSET_PATH),
+        "logo": (_app_origin() or "") + _LOGO_ASSET_PATH,
         "company": (settings_data.get("companyName") or "").strip() or "Luminary Technology & Productions",
         "website": (settings_data.get("website") or "").strip(),
     }
