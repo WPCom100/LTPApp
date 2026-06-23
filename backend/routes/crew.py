@@ -181,13 +181,14 @@ _FALLBACK_CREW_BODY = (
 # email still renders before any Settings save. The LTP stacked logo doubles as
 # the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
 _DEFAULT_ACCENT = "#E8731A"
-# The brand's vibrant orange used on the primary CTA button (same hue as the
-# quote/invoice "View & Accept or Decline" button) — punchier than the muted
-# accent used for borders/edges.
-_CTA_ORANGE = "#EF5822"
-_LTP_LOGO_URL = (
-    "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
-)
+# The exact brand orange, sampled from assets/logos — used for the masthead
+# rule (so it color-matches the logo and reads as one shape) and the CTA button.
+_BRAND_ORANGE = "#F15927"
+_CTA_ORANGE = _BRAND_ORANGE
+# Email logo: the trimmed linear lockup, served by the app itself at this path
+# (no external dependency / dead URL). The absolute URL is built per-send from
+# the app origin in _email_brand.
+_LOGO_ASSET_PATH = "/assets/logos/luminary-linear.png"
 
 # Shared body-paragraph style — explicit font-family so template text renders
 # identically everywhere (don't rely on inheritance across table boundaries,
@@ -232,7 +233,7 @@ def _email_brand(settings_data: dict) -> dict:
     variables (accentColor, logoUrl, companyName, website)."""
     return {
         "accent": _safe_color(settings_data.get("accentColor"), _DEFAULT_ACCENT),
-        "logo": _safe_url(settings_data.get("logoUrl"), _LTP_LOGO_URL),
+        "logo": _safe_url(settings_data.get("logoUrl"), (_app_origin() or "") + _LOGO_ASSET_PATH),
         "company": (settings_data.get("companyName") or "").strip() or "Luminary Technology & Productions",
         "website": (settings_data.get("website") or "").strip(),
     }
@@ -313,14 +314,18 @@ def _paragraphs_to_html(text: str, blocks: dict | None = None) -> str:
 def _crew_email_shell(inner_html: str, brand: dict) -> str:
     """Wrap composed crew-email content in the themed, branded responsive
     layout (light canvas, centered 600px card, logo masthead, footer)."""
-    accent = brand["accent"]
     company = escape(brand["company"])
+    # The logo butts flush against the masthead's bottom rule: display:block +
+    # zero bottom padding on the cell means the (bottom-trimmed) artwork sits
+    # directly on the rule, and because the rule is the logo's exact orange the
+    # mask reads as poking up out of one continuous shape. width:100%/max-width
+    # keeps it responsive without squashing.
     if brand["logo"]:
-        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" height="72" '
-                    'style="display:block;border:0;width:auto;max-width:100%;margin:0 auto">')
+        masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="420" '
+                    'style="display:block;border:0;width:100%;max-width:420px;height:auto;margin:0 auto">')
     else:
-        masthead = ('<span style="font-size:22px;font-weight:bold;color:' + accent + ';'
-                    'letter-spacing:0.03em">' + company + '</span>')
+        masthead = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
+                    'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
     footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
     # width:100% + max-width (NOT a fixed width:600px) so the card fills a phone
     # screen and stays centered — a hard 600px overflows and looks off-center.
@@ -331,8 +336,8 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:24px 28px 16px;text-align:center;border-bottom:3px solid ' + accent + '">' + masthead + '</td></tr>'
-        '<tr><td style="padding:22px 28px 26px">' + inner_html + '</td></tr>'
+        '<tr><td style="padding:28px 30px 0;text-align:center;border-bottom:8px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
         '<tr><td style="padding:16px 28px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">' + footer + '</td></tr>'
