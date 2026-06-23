@@ -76,12 +76,31 @@ def test_crew_shell_is_the_shared_container():
     assert "email_shell(inner, brand)" in crew   # crew sends use the same shell
 
 
+def test_all_email_content_is_fluid_for_small_screens():
+    """No element forces width beyond a phone screen, across every template."""
+    email = _read("backend", "routes", "email.py")
+    settings = _read("data", "settings.js")
+    header_js = settings.split("emailHeaderTemplate:")[1].split("',")[0]
+    sig_js = settings.split("emailSignatureTemplate:")[1].split("',")[0]
+    # customer header wraps (no nowrap) and stacks via inline-block on narrow screens
+    assert "white-space:nowrap" not in email
+    assert "white-space:nowrap" not in header_js
+    assert "display:inline-block" in email and "display:inline-block" in header_js
+    # signature: long email/links can break + the table can't exceed the screen
+    assert "word-break:break-word" in email and "word-break:break-word" in sig_js
+    assert "border-collapse:collapse;max-width:100%" in email and "border-collapse:collapse;max-width:100%" in sig_js
+    # sanitizer permits the safe wrapping properties
+    sani = _read("backend", "sanitize.py")
+    assert '"word-break"' in sani and '"overflow-wrap"' in sani
+
+
 def main() -> int:
     tests = [
         test_render_masthead_block,
         test_email_shell_wraps_with_masthead_on_top_and_footer_below,
         test_customer_emails_wrapped_in_container_on_send,
         test_crew_shell_is_the_shared_container,
+        test_all_email_content_is_fluid_for_small_screens,
     ]
     failed = 0
     for t in tests:

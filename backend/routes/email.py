@@ -243,12 +243,12 @@ _FALLBACK_HEADER = (
 # always sees a rich signature, never the truncated "...if you have any
 # questions or would like to proceed." that motivated this fallback.
 _FALLBACK_SIGNATURE = (
-    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse">'
+    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse;max-width:100%">'
     '<tr><td style="padding:0 10px 0 0;vertical-align:top">'
     '<img alt="{{userName}}" height="120" '
     'src="{{userPhoto}}" width="120" '
     'style="display:block;border-radius:50%;object-fit:cover">'
-    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;'
+    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;word-break:break-word;'
     "font-family:'verdana','geneva',sans-serif;font-size:12px;line-height:14px;color:#233038\">"
     '<div style="margin-bottom:10px"><strong>'
     '<span style="font-size:16px;color:#ef5822">{{userName}}</span>'
