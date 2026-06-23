@@ -336,7 +336,7 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:28px 30px 0;text-align:center;border-bottom:8px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:28px 30px 0;text-align:center;border-bottom:2px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
