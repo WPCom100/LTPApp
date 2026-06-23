@@ -11,12 +11,13 @@
 //   props.signatureTemplate — workspace signature template (settings
 //                           emailSignatureTemplate with fallback chain
 //                           handled by the caller).
-//   props.headerTemplate  — workspace customer-facing header template
-//                           (settings emailHeaderTemplate). Empty/omitted
-//                           for crew emails or workspaces without one.
-//   props.headerVars      — {viewUrl, refNumber, projectName, total} for
-//                           the editor's preview render of the header
-//                           block. Backend re-resolves these per-recipient
+//   props.headerKind      — which customer-facing header to render:
+//                           "quote" | "invoice" | "receipt" (selects the
+//                           CTA label). Empty/omitted for crew emails or
+//                           bodies without a {{header}} placeholder.
+//   props.headerVars      — {refNumber, projectName, total} for the
+//                           editor's preview render of the header block.
+//                           Backend re-resolves {{viewUrl}} per-recipient
 //                           at send time.
 //   props.onChange(body)  — fires on every user input. Body still has
 //                           placeholders intact (signature + header blocks
@@ -43,7 +44,7 @@
   window.EmailBodyEditor = function(props) {
     var value = props.value || "";
     var signatureTemplate = props.signatureTemplate || "";
-    var headerTemplate = props.headerTemplate || "";
+    var headerKind = props.headerKind || "";
     var headerVars = props.headerVars || null;
     var onChange = props.onChange;
     var heightStyle = props.minHeight || 220;
@@ -59,7 +60,7 @@
       // 1. Render initial editable HTML (signature + header substituted
       //    in, viewUrl left as placeholder in hrefs for backend resolution).
       var displayHtml = window.LTP_bodyToEditableHtml(
-        value, signatureTemplate, headerTemplate, headerVars
+        value, signatureTemplate, headerKind, headerVars
       );
       ref.current.innerHTML = displayHtml;
 

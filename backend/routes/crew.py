@@ -229,8 +229,9 @@ def _email_brand(settings_data: dict) -> dict:
     The masthead deliberately uses the dedicated linear lockup
     (assets/logos/luminary-masthead.png) — NOT settings.logoUrl. logoUrl is the
     full-size company logo (PDFs, portal, etc.); the crew masthead is its own
-    treatment (mask + horizontal rule). Quote/invoice emails are a separate path
-    (email.py / emailHeaderTemplate) and are intentionally left unchanged for now.
+    treatment (mask + horizontal rule). Quote/invoice emails share this same
+    masthead/container (email.py wraps them in email_shell); their {{header}}
+    action box is generated per type by theme.js::LTP_renderHeader.
     """
     return {
         "accent": _safe_color(settings_data.get("accentColor"), _DEFAULT_ACCENT),

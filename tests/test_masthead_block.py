@@ -80,12 +80,16 @@ def test_all_email_content_is_fluid_for_small_screens():
     """No element forces width beyond a phone screen, across every template."""
     email = _read("backend", "routes", "email.py")
     settings = _read("data", "settings.js")
-    header_js = settings.split("emailHeaderTemplate:")[1].split("',")[0]
+    theme = _read("theme.js")
+    # The customer {{header}} action box is generated per type by
+    # theme.js::LTP_renderHeader (no longer a stored settings template).
+    header_js = theme.split("LTP_renderHeader = function")[1].split("LTP_renderPreviewBody")[0]
     sig_js = settings.split("emailSignatureTemplate:")[1].split("',")[0]
     # customer header wraps (no nowrap) and stacks via inline-block on narrow screens
-    assert "white-space:nowrap" not in email
     assert "white-space:nowrap" not in header_js
-    assert "display:inline-block" in email and "display:inline-block" in header_js
+    assert "display:inline-block" in header_js
+    # nothing in the relayed customer email forces a fixed wide width
+    assert "white-space:nowrap" not in email
     # signature: long email/links can break + the table can't exceed the screen
     assert "word-break:break-word" in email and "word-break:break-word" in sig_js
     assert "border-collapse:collapse;max-width:100%" in email and "border-collapse:collapse;max-width:100%" in sig_js

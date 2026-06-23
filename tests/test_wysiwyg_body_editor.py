@@ -82,23 +82,42 @@ def py_render_signature(template, name="Sarah", email="sarah@x.com",
     )
 
 
-def py_render_header(template, vars):
-    """Python port of window.LTP_renderHeader. Substitutes per-entity
-    placeholders ONLY ({{refNumber}}, {{projectName}}, {{total}}).
-    {{viewUrl}} stays literal so the backend's per-recipient chain can
-    resolve it after the body reaches the server."""
-    if not template:
-        return ""
+_HEADER_CTA = {
+    "quote": "View &amp; Accept or Decline",
+    "invoice": "View &amp; Pay",
+    "receipt": "View Receipt",
+}
+
+
+def py_render_header(kind, vars):
+    """Python port of window.LTP_renderHeader. Builds the per-type
+    {{header}} action box (refNumber/projectName/total + a centered CTA
+    button whose label depends on `kind`). {{viewUrl}} stays literal so
+    the backend's per-recipient chain resolves it after the body reaches
+    the server."""
     vars = vars or {}
+    cta = _HEADER_CTA.get(kind) or _HEADER_CTA["quote"]
     return (
-        template
-        .replace("{{refNumber}}", vars.get("refNumber", "") or "")
-        .replace("{{projectName}}", vars.get("projectName", "") or "")
-        .replace("{{total}}", vars.get("total", "") or "")
+        '<div style="padding:0px">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
+        '<tbody><tr><td style="padding:22px;text-align:center">'
+        '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
+        + (vars.get("refNumber", "") or "") + '</div>'
+        '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">'
+        + (vars.get("projectName", "") or "") + '</div>'
+        '<div style="font-size:14px;color:#233038;margin-bottom:18px">'
+        + (vars.get("total", "") or "") + '</div>'
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
+        '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
+        '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
+        'font-weight:bold;color:#ffffff;text-decoration:none">' + cta + '</a>'
+        '</td></tr></tbody></table>'
+        '</td></tr></tbody></table></div>'
     )
 
 
-def py_body_to_editable_html(raw_body, sig_template, header_template=None, header_vars=None):
+def py_body_to_editable_html(raw_body, sig_template, header_kind=None, header_vars=None):
     """Python port of window.LTP_bodyToEditableHtml.
 
     NOTE: we skip the LTP_SANITIZE.emailHtml step (DOMPurify isn't
@@ -123,7 +142,7 @@ def py_body_to_editable_html(raw_body, sig_template, header_template=None, heade
     )
     header_block = (
         '<section class="ltp-header-block">'
-        + py_render_header(header_template or "", header_vars or {})
+        + py_render_header(header_kind or "", header_vars or {})
         + '</section>'
     )
 

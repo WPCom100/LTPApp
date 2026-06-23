@@ -304,52 +304,6 @@ def test_settings_sanitizes_signature_template():
         pass  # client lifecycle is module-level; see _teardown_client
 
 
-def test_settings_sanitizes_header_template():
-    """Mirror of test_settings_sanitizes_signature_template for the new
-    customer-facing {{header}} template. PUT /api/settings must scrub
-    XSS attempts in emailHeaderTemplate the same way it does for the
-    signature template. Critically: the legitimate {{viewUrl}}
-    placeholder + role="presentation" + the table structure must
-    survive — that's what the header relies on at send time."""
-    print("test_settings_sanitizes_header_template")
-    client, admin_tok, _, _, _ = _setup_test_client()
-    try:
-        evil = (
-            '<div style="padding:0"><table role="presentation"><tbody><tr>'
-            '<td><a href="{{viewUrl}}">View</a>'
-            '<script>alert(1)</script>'
-            '<img src="x" onerror="exfil()">'
-            '<a href="javascript:steal()">click</a>'
-            '</td></tr></tbody></table></div>'
-        )
-        r = client.put(
-            "/api/settings",
-            json={"emailHeaderTemplate": evil},
-            cookies={"ltp_session": admin_tok},
-        )
-        _check("settings PUT 200", r.status_code == 200, f"got {r.status_code}")
-        stored = r.json().get("emailHeaderTemplate", "")
-        _check("<script> tag stripped", "<script" not in stored)
-        _check("onerror handler stripped", "onerror" not in stored)
-        _check("javascript: URL stripped", "javascript:" not in stored)
-        _check("legitimate <table> preserved", "<table" in stored)
-        _check("role=\"presentation\" preserved (header accessibility)",
-               'role="presentation"' in stored)
-        _check("{{viewUrl}} placeholder preserved",
-               'href="{{viewUrl}}"' in stored)
-
-        # Idempotency: round-trip should be stable
-        r2 = client.put(
-            "/api/settings",
-            json={"emailHeaderTemplate": stored},
-            cookies={"ltp_session": admin_tok},
-        )
-        stored2 = r2.json().get("emailHeaderTemplate", "")
-        _check("sanitization idempotent", stored == stored2)
-    finally:
-        pass
-
-
 # ── Main ─────────────────────────────────────────────────────────────────
 
 
@@ -364,7 +318,6 @@ def main() -> int:
         test_update_user_admin_can_demote_other_admin()
         test_update_user_404_for_unknown_id()
         test_settings_sanitizes_signature_template()
-        test_settings_sanitizes_header_template()
     finally:
         _teardown_client()
 

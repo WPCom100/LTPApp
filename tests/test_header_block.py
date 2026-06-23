@@ -1,33 +1,37 @@
 """Tests for the customer-facing email {{header}} block.
 
-The {{header}} placeholder renders a banner-style HTML block at the top
-of customer-facing emails (quotes, invoices, payment receipts): a
-"View & Accept or Decline" button + ref/project + total. Renders ONLY
-when a body uses {{header}}; crew templates omit it because crew
-emails don't have a per-recipient view link.
+The {{header}} placeholder renders a branded "action box" at the top of
+customer-facing emails (quotes, invoices, payment receipts): a card with
+refNumber/projectName/total and a single centered CTA button. It is
+generated PER EMAIL TYPE by theme.js::LTP_renderHeader — there is no longer
+a single editable header template in Settings, because each type needs its
+own button wording:
+    quote   -> "View & Accept or Decline"
+    invoice -> "View & Pay"
+    receipt -> "View Receipt"
+Crew templates omit {{header}} (crew emails get their own server-rendered
+box in backend/routes/crew.py).
 
 What's covered:
-  - Frontend and backend templates byte-for-byte match.
-  - All five customer templates have {{header}} prepended; crew
-    templates have none.
-  - Total formatting always shows cents (".00" even on whole dollars).
-  - bleach + DOMPurify allowlists preserve role="presentation", href
-    placeholders, table structure, and the rendered View button.
-  - LTP_renderHeader substitutes the four inner per-entity tokens.
-  - Send modal wires headerTemplate + headerVars to EmailBodyEditor.
-  - executeSendQuote / sendReceipt / executeSend expand {{header}}
-    BEFORE the textToHtml + POST so per-entity tokens inside the
-    rendered header get the same client-side substitution as the rest
-    of the body.
+  - The shared editable header template is GONE (data/settings.js default +
+    Settings UI editor), replaced by the per-type generator.
+  - LTP_renderHeader builds the box per kind, substitutes the per-entity
+    tokens, and leaves {{viewUrl}} literal for the backend.
+  - Per-type CTA labels are wired (theme.js LTP_HEADER_CTA + each modal).
+  - All customer templates keep {{header}}; crew templates have none.
+  - bleach preserves the generated header structure.
+  - Send modals pass headerKind + headerVars and expand {{header}} via
+    LTP_renderHeader before POST; EmailBodyEditor consumes headerKind.
+  - Backend's per-recipient chain still does NOT substitute {{header}};
+    the dead _FALLBACK_HEADER / _render_header mirror is removed.
 
-Header-template substitution split (why testing both sides):
-  - Frontend pre-expands {{header}} -> rendered HTML (with per-entity
-    tokens substituted) right before POST.
+Header substitution split (why it matters):
+  - Frontend pre-expands {{header}} -> rendered HTML (per-entity tokens
+    baked in) right before POST.
   - Backend substitutes {{viewUrl}} (per-recipient) + {{signature}}
-    (per-sender) only. Backend does NOT substitute {{header}}; if a
-    leak occurs the recipient sees the literal "{{header}}" text — a
-    visible bug. This is the safer failure mode: silently rendering a
-    header with literal "{{refNumber}}" placeholders would be worse.
+    (per-sender) only. If a {{header}} leak reaches the backend the
+    recipient sees the literal "{{header}}" text — a visible bug, the
+    safer failure mode vs. silently shipping literal {{refNumber}}.
 """
 import os
 import re
@@ -55,61 +59,52 @@ def _read(*parts):
         return f.read()
 
 
-# Python port of window.LTP_renderHeader for testing. {{viewUrl}} is
-# NOT substituted here — it stays literal so the backend's per-recipient
-# substitution chain can resolve it after the body reaches the server.
-def _py_render_header(template, vars):
-    if not template:
-        return ""
+# Per-type CTA labels — MUST match theme.js::LTP_HEADER_CTA.
+_CTA = {
+    "quote": "View &amp; Accept or Decline",
+    "invoice": "View &amp; Pay",
+    "receipt": "View Receipt",
+}
+
+
+# Python port of window.LTP_renderHeader (theme.js). Builds the per-type
+# action box. {{viewUrl}} is left literal — the backend resolves it
+# per-recipient after the body reaches the server. Unknown/empty kinds fall
+# back to the quote label so a header never renders an empty button.
+def _py_render_header(kind, vars):
     vars = vars or {}
+    cta = _CTA.get(kind) or _CTA["quote"]
     return (
-        template
-        .replace("{{refNumber}}", vars.get("refNumber", "") or "")
-        .replace("{{projectName}}", vars.get("projectName", "") or "")
-        .replace("{{total}}", vars.get("total", "") or "")
+        '<div style="padding:0px">'
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+        'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
+        '<tbody><tr><td style="padding:22px;text-align:center">'
+        '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
+        + (vars.get("refNumber", "") or "") + '</div>'
+        '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">'
+        + (vars.get("projectName", "") or "") + '</div>'
+        '<div style="font-size:14px;color:#233038;margin-bottom:18px">'
+        + (vars.get("total", "") or "") + '</div>'
+        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
+        '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
+        '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
+        'font-weight:bold;color:#ffffff;text-decoration:none">' + cta + '</a>'
+        '</td></tr></tbody></table>'
+        '</td></tr></tbody></table></div>'
     )
-
-
-# ── Default templates ─────────────────────────────────────────────────────
-
-
-_CUSTOMER_TEMPLATES = ("quoteSent", "quoteFollowUp", "invoiceSent",
-                      "invoiceReminder", "paymentReceipt")
-_CREW_TEMPLATES = ("crewRequest", "crewConfirmed", "crewCancelled",
-                  "crewNotSelected")
-
-
-def test_data_settings_exposes_email_header_template():
-    """The frontend default for the {{header}} block lives in
-    data/settings.js next to emailSignatureTemplate."""
-    print("test_data_settings_exposes_email_header_template")
-    src = _read("data", "settings.js")
-    _check("emailHeaderTemplate key present",
-           "emailHeaderTemplate:" in src)
-    _check("template body contains View button",
-           "View &amp; Accept or Decline" in src)
-    _check("template contains role=\"presentation\" (a11y for table layout)",
-           'role="presentation"' in src)
-    _check("template contains all four per-entity placeholders",
-           all(t in src.split("emailHeaderTemplate:")[1].split("',")[0]
-               for t in ("{{viewUrl}}", "{{refNumber}}",
-                        "{{projectName}}", "{{total}}")))
 
 
 def _extract_body(src, key):
     """Pull the `body: "..."` string out of an emailTemplates.<key>
     object literal. Handles backslash escapes in the JS string."""
-    # Find the entry's opening brace.
     m_key = re.search(rf'\b{key}\s*:\s*\{{', src)
     if not m_key:
         return None
     after = src[m_key.end():]
-    # Find the body: " inside the object; non-greedy, lazy.
     m_body = re.search(r'body\s*:\s*"', after)
     if not m_body:
         return None
     start = m_body.end()
-    # Walk the string char by char to find the unescaped closing quote.
     out = []
     i = start
     while i < len(after):
@@ -123,6 +118,36 @@ def _extract_body(src, key):
         out.append(c)
         i += 1
     return None
+
+
+_CUSTOMER_TEMPLATES = ("quoteSent", "quoteFollowUp", "invoiceSent",
+                       "invoiceReminder", "paymentReceipt")
+# crewRequest ALSO carries {{header}}, but it's the SERVER-rendered crew
+# accept/decline box (backend/routes/crew.py) — a different path from the
+# frontend customer box. The remaining crew templates are plain
+# notifications with no header at all.
+_CREW_NO_HEADER_TEMPLATES = ("crewConfirmed", "crewCancelled", "crewNotSelected")
+
+
+# ── Removal of the shared editable header template ─────────────────────────
+
+
+def test_no_editable_header_template_in_settings():
+    """The shared editable header template is removed — each type generates
+    its own header. data/settings.js must not define emailHeaderTemplate,
+    and the Settings UI must not carry the editor section."""
+    print("test_no_editable_header_template_in_settings")
+    data = _read("data", "settings.js")
+    _check("data/settings.js no longer defines emailHeaderTemplate",
+           "emailHeaderTemplate" not in data)
+    settings_ui = _read("modules", "settings.js")
+    _check("Settings UI 'Email Header Template' editor section removed",
+           "Email Header Template" not in settings_ui)
+    _check("Settings UI no longer binds draft.emailHeaderTemplate",
+           "emailHeaderTemplate" not in settings_ui)
+
+
+# ── Template bodies ────────────────────────────────────────────────────────
 
 
 def test_customer_templates_prepend_header():
@@ -139,11 +164,18 @@ def test_customer_templates_prepend_header():
                    f"got: {body[:40]!r}")
 
 
-def test_crew_templates_have_no_header():
-    """Crew emails are not customer-facing — no header block."""
-    print("test_crew_templates_have_no_header")
+def test_crew_header_paths():
+    """crewRequest carries {{header}} but it's the SERVER-rendered crew
+    accept/decline box (backend/routes/crew.py), NOT the frontend customer
+    box. The other crew templates are plain notifications with no header."""
+    print("test_crew_header_paths")
     src = _read("data", "settings.js")
-    for key in _CREW_TEMPLATES:
+    req = _extract_body(src, "crewRequest")
+    _check("crewRequest body extracted", req is not None)
+    if req is not None:
+        _check("crewRequest uses {{header}} (server-rendered crew box)",
+               "{{header}}" in req)
+    for key in _CREW_NO_HEADER_TEMPLATES:
         body = _extract_body(src, key)
         _check(f"{key} body extracted", body is not None)
         if body is not None:
@@ -152,115 +184,91 @@ def test_crew_templates_have_no_header():
 
 
 def test_available_variables_list_includes_header():
-    """The Available Variables comment in data/settings.js should
-    document {{header}} so admins editing templates know it exists."""
+    """The Available Variables comment in data/settings.js still documents
+    {{header}} (it's a valid body token even though it's now auto-generated
+    per type rather than stored as an editable template)."""
     print("test_available_variables_list_includes_header")
     src = _read("data", "settings.js")
-    # The comment block above emailTemplates lists every available
-    # placeholder; {{header}} should be in it.
     available_block = src.split("// Available:")[1].split("emailTemplates")[0]
     _check("{{header}} listed in Available Variables",
            "{{header}}" in available_block)
 
 
-# ── Frontend ↔ Backend parity ─────────────────────────────────────────────
+# ── LTP_renderHeader: per-type box ─────────────────────────────────────────
 
 
-def test_backend_fallback_header_substring_pinned():
-    """The backend _FALLBACK_HEADER should contain the same critical
-    substrings as data/settings.js::emailHeaderTemplate so the modal
-    preview matches what the recipient sees."""
-    print("test_backend_fallback_header_substring_pinned")
-    from backend.routes.email import _FALLBACK_HEADER
-    js_src = _read("data", "settings.js")
-    js_template = js_src.split("emailHeaderTemplate:")[1].split("',")[0] + "'"
-    # Key structural pieces that must match between the two.
-    for needle in (
-        'href="{{viewUrl}}"',
-        '{{refNumber}}',
-        '{{projectName}}',
-        '{{total}}',
-        'role="presentation"',
-        'background-color:#f15927',     # brand orange on the centered button
-        'border-radius:10px',           # the CTA box/card
-        'View &amp; Accept or Decline',
-    ):
-        _check(f"both contain {needle!r}",
-               needle in _FALLBACK_HEADER and needle in js_template)
+def test_render_header_per_type_cta():
+    """LTP_renderHeader builds the box with the right CTA per kind, and
+    theme.js declares those labels in LTP_HEADER_CTA."""
+    print("test_render_header_per_type_cta")
+    theme = _read("theme.js")
+    _check("theme.js declares LTP_HEADER_CTA", "LTP_HEADER_CTA" in theme)
+    for kind, label in _CTA.items():
+        _check(f"theme.js carries the {kind} CTA label", label in theme)
+    for kind, label in _CTA.items():
+        out = _py_render_header(kind, {})
+        _check(f"{kind} header renders its CTA label", label in out)
+    # Each kind's button is distinct from the others.
+    _check("quote != invoice button text",
+           _CTA["quote"] not in _py_render_header("invoice", {}))
+    # Unknown / empty kind falls back to the quote label (never an empty button).
+    _check("unknown kind falls back to the quote CTA",
+           _CTA["quote"] in _py_render_header("nope", {}))
+    _check("empty kind falls back to the quote CTA",
+           _CTA["quote"] in _py_render_header("", {}))
 
 
 def test_render_header_substitutes_per_entity_tokens_only():
-    """LTP_renderHeader substitutes ONLY the per-entity tokens
-    ({{refNumber}}, {{projectName}}, {{total}}). {{viewUrl}} stays
-    literal so the backend's per-recipient chain can swap in the
-    real URL — substituting client-side would either produce a dead
-    href="" (the bug commit 5.1 fixes) or a non-tracking URL."""
+    """The header bakes in refNumber/projectName/total but leaves
+    {{viewUrl}} literal so the backend resolves it per-recipient."""
     print("test_render_header_substitutes_per_entity_tokens_only")
-    from backend.routes.email import _FALLBACK_HEADER
-    vars = {
+    out = _py_render_header("quote", {
         "refNumber": "QT-2026-007",
         "projectName": "Spring Showcase",
         "total": "$1,234.00",
-    }
-    out = _py_render_header(_FALLBACK_HEADER, vars)
-    _check("no {{refNumber}} left", "{{refNumber}}" not in out)
-    _check("no {{projectName}} left", "{{projectName}}" not in out)
-    _check("no {{total}} left", "{{total}}" not in out)
+    })
     _check("real refNumber present", "QT-2026-007" in out)
     _check("real projectName present", "Spring Showcase" in out)
     _check("real total present", "$1,234.00" in out)
-    # The critical assertion: {{viewUrl}} is preserved for the backend.
+    _check("no {{refNumber}} left", "{{refNumber}}" not in out)
+    _check("no {{projectName}} left", "{{projectName}}" not in out)
+    _check("no {{total}} left", "{{total}}" not in out)
     _check("{{viewUrl}} stays literal — backend resolves it per-recipient",
            'href="{{viewUrl}}"' in out,
-           "renderHeader must NOT substitute {{viewUrl}} or the "
-           "View button arrives with an empty href")
+           "the View button must arrive with {{viewUrl}} intact")
 
 
-def test_render_header_ignores_viewUrl_var_if_passed():
-    """Defensive: even if a caller passes a viewUrl in vars (e.g.
-    accidentally re-introducing the bug), the function MUST NOT
-    substitute it. Backend is the single source of per-recipient URLs."""
-    print("test_render_header_ignores_viewUrl_var_if_passed")
-    from backend.routes.email import _FALLBACK_HEADER
-    out = _py_render_header(_FALLBACK_HEADER, {"viewUrl": "https://attacker.example/"})
+def test_render_header_ignores_viewUrl_var():
+    """Defensive: even if a caller passes a viewUrl in vars, the function
+    MUST NOT substitute it. Backend is the single source of per-recipient
+    URLs."""
+    print("test_render_header_ignores_viewUrl_var")
+    out = _py_render_header("quote", {"viewUrl": "https://attacker.example/"})
     _check("attacker-controlled viewUrl is NOT substituted",
            "https://attacker.example/" not in out)
     _check("{{viewUrl}} still literal in output",
            'href="{{viewUrl}}"' in out)
 
 
-def test_render_header_handles_empty_template():
-    """No template configured → empty string (caller falls back)."""
-    print("test_render_header_handles_empty_template")
-    _check("empty template → empty string",
-           _py_render_header("", {"refNumber": "X"}) == "")
-    _check("None template → empty string",
-           _py_render_header(None, {"refNumber": "X"}) == "")
-
-
 # ── Sanitizer allowlists ──────────────────────────────────────────────────
 
 
 def test_bleach_preserves_header_structure():
-    """The header is a box/card (rounded border) with a centered button, role +
-    inline styles + width. Confirm the backend bleach allowlist + CSS sanitizer
-    keeps every structural piece intact."""
+    """The header box (rounded border + centered button) must survive the
+    backend bleach allowlist + CSS sanitizer, with {{viewUrl}} and the
+    structural pieces preserved for downstream substitution."""
     print("test_bleach_preserves_header_structure")
-    from backend.routes.email import _FALLBACK_HEADER
     from backend.sanitize import email_html
-    out = email_html(_FALLBACK_HEADER)
+    out = email_html(_py_render_header("quote", {}))
     for needle in (
         'role="presentation"',          # accessibility for table layout
         'href="{{viewUrl}}"',           # backend resolves this per-recipient
-        '{{refNumber}}',                # frontend bakes in before POST
-        '{{projectName}}',
-        '{{total}}',
         'background-color:#f15927',     # brand orange on the centered button
         'border-radius:10px',           # the CTA box/card
         '<table',                       # outer box + inner button
         'cellspacing="0"',              # table layout reset
         'cellpadding="0"',
-        '&amp;',                        # ampersand entity in button text
+        '&amp;',                        # ampersand entity in the quote button
     ):
         _check(f"bleach keeps {needle!r}", needle in out)
     _check("idempotent: re-sanitize == sanitize (no further mutation)",
@@ -268,8 +276,8 @@ def test_bleach_preserves_header_structure():
 
 
 def test_bleach_strips_disallowed_attrs_from_header():
-    """role + width are now in the allowlist but other potentially
-    risky attrs (onclick, onload, onerror) must still be stripped."""
+    """role + width are in the allowlist but risky handlers (onclick,
+    onload, onerror) must still be stripped."""
     print("test_bleach_strips_disallowed_attrs_from_header")
     from backend.sanitize import email_html
     src = '<div onclick="alert(1)" style="padding:0px"><table role="presentation" onload="x()">foo</table></div>'
@@ -302,17 +310,12 @@ def test_total_renders_with_cents_in_all_three_modals():
     print("test_total_renders_with_cents_in_all_three_modals")
     qb = _read("modules", "quotes-builder.js")
     inv = _read("modules", "invoices.js")
-    # toLocaleString with minimumFractionDigits: 2 is the marker.
     qb_matches = qb.count('minimumFractionDigits: 2')
     inv_matches = inv.count('minimumFractionDigits: 2')
     _check("quotes-builder uses minimumFractionDigits: 2",
            qb_matches >= 1, f"got {qb_matches} matches")
     _check("invoices uses minimumFractionDigits: 2 in BOTH send + receipt",
            inv_matches >= 2, f"got {inv_matches} matches")
-    # Negative guard for the EMAIL substitution sites: the var block
-    # whose `total:` line builds the email substitution dict must use
-    # minimumFractionDigits. Look for the `total: "$"...` line inside
-    # each `var vars = { ... };` block; assert it has the cents config.
     email_total_blocks = re.findall(
         r'total:\s*"\$"\s*\+\s*Math\.round\(\w+\.total\)\.toLocaleString\(([^)]*)\)',
         qb + inv,
@@ -324,175 +327,125 @@ def test_total_renders_with_cents_in_all_three_modals():
            f"{len(cents_blocks)} have cents config")
 
 
-# ── Editor + send-modal wiring ────────────────────────────────────────────
-
-
 def test_settings_email_templates_available_variables_matches_canonical():
     """The Email Templates section's "Available Variables" chip row in
     modules/settings.js must list every placeholder documented in
-    data/settings.js's `// Available:` comment block (the canonical
-    list). Catches drift like the commit 5 oversight where
-    {{header}} was added to the comment + default bodies but never
-    propagated to the Settings UI chip row, leaving admins editing
-    templates with no UI hint that the placeholder existed."""
+    data/settings.js's `// Available:` comment block (the canonical list)."""
     print("test_settings_email_templates_available_variables_matches_canonical")
     canonical_src = _read("data", "settings.js")
-    # Extract every {{token}} listed in the Available: comment.
-    available_block = canonical_src.split("// Available:")[1].split("emailTemplates")[0]
+    # Scope to the `// Available:` list ONLY — the comment lines up to the
+    # blank "//" separator. Splitting on "emailTemplates" would over-capture
+    # the prose comments below (e.g. the {{shifts}} mention in the {{header}}
+    # note), polluting the canonical set with tokens that aren't body vars.
+    m_avail = re.search(r'// Available:(.*?)\n\s*//\s*\n', canonical_src, re.DOTALL)
+    available_block = m_avail.group(1) if m_avail else ""
     canonical_tokens = set(re.findall(r"\{\{(\w+)\}\}", available_block))
 
     settings_src = _read("modules", "settings.js")
-    # The Email Templates chip-row array — find it by anchoring on the
-    # nearby "Available Variables" label (the header + signature
-    # sections also use that label but their arrays are shorter and
-    # contain different tokens).
     chip_rows = re.findall(
         r'\[((?:"\w+",?\s*)+)\]\.map\(function\(v\)\s*\{[\s\S]*?"\{\{"\s*\+\s*v',
         settings_src,
     )
-    # Pick the row that mentions companyName — that's the master list
-    # in the Email Templates section (signature row has userName etc.,
-    # header row has viewUrl/refNumber/projectName/total only).
     master = next((r for r in chip_rows if "companyName" in r), None)
-    _check("Email Templates chip-row array found",
-           master is not None)
+    _check("Email Templates chip-row array found", master is not None)
     if master:
         ui_tokens = set(re.findall(r'"(\w+)"', master))
         missing = canonical_tokens - ui_tokens
-        _check(
-            "every canonical token has a UI chip",
-            not missing,
-            f"missing from Settings UI: {sorted(missing)}",
-        )
+        _check("every canonical token has a UI chip", not missing,
+               f"missing from Settings UI: {sorted(missing)}")
         extra = ui_tokens - canonical_tokens
-        _check(
-            "no UI chips beyond the canonical list",
-            not extra,
-            f"in UI but not in data/settings.js Available: comment: {sorted(extra)}",
-        )
+        _check("no UI chips beyond the canonical list", not extra,
+               f"in UI but not in data/settings.js Available: comment: {sorted(extra)}")
 
 
-def test_settings_page_has_header_template_editor():
-    """The Settings page must expose a split-pane editor for
-    emailHeaderTemplate so admins can customize the banner. Mirrors
-    the existing emailSignatureTemplate editor — same shape (left
-    textarea / right sanitized preview), same Available Variables
-    chip row, same persistence path through PUT /api/settings."""
-    print("test_settings_page_has_header_template_editor")
-    src = _read("modules", "settings.js")
-    _check("Email Header Template section title present",
-           "Email Header Template" in src)
-    _check("textarea bound to draft.emailHeaderTemplate",
-           "draft.emailHeaderTemplate" in src)
-    _check("set(\"emailHeaderTemplate\", ...) on change",
-           'set("emailHeaderTemplate"' in src)
-    _check("Available Variables chips list the four header tokens",
-           all(t in src for t in ('"viewUrl"', '"refNumber"',
-                                  '"projectName"', '"total"'))
-           and '["viewUrl", "refNumber", "projectName", "total"]' in src)
-    _check("preview uses LTP_SANITIZE.emailHtml (defense in depth)",
-           "LTP_SANITIZE.emailHtml" in src
-           and "emailHeaderTemplate" in src.split("LTP_SANITIZE.emailHtml")[1].split("// ── Team Members")[0])
-    _check("preview substitutes sample {{refNumber}}",
-           '"QT-2026-007"' in src)
-    _check("preview substitutes sample {{projectName}}",
-           '"Spring Showcase"' in src)
-    _check("preview substitutes sample {{total}}",
-           '"$1,234.00"' in src)
+# ── Editor + send-modal wiring ────────────────────────────────────────────
 
 
-def test_email_body_editor_consumes_header_props():
-    """EmailBodyEditor must accept + forward headerTemplate + headerVars
-    so the non-editable header block renders + the per-entity tokens
-    substitute correctly in the editor preview."""
-    print("test_email_body_editor_consumes_header_props")
+def test_send_modals_wire_header():
+    """Each send modal expands {{header}} for its own type and passes
+    headerKind + headerVars to EmailBodyEditor."""
+    print("test_send_modals_wire_header")
+    qb = _read("modules", "quotes-builder.js")
+    _check("quotes-builder declares sendHeaderVars state",
+           "sendHeaderVars" in qb and "setSendHeaderVars" in qb)
+    _check("quotes-builder expands {{header}} as a quote",
+           'LTP_renderHeader("quote"' in qb)
+    _check('quotes-builder passes headerKind: "quote" to the editor',
+           'headerKind: "quote"' in qb)
+    _check("quotes-builder builds bodyWithHeader before POST",
+           "bodyWithHeader" in qb)
+
+    inv = _read("modules", "invoices.js")
+    _check("invoices declares sendHeaderVars state",
+           "sendHeaderVars" in inv and "setSendHeaderVars" in inv)
+    _check("invoices expands the invoice header",
+           'LTP_renderHeader("invoice"' in inv)
+    _check("invoices expands the receipt header",
+           'LTP_renderHeader("receipt"' in inv)
+    _check('invoices passes headerKind: "invoice" (send modal)',
+           'headerKind: "invoice"' in inv)
+    _check('invoices passes headerKind: "receipt" (receipt modal)',
+           'headerKind: "receipt"' in inv)
+    _check("invoices builds bodyWithHeader in both paths",
+           inv.count("bodyWithHeader") >= 2)
+    _check("no modal references the removed emailHeaderTemplate",
+           "emailHeaderTemplate" not in qb and "emailHeaderTemplate" not in inv)
+
+
+def test_email_body_editor_consumes_header_kind():
+    """EmailBodyEditor accepts headerKind (not the removed headerTemplate)
+    and forwards it to LTP_bodyToEditableHtml so the non-editable header
+    block renders with the right CTA in the editor preview."""
+    print("test_email_body_editor_consumes_header_kind")
     src = _read("components", "email-body-editor.js")
-    _check("reads props.headerTemplate", "headerTemplate" in src)
-    _check("reads props.headerVars", "headerVars" in src)
-    _check("passes headerTemplate to LTP_bodyToEditableHtml",
-           "LTP_bodyToEditableHtml(" in src and "headerTemplate" in src)
+    _check("reads props.headerKind", "headerKind" in src)
+    _check("no stale headerTemplate prop", "headerTemplate" not in src)
+    _check("passes headerKind to LTP_bodyToEditableHtml",
+           "LTP_bodyToEditableHtml(" in src and "headerKind" in src)
     _check("marks .ltp-header-block non-editable via querySelector",
-           ".ltp-header-block" in src or "ltp-header-block" in src)
-
-
-def test_send_modals_wire_header_template_and_vars():
-    """All three send modals must (a) capture sendHeaderVars at open
-    time, (b) pass headerTemplate + headerVars to EmailBodyEditor,
-    (c) expand {{header}} via LTP_renderHeader just before the POST."""
-    print("test_send_modals_wire_header_template_and_vars")
-    for module in ("modules/quotes-builder.js", "modules/invoices.js"):
-        src = _read(*module.split("/"))
-        _check(f"{module}: declares sendHeaderVars state",
-               "sendHeaderVars" in src and "setSendHeaderVars" in src)
-        _check(f"{module}: passes headerTemplate to EmailBodyEditor",
-               "headerTemplate:" in src
-               and "emailHeaderTemplate" in src)
-        _check(f"{module}: passes headerVars to EmailBodyEditor",
-               "headerVars:" in src)
-        _check(f"{module}: calls LTP_renderHeader at send time",
-               "LTP_renderHeader(" in src)
-        _check(f"{module}: builds bodyWithHeader before POST",
-               "bodyWithHeader" in src)
+           "ltp-header-block" in src)
 
 
 # ── Backend ───────────────────────────────────────────────────────────────
 
 
-def test_backend_render_header_falls_back_to_constant():
-    """When the workspace hasn't customized emailHeaderTemplate (fresh
-    deploy, settings never saved), _render_header should return
-    _FALLBACK_HEADER — same pattern as _render_signature for
-    _FALLBACK_SIGNATURE."""
-    print("test_backend_render_header_falls_back_to_constant")
-    from backend.routes.email import _FALLBACK_HEADER, _render_header
-    _check("empty settings → _FALLBACK_HEADER",
-           _render_header({}) == _FALLBACK_HEADER)
-    _check("missing key → _FALLBACK_HEADER",
-           _render_header({"emailSignatureTemplate": "x"}) == _FALLBACK_HEADER)
-    _check("empty-string template → _FALLBACK_HEADER",
-           _render_header({"emailHeaderTemplate": ""}) == _FALLBACK_HEADER)
-    _check("whitespace-only template → _FALLBACK_HEADER",
-           _render_header({"emailHeaderTemplate": "   \n\t  "}) == _FALLBACK_HEADER)
-    custom = "<div>custom header</div>"
-    _check("custom template returned as-is",
-           _render_header({"emailHeaderTemplate": custom}) == custom)
-
-
 def test_backend_send_does_not_substitute_header_token():
-    """Architecture invariant: backend's per-recipient substitution
-    chain handles viewUrl + signature only. {{header}} expansion is
-    done by the FRONTEND just before POST so the per-entity tokens
-    inside it (refNumber, projectName, total) get baked in by the
-    same vars resolution that handles the outer body. This test pins
-    the substitution chain so a future edit that adds {{header}} to
-    the backend chain (which would silently leak literal {{refNumber}}
-    tokens) gets caught."""
+    """Architecture invariant: backend's per-recipient substitution chain
+    handles viewUrl + signature only. {{header}} expansion is done by the
+    FRONTEND just before POST so the per-entity tokens inside it get baked
+    in by the same vars resolution that handles the outer body."""
     print("test_backend_send_does_not_substitute_header_token")
     src = _read("backend", "routes", "email.py")
-    # Find the body of send_email (the actual chain that runs at send time).
     send_body = src.split("@email_router.post")[1]
-    # The chain should replace viewUrl + signature but NOT {{header}}.
     _check("backend send chain still replaces {{viewUrl}}",
            '.replace("{{viewUrl}}",' in send_body)
     _check("backend send chain still replaces {{signature}}",
            '.replace("{{signature}}",' in send_body)
     _check("backend send chain does NOT replace {{header}}",
            '.replace("{{header}}",' not in send_body,
-           "found {{header}} replacement in backend send chain — "
-           "frontend pre-expands per-entity tokens, backend MUST NOT "
+           "frontend pre-expands per-entity tokens; backend MUST NOT "
            "blanket-substitute {{header}} or per-entity tokens leak")
 
 
+def test_backend_no_longer_has_header_fallback():
+    """The header is frontend-generated per type now; the backend no longer
+    keeps a _FALLBACK_HEADER / _render_header mirror, and api.py no longer
+    special-cases emailHeaderTemplate at settings-save time."""
+    print("test_backend_no_longer_has_header_fallback")
+    email_src = _read("backend", "routes", "email.py")
+    _check("_FALLBACK_HEADER removed", "_FALLBACK_HEADER" not in email_src)
+    _check("_render_header removed", "_render_header" not in email_src)
+    api_src = _read("backend", "routes", "api.py")
+    _check("api.py no longer sanitizes emailHeaderTemplate",
+           "emailHeaderTemplate" not in api_src)
+
+
 def test_text_to_html_block_detect_re_includes_section():
-    """The marker wrapper is <section>. textToHtml's block detection
-    must include <section> so a body that already has the WYSIWYG-
-    rendered section block (rare — would only happen if a user
-    pasted such content) passes through unchanged instead of being
-    paragraph-wrapped."""
+    """The marker wrapper is <section>. textToHtml's block detection must
+    include <section> so a body that already has the WYSIWYG-rendered
+    section block passes through unchanged instead of being paragraph-wrapped."""
     print("test_text_to_html_block_detect_re_includes_section")
     src = _read("theme.js")
-    # The regex literal has escaped slashes so a naive /[^/]+/ would
-    # stop too early. Grab a fixed-length window after the name.
     m = re.search(r'BLOCK_DETECT_RE\s*=\s*(.{,200})', src)
     _check("BLOCK_DETECT_RE found in theme.js", m is not None)
     if m:
@@ -505,24 +458,22 @@ def test_text_to_html_block_detect_re_includes_section():
 
 
 def main() -> int:
-    test_data_settings_exposes_email_header_template()
+    test_no_editable_header_template_in_settings()
     test_customer_templates_prepend_header()
-    test_crew_templates_have_no_header()
+    test_crew_header_paths()
     test_available_variables_list_includes_header()
-    test_backend_fallback_header_substring_pinned()
+    test_render_header_per_type_cta()
     test_render_header_substitutes_per_entity_tokens_only()
-    test_render_header_ignores_viewUrl_var_if_passed()
-    test_render_header_handles_empty_template()
+    test_render_header_ignores_viewUrl_var()
     test_bleach_preserves_header_structure()
     test_bleach_strips_disallowed_attrs_from_header()
     test_frontend_sanitizer_allowlist_pinned()
     test_total_renders_with_cents_in_all_three_modals()
     test_settings_email_templates_available_variables_matches_canonical()
-    test_settings_page_has_header_template_editor()
-    test_email_body_editor_consumes_header_props()
-    test_send_modals_wire_header_template_and_vars()
-    test_backend_render_header_falls_back_to_constant()
+    test_send_modals_wire_header()
+    test_email_body_editor_consumes_header_kind()
     test_backend_send_does_not_substitute_header_token()
+    test_backend_no_longer_has_header_fallback()
     test_text_to_html_block_detect_re_includes_section()
 
     fail_count = sum(1 for _, ok in _results if not ok)

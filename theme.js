@@ -402,22 +402,50 @@ window.LTP_renderSignature = function(template) {
     .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK);
 };
 
-// Render the {{header}} placeholder for the Send-modal preview AND
-// for send-time expansion. Substitutes the per-entity tokens
-// ({{refNumber}}, {{projectName}}, {{total}}) so the user sees real
-// values in the preview AND the expanded HTML carries them to the
-// backend. {{viewUrl}} is INTENTIONALLY left literal: it's per-
-// recipient (each To/CC gets a different tracking_token) and only the
-// backend knows the token. The expanded header reaches backend with
-// href="{{viewUrl}}" still literal, the backend's per-recipient
-// substitution chain swaps in the real URL just before the wire.
-window.LTP_renderHeader = function(template, vars) {
-  if (!template) return "";
+// ── Customer-facing email {{header}} block ───────────────────────────────
+// The {{header}} placeholder renders a branded "action box" at the top of
+// quote / invoice / receipt emails: a card with the refNumber + project +
+// total summary and one centered call-to-action button. The box container
+// is identical across types (the same crew-availability box, so every email
+// reads the same); ONLY the CTA label differs by type — hence the per-type
+// map below. This used to be a single editable emailHeaderTemplate in
+// Settings, but each email type needs its own button wording, so the header
+// is generated here per type instead of stored as one shared string.
+//
+// `kind` is one of "quote" | "invoice" | "receipt" (passed by each send
+// modal). Unknown/empty kinds fall back to the quote label so a header
+// never renders an empty button.
+window.LTP_HEADER_CTA = {
+  quote: "View &amp; Accept or Decline",
+  invoice: "View &amp; Pay",
+  receipt: "View Receipt",
+};
+
+// Build the {{header}} block for `kind`, baking in the per-entity tokens
+// (refNumber / projectName / total) so the Send-modal preview shows real
+// values AND the expanded HTML carries them to the backend. {{viewUrl}} is
+// INTENTIONALLY left literal: it's per-recipient (each To/CC gets its own
+// tracking_token) and only the backend knows the token — the backend's
+// per-recipient chain swaps href="{{viewUrl}}" for the real URL just before
+// the wire. Kept structurally in sync with the box the crew emails use
+// (backend/routes/crew.py::_crew_header_html) so the card reads identically;
+// tests/test_header_block.py pins the structure + per-type labels.
+window.LTP_renderHeader = function(kind, vars) {
   vars = vars || {};
-  return template
-    .replace(/\{\{refNumber\}\}/g, vars.refNumber || "")
-    .replace(/\{\{projectName\}\}/g, vars.projectName || "")
-    .replace(/\{\{total\}\}/g, vars.total || "");
+  var cta = window.LTP_HEADER_CTA[kind] || window.LTP_HEADER_CTA.quote;
+  return '<div style="padding:0px">'
+    + '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
+    + 'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
+    + '<tbody><tr><td style="padding:22px;text-align:center">'
+    + '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">' + (vars.refNumber || "") + '</div>'
+    + '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + (vars.projectName || "") + '</div>'
+    + '<div style="font-size:14px;color:#233038;margin-bottom:18px">' + (vars.total || "") + '</div>'
+    + '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
+    + '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
+    + '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
+    + 'font-weight:bold;color:#ffffff;text-decoration:none">' + cta + '</a>'
+    + '</td></tr></tbody></table>'
+    + '</td></tr></tbody></table></div>';
 };
 
 // Build a Send-modal preview body: substitute the placeholders the
@@ -449,11 +477,12 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
 // — invisible to the user because it lives in attribute space, not
 // text content.
 //
-// `LTP_bodyToEditableHtml(rawBody, signatureTemplate, headerTemplate, headerVars)`
+// `LTP_bodyToEditableHtml(rawBody, signatureTemplate, headerKind, headerVars)`
 //   — call when opening the modal. Produces HTML safe to drop into a
-//   contentEditable. headerVars is {viewUrl, refNumber, projectName,
-//   total} for the preview render; if missing the inner tokens stay
-//   literal (only matters in tests or call sites without entity context).
+//   contentEditable. headerKind ("quote"|"invoice"|"receipt") selects the
+//   header's CTA label; headerVars is {refNumber, projectName, total} for
+//   the preview render; if missing the summary lines render empty (only
+//   matters in tests or call sites without entity context).
 //
 // `LTP_editableHtmlToBody(html)` — call on every input event. Reverses
 // both substitutions so the stored body still has {{signature}} +
@@ -471,7 +500,7 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
 // (admin-authored templates can't pre-mark blocks as non-editable). The
 // editor component re-applies contenteditable="false" via DOM API after
 // setting innerHTML.
-window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerTemplate, headerVars) {
+window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerKind, headerVars) {
   if (!rawBody) return "";
   // 1. Paragraph-wrap FIRST, while the body still has placeholders as
   //    plain-text tokens. If we substituted the blocks first, the
@@ -483,7 +512,7 @@ window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerTempl
   var sigBlock = '<section class="ltp-sig-block">'
     + window.LTP_renderSignature(signatureTemplate || "") + '</section>';
   var headerBlock = '<section class="ltp-header-block">'
-    + window.LTP_renderHeader(headerTemplate || "", headerVars || {}) + '</section>';
+    + window.LTP_renderHeader(headerKind || "", headerVars || {}) + '</section>';
 
   // 3. Replace placeholders, splitting any surrounding <p> so the
   //    block-level <section><table> isn't nested inside an inline <p>

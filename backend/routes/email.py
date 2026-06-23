@@ -124,32 +124,6 @@ def _build_view_url(entity_type: str, share_token: str, tracking_token: str) -> 
     return f"{origin}/#/view/{entity_type}/{share_token}?r={tracking_token}"
 
 
-def _render_header(settings_data: dict) -> str:
-    """Return the customer-facing header HTML.
-
-    The header is the "View & Accept or Decline" button + refNumber /
-    projectName / total summary table that sits at the top of quote and
-    invoice emails. We expand the `{{header}}` placeholder with this
-    HTML, then the OUTER substitution chain expands `{{viewUrl}}`,
-    `{{refNumber}}`, `{{projectName}}`, `{{total}}` inside it — which
-    requires this function to run BEFORE those substitutions.
-
-    Falls back to `_FALLBACK_HEADER` when the workspace hasn't customized
-    a template (same reasoning as `_render_signature` — the data/settings.js
-    default lives only in the frontend's merged config; without a fallback
-    a fresh deploy would substitute `{{header}}` with `""`).
-
-    The fallback string MUST match data/settings.js::emailHeaderTemplate
-    byte-for-byte so the Send-modal preview shows the same header the
-    recipient gets. Any change to one MUST be mirrored in the other;
-    tests/test_header_block.py pins both via substring checks.
-    """
-    template = (settings_data.get("emailHeaderTemplate") or "").strip()
-    if not template:
-        template = _FALLBACK_HEADER
-    return template
-
-
 def _render_signature(
     user: models.User,
     settings_data: dict,
@@ -202,32 +176,6 @@ def _render_signature(
 # Send-modal preview renders the same image the recipient gets.
 _PHOTO_FALLBACK_URL = (
     "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
-)
-
-
-# Server-side fallback header — must stay byte-identical to the
-# data/settings.js default. Same reasoning as _FALLBACK_SIGNATURE
-# below: the data/settings.js default lives only in the frontend's
-# merged config and isn't in the DB until an admin saves settings, so
-# the first send from a fresh deploy needs a server-side default.
-#
-# Tokens inside ({{viewUrl}}, {{refNumber}}, {{projectName}}, {{total}})
-# get substituted by the outer per-recipient pass — _render_header
-# returns them as literals on purpose.
-_FALLBACK_HEADER = (
-    '<div style="padding:0px">'
-    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
-    'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
-    '<tbody><tr><td style="padding:22px;text-align:center">'
-    '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">{{refNumber}}</div>'
-    '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">{{projectName}}</div>'
-    '<div style="font-size:14px;color:#233038;margin-bottom:18px">{{total}}</div>'
-    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
-    '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
-    '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
-    'font-weight:bold;color:#ffffff;text-decoration:none">View &amp; Accept or Decline</a>'
-    '</td></tr></tbody></table>'
-    '</td></tr></tbody></table></div>'
 )
 
 
