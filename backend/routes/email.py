@@ -420,23 +420,25 @@ async def send_email(
     settings_data = await load_settings(db)
     signature_html = _render_signature(user, settings_data)
     view_url = _build_view_url(body.entityType, entity.share_token, primary_tracking)
-    # {{masthead}} renders the shared branded masthead (logo + color-matched
-    # rule). Substituted server-side here like {{signature}} so every email type
-    # can insert it; rendered by crew.py (imported lazily to avoid a module-load
-    # cycle — crew.py imports helpers from this module).
-    from backend.routes.crew import render_masthead, _email_brand
-    masthead_html = render_masthead(_email_brand(settings_data))
     rendered_html = (
         sanitized_html
         .replace("{{viewUrl}}", view_url)
         .replace("{{signature}}", signature_html)
-        .replace("{{masthead}}", masthead_html)
+        # The masthead is provided by the shared container below, not a body
+        # token — strip any stray {{masthead}} so it never renders literally.
+        .replace("{{masthead}}", "")
     )
     # Re-sanitize after signature substitution — the signature template
     # came out of admin-edited settings; it's already sanitized at save
     # time (commit 4 wires that), but defense in depth: a missed save-time
     # sanitization gets caught here before going to the wire.
-    final_html = email_html(rendered_html)
+    inner_html = email_html(rendered_html)
+    # Wrap every email in the shared branded container (light canvas → white
+    # card with the masthead on top + footer) so the layout and masthead are
+    # identical across crew and customer emails. Lazy import avoids a
+    # module-load cycle (crew.py imports helpers from this module).
+    from backend.routes.crew import email_shell, _email_brand
+    final_html = email_html(email_shell(inner_html, _email_brand(settings_data)))
 
     # 5. Persist email_recipients rows BEFORE attempting send. If we crash
     # mid-send, the row + tracking_token are recoverable evidence.

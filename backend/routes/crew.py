@@ -342,7 +342,7 @@ def render_masthead(brand: dict) -> str:
     )
 
 
-def _crew_email_shell(inner_html: str, brand: dict) -> str:
+def email_shell(inner_html: str, brand: dict) -> str:
     """Wrap composed crew-email content in the themed, branded responsive
     layout (light canvas, centered 580px card, masthead, footer)."""
     company = escape(brand["company"])
@@ -404,7 +404,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
             company=company, brand=brand, shifts=shifts, view_url=view_url,
             signature_html=_render_signature(user, settings_data),
         )
-        final_html = email_html(_crew_email_shell(inner, brand))
+        final_html = email_html(email_shell(inner, brand))
 
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
@@ -460,7 +460,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
 
         subject = _sub(tmpl.get("subject") or "{{projectName}}")
         inner = _paragraphs_to_html(_sub(tmpl.get("body") or ""), {"{{signature}}": _render_signature(user, settings_data)})
-        final_html = email_html(_crew_email_shell(inner, brand))
+        final_html = email_html(email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
             user=user, db=db,

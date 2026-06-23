@@ -567,7 +567,7 @@
             // order groups by usage: entity fields → money/dates →
             // block-level placeholders (signature/header expand to
             // HTML) → crew-specific → quote-specific → per-recipient.
-            ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "lineItems", "masthead", "signature", "header", "crewName", "role", "date", "callTime", "wrapTime", "location", "quoteValidity", "viewUrl"].map(function(v) {
+            ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "lineItems", "signature", "header", "crewName", "role", "date", "callTime", "wrapTime", "location", "quoteValidity", "viewUrl"].map(function(v) {
               return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
             })
           )
