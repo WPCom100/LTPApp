@@ -322,7 +322,7 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
     # reads as poking up out of one shape). width:100%/max-width stays responsive.
     if brand["logo"]:
         masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
-                    'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0">')
+                    'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">')
     else:
         masthead = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
                     'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
@@ -336,14 +336,16 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:26px 30px 0;text-align:left">' + masthead + '</td></tr>'
-        # Rule: a 4px color-matched line. Its left inset (30) matches the logo's
-        # left padding, so it begins at the mask's left edge; the nested table
-        # lets it bleed to the right card edge ("edge of the email"). Not
-        # full-width — the 30px to the left of the mask stays clear.
-        '<tr><td style="padding:0 0 0 30px">'
+        # Masthead: a 30px spacer cell, then the logo in a cell whose OWN
+        # border-bottom is the 4px rule. Putting the rule on the logo's cell
+        # (not a separate row) keeps the line directly beneath the artwork with
+        # no hairline gap; the img's -1px bottom margin overlaps it by 1px. The
+        # rule starts at the mask's left edge (after the spacer) and bleeds to
+        # the right card edge.
+        '<tr><td style="padding:0">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        '<td style="border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">&nbsp;</td>'
+        '<td width="30" style="width:30px;font-size:0;line-height:0">&nbsp;</td>'
+        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + '">' + masthead + '</td>'
         '</tr></table></td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
