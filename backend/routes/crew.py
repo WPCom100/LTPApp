@@ -188,7 +188,7 @@ _CTA_ORANGE = _BRAND_ORANGE
 # Email logo: the trimmed linear lockup, served by the app itself at this path
 # (no external dependency / dead URL). The absolute URL is built per-send from
 # the app origin in _email_brand.
-_LOGO_ASSET_PATH = "/assets/logos/luminary-linear.png"
+_LOGO_ASSET_PATH = "/assets/logos/luminary-masthead.png"
 
 # Shared body-paragraph style — explicit font-family so template text renders
 # identically everywhere (don't rely on inheritance across table boundaries,
@@ -227,7 +227,7 @@ def _email_brand(settings_data: dict) -> dict:
     """Workspace branding for the themed crew-email masthead.
 
     The masthead deliberately uses the dedicated linear lockup
-    (assets/logos/luminary-linear.png) — NOT settings.logoUrl. logoUrl is the
+    (assets/logos/luminary-masthead.png) — NOT settings.logoUrl. logoUrl is the
     full-size company logo (PDFs, portal, etc.); the crew masthead is its own
     treatment (mask + horizontal rule). Quote/invoice emails are a separate path
     (email.py / emailHeaderTemplate) and are intentionally left unchanged for now.
@@ -316,11 +316,10 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
     """Wrap composed crew-email content in the themed, branded responsive
     layout (light canvas, centered 600px card, logo masthead, footer)."""
     company = escape(brand["company"])
-    # The logo butts flush against the masthead's bottom rule: display:block +
-    # zero bottom padding on the cell means the (bottom-trimmed) artwork sits
-    # directly on the rule, and because the rule is the logo's exact orange the
-    # mask reads as poking up out of one continuous shape. width:100%/max-width
-    # keeps it responsive without squashing.
+    # Masthead: the linear lockup, left-aligned and butting flush against a 4px
+    # rule below it (display:block + zero bottom padding → the bottom-trimmed
+    # artwork sits on the rule; rule is the logo's exact orange, so the mask
+    # reads as poking up out of one shape). width:100%/max-width stays responsive.
     if brand["logo"]:
         masthead = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
                     'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0">')
@@ -337,7 +336,15 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:26px 30px 0;text-align:left;border-bottom:2px solid ' + _BRAND_ORANGE + '">' + masthead + '</td></tr>'
+        '<tr><td style="padding:26px 30px 0;text-align:left">' + masthead + '</td></tr>'
+        # Rule: a 4px color-matched line. Its left inset (30) matches the logo's
+        # left padding, so it begins at the mask's left edge; the nested table
+        # lets it bleed to the right card edge ("edge of the email"). Not
+        # full-width — the 30px to the left of the mask stays clear.
+        '<tr><td style="padding:0 0 0 30px">'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
+        '<td style="border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">&nbsp;</td>'
+        '</tr></table></td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
