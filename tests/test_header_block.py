@@ -177,10 +177,12 @@ def test_backend_fallback_header_substring_pinned():
     # Key structural pieces that must match between the two.
     for needle in (
         'href="{{viewUrl}}"',
-        '{{refNumber}} - {{projectName}}',
+        '{{refNumber}}',
+        '{{projectName}}',
         '{{total}}',
         'role="presentation"',
-        'background:#ef5822',
+        'background-color:#f15927',     # brand orange on the centered button
+        'border-radius:10px',           # the CTA box/card
         'View &amp; Accept or Decline',
     ):
         _check(f"both contain {needle!r}",
@@ -240,9 +242,9 @@ def test_render_header_handles_empty_template():
 
 
 def test_bleach_preserves_header_structure():
-    """The header is table-based with role + inline styles + hr + width.
-    Confirm the backend bleach allowlist + CSS sanitizer keeps every
-    structural piece intact."""
+    """The header is a box/card (rounded border) with a centered button, role +
+    inline styles + width. Confirm the backend bleach allowlist + CSS sanitizer
+    keeps every structural piece intact."""
     print("test_bleach_preserves_header_structure")
     from backend.routes.email import _FALLBACK_HEADER
     from backend.sanitize import email_html
@@ -253,9 +255,9 @@ def test_bleach_preserves_header_structure():
         '{{refNumber}}',                # frontend bakes in before POST
         '{{projectName}}',
         '{{total}}',
-        'background:#ef5822',           # accent color on button
-        '<hr',                          # divider
-        '<table',                       # outer + inner
+        'background-color:#f15927',     # brand orange on the centered button
+        'border-radius:10px',           # the CTA box/card
+        '<table',                       # outer box + inner button
         'cellspacing="0"',              # table layout reset
         'cellpadding="0"',
         '&amp;',                        # ampersand entity in button text
