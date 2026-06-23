@@ -183,7 +183,7 @@ _FALLBACK_CREW_BODY = (
 _DEFAULT_ACCENT = "#E8731A"
 # The exact brand orange, sampled from assets/logos — used for the masthead
 # rule (so it color-matches the logo and reads as one shape) and the CTA button.
-_BRAND_ORANGE = "#F15927"
+_BRAND_ORANGE = "#f15927"
 _CTA_ORANGE = _BRAND_ORANGE
 # Email logo: the trimmed linear lockup, served by the app itself at this path
 # (no external dependency / dead URL). The absolute URL is built per-send from
@@ -336,16 +336,17 @@ def _crew_email_shell(inner_html: str, brand: dict) -> str:
         '<tr><td align="center">'
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        # Masthead: a 30px spacer cell, then the logo in a cell whose OWN
-        # border-bottom is the 4px rule. Putting the rule on the logo's cell
-        # (not a separate row) keeps the line directly beneath the artwork with
-        # no hairline gap; the img's -1px bottom margin overlaps it by 1px. The
-        # rule starts at the mask's left edge (after the spacer) and bleeds to
-        # the right card edge.
+        # Masthead: a 31px spacer cell, then the logo in a cell whose OWN
+        # border-bottom is the 4px rule — line sits directly beneath the artwork
+        # (no separate row to leak a seam). border-collapse + font-size/line-
+        # height:0 kill the residual gap some email clients (Gmail) render below
+        # a scaled image even with display:block; the img's -1px bottom margin
+        # adds overlap in clients that keep it. Rule starts at the mask's left
+        # edge (after the spacer) and bleeds to the right card edge.
         '<tr><td style="padding:0">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>'
-        '<td width="30" style="width:30px;font-size:0;line-height:0">&nbsp;</td>'
-        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + '">' + masthead + '</td>'
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse"><tr>'
+        '<td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td>'
+        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">' + masthead + '</td>'
         '</tr></table></td></tr>'
         '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
         '</table>'
