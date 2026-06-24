@@ -7,7 +7,7 @@ generated PER EMAIL TYPE by theme.js::LTP_renderHeader — there is no longer
 a single editable header template in Settings, because each type needs its
 own button wording:
     quote   -> "View & Accept or Decline"
-    invoice -> "View & Pay"
+    invoice -> "View & Download"
     receipt -> "View Receipt"
 Crew templates omit {{header}} (crew emails get their own server-rendered
 box in backend/routes/crew.py).
@@ -62,7 +62,7 @@ def _read(*parts):
 # Per-type CTA labels — MUST match theme.js::LTP_HEADER_CTA.
 _CTA = {
     "quote": "View &amp; Accept or Decline",
-    "invoice": "View &amp; Pay",
+    "invoice": "View &amp; Download",
     "receipt": "View Receipt",
 }
 

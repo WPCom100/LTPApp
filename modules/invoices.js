@@ -667,7 +667,7 @@
       setSending(true);
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
-      // "invoice" selects the View & Pay CTA label.
+      // "invoice" selects the View & Download CTA label.
       // Paragraph-wrap BEFORE injecting the header so the header's <table>
       // doesn't trip textToHtml's block-detection and collapse the body's
       // plain-text paragraph breaks; re-flatten {{signature}} to block level.

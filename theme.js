@@ -417,7 +417,7 @@ window.LTP_renderSignature = function(template) {
 // never renders an empty button.
 window.LTP_HEADER_CTA = {
   quote: "View &amp; Accept or Decline",
-  invoice: "View &amp; Pay",
+  invoice: "View &amp; Download",
   receipt: "View Receipt",
 };
 

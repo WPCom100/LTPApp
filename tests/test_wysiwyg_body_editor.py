@@ -84,7 +84,7 @@ def py_render_signature(template, name="Sarah", email="sarah@x.com",
 
 _HEADER_CTA = {
     "quote": "View &amp; Accept or Decline",
-    "invoice": "View &amp; Pay",
+    "invoice": "View &amp; Download",
     "receipt": "View Receipt",
 }
 
