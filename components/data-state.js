@@ -269,6 +269,17 @@
             // colors / crew options / etc. when the server's settings blob
             // is empty or sparse. Server values win on overlapping keys.
             adopted = Object.assign({}, fallback || {}, serverValue || {});
+            // emailTemplates is a nested object that GAINS keys as we ship new
+            // template types (e.g. crewWithdrawn). A shallow assign lets a saved
+            // blob's emailTemplates hide every newly-shipped default, so deep-
+            // merge it: ship-defaults form the base; the server's saved
+            // per-template edits win on top. (Any future nested-object setting
+            // that grows new default keys needs the same treatment.)
+            adopted.emailTemplates = Object.assign(
+              {},
+              (fallback || {}).emailTemplates || {},
+              (serverValue || {}).emailTemplates || {}
+            );
           } else if (Array.isArray(serverValue)) {
             adopted = serverValue;
           } else {

@@ -526,7 +526,7 @@
             var groups = [
               { label: "Quotes", keys: ["quoteSent", "quoteFollowUp"] },
               { label: "Invoices", keys: ["invoiceSent", "invoiceReminder", "paymentReceipt"] },
-              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewNotSelected"] },
+              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn"] },
             ];
             var elements = [];
             groups.forEach(function(group) {
