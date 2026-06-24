@@ -8,7 +8,7 @@ from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
-from backend import models
+from backend import models, qbo_receipts
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
@@ -63,6 +63,37 @@ async def _session_sweeper_loop():
             raise
 
 
+# ── QuickBooks auto-receipt poller ──────────────────────────────────────────
+# Wakes every couple of hours, asks QuickBooks which linked invoices are now
+# paid (Balance 0), and emails each client their payment receipt exactly once.
+# Sender = the admin who connected QuickBooks; if their Gmail is unavailable the
+# receipt is cached and retried next cycle. See backend/qbo_receipts.py. Tune
+# the cadence via LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS (default 2 hours).
+QBO_RECEIPT_POLL_INTERVAL = int(os.environ.get("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", str(2 * 3600)))
+
+
+async def _qbo_receipt_poll_loop():
+    """Long-running background task started by lifespan(). Each iteration runs
+    one poll cycle, then sleeps. Exceptions inside a cycle are caught and logged
+    so one transient blip (DB/QuickBooks/Gmail) doesn't permanently kill the
+    poller; per-invoice failures are already isolated inside run_receipt_poll."""
+    while True:
+        try:
+            summary = await qbo_receipts.run_receipt_poll()
+            if not summary.get("skipped") and (summary.get("sent") or summary.get("pending") or summary.get("failed")):
+                print(f"[LTP] qbo-receipts: {summary['sent']} sent, "
+                      f"{summary['pending']} cached, {summary['failed']} failed "
+                      f"(of {summary['checked']} checked)", flush=True)
+        except asyncio.CancelledError:
+            raise  # propagate shutdown signal
+        except Exception as e:
+            print(f"[LTP] qbo-receipts error (will retry next interval): {e}", flush=True)
+        try:
+            await asyncio.sleep(QBO_RECEIPT_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -74,17 +105,20 @@ async def lifespan(app: FastAPI):
     # purposes (worst case: one extra log entry per token per pod reboot).
     app.state.client_view_seen = {}
     sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
+    receipt_poller = asyncio.create_task(_qbo_receipt_poll_loop(), name="ltp_qbo_receipt_poller")
     try:
         yield
     finally:
-        # Graceful shutdown: cancel, then await so the task actually finishes
+        # Graceful shutdown: cancel, then await so each task actually finishes
         # its current iteration (asyncio.Task.cancel() alone just sets a flag).
-        sweeper.cancel()
-        try:
-            await sweeper
-        except (asyncio.CancelledError, Exception):
-            # Swallow CancelledError (expected); log any unexpected error.
-            pass
+        for task in (sweeper, receipt_poller):
+            task.cancel()
+        for task in (sweeper, receipt_poller):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                # Swallow CancelledError (expected); ignore any teardown error.
+                pass
 
 
 app = FastAPI(title="LTP Business Suite", version="2.0.0", lifespan=lifespan)

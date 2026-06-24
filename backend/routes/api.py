@@ -43,6 +43,9 @@ _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
     "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
     "qb_customer_id", "qb_item_id",
+    # Auto-receipt state — written only by the receipt poller + the manual
+    # receipt send path; the client must never set these via a CRUD PUT.
+    "qb_balance", "receipt_email_status", "receipt_email_sent_at",
     "share_token",
 }
 

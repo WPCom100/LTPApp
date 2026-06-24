@@ -105,6 +105,11 @@ class SendRequest(BaseModel):
     # When true (invoice sends only), the backend generates the invoice PDF
     # and attaches it to the email. Ignored for non-invoice entity types.
     attachPdf: bool = False
+    # When true (invoice receipt sends only), mark the invoice as receipted so
+    # the QuickBooks-driven auto-receipt poller (backend/qbo_receipts.py) never
+    # sends a second receipt for the same invoice. Set by the manual "Send
+    # Receipt" flow (modules/invoices.js::sendReceipt).
+    receipt: bool = False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -486,6 +491,12 @@ async def send_email(
     for r in recipient_rows:
         r.gmail_message_id = gmail_message_id
     entry = _stamp_email_sent(entity, user, to_list, cc_list, subject, gmail_message_id, now)
+    # A manual "Send Receipt" claims the receipt slot so the QuickBooks poller
+    # won't email a second receipt. Server-authoritative (the column is in
+    # _READONLY_COLS) — set here, on the real send, not from client state.
+    if body.receipt and body.entityType == "invoice":
+        entity.receipt_email_status = "sent"
+        entity.receipt_email_sent_at = now
     await db.flush()
 
     return {

@@ -28,7 +28,7 @@ from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import crypto, models, qbo_sync, quickbooks
@@ -167,10 +167,20 @@ async def status(
     needs_reconnect = refresh_exp is not None and refresh_exp <= now
 
     connected_by = None
+    sender_gmail_connected = False
     if conn.connected_by_user_id:
         r = await db.execute(select(models.User).where(models.User.id == conn.connected_by_user_id))
         u = r.scalar_one_or_none()
         connected_by = u.name if u else None
+        # Auto-receipts are emailed from this admin's Gmail (backend/qbo_receipts.py).
+        sender_gmail_connected = bool(u and u.gmail_refresh_token)
+
+    # Receipts that are paid-and-queued but waiting on the sender's Gmail
+    # (the "cache the task until the connection is reestablished" state).
+    pending_receipts = await db.scalar(
+        select(func.count()).select_from(models.Invoice)
+        .where(models.Invoice.receipt_email_status == "pending")
+    )
 
     realm = conn.realm_id or ""
     masked_realm = ("…" + realm[-4:]) if len(realm) > 4 else realm
@@ -185,6 +195,9 @@ async def status(
         "accessTokenExpiresAt": _aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
         "refreshTokenExpiresAt": refresh_exp.isoformat() if refresh_exp else None,
         "needsReconnect": needs_reconnect,
+        # Auto-receipt surface for the Settings panel.
+        "senderGmailConnected": sender_gmail_connected,
+        "pendingReceipts": int(pending_receipts or 0),
     }
 
 

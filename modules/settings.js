@@ -500,7 +500,16 @@
           h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.6 } },
             h("div", null, "Company (realm): ", h("span", { style: { color: B.textSec } }, qbo.realmMasked || "—")),
             qbo.connectedBy && h("div", null, "Connected by ", h("span", { style: { color: B.textSec } }, qbo.connectedBy), qbo.connectedAt ? " on " + qbo.connectedAt.substring(0, 10) : ""),
-            qbo.refreshTokenExpiresAt && h("div", null, "Authorization valid until ", h("span", { style: { color: B.textSec } }, qbo.refreshTokenExpiresAt.substring(0, 10)))),
+            qbo.refreshTokenExpiresAt && h("div", null, "Authorization valid until ", h("span", { style: { color: B.textSec } }, qbo.refreshTokenExpiresAt.substring(0, 10))),
+            // Auto-receipts: emailed from the connector's Gmail when QuickBooks marks an invoice paid.
+            h("div", { style: { marginTop: 6 } }, "Payment receipts: ",
+              h("span", { style: { color: B.textSec } },
+                "auto-sent" + (qbo.connectedBy ? " from " + qbo.connectedBy + "'s Gmail" : "") + " when QuickBooks marks an invoice paid"))),
+          // Warn when receipts are queued but the sender's Gmail is disconnected — they'll
+          // send automatically once it's reconnected (no action needed beyond reconnecting Gmail).
+          qbo.pendingReceipts > 0 && h("div", { style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginTop: 10, lineHeight: 1.5 } },
+            qbo.pendingReceipts + " payment receipt" + (qbo.pendingReceipts === 1 ? " is" : "s are") + " waiting to send"
+            + (qbo.senderGmailConnected ? " and will go out on the next sync." : ". Reconnect " + (qbo.connectedBy || "the connector") + "'s Google sign-in (gmail.send) to release them.")),
           h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
             qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
             h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))

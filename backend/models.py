@@ -214,6 +214,24 @@ class Invoice(Base):
     # QB-relevant actually changed (lines, dates, discount, customer info,
     # project name). Stored verbatim — server-authoritative (see _READONLY_COLS).
     qb_synced_signature = Column(Text, nullable=True)
+    # ── Auto-receipt (QuickBooks-driven) ────────────────────────────────────
+    # The background poller (backend/qbo_receipts.py) watches linked invoices
+    # for the QuickBooks-side Balance reaching 0 (paid in full) and emails the
+    # client a payment receipt — exactly once. These three columns are
+    # SERVER-AUTHORITATIVE too (see _READONLY_COLS in routes/api.py).
+    #   qb_balance           — last QB Balance the poller observed (0 = paid).
+    #   receipt_email_status — idempotency + cache-and-retry state machine:
+    #       null     no receipt warranted yet (invoice not paid in QB)
+    #       pending  paid + queued, but the sender's Gmail was unavailable;
+    #                retried every poll cycle until it sends (the owner's
+    #                "cache the task until the connection is reestablished")
+    #       sent     receipt emailed — set by BOTH the poller and the manual
+    #                "Send Receipt" flow, so the two paths never double-send
+    #       failed   a non-recoverable send error; retried next cycle too
+    #   receipt_email_sent_at — when the receipt actually went out.
+    qb_balance = Column(Float, nullable=True)
+    receipt_email_status = Column(String(20), nullable=True)
+    receipt_email_sent_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

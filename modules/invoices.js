@@ -569,6 +569,7 @@
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
           bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
+          receipt: true,  // claim the receipt slot so the QB auto-receipt poller won't re-send
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
