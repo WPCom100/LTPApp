@@ -568,7 +568,7 @@
           setSending(false);
           if (resp.status === 200) {
             setShowReceiptModal(false);
-            setDlg({ title: "Receipt Sent", message: "Payment receipt sent to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            window.LTP_toast("Receipt Sent", { message: "Payment receipt sent to " + sendEmail + ".", variant: "success" });
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
@@ -691,7 +691,7 @@
             // invoice is now "sent", which is what makes it eligible to export.
             if (isAdmin && qbConnected) { persistAndPushQbo(updated); }
             setShowSendModal(false);
-            setDlg({ title: isResend ? "Invoice Resent" : "Invoice Sent", message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", variant: "success" });
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
@@ -847,7 +847,10 @@
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); pendingRollbacks.current = []; }, [invoiceId, isNew]);
 
-    function showAlert(title, msg) { setDlg({ title: title, message: msg, confirmLabel: "OK", onConfirm: function() { setDlg(null); } }); }
+    // Informational / validation notice as a non-blocking toast (modals are
+    // reserved for confirm/cancel decisions). Variant defaults to "error";
+    // pass "info" for advisory notices.
+    function showAlert(title, msg, variant) { window.LTP_toast(title, { message: msg, variant: variant || "error" }); }
 
     var isDraft = draft.status === "draft";
     var isLocked = !isDraft; // Invoices locked once sent — must recall to draft to edit
@@ -1369,7 +1372,7 @@
                           if (proj && proj.companyId && proj.companyId !== draft.companyId) {
                             var projComp = companies.find(function(c) { return c.id === proj.companyId; });
                             var invComp = companies.find(function(c) { return c.id === draft.companyId; });
-                            showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this invoice is for " + (invComp ? invComp.name : "another company") + ".");
+                            showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this invoice is for " + (invComp ? invComp.name : "another company") + ".", "info");
                           }
                         }
                         patchDraft({ projectId: pid });
@@ -1666,8 +1669,8 @@
           h(window.Btn, { variant: "ghost", onClick: function() { setShowPaymentForm(false); } }, "Cancel"),
           h(window.Btn, { onClick: function() {
             var amt = Number(payAmount);
-            if (!payAmount || amt <= 0) { alert("Enter a valid payment amount."); return; }
-            if (!payDate) { alert("Enter a payment date."); return; }
+            if (!payAmount || amt <= 0) { showAlert("Invalid Amount", "Enter a valid payment amount."); return; }
+            if (!payDate) { showAlert("Missing Date", "Enter a payment date."); return; }
             if (amt > t.balance && t.balance > 0) {
               if (!window.confirm("This payment ($" + amt.toLocaleString() + ") exceeds the balance due ($" + Math.round(t.balance).toLocaleString() + "). Record anyway?")) return;
             }

@@ -826,7 +826,7 @@
     function setDraft(updater) {
       if (!warnedSentEdit.current && draft.status && draft.status !== "draft") {
         warnedSentEdit.current = true;
-        showAlert("Editing Sent Quote", "This quote has been sent to the client. Changes won't be visible to them until you resend.");
+        showAlert("Editing Sent Quote", "This quote has been sent to the client. Changes won't be visible to them until you resend.", "info");
       }
       setDraftRaw(updater); setIsDirty(true);
     }
@@ -1041,12 +1041,13 @@
     function onSectionDragStart(sectionId) { dragRef.current = { type: "section", sectionId: sectionId }; }
 
     // ── Save / discard ─────────────────────────────────────────────────────────
-    function showAlert(title, message) {
-      setDlg({
-        title: title, message: message,
-        variant: "primary", confirmLabel: "OK", alertOnly: true,
-        onConfirm: function() { setDlg(null); },
-      });
+    // Non-blocking informational / validation notice, rendered as a toast
+    // (bottom-right) rather than a modal — modals are reserved for real
+    // confirm/cancel decisions (delete, discard, recall). `variant` defaults
+    // to "error" since most callers are validation or permission failures;
+    // pass "info" for purely advisory notices.
+    function showAlert(title, message, variant) {
+      window.LTP_toast(title, { message: message, variant: variant || "error" });
     }
 
     function save() {
@@ -1214,7 +1215,7 @@
             setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
             setShowSendModal(false);
-            setDlg({ title: isResend ? "Quote Resent" : "Quote Sent", message: "Quote " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", confirmLabel: "OK", onConfirm: function() { setDlg(null); } });
+            window.LTP_toast(isResend ? "Quote Resent" : "Quote Sent", { message: "Quote " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", variant: "success" });
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
@@ -1736,7 +1737,7 @@
                       if (proj && proj.companyId && proj.companyId !== draft.companyId) {
                         var projComp = companies.find(function(c) { return c.id === proj.companyId; });
                         var quoteComp = companies.find(function(c) { return c.id === draft.companyId; });
-                        showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this quote is for " + (quoteComp ? quoteComp.name : "another company") + ". You may want to update the company.");
+                        showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this quote is for " + (quoteComp ? quoteComp.name : "another company") + ". You may want to update the company.", "info");
                       }
                     }
                     patchDraft({ projectId: pid });

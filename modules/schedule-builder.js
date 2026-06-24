@@ -55,7 +55,9 @@
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
 
-    function showAlert(title, msg) { setDlg({ title: title, message: msg, confirmLabel: "OK", onConfirm: function() { setDlg(null); } }); }
+    // Informational / validation notice as a non-blocking toast (modals are
+    // reserved for confirm/cancel decisions). Variant defaults to "error".
+    function showAlert(title, msg, variant) { window.LTP_toast(title, { message: msg, variant: variant || "error" }); }
 
     // ── Compute summary stats ────────────────────────────────────────────────
     var stats = useMemo(function() {
