@@ -124,32 +124,6 @@ def _build_view_url(entity_type: str, share_token: str, tracking_token: str) -> 
     return f"{origin}/#/view/{entity_type}/{share_token}?r={tracking_token}"
 
 
-def _render_header(settings_data: dict) -> str:
-    """Return the customer-facing header HTML.
-
-    The header is the "View & Accept or Decline" button + refNumber /
-    projectName / total summary table that sits at the top of quote and
-    invoice emails. We expand the `{{header}}` placeholder with this
-    HTML, then the OUTER substitution chain expands `{{viewUrl}}`,
-    `{{refNumber}}`, `{{projectName}}`, `{{total}}` inside it — which
-    requires this function to run BEFORE those substitutions.
-
-    Falls back to `_FALLBACK_HEADER` when the workspace hasn't customized
-    a template (same reasoning as `_render_signature` — the data/settings.js
-    default lives only in the frontend's merged config; without a fallback
-    a fresh deploy would substitute `{{header}}` with `""`).
-
-    The fallback string MUST match data/settings.js::emailHeaderTemplate
-    byte-for-byte so the Send-modal preview shows the same header the
-    recipient gets. Any change to one MUST be mirrored in the other;
-    tests/test_header_block.py pins both via substring checks.
-    """
-    template = (settings_data.get("emailHeaderTemplate") or "").strip()
-    if not template:
-        template = _FALLBACK_HEADER
-    return template
-
-
 def _render_signature(
     user: models.User,
     settings_data: dict,
@@ -205,38 +179,6 @@ _PHOTO_FALLBACK_URL = (
 )
 
 
-# Server-side fallback header — must stay byte-identical to the
-# data/settings.js default. Same reasoning as _FALLBACK_SIGNATURE
-# below: the data/settings.js default lives only in the frontend's
-# merged config and isn't in the DB until an admin saves settings, so
-# the first send from a fresh deploy needs a server-side default.
-#
-# Tokens inside ({{viewUrl}}, {{refNumber}}, {{projectName}}, {{total}})
-# get substituted by the outer per-recipient pass — _render_header
-# returns them as literals on purpose.
-_FALLBACK_HEADER = (
-    '<div style="padding:0px">'
-    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
-    'style="width:100%;margin-top:5px">'
-    '<tbody><tr><td valign="center" style="white-space:nowrap">'
-    '<table cellspacing="0" cellpadding="0" border="0"><tbody><tr>'
-    '<td style="border-radius:3px;text-align:center;background:#ef5822">'
-    '<a style="font-size:12px;color:#ffffff;display:block;padding:8px 12px 11px;'
-    'text-decoration:none;font-weight:bold" href="{{viewUrl}}">'
-    'View &amp; Accept or Decline</a></td>'
-    '<td>&nbsp;&nbsp;</td>'
-    '<td style="font-size:12px">'
-    '<span style="font-weight:bold">{{refNumber}} - {{projectName}}</span>'
-    '<br><span>{{total}}</span></td>'
-    '</tr></tbody></table></td></tr>'
-    '<tr><td valign="center">'
-    '<hr width="100%" style="background-color:rgb(204,204,204);border:medium none;'
-    'clear:both;display:block;font-size:0px;min-height:1px;line-height:0;'
-    'margin:10px 0px">'
-    '</td></tr></tbody></table></div>'
-)
-
-
 # Server-side fallback signature — must stay byte-identical to the
 # data/settings.js default. When the DB has no emailSignatureTemplate
 # value (fresh deploy, settings never saved, admin set it to ""), the
@@ -244,12 +186,12 @@ _FALLBACK_HEADER = (
 # always sees a rich signature, never the truncated "...if you have any
 # questions or would like to proceed." that motivated this fallback.
 _FALLBACK_SIGNATURE = (
-    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse">'
+    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse;max-width:100%">'
     '<tr><td style="padding:0 10px 0 0;vertical-align:top">'
     '<img alt="{{userName}}" height="120" '
     'src="{{userPhoto}}" width="120" '
     'style="display:block;border-radius:50%;object-fit:cover">'
-    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;'
+    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;word-break:break-word;'
     "font-family:'verdana','geneva',sans-serif;font-size:12px;line-height:14px;color:#233038\">"
     '<div style="margin-bottom:10px"><strong>'
     '<span style="font-size:16px;color:#ef5822">{{userName}}</span>'
@@ -424,12 +366,21 @@ async def send_email(
         sanitized_html
         .replace("{{viewUrl}}", view_url)
         .replace("{{signature}}", signature_html)
+        # The masthead is provided by the shared container below, not a body
+        # token — strip any stray {{masthead}} so it never renders literally.
+        .replace("{{masthead}}", "")
     )
     # Re-sanitize after signature substitution — the signature template
     # came out of admin-edited settings; it's already sanitized at save
     # time (commit 4 wires that), but defense in depth: a missed save-time
     # sanitization gets caught here before going to the wire.
-    final_html = email_html(rendered_html)
+    inner_html = email_html(rendered_html)
+    # Wrap every email in the shared branded container (light canvas → white
+    # card with the masthead on top + footer) so the layout and masthead are
+    # identical across crew and customer emails. Lazy import avoids a
+    # module-load cycle (crew.py imports helpers from this module).
+    from backend.routes.crew import email_shell, _email_brand
+    final_html = email_html(email_shell(inner_html, _email_brand(settings_data)))
 
     # 5. Persist email_recipients rows BEFORE attempting send. If we crash
     # mid-send, the row + tracking_token are recoverable evidence.

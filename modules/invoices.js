@@ -548,11 +548,8 @@
       setSending(true);
       // Expand {{header}} into rendered HTML (with refNumber / projectName
       // / total inlined) JUST before send. See quotes-builder.js for
-      // the full rationale.
-      var headerHtml = window.LTP_renderHeader(
-        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
-        sendHeaderVars || {}
-      );
+      // the full rationale. "receipt" selects the View Receipt CTA label.
+      var headerHtml = window.LTP_renderHeader("receipt", sendHeaderVars || {});
       var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
@@ -664,10 +661,8 @@
       setSending(true);
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
-      var headerHtml = window.LTP_renderHeader(
-        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
-        sendHeaderVars || {}
-      );
+      // "invoice" selects the View & Pay CTA label.
+      var headerHtml = window.LTP_renderHeader("invoice", sendHeaderVars || {});
       var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
@@ -1740,7 +1735,7 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerKind: "invoice",
               headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,
@@ -1809,7 +1804,7 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerKind: "receipt",
               headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,

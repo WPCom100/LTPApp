@@ -70,6 +70,19 @@
       };
     }
 
+    // Public crew-request view: #/crew/<token>. Like "view", the token is an
+    // opaque credential (non-numeric, longer than any normal id); special-case
+    // it so the token lands in `id` rather than being mis-parsed as `sub`.
+    if (module === "crew") {
+      return {
+        module: "crew",
+        sub: null,
+        id: parts[1] || null,      // crew request token
+        action: null,
+        query: query,
+      };
+    }
+
     var p1 = parts[1] || null;
     var p2 = parts[2] || null;
     var p3 = parts[3] || null;

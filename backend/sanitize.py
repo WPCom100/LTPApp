@@ -107,7 +107,7 @@ _ALLOWED_CSS_PROPERTIES = (
     "color", "background", "background-color", "background-image",
     "font", "font-family", "font-size", "font-weight", "font-style",
     "line-height", "letter-spacing", "text-decoration", "text-transform",
-    "white-space",
+    "white-space", "word-break", "overflow-wrap",
 )
 
 

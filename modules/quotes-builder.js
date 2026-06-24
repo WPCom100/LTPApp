@@ -1178,10 +1178,7 @@
       // {{header}} literal in sendMessage state so the editor can wrap
       // it as a non-editable block; backend stays simple and only
       // resolves the per-recipient {{viewUrl}} + per-sender {{signature}}.
-      var headerHtml = window.LTP_renderHeader(
-        ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
-        sendHeaderVars || {}
-      );
+      var headerHtml = window.LTP_renderHeader("quote", sendHeaderVars || {});
       var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
       fetch("/api/email/send", {
         method: "POST",
@@ -2099,7 +2096,7 @@
             h(window.EmailBodyEditor, {
               value: sendMessage,
               signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerTemplate: ((settings || {}).emailHeaderTemplate || (window.LTP_DATA_SETTINGS || {}).emailHeaderTemplate),
+              headerKind: "quote",
               headerVars: sendHeaderVars,
               onChange: setSendMessage,
               minHeight: 240,

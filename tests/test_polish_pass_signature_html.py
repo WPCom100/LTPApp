@@ -228,31 +228,30 @@ def test_data_settings_has_rich_signature_default():
 
 
 def test_data_settings_email_templates_wrap_viewurl_in_anchor():
-    """Every template that uses {{viewUrl}} should wrap it in an <a> so
-    the recipient sees a hyperlink, not a raw URL pasted inline.
+    """Wherever {{viewUrl}} is rendered it must be wrapped in an <a> so the
+    recipient sees a hyperlink, not a raw URL pasted inline.
 
-    In data/settings.js the body strings are JS double-quoted with
-    embedded \\" escapes. We look for the escaped form 'href=\\"{{viewUrl}}\\"'
-    that the source file actually contains."""
+    The View button now lives in theme.js::LTP_renderHeader (the per-type
+    {{header}} action box) rather than a stored data/settings.js template,
+    so that's where the anchor wrapper is pinned. data/settings.js must
+    still never carry a BARE {{viewUrl}} on a body line."""
     print("test_data_settings_email_templates_wrap_viewurl_in_anchor")
-    path = os.path.join(_root, "data", "settings.js")
-    with open(path, encoding="utf-8") as f:
+    settings_path = os.path.join(_root, "data", "settings.js")
+    with open(settings_path, encoding="utf-8") as f:
         src = f.read()
-    # We don't try to scope the assertion to a particular template — we
-    # check that the file contains at least one href={{viewUrl}} pattern,
-    # AND that no template uses a bare {{viewUrl}} on a line by itself
-    # (which is the bug the polish pass fixes).
-    _check("at least one href=\"{{viewUrl}}\" pattern present",
-           r'href=\"{{viewUrl}}\"' in src or 'href="{{viewUrl}}"' in src)
-    # Each of the four templates that link to the live view should appear
-    # alongside the anchor wrapper. We check that each label survived
-    # the rewrite (so we didn't accidentally lose one).
+    theme_path = os.path.join(_root, "theme.js")
+    with open(theme_path, encoding="utf-8") as f:
+        theme = f.read()
+    # The header generator wraps {{viewUrl}} in an anchor.
+    _check("LTP_renderHeader wraps {{viewUrl}} in an <a>",
+           'href="{{viewUrl}}"' in theme)
+    # Each of the four templates that link to the live view should still
+    # be present (so we didn't accidentally lose one in the refactor).
     for tmpl_key in ("quoteSent", "quoteFollowUp", "invoiceSent", "invoiceReminder"):
         _check(f"{tmpl_key} template still in file", tmpl_key + ":" in src)
-    # No template should have a naked {{viewUrl}} followed by whitespace —
-    # that's what we just fixed. The exception is the signature template
-    # which uses {{userEmail}} etc. (not viewUrl), so a simple substring
-    # check works.
+    # No template body should have a naked {{viewUrl}} on a line by itself
+    # (the bug the polish pass fixed). The Available: comment lists the
+    # token but lives on a "//" line, so it's excluded.
     bare_viewurl_lines = [
         line for line in src.split("\n")
         if "{{viewUrl}}" in line and "href" not in line and "//" not in line

@@ -23,6 +23,12 @@ window.LTPApp = function() {
     return h(window.LTPClientView, { route: route });
   }
 
+  // Public crew-request landing page — same deal: the token in #/crew/<token>
+  // is the credential, no LTP session required (see modules/crew-view.js).
+  if (route.module === "crew") {
+    return h(window.LTPCrewView, { route: route });
+  }
+
   // Re-render when auth.js publishes the result.
   var pair = useState(window.LTP_AUTH_USER);
   var authUser = pair[0], setAuthUser = pair[1];
@@ -310,7 +316,7 @@ function LTPSignedInApp(props) {
       var full = (contactName(c) + " " + (c.crewRoles || []).join(" ") + " " + (c.crewNotes || "")).toLowerCase();
       if (full.indexOf(q) !== -1) {
         results.push({ type: "Crew", label: contactName(c), sub: (c.crewRoles || []).join(", ") + " \u00b7 " + (c.crewStatus || "active"), module: "labor",
-          action: function() { nav("labor"); setSearchOpen(false); setGlobalSearch(""); } });
+          action: function() { nav("labor/roster"); setSearchOpen(false); setGlobalSearch(""); } });
       }
     });
 
@@ -351,7 +357,7 @@ function LTPSignedInApp(props) {
       case "labor":     return h(window.LTPErrorBoundary, { name: "Labor" }, h(window.LaborView, {
         contacts: contacts, setContacts: setContacts,
         projects: projects, setProjects: setProjects,
-        services: services, quotes: quotes, companies: companies, settings: settings,
+        services: services, quotes: quotes, companies: companies, settings: settings, route: route,
       }));
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
@@ -450,6 +456,24 @@ function LTPSignedInApp(props) {
                 : sub.path === "quotes/products"
                   ? (route.module === "quotes" && route.sub === "products")
                   : (route.module === "quotes" && route.sub === "services");
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+                style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
+                h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
+            });
+          }
+
+          // Labor sub-nav
+          if (sidebarOpen && m.id === "labor") {
+            var laborSubs = [
+              { path: "labor/assignments", label: "Assignments"    },
+              { path: "labor/roster",      label: "Crew Roster"     },
+              { path: "labor/calendar",    label: "Calendar"        },
+              { path: "labor/schedule",    label: "Weekly Schedule" },
+            ];
+            laborSubs.forEach(function(sub) {
+              var subKey = sub.path.split("/")[1];
+              // Bare `labor` (no sub) defaults to Assignments — highlight it then too.
+              var subActive = route.module === "labor" && (route.sub === subKey || (!route.sub && subKey === "assignments"));
               rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
