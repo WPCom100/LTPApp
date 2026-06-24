@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from backend.database import get_db
-from backend import models
+from backend import crew_integrity, models
 from backend.auth_deps import require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
@@ -233,6 +233,12 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             if key != "id":
                 setattr(row, key, val)
         await db.flush()
+        # Crew-request integrity (Project only): a schedule edit may have removed
+        # positions/days that crew requests still reference. Trim each affected
+        # request to its surviving shifts; auto-withdraw any left with none, so a
+        # removal is traced the moment it's saved instead of leaving a stale hire.
+        if model_cls is models.Project:
+            await crew_integrity.reconcile_project(db, row)
         await db.refresh(row)
         return _row_to_dict(row)
 
@@ -242,6 +248,11 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         row = result.scalar_one_or_none()
         if not row:
             return {"ok": True, "id": item_id}  # idempotent delete
+        # Auto-withdraw this project's active crew requests BEFORE the delete nulls
+        # their project_id FK — otherwise they'd be orphaned with no link back to
+        # trace. (Project only; a no-op for every other entity.)
+        if model_cls is models.Project:
+            await crew_integrity.reconcile_project(db, row, deleted=True)
         await db.delete(row)
         # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
         # level by design (trusted staff delete their own drafts) but are now

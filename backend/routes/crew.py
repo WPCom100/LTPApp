@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import gmail, models, view_tracking
+from backend import crew_integrity, gmail, models, view_tracking
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.routes._shared import load_settings, public_settings
@@ -492,6 +492,12 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=404, detail="not found")
 
     project = await _load_project(db, req.project_id)
+    # Heal staleness on read: a link whose shifts were removed (or whose project
+    # was deleted) is auto-withdrawn here too, so the crew always lands on the
+    # "this request has been withdrawn" screen even if the producer-side hooks /
+    # sweep haven't run yet. A no-op once the request is already terminal.
+    if crew_integrity.reconcile_one(req, project):
+        await db.flush()
     contact = None
     if req.contact_id is not None:
         r = await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))
@@ -540,6 +546,17 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
         )
 
     project = await _load_project(db, req.project_id)
+    # Stale guard: if the shifts were removed (or the project deleted) out from
+    # under this request, refuse — the crew member sees the withdrawn screen on
+    # reload (the GET heal / the project save+delete hooks persist the actual
+    # withdrawal; this path just blocks the response and rolls back). A partial
+    # removal only trims position_ids and falls through, so they answer for the
+    # shifts that remain (that trim IS persisted, by the flush at the end).
+    if crew_integrity.reconcile_one(req, project) and req.status == "withdrawn":
+        raise HTTPException(
+            status_code=409,
+            detail={"status": "withdrawn", "message": "This request has been withdrawn."},
+        )
     if project is not None:
         # Only move positions still sitting at `requested` — never override a
         # slot the producer already settled out-of-band.
@@ -570,6 +587,11 @@ async def decline_crew_request(token: str, body: dict, request: Request, db: Asy
 
 @crew_admin_router.get("")
 async def list_crew_requests(projectId: int | None = None, db: AsyncSession = Depends(get_db)):
+    # Heal stale requests on read: trims any whose shifts were removed and
+    # auto-withdraws the fully-orphaned ones (including ones orphaned before this
+    # engine existed, so opening the tab cleans up the existing backlog). The
+    # frontend already hides withdrawn requests, so they simply drop out.
+    await crew_integrity.reconcile_all(db)
     q = select(models.CrewRequest).order_by(models.CrewRequest.id)
     if projectId is not None:
         q = q.where(models.CrewRequest.project_id == projectId)

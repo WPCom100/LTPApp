@@ -216,6 +216,10 @@
     var shifts = data.shifts || [];
     var settings = data.settings || {};
     var terminal = status !== "pending";
+    // A withdrawn request (manually withdrawn OR auto-withdrawn because its
+    // shifts/project were removed) shows a clean "withdrawn" screen — no shift
+    // list, since the booking no longer stands.
+    var withdrawn = status === "withdrawn";
 
     var dateRange = [fmtDate(project.startDate), fmtDate(project.endDate)]
       .filter(function(x) { return x; });
@@ -251,7 +255,7 @@
 
         // Greeting
         crewName && h("div", { style: { fontSize: "15px", color: "#fff", fontWeight: 700, marginBottom: 4 } }, "Hi " + crewName + ","),
-        h("div", { style: { fontSize: "13px", color: FULL_UP_GRAY, marginBottom: 18 } },
+        !withdrawn && h("div", { style: { fontSize: "13px", color: FULL_UP_GRAY, marginBottom: 18 } },
           terminal ? "Here are the shifts on this request:" : "You've been requested for the following shifts:"),
 
         // Project block
@@ -263,10 +267,11 @@
 
         h("div", { style: { height: 1, background: "#3a4a52", margin: "6px 0 20px" } }),
 
-        // Shifts
-        shifts.length === 0
-          ? h("div", { style: { fontSize: "12px", color: "#8899a0", fontStyle: "italic", marginBottom: 20 } }, "No shifts are attached to this request.")
-          : shifts.map(renderShift),
+        // Shifts (hidden entirely on a withdrawn request — the banner says it all)
+        withdrawn ? null
+          : shifts.length === 0
+            ? h("div", { style: { fontSize: "12px", color: "#8899a0", fontStyle: "italic", marginBottom: 20 } }, "No shifts are attached to this request.")
+            : shifts.map(renderShift),
 
         // Comment they left (terminal)
         terminal && data.comment && h("div", { style: { marginTop: 16, fontSize: "12px", color: FULL_UP_GRAY, fontStyle: "italic" } }, "Your note: \"" + data.comment + "\""),

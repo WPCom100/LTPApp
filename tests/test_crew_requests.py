@@ -64,6 +64,9 @@ P_LIST     = 7011   # GET /api/crew-requests list shape + project filter
 P_RESEND   = 7012   # resend re-emails a pending request
 P_RESEND2  = 7013   # resend on a non-pending request → 409
 P_NOTIFY   = 7014   # /notify informational template emails
+P_STALE    = 7015   # full position removal → auto-withdraw + withdrawn screen
+P_STALE2   = 7016   # partial removal → trim, request still answerable
+P_DEL      = 7017   # project delete → auto-withdraw
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -159,6 +162,17 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_NOTIFY, name="Gala Notify", schedule=[
                     _shift("s14", "Show", "2026-07-30", [_pos("p14a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_STALE, name="Gala Stale", schedule=[
+                    _shift("sst", "Show", "2026-08-01",
+                           [_pos("pst_a", C1, service=S1), _pos("pst_b", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_STALE2, name="Gala Stale Partial", schedule=[
+                    _shift("st_keep", "Keep", "2026-08-02", [_pos("pk", C1, service=S1)]),
+                    _shift("st_drop", "Drop", "2026-08-03", [_pos("pd", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_DEL, name="Gala Delete", schedule=[
+                    _shift("sdl", "Show", "2026-08-05", [_pos("pdl_a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -462,6 +476,57 @@ def test_notify_rejects_unknown_template():
     assert r.status_code == 400
 
 
+def test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen():
+    """Producer removes the shifts a pending request covers → the save hook
+    auto-withdraws it; the crew link reports withdrawn and accept is refused."""
+    client, tok = _setup()
+    token = _send(client, tok, P_STALE, C1).json()["token"]
+    assert client.get(f"/api/crew/{token}").json()["status"] == "pending"
+
+    # Remove every position (empty the schedule) and PUT the project back.
+    proj = _project(client, tok, P_STALE)
+    proj["schedule"] = []
+    put = client.put(f"/api/projects/{P_STALE}", json=proj, cookies={"ltp_session": tok})
+    assert put.status_code == 200, put.text
+
+    body = client.get(f"/api/crew/{token}").json()
+    assert body["status"] == "withdrawn", body          # crew sees the withdrawn screen
+    assert body["shifts"] == []
+    acc = client.post(f"/api/crew/{token}/accept", json={})
+    assert acc.status_code == 409, acc.text             # can't accept a withdrawn request
+
+
+def test_partial_removal_trims_request_but_stays_answerable():
+    """Removing ONE of a request's shifts trims it to the survivors; the request
+    stays pending and the crew can still accept the shift that remains."""
+    client, tok = _setup()
+    token = _send(client, tok, P_STALE2, C1).json()["token"]
+    assert sorted(client.get("/api/crew-requests?projectId=" + str(P_STALE2),
+                             cookies={"ltp_session": tok}).json()[0]["positionIds"]) == ["pd", "pk"]
+
+    # Drop the "st_drop" shift; keep "st_keep".
+    proj = _project(client, tok, P_STALE2)
+    proj["schedule"] = [s for s in proj["schedule"] if s["id"] == "st_keep"]
+    assert client.put(f"/api/projects/{P_STALE2}", json=proj,
+                      cookies={"ltp_session": tok}).status_code == 200
+
+    body = client.get(f"/api/crew/{token}").json()
+    assert body["status"] == "pending", body            # still answerable
+    assert [s["positionId"] for s in body["shifts"]] == ["pk"]
+    acc = client.post(f"/api/crew/{token}/accept", json={})
+    assert acc.status_code == 200, acc.text
+    assert _pos_status(_project(client, tok, P_STALE2), "pk") == "accepted"
+
+
+def test_project_delete_auto_withdraws_request():
+    """Deleting the project auto-withdraws its requests (before the FK nulls)."""
+    client, tok = _setup()
+    token = _send(client, tok, P_DEL, C1).json()["token"]
+    assert client.delete(f"/api/projects/{P_DEL}", cookies={"ltp_session": tok}).status_code == 200
+    body = client.get(f"/api/crew/{token}").json()
+    assert body["status"] == "withdrawn", body
+
+
 def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
@@ -481,6 +546,9 @@ def main() -> int:
         test_resend_non_pending_is_409,
         test_notify_sends_named_template_email,
         test_notify_rejects_unknown_template,
+        test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen,
+        test_partial_removal_trims_request_but_stays_answerable,
+        test_project_delete_auto_withdraws_request,
     ]
     failed = 0
     try:
