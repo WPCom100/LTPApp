@@ -93,7 +93,7 @@ window.LTP_DATA_SETTINGS = {
   // box with refNumber/projectName/total + one centered CTA button, generated
   // per type by theme.js::LTP_renderHeader and expanded client-side just
   // before send: quotes -> "View & Accept or Decline", invoices -> "View &
-  // Pay", receipts -> "View Receipt". For crewRequest it's the Accept/Decline
+  // Download", receipts -> "View Receipt". For crewRequest it's the Accept/Decline
   // buttons (linking to the crew landing page #/crew/{token}) + project +
   // shift-count summary; {{shifts}} renders that request's shift list — both
   // substituted server-side (backend/routes/crew.py) at send time.

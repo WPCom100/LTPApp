@@ -36,6 +36,7 @@ import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
 from email.header import Header
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.policy import SMTP
@@ -228,11 +229,42 @@ def build_message(
     html_body: str,
     text_body: str | None = None,
     reply_to: str | None = None,
+    attachments: list[dict] | None = None,
 ) -> bytes:
-    """Construct a multipart/alternative RFC 2822 message ready for
-    Gmail's API. Returns the base64url-safe encoded bytes (what the
-    Gmail API `raw` field expects)."""
-    msg = MIMEMultipart("alternative", policy=SMTP)
+    """Construct an RFC 2822 message ready for Gmail's API. Returns the
+    base64url-safe encoded bytes (what the Gmail API `raw` field expects).
+
+    Without attachments the message is a multipart/alternative (text + html).
+    With attachments it becomes a multipart/mixed wrapping that alternative
+    plus one part per file, so the body still renders inline and the files
+    attach. Each attachment is a dict:
+        {"filename": str, "content": bytes, "subtype": str (optional, "pdf")}
+    """
+    # Inner alternative: the human-readable body in plain + html.
+    alt = MIMEMultipart("alternative", policy=SMTP)
+    if not text_body:
+        text_body = html_to_text(html_body)
+    alt.attach(MIMEText(text_body, "plain", "utf-8", policy=SMTP))
+    alt.attach(MIMEText(html_body, "html", "utf-8", policy=SMTP))
+
+    if attachments:
+        msg = MIMEMultipart("mixed", policy=SMTP)
+        msg.attach(alt)
+        for att in attachments:
+            # MIMEApplication base64-encodes the bytes for transport.
+            part = MIMEApplication(
+                att["content"], _subtype=att.get("subtype", "pdf"), policy=SMTP,
+            )
+            part.add_header(
+                "Content-Disposition", "attachment",
+                filename=att.get("filename", "attachment.pdf"),
+            )
+            msg.attach(part)
+    else:
+        msg = alt
+
+    # Headers belong on the OUTER message (mixed when attaching, else the
+    # alternative itself).
     msg["From"] = formataddr((str(Header(from_name, "utf-8")), from_email))
     msg["To"] = ", ".join(to)
     if cc:
@@ -240,11 +272,6 @@ def build_message(
     if reply_to:
         msg["Reply-To"] = reply_to
     msg["Subject"] = str(Header(subject, "utf-8"))
-
-    if not text_body:
-        text_body = html_to_text(html_body)
-    msg.attach(MIMEText(text_body, "plain", "utf-8", policy=SMTP))
-    msg.attach(MIMEText(html_body, "html", "utf-8", policy=SMTP))
 
     # base64url with no padding — what Gmail's `raw` field expects.
     return base64.urlsafe_b64encode(msg.as_bytes(policy=SMTP)).rstrip(b"=")
@@ -264,10 +291,14 @@ async def send(
     html_body: str,
     text_body: str | None = None,
     reply_to: str | None = None,
+    attachments: list[dict] | None = None,
     httpx_client: httpx.AsyncClient | None = None,
 ) -> dict:
     """Send an email through Gmail as `user`. Returns Gmail's response
     dict (contains the message id, thread id, label ids).
+
+    `attachments` (optional) is a list of {filename, content (bytes), subtype}
+    dicts attached to the message (see build_message).
 
     Token-lifecycle handling:
       - 401 from Gmail: refresh + retry once. If the refresh itself fails
@@ -287,7 +318,7 @@ async def send(
         from_email=user.email,
         to=to, cc=cc, subject=subject,
         html_body=html_body, text_body=text_body,
-        reply_to=reply_to,
+        reply_to=reply_to, attachments=attachments,
     )
 
     async def _do_send(token: str) -> httpx.Response:

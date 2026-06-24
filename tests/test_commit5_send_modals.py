@@ -401,6 +401,129 @@ def test_app_js_exposes_gmail_globals():
     _check("window.LTP_SENDER_NAME set", "window.LTP_SENDER_NAME" in src)
 
 
+def test_invoice_attach_pdf_passes_attachment_to_gmail():
+    """attachPdf=true on an invoice send generates the PDF and hands it to
+    gmail.send as an attachment. generate_pdf is mocked (no reportlab dep);
+    we spy on gmail.send to capture the attachments kwarg."""
+    print("test_invoice_attach_pdf_passes_attachment_to_gmail")
+    client, sess_tok, _, i_id = _setup()
+    captured = {}
+
+    async def _spy_send(**kw):
+        captured.update(kw)
+        return _gmail_send_ok()
+
+    def _fake_generate_pdf(buf, *a, **kw):
+        buf.write(b"%PDF-1.4 fake invoice pdf")
+
+    with patch("backend.gmail.send", new=AsyncMock(side_effect=_spy_send)), \
+         patch("backend.routes.email.generate_pdf", new=_fake_generate_pdf):
+        r = client.post(
+            "/api/email/send",
+            json={
+                "entityType": "invoice", "entityId": i_id,
+                "to": "client@biz.com", "subject": "Invoice INV-2026-014",
+                "bodyHtml": "<p>Please find the invoice attached.</p>",
+                "attachPdf": True,
+            },
+            cookies={"ltp_session": sess_tok},
+        )
+    _check("200 OK", r.status_code == 200, f"got {r.status_code}: {r.text[:200]}")
+    atts = captured.get("attachments")
+    _check("one attachment passed to gmail.send",
+           isinstance(atts, list) and len(atts) == 1, f"got {atts!r}")
+    if atts:
+        _check("attachment carries the generated PDF bytes",
+               atts[0].get("content") == b"%PDF-1.4 fake invoice pdf")
+        _check("attachment filename ends with .pdf",
+               str(atts[0].get("filename", "")).lower().endswith(".pdf"))
+
+
+def test_invoice_send_without_flag_has_no_attachment():
+    """attachPdf omitted → default False → no PDF generated, no attachment."""
+    print("test_invoice_send_without_flag_has_no_attachment")
+    client, sess_tok, _, i_id = _setup()
+    captured = {}
+    gen = {"hit": False}
+
+    async def _spy_send(**kw):
+        captured.update(kw)
+        return _gmail_send_ok()
+
+    def _fake_generate_pdf(buf, *a, **kw):
+        gen["hit"] = True
+        buf.write(b"%PDF")
+
+    with patch("backend.gmail.send", new=AsyncMock(side_effect=_spy_send)), \
+         patch("backend.routes.email.generate_pdf", new=_fake_generate_pdf):
+        r = client.post(
+            "/api/email/send",
+            json={
+                "entityType": "invoice", "entityId": i_id,
+                "to": "client@biz.com", "subject": "Invoice",
+                "bodyHtml": "<p>No attach.</p>",
+            },
+            cookies={"ltp_session": sess_tok},
+        )
+    _check("200 OK", r.status_code == 200, f"got {r.status_code}")
+    _check("no attachments passed", not captured.get("attachments"))
+    _check("generate_pdf NOT called", gen["hit"] is False)
+
+
+def test_quote_attach_pdf_is_ignored():
+    """attachPdf only applies to invoices; a quote send with the flag set
+    must NOT generate or attach a PDF."""
+    print("test_quote_attach_pdf_is_ignored")
+    client, sess_tok, q_id, _ = _setup()
+    captured = {}
+    gen = {"hit": False}
+
+    async def _spy_send(**kw):
+        captured.update(kw)
+        return _gmail_send_ok()
+
+    def _fake_generate_pdf(buf, *a, **kw):
+        gen["hit"] = True
+        buf.write(b"%PDF")
+
+    with patch("backend.gmail.send", new=AsyncMock(side_effect=_spy_send)), \
+         patch("backend.routes.email.generate_pdf", new=_fake_generate_pdf):
+        r = client.post(
+            "/api/email/send",
+            json={
+                "entityType": "quote", "entityId": q_id,
+                "to": "client@biz.com", "subject": "Quote",
+                "bodyHtml": "<p>x</p>", "attachPdf": True,
+            },
+            cookies={"ltp_session": sess_tok},
+        )
+    _check("200 OK", r.status_code == 200, f"got {r.status_code}")
+    _check("no attachment for quote send", not captured.get("attachments"))
+    _check("generate_pdf NOT called for quote", gen["hit"] is False)
+
+
+def test_invoice_send_modal_attach_pdf_wiring():
+    """Frontend: the invoice send modal declares attachPdf state (default ON),
+    renders the 'Attach invoice PDF' checkbox, resets it on open, and
+    executeSend posts the attachPdf flag."""
+    print("test_invoice_send_modal_attach_pdf_wiring")
+    path = os.path.join(_root, "modules", "invoices.js")
+    with open(path, encoding="utf-8") as f:
+        src = f.read()
+    _check("attachPdf state declared",
+           "[attachPdf, setAttachPdf]" in src)
+    _check("attachPdf defaults ON (useState(true))",
+           "var [attachPdf, setAttachPdf] = useState(true)" in src)
+    _check("'Attach invoice PDF' checkbox label present",
+           "Attach invoice PDF" in src)
+    _check("checkbox bound to attachPdf",
+           "checked: attachPdf" in src and "setAttachPdf(e.target.checked)" in src)
+    _check("openSendModal resets the flag ON",
+           "setAttachPdf(true)" in src)
+    _check("executeSend posts attachPdf",
+           "attachPdf: attachPdf" in src)
+
+
 def main() -> int:
     try:
         test_request_shape_quote_200()
@@ -414,6 +537,10 @@ def main() -> int:
         test_unsaved_entity_blocked_at_backend()
         test_button_disabled_prop_in_ui_js()
         test_app_js_exposes_gmail_globals()
+        test_invoice_attach_pdf_passes_attachment_to_gmail()
+        test_invoice_send_without_flag_has_no_attachment()
+        test_quote_attach_pdf_is_ignored()
+        test_invoice_send_modal_attach_pdf_wiring()
     finally:
         _teardown()
 

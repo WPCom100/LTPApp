@@ -400,6 +400,9 @@
     // captured at openSendModal / openReceiptModal so a later draft
     // mutation doesn't change what the user sees in the modal preview.
     var [sendHeaderVars, setSendHeaderVars] = useState(null);
+    // Attach the invoice PDF to invoice + reminder emails. Default ON; the
+    // user can uncheck per-send in the modal. Backend generates the PDF fresh.
+    var [attachPdf, setAttachPdf] = useState(true);
     var [payDate, setPayDate] = useState(todayISO());
     var [payAmount, setPayAmount] = useState("");
     var [generatingPdf, setGeneratingPdf] = useState(false);
@@ -653,6 +656,7 @@
       // dueDate feeds the invoice-only due-date line in the header box (empty
       // when unset → the line is omitted).
       setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, dueDate: draft.dueDate ? fmt(draft.dueDate) : "" });
+      setAttachPdf(true);  // default the PDF attachment ON for each invoice send
       setShowSendModal(true);
     }
 
@@ -667,7 +671,7 @@
       setSending(true);
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
-      // "invoice" selects the View & Pay CTA label.
+      // "invoice" selects the View & Download CTA label.
       // Paragraph-wrap BEFORE injecting the header so the header's <table>
       // doesn't trip textToHtml's block-detection and collapse the body's
       // plain-text paragraph breaks; re-flatten {{signature}} to block level.
@@ -684,6 +688,7 @@
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
           bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
+          attachPdf: attachPdf,  // backend attaches the freshly-generated invoice PDF
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -1755,12 +1760,18 @@
             })
           )
         ),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
-          h(window.Btn, {
-            onClick: executeSend,
-            disabled: sending || !window.LTP_GMAIL_CONNECTED,
-          }, sending ? "Sending\u2026" : (isDraft ? "\u2709 Send Invoice" : "\u2709 Resend")))
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
+          // Attach the invoice PDF (default on). Invoice + reminder sends only;
+          // the backend generates it fresh and attaches it to the email.
+          h("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: B.textSec, cursor: "pointer", userSelect: "none" } },
+            h("input", { type: "checkbox", checked: attachPdf, onChange: function(e) { setAttachPdf(e.target.checked); }, style: { cursor: "pointer", accentColor: B.accent } }),
+            "\ud83d\udcce Attach invoice PDF"),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
+            h(window.Btn, {
+              onClick: executeSend,
+              disabled: sending || !window.LTP_GMAIL_CONNECTED,
+            }, sending ? "Sending\u2026" : (isDraft ? "\u2709 Send Invoice" : "\u2709 Resend"))))
       ),
 
       // Payment Receipt modal
