@@ -562,6 +562,7 @@ def test_withdraw_with_notify_emails_crew():
     assert captured["to"] == ["casey@crew.com"]
     assert "Gala WD Notify" in captured["subject"]
     assert "withdrawn" in captured["html_body"].lower()   # uses the crewWithdrawn fallback body
+    assert "Lead Lighting Tech" in captured["html_body"]  # {{shifts}} renders the withdrawn shift
     assert _pos_status(_project(client, tok, P_WD_NOTIFY), "pwn_a") == "open"
 
 

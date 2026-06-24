@@ -448,9 +448,9 @@ _NOTIFY_FALLBACKS = {
     "crewWithdrawn": {
         "subject": "Update: {{projectName}} — crew request withdrawn",
         "body": ("Hi {{crewName}},\n\nWe've withdrawn our crew request for "
-                 "{{projectName}}. No response is needed on your end.\n\nThank you "
-                 "for your time — we'll keep you in mind for future projects.\n\n"
-                 "{{signature}}"),
+                 "{{projectName}} — no response is needed on the following "
+                 "shifts:\n\n{{shifts}}\n\nThank you for your time, and we'll keep "
+                 "you in mind for future projects.\n\n{{signature}}"),
     },
 }
 
@@ -482,7 +482,16 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             return t
 
         subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}")
-        inner = _paragraphs_to_html(_sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or ""), {"{{signature}}": _render_signature(user, settings_data)})
+        body_text = _sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or "")
+        # {{shifts}} renders the themed shift list (same block the request email
+        # uses) so a withdrawal can spell out exactly which shifts it covers. The
+        # block is offered to every notify template; single-position notices
+        # (confirmed/cancelled/not-selected) simply don't reference it.
+        blocks = {
+            "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]) if shifts else "",
+            "{{signature}}": _render_signature(user, settings_data),
+        }
+        inner = _paragraphs_to_html(body_text, blocks)
         final_html = email_html(email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(

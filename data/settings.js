@@ -166,7 +166,7 @@ window.LTP_DATA_SETTINGS = {
       // can span several shifts), so no {{role}}/{{date}}. The backend fallback in
       // routes/crew.py::_NOTIFY_FALLBACKS must match this body byte-for-byte.
       subject: "Update: {{projectName}} — crew request withdrawn",
-      body: "Hi {{crewName}},\n\nWe've withdrawn our crew request for {{projectName}}. No response is needed on your end.\n\nThank you for your time — we'll keep you in mind for future projects.\n\n{{signature}}"
+      body: "Hi {{crewName}},\n\nWe've withdrawn our crew request for {{projectName}} — no response is needed on the following shifts:\n\n{{shifts}}\n\nThank you for your time, and we'll keep you in mind for future projects.\n\n{{signature}}"
     },
   },
 };
@@ -190,5 +190,5 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
-  crewWithdrawn:   ["companyName", "crewName", "projectName", "signature"],
+  crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
 };
