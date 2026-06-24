@@ -636,7 +636,9 @@
       var ref = draft.id != null ? window.LTP_INVOICE_REF(draft) : "Invoice";
       var resolve = window.LTP_resolveTemplate;
       var s = settings || {};
-      var templateKey = isDraft ? "invoiceSent" : (window.LTP_isOverdue(draft) ? "invoiceReminder" : "invoiceSent");
+      // Draft = first send (Invoice Sent); any resend of an already-sent
+      // invoice is a nudge, so it uses the Payment Reminder template.
+      var templateKey = isDraft ? "invoiceSent" : "invoiceReminder";
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
       // {{viewUrl}} and {{signature}} are intentionally LEFT unresolved here
       // — backend substitutes them per-recipient at send time. See the
