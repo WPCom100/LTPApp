@@ -135,10 +135,18 @@ def render_receipt_header(ref_number: str, project_name: str, total: str) -> str
 # Fallbacks if the workspace never customized the paymentReceipt template (the
 # rich default lives in data/settings.js, not the DB, until an admin saves
 # Settings). Kept in sync with modules/invoices.js openReceiptModal.
-_FALLBACK_SUBJECT = "{{refNumber}} — Payment Received"
+# Fallback used ONLY when the DB has no saved paymentReceipt template — a fresh
+# deploy where Settings were never saved (load_settings reads the DB, which
+# doesn't carry the data/settings.js defaults until an admin clicks Save). It is
+# pinned BYTE-FOR-BYTE to data/settings.js::emailTemplates.paymentReceipt so the
+# auto-receipt sends exactly the template an admin sees in Settings — the same
+# pattern as backend/routes/email.py::_FALLBACK_SIGNATURE. Any edit to the
+# data/settings.js default MUST be mirrored here (test_qbo_receipts pins it).
+_FALLBACK_SUBJECT = "{{refNumber}} — Payment Received — Thank You"
 _FALLBACK_BODY = (
-    "{{header}}\n\nHi {{clientName}},\n\nThank you for your payment.\n\n"
-    "{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}"
+    "{{header}}\n\nHi {{clientName}},\n\nThank you! We have received your payment for "
+    "{{refNumber}} ({{projectName}}).\n\n{{lineItems}}\n\nBalance: $0.00 — Paid in Full\n\n"
+    "This email serves as your receipt. Please keep it for your records.\n\n{{signature}}"
 )
 
 

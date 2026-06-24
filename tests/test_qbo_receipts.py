@@ -121,6 +121,28 @@ def test_resolve_and_compose():
     _check("finalize wraps in email shell", "f1f3f5" in final or "max-width:580px" in final)
 
 
+def test_fallback_matches_settings_default():
+    print("test_fallback_matches_settings_default")
+    import re
+    with open(os.path.join(_root, "data", "settings.js"), encoding="utf-8") as f:
+        src = f.read()
+    # Scope to the paymentReceipt object. Split on the close line ("\n    },")
+    # — NOT a bare "}," which also occurs inside "{{clientName}},".
+    block = src.split("paymentReceipt:", 1)[1].split("\n    },", 1)[0]
+
+    def grab(field):
+        m = re.search(field + r'\s*:\s*"((?:[^"\\]|\\.)*)"', block)
+        return m.group(1).replace('\\"', '"').replace("\\n", "\n")
+
+    js_subject, js_body = grab("subject"), grab("body")
+    # The no-DB-saved fallback must be the SAME template an admin sees in
+    # Settings, so the auto-receipt never sends a different stub than the manual
+    # flow. Pinned byte-for-byte to data/settings.js::paymentReceipt.
+    _check("fallback subject matches data/settings.js", qr._FALLBACK_SUBJECT == js_subject,
+           f"py={qr._FALLBACK_SUBJECT!r} js={js_subject!r}")
+    _check("fallback body matches data/settings.js", qr._FALLBACK_BODY == js_body)
+
+
 def test_reconcile_paid_idempotent():
     print("test_reconcile_paid_idempotent")
     now = datetime(2026, 6, 24, tzinfo=timezone.utc)
@@ -343,7 +365,8 @@ def test_send_request_receipt_flag():
 
 def main():
     sync_tests = [test_money_and_lines, test_receipt_header, test_resolve_and_compose,
-                  test_reconcile_paid_idempotent, test_send_request_receipt_flag]
+                  test_fallback_matches_settings_default, test_reconcile_paid_idempotent,
+                  test_send_request_receipt_flag]
     async_tests = [
         test_poll_sends_receipt_when_paid, test_poll_skips_unpaid,
         test_poll_caches_when_no_gmail, test_poll_caches_on_gmail_reconnect_error,
