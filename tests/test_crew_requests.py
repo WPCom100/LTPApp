@@ -67,6 +67,8 @@ P_NOTIFY   = 7014   # /notify informational template emails
 P_STALE    = 7015   # full position removal → auto-withdraw + withdrawn screen
 P_STALE2   = 7016   # partial removal → trim, request still answerable
 P_DEL      = 7017   # project delete → auto-withdraw
+P_WD_NOTIFY = 7018  # withdraw + notify emails the crew member (crewWithdrawn)
+P_WD_QUIET  = 7019  # withdraw without notify sends no email
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -173,6 +175,12 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_DEL, name="Gala Delete", schedule=[
                     _shift("sdl", "Show", "2026-08-05", [_pos("pdl_a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_WD_NOTIFY, name="Gala WD Notify", schedule=[
+                    _shift("swn", "Show", "2026-08-07", [_pos("pwn_a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_WD_QUIET, name="Gala WD Quiet", schedule=[
+                    _shift("swq", "Show", "2026-08-09", [_pos("pwq_a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -527,6 +535,62 @@ def test_project_delete_auto_withdraws_request():
     assert body["status"] == "withdrawn", body
 
 
+def test_withdraw_with_notify_emails_crew():
+    """Withdraw with {notify:true} emails the crew member the crewWithdrawn
+    template (best-effort) and still reopens the positions."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    req = _send(client, tok, P_WD_NOTIFY, C1).json()   # request created (admin Gmail not connected — fine)
+    captured = {}
+
+    async def fake_send(**kwargs):
+        captured.update(kwargs)
+        return {"id": "msg-wd"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/" + str(req["id"]) + "/withdraw",
+                        json={"notify": True}, cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "withdrawn"
+    assert body["emailStatus"]["emailed"] is True
+    assert captured["to"] == ["casey@crew.com"]
+    assert "Gala WD Notify" in captured["subject"]
+    assert "withdrawn" in captured["html_body"].lower()   # uses the crewWithdrawn fallback body
+    assert _pos_status(_project(client, tok, P_WD_NOTIFY), "pwn_a") == "open"
+
+
+def test_withdraw_without_notify_sends_no_email():
+    """Plain withdraw (no notify flag) reopens positions but emails nobody."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    req = _send(client, tok, P_WD_QUIET, C1).json()
+    called = {"n": 0}
+
+    async def fake_send(**kwargs):
+        called["n"] += 1
+        return {"id": "x"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/" + str(req["id"]) + "/withdraw",
+                        cookies={"ltp_session": tok})   # no body → notify defaults false
+    finally:
+        gmailmod.send = orig
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "withdrawn"
+    assert "emailStatus" not in body
+    assert called["n"] == 0
+
+
 def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
@@ -549,6 +613,8 @@ def main() -> int:
         test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen,
         test_partial_removal_trims_request_but_stays_answerable,
         test_project_delete_auto_withdraws_request,
+        test_withdraw_with_notify_emails_crew,
+        test_withdraw_without_notify_sends_no_email,
     ]
     failed = 0
     try:

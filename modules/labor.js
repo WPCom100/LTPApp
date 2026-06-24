@@ -1115,7 +1115,8 @@
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
   function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects }) {
-    // Resend confirmations + errors surface as toasts (window.LTP_toast).
+    // Resend / withdraw confirmations + errors surface as toasts (window.LTP_toast).
+    var [withdrawDlg, setWithdrawDlg] = useState(null);  // request awaiting a withdraw decision
 
     // Refresh on open so a crew member's response since last load shows up here
     // (and reconciles into the Assignments view).
@@ -1124,11 +1125,32 @@
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
     function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
 
-    function withdrawRequest(req) {
-      fetch("/api/crew-requests/" + req.id + "/withdraw", { method: "POST", credentials: "include" })
-        .then(function(r) { if (!r.ok) throw new Error("withdraw failed"); return r.json(); })
-        .then(function() {
+    // Withdraw a pending request, optionally emailing the crew member that it's
+    // been withdrawn (crewWithdrawn template, best-effort — failure never blocks
+    // the withdrawal).
+    function doWithdraw(req, notify) {
+      setWithdrawDlg(null);
+      fetch("/api/crew-requests/" + req.id + "/withdraw", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notify: !!notify }),
+      })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+        .then(function(res) {
+          if (!res.ok) {
+            window.LTP_toast("Withdraw failed", { message: (res.body && res.body.detail && (res.body.detail.message || res.body.detail)) || "could not withdraw the request", variant: "error" });
+            reloadCrewRequests();
+            return;
+          }
           flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
+          if (!notify) {
+            window.LTP_toast("Request withdrawn", { variant: "success" });
+          } else {
+            var es = (res.body && res.body.emailStatus) || {};
+            if (es.emailed) window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " was emailed.", variant: "success" });
+            else if (es.needsReconnect) window.LTP_toast("Withdrawn — email not sent", { message: "Connect Google in Settings to notify " + crewLabel(req.contactId) + ".", variant: "warn" });
+            else window.LTP_toast("Withdrawn — email not sent", { message: (es.error || "the notification email failed"), variant: "error" });
+          }
           reloadCrewRequests();
         })
         .catch(function() { reloadCrewRequests(); });
@@ -1171,10 +1193,22 @@
                 h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
                 st === "pending" && h("button", { onClick: function() { resendRequest(r); },
                   style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
-                st === "pending" && h("button", { onClick: function() { withdrawRequest(r); },
+                st === "pending" && h("button", { onClick: function() { setWithdrawDlg(r); },
                   style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
               );
-            }))
+            })),
+
+      // Withdraw confirmation — mirrors the Assignments "Cancel & Notify / Without
+      // Email" pattern, since withdrawing now sends an outward-facing email.
+      withdrawDlg && h(window.LTPModal, { title: "Withdraw Request", onClose: function() { setWithdrawDlg(null); } },
+        h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
+          "Withdraw the request to ", h("strong", { style: { color: B.text } }, crewLabel(withdrawDlg.contactId)),
+          " for ", h("strong", { style: { color: B.text } }, projLabel(withdrawDlg.projectId)),
+          "? Their requested shifts reopen. Let them know by email, or withdraw quietly."),
+        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setWithdrawDlg(null); } }, "Cancel"),
+          h(window.Btn, { variant: "ghost", onClick: function() { doWithdraw(withdrawDlg, false); } }, "Withdraw Without Email"),
+          h(window.Btn, { onClick: function() { doWithdraw(withdrawDlg, true); } }, "✉ Withdraw & Notify")))
     );
   }
 

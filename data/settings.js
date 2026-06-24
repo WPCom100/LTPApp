@@ -158,6 +158,16 @@ window.LTP_DATA_SETTINGS = {
       subject: "Update: {{projectName}} — {{date}}",
       body: "Hi {{crewName}},\n\nThank you for your interest and availability for {{projectName}} on {{date}}.\n\nUnfortunately, we've gone in a different direction for the {{role}} position and won't be needing your services for this particular project.\n\nWe appreciate your willingness to work with us and will absolutely keep you in mind for upcoming opportunities.\n\n{{signature}}"
     },
+    crewWithdrawn: {
+      label: "Request Withdrawn",
+      cc: "",
+      // Sent (optionally) when a producer WITHDRAWS a pending crew request — the
+      // person was asked, but the ask is now retracted. Project-level (a request
+      // can span several shifts), so no {{role}}/{{date}}. The backend fallback in
+      // routes/crew.py::_NOTIFY_FALLBACKS must match this body byte-for-byte.
+      subject: "Update: {{projectName}} — crew request withdrawn",
+      body: "Hi {{crewName}},\n\nWe've withdrawn our crew request for {{projectName}}. No response is needed on your end.\n\nThank you for your time — we'll keep you in mind for future projects.\n\n{{signature}}"
+    },
   },
 };
 
@@ -180,4 +190,5 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
+  crewWithdrawn:   ["companyName", "crewName", "projectName", "signature"],
 };

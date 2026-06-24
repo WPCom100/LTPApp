@@ -436,7 +436,23 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
 # from a representative position, so the shipped template bodies AND their
 # Settings previews stay valid without a redesign.
-_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected"}
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn"}
+
+# Server-side fallbacks for the informational templates, used when the workspace
+# hasn't saved that template to the DB yet (load_settings reads the DB, which
+# doesn't carry the data/settings.js defaults until an admin clicks Save). Only
+# crewWithdrawn is pinned here for now — it's the one sent AUTOMATICALLY (on
+# withdraw), so an empty body would be a broken auto-email; the others are
+# producer-initiated. MUST stay in sync with data/settings.js.
+_NOTIFY_FALLBACKS = {
+    "crewWithdrawn": {
+        "subject": "Update: {{projectName}} — crew request withdrawn",
+        "body": ("Hi {{crewName}},\n\nWe've withdrawn our crew request for "
+                 "{{projectName}}. No response is needed on your end.\n\nThank you "
+                 "for your time — we'll keep you in mind for future projects.\n\n"
+                 "{{signature}}"),
+    },
+}
 
 
 async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data) -> dict:
@@ -465,8 +481,8 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
                 t = t.replace(k, v)
             return t
 
-        subject = _sub(tmpl.get("subject") or "{{projectName}}")
-        inner = _paragraphs_to_html(_sub(tmpl.get("body") or ""), {"{{signature}}": _render_signature(user, settings_data)})
+        subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}")
+        inner = _paragraphs_to_html(_sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or ""), {"{{signature}}": _render_signature(user, settings_data)})
         final_html = email_html(email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
@@ -697,6 +713,7 @@ async def send_crew_request(
 @crew_admin_router.post("/{req_id}/withdraw")
 async def withdraw_crew_request(
     req_id: int,
+    body: dict | None = None,
     db: AsyncSession = Depends(get_db),
     user: models.User = Depends(require_session),
 ):
@@ -704,13 +721,18 @@ async def withdraw_crew_request(
     the request → withdrawn. A request the crew already answered
     (accepted/declined) is NOT silently reopened — that returns 409 so the
     producer uses the Labor status controls instead. Idempotent on an
-    already-withdrawn request."""
+    already-withdrawn request.
+
+    Body `{notify: true}` also emails the crew member that the request was
+    withdrawn (the crewWithdrawn template, best-effort — like send/notify, a
+    delivery failure never rolls back the withdrawal). Returns `emailStatus`
+    when an email was attempted."""
     r = await db.execute(select(models.CrewRequest).where(models.CrewRequest.id == req_id))
     req = r.scalar_one_or_none()
     if req is None:
         raise HTTPException(status_code=404, detail="not found")
     if req.status == "withdrawn":
-        return _request_dict(req)
+        return _request_dict(req)            # idempotent — already gone, don't re-email
     if req.status != "pending":
         raise HTTPException(
             status_code=409,
@@ -722,7 +744,15 @@ async def withdraw_crew_request(
     req.status = "withdrawn"
     await db.flush()
     await db.refresh(req)
-    return _request_dict(req)
+
+    out = _request_dict(req)
+    if bool((body or {}).get("notify")):
+        contact = (await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))).scalar_one_or_none()
+        services = (await db.execute(select(models.Service))).scalars().all()
+        shifts = _crew_shifts(project, req.position_ids, {s.id: s for s in services}) if project else []
+        settings_data = await load_settings(db)
+        out["emailStatus"] = await _send_crew_notify(db, user, contact, project, shifts, "crewWithdrawn", settings_data)
+    return out
 
 
 # ── PRODUCER: POST /api/crew-requests/{id}/resend ───────────────────────────
