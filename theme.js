@@ -433,13 +433,26 @@ window.LTP_HEADER_CTA = {
 window.LTP_renderHeader = function(kind, vars) {
   vars = vars || {};
   var cta = window.LTP_HEADER_CTA[kind] || window.LTP_HEADER_CTA.quote;
+  // Invoice emails emphasize the financials: a larger reference + total plus a
+  // due-date line. Quotes/receipts keep the standard (smaller) sizing and have
+  // no due date.
+  var invoice = (kind === "invoice");
+  var refPx = invoice ? 14 : 12;
+  var totalPx = invoice ? 17 : 14;
+  var totalWeight = invoice ? "font-weight:bold;" : "";
+  // The total's bottom gap closes up when a due-date line follows it.
+  var totalGap = (invoice && vars.dueDate) ? 2 : 18;
+  var dueLine = (invoice && vars.dueDate)
+    ? '<div style="font-size:14px;color:#233038;margin-bottom:18px">Due ' + vars.dueDate + '</div>'
+    : '';
   return '<div style="padding:0px">'
     + '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
     + 'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
     + '<tbody><tr><td style="padding:22px;text-align:center">'
-    + '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">' + (vars.refNumber || "") + '</div>'
+    + '<div style="font-size:' + refPx + 'px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">' + (vars.refNumber || "") + '</div>'
     + '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + (vars.projectName || "") + '</div>'
-    + '<div style="font-size:14px;color:#233038;margin-bottom:18px">' + (vars.total || "") + '</div>'
+    + '<div style="font-size:' + totalPx + 'px;color:#233038;' + totalWeight + 'margin-bottom:' + totalGap + 'px">' + (vars.total || "") + '</div>'
+    + dueLine
     + '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
     + '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
     + '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'

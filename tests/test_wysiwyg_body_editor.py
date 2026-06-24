@@ -92,23 +92,35 @@ _HEADER_CTA = {
 def py_render_header(kind, vars):
     """Python port of window.LTP_renderHeader. Builds the per-type
     {{header}} action box (refNumber/projectName/total + a centered CTA
-    button whose label depends on `kind`). {{viewUrl}} stays literal so
-    the backend's per-recipient chain resolves it after the body reaches
-    the server."""
+    button whose label depends on `kind`). Invoice emails use a larger
+    reference + total and add a due-date line; quotes/receipts use the
+    standard sizing. {{viewUrl}} stays literal so the backend's
+    per-recipient chain resolves it after the body reaches the server."""
     vars = vars or {}
     cta = _HEADER_CTA.get(kind) or _HEADER_CTA["quote"]
+    invoice = (kind == "invoice")
+    ref_px = 14 if invoice else 12
+    total_px = 17 if invoice else 14
+    total_weight = "font-weight:bold;" if invoice else ""
+    has_due = bool(invoice and vars.get("dueDate"))
+    total_gap = 2 if has_due else 18
+    due_line = (
+        '<div style="font-size:14px;color:#233038;margin-bottom:18px">Due '
+        + (vars.get("dueDate") or "") + '</div>'
+    ) if has_due else ""
     return (
         '<div style="padding:0px">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
         '<tbody><tr><td style="padding:22px;text-align:center">'
-        '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
+        '<div style="font-size:' + str(ref_px) + 'px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
         + (vars.get("refNumber", "") or "") + '</div>'
         '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">'
         + (vars.get("projectName", "") or "") + '</div>'
-        '<div style="font-size:14px;color:#233038;margin-bottom:18px">'
+        '<div style="font-size:' + str(total_px) + 'px;color:#233038;' + total_weight + 'margin-bottom:' + str(total_gap) + 'px">'
         + (vars.get("total", "") or "") + '</div>'
-        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
+        + due_line
+        + '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
         '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
         '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
         'font-weight:bold;color:#ffffff;text-decoration:none">' + cta + '</a>'

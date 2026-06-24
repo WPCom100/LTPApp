@@ -650,7 +650,9 @@
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
       setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nDue: {{dueDate}}\n\n{{signature}}", vars));
       // {{viewUrl}} stays literal — backend swaps in the per-recipient URL.
-      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total });
+      // dueDate feeds the invoice-only due-date line in the header box (empty
+      // when unset → the line is omitted).
+      setSendHeaderVars({ refNumber: ref, projectName: projName, total: vars.total, dueDate: draft.dueDate ? fmt(draft.dueDate) : "" });
       setShowSendModal(true);
     }
 

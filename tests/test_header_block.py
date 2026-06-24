@@ -70,22 +70,35 @@ _CTA = {
 # Python port of window.LTP_renderHeader (theme.js). Builds the per-type
 # action box. {{viewUrl}} is left literal — the backend resolves it
 # per-recipient after the body reaches the server. Unknown/empty kinds fall
-# back to the quote label so a header never renders an empty button.
+# back to the quote label so a header never renders an empty button. Invoice
+# emails emphasize the financials: a larger reference + total plus a due-date
+# line (quotes/receipts keep the standard sizing and have no due date).
 def _py_render_header(kind, vars):
     vars = vars or {}
     cta = _CTA.get(kind) or _CTA["quote"]
+    invoice = (kind == "invoice")
+    ref_px = 14 if invoice else 12
+    total_px = 17 if invoice else 14
+    total_weight = "font-weight:bold;" if invoice else ""
+    has_due = bool(invoice and vars.get("dueDate"))
+    total_gap = 2 if has_due else 18
+    due_line = (
+        '<div style="font-size:14px;color:#233038;margin-bottom:18px">Due '
+        + (vars.get("dueDate") or "") + '</div>'
+    ) if has_due else ""
     return (
         '<div style="padding:0px">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
         'style="width:100%;margin-top:5px;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
         '<tbody><tr><td style="padding:22px;text-align:center">'
-        '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
+        '<div style="font-size:' + str(ref_px) + 'px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">'
         + (vars.get("refNumber", "") or "") + '</div>'
         '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">'
         + (vars.get("projectName", "") or "") + '</div>'
-        '<div style="font-size:14px;color:#233038;margin-bottom:18px">'
+        '<div style="font-size:' + str(total_px) + 'px;color:#233038;' + total_weight + 'margin-bottom:' + str(total_gap) + 'px">'
         + (vars.get("total", "") or "") + '</div>'
-        '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
+        + due_line
+        + '<table role="presentation" cellspacing="0" cellpadding="0" border="0" align="center" style="margin:0 auto">'
         '<tbody><tr><td style="background-color:#f15927;border-radius:7px">'
         '<a href="{{viewUrl}}" style="display:inline-block;padding:14px 38px;font-size:15px;'
         'font-weight:bold;color:#ffffff;text-decoration:none">' + cta + '</a>'
@@ -248,6 +261,39 @@ def test_render_header_ignores_viewUrl_var():
            "https://attacker.example/" not in out)
     _check("{{viewUrl}} still literal in output",
            'href="{{viewUrl}}"' in out)
+
+
+def test_invoice_header_due_date_and_larger_fonts():
+    """Invoice emails get a due-date line plus a larger reference + total;
+    quotes and receipts keep the standard sizing and have no due date."""
+    print("test_invoice_header_due_date_and_larger_fonts")
+    v = {"refNumber": "INV-2026-014", "projectName": "Spring Showcase",
+         "total": "$1,234.00", "dueDate": "July 1st, 2026"}
+    inv = _py_render_header("invoice", v)
+    _check("invoice reference is larger (14px)",
+           "font-size:14px;color:#8a949e" in inv)
+    _check("invoice total is larger + bold (17px)",
+           "font-size:17px;color:#233038;font-weight:bold;" in inv)
+    _check("invoice shows the due-date line",
+           ">Due July 1st, 2026</div>" in inv)
+    # Quotes/receipts are untouched even if a dueDate is (wrongly) passed.
+    for kind in ("quote", "receipt"):
+        out = _py_render_header(kind, v)
+        _check(f"{kind} reference stays 12px",
+               "font-size:12px;color:#8a949e" in out)
+        _check(f"{kind} total stays 14px, not bold",
+               "font-size:14px;color:#233038;margin-bottom:18px" in out)
+        _check(f"{kind} has NO due-date line", ">Due " not in out)
+    # Invoice with no due date set: larger sizes still apply, line omitted.
+    no_due = _py_render_header("invoice", {"refNumber": "INV-1", "total": "$5.00"})
+    _check("invoice w/o due date keeps the larger sizes",
+           "font-size:14px;color:#8a949e" in no_due and "font-size:17px" in no_due)
+    _check("invoice w/o due date omits the due-date line", ">Due " not in no_due)
+    # Source-level: the variant is gated to kind === "invoice" in theme.js.
+    theme = _read("theme.js")
+    _check('theme.js gates the invoice variant on kind === "invoice"',
+           'kind === "invoice"' in theme)
+    _check("theme.js renders a 'Due ' line for invoices", ">Due " in theme)
 
 
 # ── Sanitizer allowlists ──────────────────────────────────────────────────
@@ -465,6 +511,7 @@ def main() -> int:
     test_render_header_per_type_cta()
     test_render_header_substitutes_per_entity_tokens_only()
     test_render_header_ignores_viewUrl_var()
+    test_invoice_header_due_date_and_larger_fonts()
     test_bleach_preserves_header_structure()
     test_bleach_strips_disallowed_attrs_from_header()
     test_frontend_sanitizer_allowlist_pinned()
