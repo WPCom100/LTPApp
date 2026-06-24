@@ -351,20 +351,24 @@ def test_text_to_html_detects_table_as_html():
 # helpers (sanity test against regression of the polish pass).
 
 
-def test_quotes_builder_send_expands_header_then_calls_text_to_html():
-    """Quote send path: expand {{header}} into rendered HTML BEFORE
-    LTP_textToHtml runs (so the per-entity tokens inside the header
-    get the same client-side substitution as the rest of the body)."""
-    print("test_quotes_builder_send_expands_header_then_calls_text_to_html")
+def test_quotes_builder_send_paragraph_wraps_then_injects_header():
+    """Quote send path: paragraph-wrap the (possibly plain-text) body FIRST
+    (LTP_textToHtml on sendMessage), THEN drop the rendered header in at block
+    level via LTP_injectBlock. Injecting the header before textToHtml lets its
+    <table> trip block-detection, which passes the whole body through and
+    collapses the body's plain-text paragraph breaks — the bug this fixes."""
+    print("test_quotes_builder_send_paragraph_wraps_then_injects_header")
     path = os.path.join(_root, "modules", "quotes-builder.js")
     with open(path, encoding="utf-8") as f:
         src = f.read()
-    _check("calls LTP_renderHeader to expand {{header}}",
+    _check("calls LTP_renderHeader to build the {{header}} box",
            "LTP_renderHeader" in src)
-    _check("Send path runs textToHtml on the expanded body, not raw sendMessage",
-           "LTP_textToHtml(bodyWithHeader)" in src
-           and "LTP_textToHtml(sendMessage)" not in src,
-           "Found old LTP_textToHtml(sendMessage) call — should be bodyWithHeader")
+    _check("paragraph-wraps sendMessage BEFORE injecting the header",
+           "LTP_injectBlock(window.LTP_textToHtml(String(sendMessage))" in src)
+    _check("injects the header at block level via LTP_injectBlock",
+           '"{{header}}", headerHtml' in src)
+    _check("does NOT textToHtml the header-injected body (the collapse bug)",
+           "LTP_textToHtml(bodyWithHeader)" not in src)
 
 
 def test_quotes_builder_uses_helpers():
@@ -387,12 +391,12 @@ def test_invoices_uses_helpers():
     _check("Send + Receipt modals render EmailBodyEditor",
            src.count("window.EmailBodyEditor") >= 2,
            f"got {src.count('window.EmailBodyEditor')} EmailBodyEditor refs")
-    _check("Both send paths expand {{header}} via LTP_renderHeader before textToHtml",
+    _check("Both send paths paragraph-wrap THEN inject the header (not the reverse)",
            src.count("LTP_renderHeader") >= 2
-           and src.count("LTP_textToHtml(bodyWithHeader)") >= 2
-           and "LTP_textToHtml(sendMessage)" not in src,
+           and src.count("LTP_injectBlock(window.LTP_textToHtml(String(sendMessage))") >= 2
+           and "LTP_textToHtml(bodyWithHeader)" not in src,
            f"renderHeader={src.count('LTP_renderHeader')}, "
-           f"textToHtml(bodyWithHeader)={src.count('LTP_textToHtml(bodyWithHeader)')}")
+           f"wrap-then-inject={src.count('LTP_injectBlock(window.LTP_textToHtml(String(sendMessage))')}")
 
 
 def test_theme_js_exposes_helpers():
@@ -406,6 +410,8 @@ def test_theme_js_exposes_helpers():
            "window.LTP_renderSignature" in src)
     _check("window.LTP_renderPreviewBody exposed",
            "window.LTP_renderPreviewBody" in src)
+    _check("window.LTP_injectBlock exposed (block-level token injector)",
+           "window.LTP_injectBlock" in src)
 
 
 def test_app_js_exposes_sender_title_phone():
@@ -439,7 +445,7 @@ def main() -> int:
     test_text_to_html_does_not_escape_inline_html()
     test_text_to_html_empty_and_whitespace()
     test_text_to_html_detects_table_as_html()
-    test_quotes_builder_send_expands_header_then_calls_text_to_html()
+    test_quotes_builder_send_paragraph_wraps_then_injects_header()
     test_quotes_builder_uses_helpers()
     test_invoices_uses_helpers()
     test_theme_js_exposes_helpers()

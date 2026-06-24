@@ -500,6 +500,34 @@ window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
 // (admin-authored templates can't pre-mark blocks as non-editable). The
 // editor component re-applies contenteditable="false" via DOM API after
 // setting innerHTML.
+// Drop a block-level HTML fragment (a <table>-based header/signature, or a
+// literal token the backend will expand) into a paragraph-wrapped body at
+// BLOCK level. If `token` sits inside a <p>...</p>, the paragraph is split so
+// `block` is NOT nested inside the inline <p> — browsers/email clients
+// auto-close the <p> at the first <table>, which strands trailing text and
+// leaves a stray empty paragraph. Surrounding text in the same <p> stays
+// wrapped; empty halves are dropped so "<p>{{token}}</p>" collapses to just
+// `block`. Bare tokens outside any <p> are replaced directly. Passing
+// block === token re-flattens a wrapped token back to a bare one (used so the
+// backend-resolved {{signature}} <table> also lands at block level).
+window.LTP_injectBlock = function(html, token, block) {
+  if (!html) return html;
+  var stripEnds = function(s) {
+    return s.replace(/^(?:\s|<br\s*\/?>)+/i, '').replace(/(?:\s|<br\s*\/?>)+$/i, '');
+  };
+  return String(html).replace(/<p>([\s\S]*?)<\/p>/g, function(match, inner) {
+    if (inner.indexOf(token) === -1) return match;
+    var pieces = inner.split(token);
+    var out = [];
+    for (var i = 0; i < pieces.length; i++) {
+      var clean = stripEnds(pieces[i]);
+      if (clean) out.push('<p>' + clean + '</p>');
+      if (i < pieces.length - 1) out.push(block);
+    }
+    return out.join('\n');
+  }).split(token).join(block);  // catch any bare token outside <p>
+};
+
 window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerKind, headerVars) {
   if (!rawBody) return "";
   // 1. Paragraph-wrap FIRST, while the body still has placeholders as
@@ -514,33 +542,12 @@ window.LTP_bodyToEditableHtml = function(rawBody, signatureTemplate, headerKind,
   var headerBlock = '<section class="ltp-header-block">'
     + window.LTP_renderHeader(headerKind || "", headerVars || {}) + '</section>';
 
-  // 3. Replace placeholders, splitting any surrounding <p> so the
-  //    block-level <section><table> isn't nested inside an inline <p>
-  //    (browsers would auto-close the <p> at the first <table>, leaving
-  //    orphaned trailing text). Empty halves are dropped so
-  //    "<p>{{token}}</p>" collapses to just the marker block.
-  function substitute(html, token, block) {
-    var stripEnds = function(s) {
-      return s.replace(/^(?:\s|<br\s*\/?>)+/i, '').replace(/(?:\s|<br\s*\/?>)+$/i, '');
-    };
-    return html.replace(/<p>([\s\S]*?)<\/p>/g, function(match, inner) {
-      if (inner.indexOf(token) === -1) return match;
-      var pieces = inner.split(token);
-      var out = [];
-      for (var i = 0; i < pieces.length; i++) {
-        var clean = stripEnds(pieces[i]);
-        if (clean) out.push('<p>' + clean + '</p>');
-        if (i < pieces.length - 1) out.push(block);
-      }
-      return out.join('\n');
-    }).split(token).join(block);  // catch any bare token outside <p>
-  }
-
-  // Order: header first (it goes at the top of the body), then signature.
-  // The order doesn't affect correctness — paragraphs are split
-  // independently — but it reads naturally top-down.
-  var withHeader = substitute(withParagraphs, '{{header}}', headerBlock);
-  var withSig = substitute(withHeader, '{{signature}}', sigBlock);
+  // 3. Drop the marker blocks in at block level — LTP_injectBlock splits any
+  //    surrounding <p> so the <section><table> isn't nested inside an inline
+  //    <p>. Header first (top of body), then signature; order doesn't affect
+  //    correctness since paragraphs are split independently.
+  var withHeader = window.LTP_injectBlock(withParagraphs, '{{header}}', headerBlock);
+  var withSig = window.LTP_injectBlock(withHeader, '{{signature}}', sigBlock);
   return window.LTP_SANITIZE.emailHtml(withSig);
 };
 

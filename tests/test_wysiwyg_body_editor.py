@@ -479,6 +479,56 @@ def test_send_modals_use_email_body_editor():
                "found leftover split-pane grid")
 
 
+def py_inject_block(html, token, block):
+    """Python port of window.LTP_injectBlock — drop a block-level fragment in
+    at block level, splitting any surrounding <p> so it isn't nested inside an
+    inline <p>. block == token re-flattens a wrapped token back to a bare one."""
+    if not html:
+        return html
+    end_re = re.compile(r"^(?:\s|<br\s*/?>)+|(?:\s|<br\s*/?>)+$", re.IGNORECASE)
+
+    def strip_ends(s):
+        return end_re.sub("", s)
+
+    def repl(m):
+        inner = m.group(1)
+        if token not in inner:
+            return m.group(0)
+        pieces = inner.split(token)
+        out = []
+        for i, piece in enumerate(pieces):
+            cleaned = strip_ends(piece)
+            if cleaned:
+                out.append("<p>" + cleaned + "</p>")
+            if i < len(pieces) - 1:
+                out.append(block)
+        return "\n".join(out)
+
+    return re.sub(r"<p>([\s\S]*?)</p>", repl, str(html)).replace(token, block)
+
+
+def test_send_body_wrap_then_inject_preserves_paragraphs():
+    """REGRESSION (paragraph collapse): a plain-text body with blank-line
+    paragraph breaks plus a {{header}} must yield SEPARATE <p> paragraphs.
+    The send path paragraph-wraps (LTP_textToHtml) BEFORE injecting the header
+    via LTP_injectBlock. The old order injected the header's <table> first,
+    which tripped textToHtml's block-detection and passed the whole body
+    through — collapsing every blank-line paragraph break into a single space."""
+    print("test_send_body_wrap_then_inject_preserves_paragraphs")
+    body = "{{header}}\n\nHi John,\n\nThank you.\n\nSee you soon.\n\n{{signature}}"
+    header_html = '<div style="padding:0px"><table><tbody><tr><td>HEADER</td></tr></tbody></table></div>'
+    out = py_inject_block(py_text_to_html(body), "{{header}}", header_html)
+    out = py_inject_block(out, "{{signature}}", "{{signature}}")
+    _check("'Hi John,' in its own <p>", "<p>Hi John,</p>" in out)
+    _check("'Thank you.' in its own <p>", "<p>Thank you.</p>" in out)
+    _check("'See you soon.' in its own <p>", "<p>See you soon.</p>" in out)
+    _check("no collapsed raw newline before 'Hi John'", "\n\nHi John" not in out)
+    _check("header table dropped in (not nested in a <p>)",
+           "<table><tbody><tr><td>HEADER" in out and "<p><div" not in out)
+    _check("signature stays a bare block-level token for the backend",
+           "{{signature}}" in out and "<p>{{signature}}</p>" not in out)
+
+
 # ── Main ──────────────────────────────────────────────────────────────────
 
 
@@ -503,6 +553,7 @@ def main() -> int:
     test_email_body_editor_component_loaded()
     test_index_html_loads_component()
     test_send_modals_use_email_body_editor()
+    test_send_body_wrap_then_inject_preserves_paragraphs()
 
     fail_count = sum(1 for _, ok in _results if not ok)
     print()

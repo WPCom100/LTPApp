@@ -1179,8 +1179,15 @@
       // {{header}} literal in sendMessage state so the editor can wrap
       // it as a non-editable block; backend stays simple and only
       // resolves the per-recipient {{viewUrl}} + per-sender {{signature}}.
+      //
+      // Paragraph-wrap the (possibly plain-text) body BEFORE injecting the
+      // header: the header's <table> would otherwise trip textToHtml's
+      // block-detection, passing the whole body through and collapsing every
+      // plain-text paragraph break. {{signature}} is re-flattened to a bare
+      // token so the backend-resolved <table> also lands at block level.
       var headerHtml = window.LTP_renderHeader("quote", sendHeaderVars || {});
-      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
+      var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
+      bodyWithHeader = window.LTP_injectBlock(bodyWithHeader, "{{signature}}", "{{signature}}");
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1190,12 +1197,10 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          // textToHtml converts blank-line paragraphs + single newlines
-          // when the body is plain text. If the admin authored HTML in
-          // the template editor, it passes through untouched. Server
-          // re-resolves {{viewUrl}} and {{signature}} and sanitizes via
+          // bodyWithHeader is already paragraph-wrapped HTML (see above).
+          // Server re-resolves {{viewUrl}} + {{signature}} and sanitizes via
           // bleach before sending.
-          bodyHtml: window.LTP_textToHtml(bodyWithHeader),
+          bodyHtml: bodyWithHeader,
         }),
       })
         .then(function(r) {

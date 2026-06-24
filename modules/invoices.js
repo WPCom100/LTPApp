@@ -549,8 +549,12 @@
       // Expand {{header}} into rendered HTML (with refNumber / projectName
       // / total inlined) JUST before send. See quotes-builder.js for
       // the full rationale. "receipt" selects the View Receipt CTA label.
+      // Paragraph-wrap BEFORE injecting the header so the header's <table>
+      // doesn't trip textToHtml's block-detection and collapse the body's
+      // plain-text paragraph breaks; re-flatten {{signature}} to block level.
       var headerHtml = window.LTP_renderHeader("receipt", sendHeaderVars || {});
-      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
+      var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
+      bodyWithHeader = window.LTP_injectBlock(bodyWithHeader, "{{signature}}", "{{signature}}");
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -560,7 +564,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: window.LTP_textToHtml(bodyWithHeader),  // plain-text bodies keep paragraph spacing
+          bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
@@ -662,8 +666,12 @@
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
       // "invoice" selects the View & Pay CTA label.
+      // Paragraph-wrap BEFORE injecting the header so the header's <table>
+      // doesn't trip textToHtml's block-detection and collapse the body's
+      // plain-text paragraph breaks; re-flatten {{signature}} to block level.
       var headerHtml = window.LTP_renderHeader("invoice", sendHeaderVars || {});
-      var bodyWithHeader = String(sendMessage).split("{{header}}").join(headerHtml);
+      var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
+      bodyWithHeader = window.LTP_injectBlock(bodyWithHeader, "{{signature}}", "{{signature}}");
       fetch("/api/email/send", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -673,7 +681,7 @@
           to: sendEmail,
           cc: (sendCc || "").trim() || null,  // whitespace-only → omit
           subject: sendSubject,
-          bodyHtml: window.LTP_textToHtml(bodyWithHeader),  // plain-text bodies keep paragraph spacing
+          bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
         }),
       })
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
