@@ -287,8 +287,8 @@
     // sent-requests list + accept/decline tracking lives in the Crew Requests
     // tab (CrewRequestsTab). After a send we call reloadCrewRequests() so that
     // tab — and the reconcile that advances accepted/declined positions — picks
-    // up the new requests.
-    var [sendResult, setSendResult] = useState(null);   // post-send summary banner
+    // up the new requests. Send confirmations + errors surface as toasts
+    // (window.LTP_toast), consistent with the rest of the app.
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
@@ -303,9 +303,11 @@
         .then(function(res) {
           var es = (res.ok && res.body.emailStatus) || {};
           if (!es.emailed) {
-            setSendResult({ sent: 0, reconnect: !!es.needsReconnect,
-              errors: es.needsReconnect ? [] : [crewLabel(contactId) + ": " + (es.error || "email not sent")],
-              headline: "Status saved — notification email not sent" });
+            if (es.needsReconnect) {
+              window.LTP_toast("Notification email not sent", { message: "Status saved — connect Google in Settings to email " + crewLabel(contactId) + ".", variant: "warn" });
+            } else {
+              window.LTP_toast("Notification email failed", { message: crewLabel(contactId) + ": " + (es.error || "email not sent"), variant: "error" });
+            }
           }
         })
         .catch(function() {});
@@ -559,7 +561,13 @@
             errors.push(crewLabel(res.group.contactId) + ": " + detail);
           }
         });
-        setSendResult({ sent: sent, reconnect: reconnect, errors: errors });
+        if (errors.length) {
+          window.LTP_toast(sent > 0 ? "Some requests didn't send" : "Send failed", { message: errors.join("; "), variant: "error" });
+        } else if (reconnect) {
+          window.LTP_toast(sent + " crew request" + (sent !== 1 ? "s" : "") + " created", { message: "Email not sent — connect Google in Settings, then Resend from the Crew Requests tab.", variant: "warn" });
+        } else if (sent > 0) {
+          window.LTP_toast(sent + " crew request" + (sent !== 1 ? "s" : "") + " sent", { variant: "success" });
+        }
         reloadCrewRequests();
       });
     }
@@ -679,15 +687,6 @@
         pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
           style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
       ),
-
-      // Post-send result banner \u2014 sent count + email-reconnect hint + errors.
-      sendResult && h("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "8px 12px", borderRadius: "6px", background: (sendResult.errors.length ? B.danger : B.success) + "12", border: "1px solid " + (sendResult.errors.length ? B.danger : B.success) + "44" } },
-        h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec, lineHeight: 1.5 } },
-          h("span", { style: { fontWeight: 700, color: sendResult.errors.length ? B.danger : B.success } },
-            sendResult.headline || (sendResult.sent > 0 ? "\u2713 " + sendResult.sent + " request" + (sendResult.sent !== 1 ? "s" : "") + " sent" : "No requests sent")),
-          sendResult.reconnect && h("span", { style: { color: B.warn } }, "  \u00b7  Email not sent \u2014 connect Google in Settings, then Resend from the Crew Requests tab."),
-          sendResult.errors.length > 0 && h("div", { style: { color: B.danger, marginTop: 4 } }, sendResult.errors.join("; "))),
-        h("button", { onClick: function() { setSendResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "\u00d7")),
 
       // Grouped by project
       projectGroups.length === 0 && h(window.EmptyState, { text: "No positions found. Add positions to project schedules." }),
@@ -1116,7 +1115,7 @@
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
   function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects }) {
-    var [actionResult, setActionResult] = useState(null);  // resend/withdraw feedback
+    // Resend confirmations + errors surface as toasts (window.LTP_toast).
 
     // Refresh on open so a crew member's response since last load shows up here
     // (and reconciles into the Assignments view).
@@ -1140,9 +1139,13 @@
         .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
         .then(function(res) {
           var es = (res.ok && res.body.emailStatus) || {};
-          setActionResult(es.emailed
-            ? { ok: true, msg: "✓ Email re-sent to " + crewLabel(req.contactId) }
-            : { ok: false, msg: es.needsReconnect ? "Email not re-sent — connect Google in Settings, then Resend." : (crewLabel(req.contactId) + ": " + ((res.body && res.body.detail && res.body.detail.message) || es.error || "resend failed")) });
+          if (es.emailed) {
+            window.LTP_toast("Request re-sent", { message: "Email re-sent to " + crewLabel(req.contactId) + ".", variant: "success" });
+          } else if (es.needsReconnect) {
+            window.LTP_toast("Email not re-sent", { message: "Connect Google in Settings, then try Resend again.", variant: "warn" });
+          } else {
+            window.LTP_toast("Resend failed", { message: crewLabel(req.contactId) + ": " + ((res.body && res.body.detail && res.body.detail.message) || es.error || "resend failed"), variant: "error" });
+          }
           reloadCrewRequests();
         })
         .catch(function() { reloadCrewRequests(); });
@@ -1152,11 +1155,6 @@
     var active = (crewRequests || []).filter(function(r) { return r.status !== "withdrawn"; });
 
     return h("div", null,
-      // Resend / withdraw feedback.
-      actionResult && h("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "8px 12px", borderRadius: "6px", background: (actionResult.ok ? B.success : B.danger) + "12", border: "1px solid " + (actionResult.ok ? B.success : B.danger) + "44" } },
-        h("div", { style: { flex: 1, fontSize: "11px", fontWeight: 600, color: actionResult.ok ? B.success : B.danger } }, actionResult.msg),
-        h("button", { onClick: function() { setActionResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "×")),
-
       active.length === 0
         ? h(window.EmptyState, { text: "No crew requests yet. Select positions in the Assignments tab and send requests to crew." })
         : h("div", { style: { border: "1px solid " + B.border, borderRadius: "8px", overflow: "hidden" } },
