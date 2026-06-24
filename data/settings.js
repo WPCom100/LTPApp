@@ -78,10 +78,12 @@ window.LTP_DATA_SETTINGS = {
   // masthead + container read identically across every email.
 
   // Email Templates — generic with {{variable}} placeholders. Users can edit per-template in Settings.
+  // Available (UNION across all templates — the EXACT set each template supports
+  // is in LTP_TEMPLATE_VARIABLES below, and shown per-template in the Settings UI):
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
   //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}}, {{header}},
-  //            {{crewName}}, {{role}}, {{date}}, {{callTime}}, {{wrapTime}}, {{location}},
-  //            {{quoteValidity}}, {{viewUrl}}
+  //            {{shifts}}, {{crewName}}, {{role}}, {{date}}, {{callTime}},
+  //            {{wrapTime}}, {{location}}, {{quoteValidity}}, {{viewUrl}}
   //
   // The branded MASTHEAD (linear logo + color-matched rule) and the surrounding
   // card container are NOT template tokens — every email is wrapped in the shared
@@ -157,4 +159,25 @@ window.LTP_DATA_SETTINGS = {
       body: "Hi {{crewName}},\n\nThank you for your interest and availability for {{projectName}} on {{date}}.\n\nUnfortunately, we've gone in a different direction for the {{role}} position and won't be needing your services for this particular project.\n\nWe appreciate your willingness to work with us and will absolutely keep you in mind for upcoming opportunities.\n\n{{signature}}"
     },
   },
+};
+
+// Variables available PER email template — drives the per-template chip rows in
+// Settings. Each list is exactly what that template's send path resolves, so an
+// admin editing a body knows precisely what they can use (an unlisted token
+// would leak as literal text). Customer templates are composed client-side
+// (modules/quotes-builder.js openQuoteSendModal, modules/invoices.js
+// openSendModal / openReceiptModal); crew templates are composed server-side
+// (backend/routes/crew.py). header / signature / shifts are block placeholders
+// that expand to HTML; viewUrl is resolved per-recipient by the backend.
+// Kept OUTSIDE LTP_DATA_SETTINGS so it never enters the persisted settings blob.
+window.LTP_TEMPLATE_VARIABLES = {
+  quoteSent:       ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "header", "signature", "viewUrl"],
+  quoteFollowUp:   ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "header", "signature", "viewUrl"],
+  invoiceSent:     ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
+  invoiceReminder: ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
+  paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],
+  crewRequest:     ["companyName", "crewName", "projectName", "header", "shifts", "signature"],
+  crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
+  crewCancelled:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
+  crewNotSelected: ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
 };

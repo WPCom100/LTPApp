@@ -248,8 +248,9 @@
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : "qty";
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
+    var unitP = Number(item.unitPrice) || 0;
     var adjusted = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
-    var eff = item.adjustedPrice != null ? item.adjustedPrice : item.unitPrice;
+    var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lt = eff * (Number(item.qty) || 0);
 
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
@@ -284,16 +285,16 @@
       // Unit price
       h("div", { style: { width: 75 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
-        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + item.unitPrice)
+        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
       ),
       // Adjusted price
       h("div", { style: { width: 75 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
         isDraft
-          ? h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: String(item.unitPrice),
+          ? h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: String(unitP),
               onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
               style: { width: "100%", background: B.bg, border: "1px solid " + (adjusted ? B.accent : B.border), borderRadius: "3px", padding: "3px 6px", color: adjusted ? B.accent : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
-          : h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + item.adjustedPrice : "\u2014")
+          : h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
       ),
       // Total
       h("div", { style: { width: 85, textAlign: "right" } },
@@ -985,9 +986,9 @@
       sec.items.forEach(function(it) {
         if (it.type === "note") return;
         var qty = Number(it.qty) || 0;
-        var eff = it.adjustedPrice != null ? it.adjustedPrice : it.unitPrice;
+        var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
         sub += eff * qty;
-        cost += (it.cost || 0) * qty;
+        cost += (Number(it.cost) || 0) * qty;
       });
       return { subtotal: sub, cost: cost };
     }
@@ -1409,7 +1410,7 @@
                     h(window.LTPInput, { label: "Invoice Date", value: draft.invoiceDate || "", type: "date",
                       onChange: function(v) { patchDraft({ invoiceDate: v }); } }),
                     // Due date with net options
-                    h("div", null,
+                    h("div", { style: { minWidth: 0 } },
                       h(window.LTPInput, { label: "Due Date", value: draft.dueDate || "", type: "date",
                         onChange: function(v) { patchDraft({ dueDate: v }); } }),
                       h("div", { style: { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap" } },

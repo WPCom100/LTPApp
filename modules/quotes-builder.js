@@ -403,9 +403,10 @@
     // Lookup service for rate type changes
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
 
-    var effectivePrice = item.adjustedPrice != null ? item.adjustedPrice : item.unitPrice;
+    var unitP = Number(item.unitPrice) || 0;
+    var effectivePrice = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lineTotal = effectivePrice * (Number(item.qty) || 0);
-    var origTotal = item.unitPrice * (Number(item.qty) || 0);
+    var origTotal = unitP * (Number(item.qty) || 0);
     var adjusted  = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
 
     var delivQty = Number(item.deliveredQty) || 0;
@@ -465,15 +466,15 @@
       // Unit price — locked when accepted/converted
       h("div", { style: { width: 80 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
-        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + item.unitPrice)
+        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
       ),
       // Adjusted price — locked when accepted/converted
       h("div", { style: { width: 80 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
         isLocked
-          ? h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + item.adjustedPrice : "\u2014")
+          ? h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
           : h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "",
-              placeholder: String(item.unitPrice),
+              placeholder: String(unitP),
               onChange: function(e) {
                 var v = e.target.value;
                 onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) });
@@ -1583,9 +1584,9 @@
       sec.items.forEach(function(it) {
         if (it.type === "note") return;
         var qty = Number(it.qty) || 0;
-        var eff = it.adjustedPrice != null ? it.adjustedPrice : it.unitPrice;
+        var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
         sub += eff * qty;
-        cst += (it.cost || 0) * qty;
+        cst += (Number(it.cost) || 0) * qty;
       });
       return { subtotal: sub, margin: sub - cst };
     }

@@ -373,35 +373,44 @@ def test_total_renders_with_cents_in_all_three_modals():
            f"{len(cents_blocks)} have cents config")
 
 
-def test_settings_email_templates_available_variables_matches_canonical():
-    """The Email Templates section's "Available Variables" chip row in
-    modules/settings.js must list every placeholder documented in
-    data/settings.js's `// Available:` comment block (the canonical list)."""
-    print("test_settings_email_templates_available_variables_matches_canonical")
-    canonical_src = _read("data", "settings.js")
-    # Scope to the `// Available:` list ONLY — the comment lines up to the
-    # blank "//" separator. Splitting on "emailTemplates" would over-capture
-    # the prose comments below (e.g. the {{shifts}} mention in the {{header}}
-    # note), polluting the canonical set with tokens that aren't body vars.
-    m_avail = re.search(r'// Available:(.*?)\n\s*//\s*\n', canonical_src, re.DOTALL)
-    available_block = m_avail.group(1) if m_avail else ""
-    canonical_tokens = set(re.findall(r"\{\{(\w+)\}\}", available_block))
-
+def test_per_template_variable_lists():
+    """Each template lists EXACTLY the variables its send path resolves
+    (data/settings.js LTP_TEMPLATE_VARIABLES), shown per-template in Settings.
+    The old single combined chip row is gone, and every {{token}} a default
+    body uses is in that template's list (nothing leaks as literal text)."""
+    print("test_per_template_variable_lists")
+    data_src = _read("data", "settings.js")
     settings_src = _read("modules", "settings.js")
-    chip_rows = re.findall(
-        r'\[((?:"\w+",?\s*)+)\]\.map\(function\(v\)\s*\{[\s\S]*?"\{\{"\s*\+\s*v',
-        settings_src,
-    )
-    master = next((r for r in chip_rows if "companyName" in r), None)
-    _check("Email Templates chip-row array found", master is not None)
-    if master:
-        ui_tokens = set(re.findall(r'"(\w+)"', master))
-        missing = canonical_tokens - ui_tokens
-        _check("every canonical token has a UI chip", not missing,
-               f"missing from Settings UI: {sorted(missing)}")
-        extra = ui_tokens - canonical_tokens
-        _check("no UI chips beyond the canonical list", not extra,
-               f"in UI but not in data/settings.js Available: comment: {sorted(extra)}")
+
+    all_templates = list(_CUSTOMER_TEMPLATES) + ["crewRequest"] + list(_CREW_NO_HEADER_TEMPLATES)
+
+    # 1. LTP_TEMPLATE_VARIABLES defined with a non-empty entry per template.
+    _check("LTP_TEMPLATE_VARIABLES defined in data/settings.js",
+           "window.LTP_TEMPLATE_VARIABLES" in data_src)
+    tv_block = data_src.split("window.LTP_TEMPLATE_VARIABLES")[1].split("};")[0]
+    per_template = {}
+    for m in re.finditer(r'(\w+):\s*\[([^\]]*)\]', tv_block):
+        per_template[m.group(1)] = set(re.findall(r'"(\w+)"', m.group(2)))
+    for key in all_templates:
+        _check(f"{key} has a variable list",
+               bool(per_template.get(key)), f"missing/empty list for {key}")
+
+    # 2. No leaks: every {{token}} a default body uses is in that template's list.
+    for key in all_templates:
+        body = _extract_body(data_src, key)
+        if body is None:
+            continue
+        body_tokens = set(re.findall(r"\{\{(\w+)\}\}", body))
+        leaks = body_tokens - per_template.get(key, set())
+        _check(f"{key} body uses only listed variables", not leaks,
+               f"{key} body tokens not in its list: {sorted(leaks)}")
+
+    # 3. The single combined chip row is gone; the UI renders per-template
+    #    chips sourced from LTP_TEMPLATE_VARIABLES.
+    _check("single combined 'Available Variables' chip row removed",
+           "Available Variables" not in settings_src)
+    _check("Settings UI renders per-template chips from LTP_TEMPLATE_VARIABLES",
+           "LTP_TEMPLATE_VARIABLES" in settings_src)
 
 
 # ── Editor + send-modal wiring ────────────────────────────────────────────
@@ -516,7 +525,7 @@ def main() -> int:
     test_bleach_strips_disallowed_attrs_from_header()
     test_frontend_sanitizer_allowlist_pinned()
     test_total_renders_with_cents_in_all_three_modals()
-    test_settings_email_templates_available_variables_matches_canonical()
+    test_per_template_variable_lists()
     test_send_modals_wire_header()
     test_email_body_editor_consumes_header_kind()
     test_backend_send_does_not_substitute_header_token()

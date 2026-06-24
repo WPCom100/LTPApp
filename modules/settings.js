@@ -510,20 +510,7 @@
       h("div", { style: sectionStyle },
         h("div", { style: sectionTitle }, "Email Templates"),
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Customize email templates for quotes, invoices, and crew. Use ", h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{variable}}"), " placeholders for dynamic content."),
-        h("div", { style: { background: B.bg, borderRadius: "6px", padding: "8px 12px", marginBottom: 14, border: "1px solid " + B.border } },
-          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available Variables"),
-          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-            // Keep this list in sync with the canonical Available
-            // comment in data/settings.js (above emailTemplates). The
-            // order groups by usage: entity fields → money/dates →
-            // block-level placeholders (signature/header expand to
-            // HTML) → crew-specific → quote-specific → per-recipient.
-            ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "lineItems", "signature", "header", "crewName", "role", "date", "callTime", "wrapTime", "location", "quoteValidity", "viewUrl"].map(function(v) {
-              return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
-            })
-          )
-        ),
+          "Customize email templates for quotes, invoices, and crew. Use ", h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{variable}}"), " placeholders for dynamic content. Each template lists the variables it supports below."),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
           function() {
             var templates = draft.emailTemplates || {};
@@ -542,6 +529,16 @@
                     h("span", null, tmpl.label || key),
                     h("span", { style: { fontSize: "9px", color: B.textMut, fontWeight: 400 } }, key)),
                   h("div", { style: { padding: "0 14px 14px" } },
+                    // Variables THIS template supports — exactly what its send
+                    // path resolves (data/settings.js LTP_TEMPLATE_VARIABLES).
+                    h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 8, border: "1px solid " + B.border } },
+                      h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
+                      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+                        ((window.LTP_TEMPLATE_VARIABLES || {})[key] || []).map(function(v) {
+                          return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
+                        })
+                      )
+                    ),
                     h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 } },
                       h(window.LTPInput, { label: "Subject", value: tmpl.subject || "",
                         onChange: function(v) {
