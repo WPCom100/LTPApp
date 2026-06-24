@@ -207,6 +207,37 @@ def test_build_message_unicode_subject():
            b"=?utf-8?" in msg.lower() or b"=?UTF-8?" in msg)
 
 
+def test_build_message_with_pdf_attachment():
+    print("test_build_message_with_pdf_attachment")
+    raw = gmail.build_message(
+        from_name="Sarah", from_email="s@x.com",
+        to=["client@biz.com"], cc=[], subject="Invoice INV-2026-014",
+        html_body="<p>Please find the invoice attached.</p>",
+        attachments=[{"filename": "INV-2026-014.pdf", "content": b"%PDF-1.4 demo bytes"}],
+    )
+    padded = raw + b"=" * (-len(raw) % 4)
+    msg = base64.urlsafe_b64decode(padded).decode("latin-1")
+    _check("multipart/mixed wrapper", "multipart/mixed" in msg)
+    _check("body still inline (multipart/alternative)", "multipart/alternative" in msg)
+    _check("text/html part still present", "text/html" in msg)
+    _check("application/pdf attachment part", "application/pdf" in msg)
+    _check("Content-Disposition attachment + filename",
+           "attachment" in msg and "INV-2026-014.pdf" in msg)
+    _check("PDF bytes base64-encoded into the part",
+           base64.b64encode(b"%PDF-1.4 demo bytes").decode() in msg)
+
+
+def test_build_message_no_attachment_stays_alternative():
+    print("test_build_message_no_attachment_stays_alternative")
+    raw = gmail.build_message(
+        from_name="S", from_email="s@x.com", to=["a@b.com"], cc=[],
+        subject="hi", html_body="<p>hi</p>",
+    )
+    msg = base64.urlsafe_b64decode(raw + b"=" * (-len(raw) % 4)).decode("latin-1")
+    _check("no mixed wrapper without attachments", "multipart/mixed" not in msg)
+    _check("plain multipart/alternative preserved", "multipart/alternative" in msg)
+
+
 def test_html_to_text_preserves_links():
     print("test_html_to_text_preserves_links")
     out = gmail.html_to_text('<p>Click <a href="https://x.com/quote">here</a></p>')
@@ -563,6 +594,8 @@ def main() -> int:
     test_validate_subject_strips_crlf()
     test_build_message_structure()
     test_build_message_unicode_subject()
+    test_build_message_with_pdf_attachment()
+    test_build_message_no_attachment_stays_alternative()
     test_html_to_text_preserves_links()
     test_view_url_construction()
     test_render_signature_substitutes_variables()

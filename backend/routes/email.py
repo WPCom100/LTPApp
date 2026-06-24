@@ -57,7 +57,10 @@ Lifecycle
 11. On `GmailSendError`: roll back recipient rows, stamp `email_failed`
     activity, return 502 with the error summary.
 """
+import asyncio
+import io
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from html import escape
@@ -73,7 +76,8 @@ from backend import gmail, models
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
-from backend.routes._shared import load_settings
+from backend.pdf_generator import doc_ref, generate_pdf
+from backend.routes._shared import invoice_dict, load_related, load_settings
 from backend.sanitize import email_html
 
 
@@ -98,9 +102,19 @@ class SendRequest(BaseModel):
     subject: str
     bodyHtml: str
     bodyText: str | None = None
+    # When true (invoice sends only), the backend generates the invoice PDF
+    # and attaches it to the email. Ignored for non-invoice entity types.
+    attachPdf: bool = False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
+
+
+def _pdf_filename(stem: str) -> str:
+    """Sanitize a doc ref ('INV-2026-014') into a safe attachment filename.
+    Mirrors backend/routes/pdf.py::_safe_filename."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem or "invoice")
+    return safe if safe.lower().endswith(".pdf") else f"{safe}.pdf"
 
 
 def _app_origin() -> str:
@@ -382,6 +396,31 @@ async def send_email(
     from backend.routes.crew import email_shell, _email_brand
     final_html = email_html(email_shell(inner_html, _email_brand(settings_data)))
 
+    # 4b. Optionally generate + attach the invoice PDF. Fresh render (the same
+    # generator POST /api/invoices/{id}/pdf and the "View & Download" link use)
+    # so the attachment matches the invoice's current state. Done BEFORE the
+    # recipient rows so a generation failure leaves no partial state. Only
+    # invoices have a PDF; the flag is ignored for other entity types.
+    attachments = None
+    if body.attachPdf and body.entityType == "invoice":
+        company, contact, project = await load_related(
+            db, entity.company_id, entity.client_contact_id, entity.project_id,
+        )
+        inv_dict = invoice_dict(entity)
+        buf = io.BytesIO()
+        # reportlab is synchronous + slow enough to block the event loop.
+        await asyncio.to_thread(
+            generate_pdf, buf, "invoice", inv_dict,
+            company, contact, project, settings_data, user.name,
+        )
+        pdf_bytes = buf.getvalue()
+        if not pdf_bytes:
+            raise HTTPException(
+                status_code=500,
+                detail={"reason": "pdf", "error": "could not generate the invoice PDF to attach"},
+            )
+        attachments = [{"filename": _pdf_filename(doc_ref("invoice", inv_dict)), "content": pdf_bytes}]
+
     # 5. Persist email_recipients rows BEFORE attempting send. If we crash
     # mid-send, the row + tracking_token are recoverable evidence.
     recipient_rows = []
@@ -422,7 +461,7 @@ async def send_email(
             client_id=client_id, client_secret=client_secret,
             to=to_list, cc=cc_list, subject=subject,
             html_body=final_html, text_body=body.bodyText,
-            reply_to=reply_to,
+            reply_to=reply_to, attachments=attachments,
         )
     except gmail.GmailReconnectRequired as e:
         # Roll back the recipient rows — they exist but were never delivered,
