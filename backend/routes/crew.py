@@ -316,9 +316,9 @@ def _paragraphs_to_html(text: str, blocks: dict | None = None) -> str:
 def render_masthead(brand: dict) -> str:
     """Self-contained branded masthead block: the linear logo butting a 4px
     color-matched rule that begins at the mask's left edge (after a 31px spacer)
-    and bleeds to the right edge. Reusable as the {{masthead}} email token
-    (substituted server-side at send time, like {{signature}}) and by the crew
-    email shell.
+    and bleeds to the right edge. Rendered STRUCTURALLY by email_shell at the top
+    of every email — the masthead is NOT a body token; a stray {{masthead}} left
+    in a template body is stripped by email_shell, never substituted.
 
     The rule is the logo cell's OWN border-bottom (no separate row to leak a
     seam); border-collapse + font-size/line-height:0 kill the residual gap some
@@ -345,7 +345,13 @@ def render_masthead(brand: dict) -> str:
 
 def email_shell(inner_html: str, brand: dict) -> str:
     """Wrap composed crew-email content in the themed, branded responsive
-    layout (light canvas, centered 580px card, masthead, footer)."""
+    layout (light canvas, centered 580px card, masthead, footer).
+
+    The masthead is part of THIS layout (render_masthead below), NOT a body
+    token — so any stray {{masthead}} in the content is dead. Strip it here so it
+    can never render literally; this is the single door the crew + crew-notify
+    paths go through (the customer path in routes/email.py strips it too)."""
+    inner_html = (inner_html or "").replace("{{masthead}}", "")
     company = escape(brand["company"])
     footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
     # width:100% + max-width (NOT a fixed width:600px) so the card fills a phone
