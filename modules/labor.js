@@ -67,6 +67,56 @@
     });
   }
 
+  // Optimistically move a set of positions to a status locally, only when they're
+  // currently at `fromStatus`. Mirrors what the server already did (send/withdraw
+  // mutate positions server-side); keeps the UI in sync without a project refetch.
+  // Same-result writes converge with the debounced PUT.
+  function flipPositionsLocal(setProjects, projectId, posIds, fromStatus, toStatus) {
+    var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
+    setProjects(function(prev) {
+      return prev.map(function(proj) {
+        if (projectId != null && proj.id !== projectId) return proj;
+        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+            if (idSet[pos.id] && pos.status === fromStatus) return Object.assign({}, pos, { status: toStatus });
+            return pos;
+          }) });
+        }) });
+      });
+    });
+  }
+
+  // Reconcile crew-request answers (accepted/declined) into local position
+  // statuses, advancing only positions still at "requested" so a producer's
+  // manual changes (confirmed, released) are never disturbed. The app doesn't
+  // poll `projects` for inbound server changes, so this bridges a crew member's
+  // accept/decline (written server-side to the position status) into the grouped
+  // view without a full reload.
+  function reconcileFromRequests(setProjects, reqs) {
+    var byProject = {};
+    (reqs || []).forEach(function(r) {
+      var target = r.status === "accepted" ? "accepted" : (r.status === "declined" ? "declined" : null);
+      if (!target) return;
+      byProject[r.projectId] = byProject[r.projectId] || {};
+      (r.positionIds || []).forEach(function(pid) { byProject[r.projectId][pid] = target; });
+    });
+    if (Object.keys(byProject).length === 0) return;
+    setProjects(function(prev) {
+      var changed = false;
+      var next = prev.map(function(proj) {
+        var map = byProject[proj.id];
+        if (!map) return proj;
+        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+            if (map[pos.id] && pos.status === "requested") { changed = true; return Object.assign({}, pos, { status: map[pos.id] }); }
+            return pos;
+          }) });
+        }) });
+      });
+      return changed ? next : prev;
+    });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //   CREW ROSTER TAB
   // ═══════════════════════════════════════════════════════════════════════════
@@ -223,7 +273,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
-  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings }) {
+  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests }) {
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
@@ -233,112 +283,14 @@
     var [confirmDlg, setConfirmDlg] = useState(null); // posId → true/false
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
-    // ── Crew requests (tokenized accept/decline) ────────────────────────────
-    // Loaded from /api/crew-requests (the producer's own data — includes the
-    // token so we can surface/copy the crew link). Reloaded after send/withdraw.
-    // Crew responses (accept/decline) flow back as POSITION status changes on
-    // the project, which the existing grouped view already reflects on refresh.
-    var [crewRequests, setCrewRequests] = useState([]);
+    // Sending crew requests lives here (you select positions and send); the
+    // sent-requests list + accept/decline tracking lives in the Crew Requests
+    // tab (CrewRequestsTab). After a send we call reloadCrewRequests() so that
+    // tab — and the reconcile that advances accepted/declined positions — picks
+    // up the new requests.
     var [sendResult, setSendResult] = useState(null);   // post-send summary banner
-    var [copiedId, setCopiedId] = useState(null);        // copy-link feedback
-
-    function loadCrewRequests() {
-      fetch("/api/crew-requests", { credentials: "include" })
-        .then(function(r) { return r.ok ? r.json() : []; })
-        .then(function(d) {
-          var list = Array.isArray(d) ? d : [];
-          setCrewRequests(list);
-          reconcileFromRequests(list);
-        })
-        .catch(function() {});
-    }
-    React.useEffect(loadCrewRequests, []);
-
-    // The app doesn't poll `projects` for inbound server changes, so a crew
-    // member's accept/decline (which the backend writes to the position status)
-    // wouldn't show in the grouped view until a full reload. Bridge that: when
-    // we fetch the requests, advance any still-"requested" position to match
-    // its request's answer. Only advances FROM "requested" so a producer's
-    // manual changes (confirmed, released) are never disturbed.
-    function reconcileFromRequests(reqs) {
-      var byProject = {};
-      reqs.forEach(function(r) {
-        var target = r.status === "accepted" ? "accepted" : (r.status === "declined" ? "declined" : null);
-        if (!target) return;
-        byProject[r.projectId] = byProject[r.projectId] || {};
-        (r.positionIds || []).forEach(function(pid) { byProject[r.projectId][pid] = target; });
-      });
-      if (Object.keys(byProject).length === 0) return;
-      setProjects(function(prev) {
-        var changed = false;
-        var next = prev.map(function(proj) {
-          var map = byProject[proj.id];
-          if (!map) return proj;
-          return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-              if (map[pos.id] && pos.status === "requested") { changed = true; return Object.assign({}, pos, { status: map[pos.id] }); }
-              return pos;
-            }) });
-          }) });
-        });
-        return changed ? next : prev;
-      });
-    }
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
-    function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
-
-    function copyCrewLink(req) {
-      var url = window.location.origin + "/#/crew/" + req.token;
-      function flash() { setCopiedId(req.id); setTimeout(function() { setCopiedId(null); }, 1500); }
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(url).then(flash, function() { window.prompt("Copy this crew link:", url); });
-      } else {
-        window.prompt("Copy this crew link:", url);
-      }
-    }
-
-    // Optimistically move a set of positions to a status locally, only when
-    // they're currently at `fromStatus`. Mirrors what the server already did
-    // (send/withdraw mutate positions server-side); keeps the UI in sync without
-    // a project refetch. Same-result writes converge with the debounced PUT.
-    function flipPositionsLocal(projectId, posIds, fromStatus, toStatus) {
-      var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
-      setProjects(function(prev) {
-        return prev.map(function(proj) {
-          if (projectId != null && proj.id !== projectId) return proj;
-          return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-              if (idSet[pos.id] && pos.status === fromStatus) return Object.assign({}, pos, { status: toStatus });
-              return pos;
-            }) });
-          }) });
-        });
-      });
-    }
-
-    function withdrawRequest(req) {
-      fetch("/api/crew-requests/" + req.id + "/withdraw", { method: "POST", credentials: "include" })
-        .then(function(r) { if (!r.ok) throw new Error("withdraw failed"); return r.json(); })
-        .then(function() {
-          flipPositionsLocal(req.projectId, req.positionIds, "requested", "open");
-          loadCrewRequests();
-        })
-        .catch(function() { loadCrewRequests(); });
-    }
-
-    function resendRequest(req) {
-      fetch("/api/crew-requests/" + req.id + "/resend", { method: "POST", credentials: "include" })
-        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
-        .then(function(res) {
-          var es = (res.ok && res.body.emailStatus) || {};
-          setSendResult(es.emailed
-            ? { sent: 1, reconnect: false, errors: [], headline: "✓ Email re-sent to " + crewLabel(req.contactId) }
-            : { sent: 0, reconnect: !!es.needsReconnect, errors: es.needsReconnect ? [] : [crewLabel(req.contactId) + ": " + ((res.body && res.body.detail && res.body.detail.message) || es.error || "resend failed")], headline: "Email not re-sent" });
-          loadCrewRequests();
-        })
-        .catch(function() { loadCrewRequests(); });
-    }
 
     // Best-effort informational crew email (confirmed / cancelled / not-selected).
     // The status change already happened locally; surface only email failures so
@@ -584,7 +536,7 @@
       // does the same), so the grouped view updates without a project refetch.
       var allIds = [];
       groupList.forEach(function(g) { allIds = allIds.concat(g.positionIds); });
-      flipPositionsLocal(null, allIds, "open", "requested");
+      flipPositionsLocal(setProjects, null, allIds, "open", "requested");
 
       setShowSendPanel(false);
       Promise.all(groupList.map(function(g) {
@@ -608,7 +560,7 @@
           }
         });
         setSendResult({ sent: sent, reconnect: reconnect, errors: errors });
-        loadCrewRequests();
+        reloadCrewRequests();
       });
     }
 
@@ -733,39 +685,9 @@
         h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec, lineHeight: 1.5 } },
           h("span", { style: { fontWeight: 700, color: sendResult.errors.length ? B.danger : B.success } },
             sendResult.headline || (sendResult.sent > 0 ? "\u2713 " + sendResult.sent + " request" + (sendResult.sent !== 1 ? "s" : "") + " sent" : "No requests sent")),
-          sendResult.reconnect && h("span", { style: { color: B.warn } }, "  \u00b7  Email not sent \u2014 connect Google in Settings, or copy links below."),
+          sendResult.reconnect && h("span", { style: { color: B.warn } }, "  \u00b7  Email not sent \u2014 connect Google in Settings, then Resend from the Crew Requests tab."),
           sendResult.errors.length > 0 && h("div", { style: { color: B.danger, marginTop: 4 } }, sendResult.errors.join("; "))),
         h("button", { onClick: function() { setSendResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "\u00d7")),
-
-      // \u2500\u2500 Crew Requests panel \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-      // Sent tokenized requests with live status + copy-link + withdraw. Crew
-      // responses arrive as POSITION status changes (reflected in the groups
-      // below); this panel tracks the request envelope itself.
-      crewRequests.length > 0 && function() {
-        var STBADGE = { pending: B.warn, accepted: B.success, declined: B.danger, withdrawn: B.textMut };
-        var active = crewRequests.filter(function(r) { return r.status !== "withdrawn"; });
-        if (active.length === 0) return null;
-        return h("div", { style: { marginBottom: 16, border: "1px solid " + B.border, borderRadius: "8px", overflow: "hidden" } },
-          h("div", { style: { padding: "8px 14px", background: B.surface, borderBottom: "1px solid " + B.border, fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } },
-            "Crew Requests (" + active.length + ")"),
-          active.map(function(r, i) {
-            var st = r.status || "pending";
-            return h("div", { key: r.id, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
-              h("div", { style: { flex: 1, minWidth: 0 } },
-                h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  \u00b7  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
-                // Note the crew member left when they accepted/declined.
-                r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "\u201c" + r.comment + "\u201d")),
-              h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
-              h("button", { onClick: function() { copyCrewLink(r); },
-                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: copiedId === r.id ? B.success : B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, copiedId === r.id ? "\u2713 Copied" : "Copy link"),
-              st === "pending" && h("button", { onClick: function() { resendRequest(r); },
-                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
-              st === "pending" && h("button", { onClick: function() { withdrawRequest(r); },
-                style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
-            );
-          }));
-      }(),
 
       // Grouped by project
       projectGroups.length === 0 && h(window.EmptyState, { text: "No positions found. Add positions to project schedules." }),
@@ -1187,18 +1109,109 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  //   CREW REQUESTS TAB
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Sent tokenized crew requests with live accept/decline status + the note the
+  // crew member left, plus Resend / Withdraw on still-pending ones. Crew
+  // responses also flow back as POSITION status changes (reconciled into the
+  // Assignments view); this tab tracks the request envelope itself.
+  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects }) {
+    var [actionResult, setActionResult] = useState(null);  // resend/withdraw feedback
+
+    // Refresh on open so a crew member's response since last load shows up here
+    // (and reconciles into the Assignments view).
+    React.useEffect(function() { reloadCrewRequests(); }, []);
+
+    function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
+    function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
+
+    function withdrawRequest(req) {
+      fetch("/api/crew-requests/" + req.id + "/withdraw", { method: "POST", credentials: "include" })
+        .then(function(r) { if (!r.ok) throw new Error("withdraw failed"); return r.json(); })
+        .then(function() {
+          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
+          reloadCrewRequests();
+        })
+        .catch(function() { reloadCrewRequests(); });
+    }
+
+    function resendRequest(req) {
+      fetch("/api/crew-requests/" + req.id + "/resend", { method: "POST", credentials: "include" })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+        .then(function(res) {
+          var es = (res.ok && res.body.emailStatus) || {};
+          setActionResult(es.emailed
+            ? { ok: true, msg: "✓ Email re-sent to " + crewLabel(req.contactId) }
+            : { ok: false, msg: es.needsReconnect ? "Email not re-sent — connect Google in Settings, then Resend." : (crewLabel(req.contactId) + ": " + ((res.body && res.body.detail && res.body.detail.message) || es.error || "resend failed")) });
+          reloadCrewRequests();
+        })
+        .catch(function() { reloadCrewRequests(); });
+    }
+
+    var STBADGE = { pending: B.warn, accepted: B.success, declined: B.danger, withdrawn: B.textMut };
+    var active = (crewRequests || []).filter(function(r) { return r.status !== "withdrawn"; });
+
+    return h("div", null,
+      // Resend / withdraw feedback.
+      actionResult && h("div", { style: { display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 12, padding: "8px 12px", borderRadius: "6px", background: (actionResult.ok ? B.success : B.danger) + "12", border: "1px solid " + (actionResult.ok ? B.success : B.danger) + "44" } },
+        h("div", { style: { flex: 1, fontSize: "11px", fontWeight: 600, color: actionResult.ok ? B.success : B.danger } }, actionResult.msg),
+        h("button", { onClick: function() { setActionResult(null); }, style: { background: "transparent", border: "none", color: B.textMut, fontSize: "14px", cursor: "pointer", lineHeight: 1 } }, "×")),
+
+      active.length === 0
+        ? h(window.EmptyState, { text: "No crew requests yet. Select positions in the Assignments tab and send requests to crew." })
+        : h("div", { style: { border: "1px solid " + B.border, borderRadius: "8px", overflow: "hidden" } },
+            h("div", { style: { padding: "8px 14px", background: B.surface, borderBottom: "1px solid " + B.border, fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } },
+              "Crew Requests (" + active.length + ")"),
+            active.map(function(r, i) {
+              var st = r.status || "pending";
+              return h("div", { key: r.id, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
+                  h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  ·  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                  // Note the crew member left when they accepted/declined.
+                  r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
+                h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
+                st === "pending" && h("button", { onClick: function() { resendRequest(r); },
+                  style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
+                st === "pending" && h("button", { onClick: function() { withdrawRequest(r); },
+                  style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
+              );
+            }))
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
   window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route }) {
     // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
     // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
     //   labor            → assignments (default)
+    //   labor/requests   → Crew Requests
     //   labor/roster     → Crew Roster
     //   labor/calendar   → Calendar
     //   labor/schedule   → Weekly Schedule
-    var validTabs = { assignments: 1, roster: 1, calendar: 1, schedule: 1 };
+    var validTabs = { assignments: 1, requests: 1, roster: 1, calendar: 1, schedule: 1 };
     var tab = (route && validTabs[route.sub]) ? route.sub : "assignments";
     var crew = contacts.filter(function(c) { return c.isCrew; });
+
+    // Crew requests live at the LaborView level (not inside a single tab) so the
+    // reconcile that advances accepted/declined positions into the Assignments
+    // view runs on load regardless of which crew tab is open. Both the
+    // Assignments tab (after a send) and the Crew Requests tab refresh via
+    // reloadCrewRequests.
+    var [crewRequests, setCrewRequests] = useState([]);
+    function loadCrewRequests() {
+      fetch("/api/crew-requests", { credentials: "include" })
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(d) {
+          var list = Array.isArray(d) ? d : [];
+          setCrewRequests(list);
+          reconcileFromRequests(setProjects, list);
+        })
+        .catch(function() {});
+    }
+    React.useEffect(loadCrewRequests, []);
 
     var allPositions = useMemo(function() {
       return aggregatePositions(projects, contacts, services);
@@ -1210,7 +1223,8 @@
 
     var conflictCount = Object.keys(crewConflicts).length;
 
-    var tabTitle = tab === "roster" ? "Crew Roster"
+    var tabTitle = tab === "requests" ? "Crew Requests"
+      : tab === "roster" ? "Crew Roster"
       : tab === "calendar" ? "Crew Calendar"
       : tab === "schedule" ? "Weekly Schedule"
       : "Crew Assignments";
@@ -1222,7 +1236,8 @@
           "\u26a0 " + conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
-      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings }),
+      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests }),
+      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts })
     );

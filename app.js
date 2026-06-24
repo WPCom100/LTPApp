@@ -466,6 +466,7 @@ function LTPSignedInApp(props) {
           if (sidebarOpen && m.id === "labor") {
             var laborSubs = [
               { path: "labor/assignments", label: "Assignments"    },
+              { path: "labor/requests",    label: "Crew Requests"   },
               { path: "labor/roster",      label: "Crew Roster"     },
               { path: "labor/calendar",    label: "Calendar"        },
               { path: "labor/schedule",    label: "Weekly Schedule" },
