@@ -327,44 +327,6 @@
       });
     }
 
-    // The pending crew request that put this position into "requested" (matched
-    // by project + position id). Withdrawing a request MUST go through this
-    // record — reopening the position locally alone leaves the request live
-    // (integrity keys on position-id presence, not status), so the crew link
-    // would still accept. Returns undefined when no tracked request covers it.
-    function findPendingRequest(pos) {
-      return (crewRequests || []).find(function(r) {
-        return r.status === "pending" && r.projectId === pos.projectId &&
-               (r.positionIds || []).indexOf(pos.posId) !== -1;
-      });
-    }
-
-    // Withdraw a pending request through the server (sets status=withdrawn so the
-    // crew link shows the withdrawn screen, reopens its shifts) and park the
-    // crew-withdrawn email in the notify tray — coalesced per person, sent on
-    // demand — instead of emailing inline. Mirrors the Crew Requests tab's
-    // doWithdraw so both no-save entry points behave identically.
-    function withdrawRequestRecord(req) {
-      fetch("/api/crew-requests/" + req.id + "/withdraw", {
-        method: "POST", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notify: false }),
-      })
-        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
-        .then(function(res) {
-          if (!res.ok) {
-            window.LTP_toast("Withdraw failed", { message: (res.body && res.body.detail && (res.body.detail.message || res.body.detail)) || "could not withdraw the request", variant: "error" });
-            if (reloadCrewRequests) reloadCrewRequests();
-            return;
-          }
-          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
-          parkRemoval(req.contactId, req.projectId, "crewWithdrawn", req.positionIds);
-          window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
-          if (reloadCrewRequests) reloadCrewRequests();
-        })
-        .catch(function() { if (reloadCrewRequests) reloadCrewRequests(); });
-    }
-
     // Backward status moves that need confirmation
     var SEVERITY = { confirmed: 4, accepted: 3, requested: 2, open: 1, declined: 0 };
 
@@ -380,28 +342,23 @@
 
       // Backward move with crew assigned — needs confirmation
       if (newSev < oldSev && pos.crewId && oldSev >= 2) {
-        // A pending request is withdrawn as a whole unit (the crew member sees
-        // and accepts/declines the entire request), so reflect that all of its
-        // shifts reopen — not just the one the producer clicked.
-        var req = pos.status === "requested" ? findPendingRequest(pos) : null;
-        var reqShifts = req ? (req.positionIds || []).length : 0;
+        // Each status change is scoped to THIS booking's shift(s) (posIds) — a
+        // conflicting double-booking is its own booking, so withdrawing/releasing
+        // one shift never touches the other. The request record is trimmed (or
+        // withdrawn, if this was its last shift) server-side on save.
         var tray = " They're added to the notify tray (bottom-left), where you can email them — or decline — when ready.";
-        var requestedMsg = req
-          ? "This withdraws " + crewName + "'s entire request for " + (pos.projectName || "this project") +
-            (reqShifts > 1 ? " (" + reqShifts + " shifts)" : "") + ". Those shifts reopen and the crew link stops working." + tray
-          : "This will withdraw the request sent to " + crewName + " for " + context + "." + tray;
         var messages = {
           "confirmed": "This cancels " + crewName + "'s confirmed position on " + context + "." + tray,
           "accepted": crewName + " already accepted this position on " + context + ". This releases their assignment." + tray,
-          "requested": requestedMsg,
+          "requested": "This withdraws " + crewName + " from " + context + ". Only this shift reopens — any other shifts they're on are unaffected." + tray,
         };
         var actions = {
           "confirmed": "Cancel Position",
           "accepted": "Release",
-          "requested": "Withdraw Request",
+          "requested": "Withdraw",
         };
         setStatusDlg({
-          pos: pos, newStatus: newStatus, req: req, posIds: posIds,
+          pos: pos, newStatus: newStatus, posIds: posIds,
           title: pos.status === "confirmed" ? "Cancel Confirmed Position" : pos.status === "accepted" ? "Release Accepted Crew" : "Withdraw Request",
           message: messages[pos.status] || "Change status from " + pos.status + " to " + newStatus + "?",
           actionLabel: actions[pos.status] || "Confirm",
@@ -424,15 +381,6 @@
       // for this crew (the legacy whole-day behaviour) when not.
       var scopeIds = (statusDlg.posIds && statusDlg.posIds.length) ? statusDlg.posIds : null;
       var affectIds = scopeIds ? scopeIds.reduce(function(m, id) { m[id] = true; return m; }, {}) : null;
-      // Withdrawing a tracked pending request goes through the server so the
-      // request record is actually withdrawn (crew link → withdrawn screen) and
-      // its shifts reopen; the notice is parked in the tray. That call handles
-      // everything, so skip the cascade/park below.
-      if (pos.status === "requested" && statusDlg.req) {
-        withdrawRequestRecord(statusDlg.req);
-        setStatusDlg(null);
-        return;
-      }
       // Park a typed notice (requested→withdrawn, accepted→not-selected,
       // confirmed→cancelled) for the affected shifts — scopeIds (this booking's
       // positions) when known, else every same-date shift for this crew. The
