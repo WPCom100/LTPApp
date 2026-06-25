@@ -535,7 +535,7 @@
           terminal && clientAction
             ? h("div", null,
                 h("div", { style: { fontSize: "14px", fontWeight: 700, color: clientAction.type === "client_accepted" ? "#4CAF50" : "#E74C3C", marginBottom: 6 } },
-                  (clientAction.type === "client_accepted" ? "✓ Accepted" : "✗ Declined") + " by " + (clientAction.user || "client") +
+                  (clientAction.type === "client_accepted" ? "✓ Accepted" : "✕ Declined") + " by " + (clientAction.user || "client") +
                   " on " + fmtDate(clientAction.date)),
                 clientAction.comment && h("div", { style: { fontSize: "12px", color: FULL_UP_GRAY, fontStyle: "italic", marginBottom: 8 } }, "\"" + clientAction.comment + "\""),
                 clientAction.signatureDataUrl && h("div", { style: { marginTop: 10 } },

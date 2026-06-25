@@ -496,11 +496,10 @@ function LTPSignedInApp(props) {
           h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.textSec } }, (MODULES.find(function(m) { return m.id === activeModule; }) || {}).label)),
         h("div", { ref: searchRef, style: { position: "relative", flex: 1, maxWidth: 720, margin: "0 24px" } },
           h("div", { style: { position: "relative" } },
-            h("span", { style: { position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", fontSize: "13px", color: B.textMut, pointerEvents: "none" } }, "\uD83D\uDD0D"),
             h("input", { type: "text", value: globalSearch, placeholder: "Search companies, contacts, projects, invoices\u2026",
               onChange: function(e) { setGlobalSearch(e.target.value); setSearchOpen(true); },
               onFocus: function() { if (globalSearch) setSearchOpen(true); },
-              style: { width: "100%", background: B.raised, border: "1px solid " + (searchOpen && globalSearch ? B.accent : B.border), borderRadius: "6px", padding: "6px 12px 6px 30px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" } })
+              style: { width: "100%", background: B.raised, border: "1px solid " + (searchOpen && globalSearch ? B.accent : B.border), borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" } })
           ),
           searchOpen && globalSearch && h("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 2000, overflow: "hidden", maxHeight: 400, overflowY: "auto" } },
             searchResults.length === 0

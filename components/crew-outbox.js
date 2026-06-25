@@ -123,7 +123,6 @@
         background: B.warnBg || "#2e2208", border: "1px solid " + accent, borderRadius: "8px", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
         fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text || "#fff", overflow: "hidden" } },
       h("div", { style: { padding: "10px 12px", borderBottom: "1px solid " + accent + "55", display: "flex", alignItems: "center", gap: 8 } },
-        h("span", { style: { fontSize: "14px", flexShrink: 0 } }, "✉"),
         h("div", { style: { flex: 1, minWidth: 0 } },
           h("div", { style: { fontSize: "12px", fontWeight: 700 } }, "Crew to notify (" + items.length + ")"),
           h("div", { style: { fontSize: "10px", color: B.textMut || "#888", marginTop: 1 } },
@@ -143,7 +142,7 @@
       h("div", { style: { padding: "8px 12px", borderTop: "1px solid " + accent + "55", display: "flex", gap: 8, alignItems: "center" } },
         h("button", { onClick: sendAll, disabled: sending,
           style: { flex: 1, background: B.success || "#3fb950", border: "none", borderRadius: "6px", padding: "7px 12px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: sending ? "default" : "pointer", opacity: sending ? 0.6 : 1, fontFamily: "inherit" } },
-          sending ? "Sending…" : "✉ Notify all"),
+          sending ? "Sending…" : "Notify all"),
         h("button", { onClick: declineAll, disabled: sending,
           style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "6px", padding: "7px 12px", color: B.textMut || "#888", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
           "Dismiss all")));

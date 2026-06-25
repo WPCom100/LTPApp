@@ -730,7 +730,7 @@
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
             style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? "#000" : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
-            isConflict ? "\u26a0 Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
+            isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
         }),
         h("select", { value: projFilter, onChange: function(e) { setProjFilter(e.target.value); },
           style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
@@ -823,7 +823,7 @@
                               if (otherBookings.length > 0) {
                                 var cm = contacts.find(function(c) { return c.id === cid; });
                                 var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
-                                setConflictWarn({ title: "\u26a0 Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
+                                setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
                                   onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
                                 return;
                               }
@@ -893,7 +893,7 @@
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
           h(window.Btn, { variant: "ghost", onClick: function() { executeConfirm(false); } }, "Confirm Quietly"),
-          h(window.Btn, { onClick: function() { executeConfirm(true); } }, "\u2709 Confirm & Notify"))
+          h(window.Btn, { onClick: function() { executeConfirm(true); } }, "Confirm & Notify"))
       ),
 
       // Conflict warning dialog
@@ -971,7 +971,7 @@
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
                         h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
-                      !cm || !cm.email ? h("span", { title: "No email on file", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "\u26a0") : null
+                      !cm || !cm.email ? h("span", { title: "No email on file", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "no email") : null
                     );
                   }))
               ),
@@ -1009,7 +1009,7 @@
                 h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); } }, "Cancel"),
                 h(window.Btn, { onClick: selectedCount > 0 ? sendSelected : undefined,
                   style: selectedCount > 0 ? {} : { opacity: 0.4, cursor: "not-allowed" } },
-                  "\u2709 Send " + selectedCount + " Request" + (selectedCount !== 1 ? "s" : ""))))
+                  "Send " + selectedCount + " Request" + (selectedCount !== 1 ? "s" : ""))))
           );
         }()
       )
@@ -1289,7 +1289,7 @@
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, tabTitle),
         conflictCount > 0 && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
-          "\u26a0 " + conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
+          conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),

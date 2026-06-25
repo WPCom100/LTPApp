@@ -618,7 +618,7 @@
                 return "[" + e.timestamp + "] " + e.module + ": " + e.message + "\n" + (e.stack || "") + "\n" + (e.componentStack || "");
               }).join("\n---\n");
               if (navigator.clipboard) navigator.clipboard.writeText(text);
-            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "\u2398 Copy All"),
+            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Copy All"),
             h("button", { onClick: function() { window.__LTP_ERROR_LOG = []; set("_errorClear", Date.now()); },
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Clear Log"))
         )

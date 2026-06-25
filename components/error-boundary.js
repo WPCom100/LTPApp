@@ -64,7 +64,7 @@
                 var text = "Module: " + last.module + "\nTime: " + last.timestamp + "\nError: " + last.message + "\n\nStack:\n" + last.stack + "\n\nComponent:\n" + last.componentStack;
                 if (navigator.clipboard) { navigator.clipboard.writeText(text); }
               }
-            }, style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "4px", padding: "5px 14px", color: B.textMut || "#666", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "\u2398 Copy Error")),
+            }, style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "4px", padding: "5px 14px", color: B.textMut || "#666", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "Copy Error")),
 
           this.state.showDetails && h("div", { style: { background: (B.bg || "#000"), border: "1px solid " + (B.border || "#333"), borderRadius: "6px", padding: "10px 12px", overflow: "auto", maxHeight: 200 } },
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger || "#e74c3c", marginBottom: 6 } }, err ? err.message : "Unknown error"),

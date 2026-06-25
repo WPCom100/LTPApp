@@ -232,7 +232,7 @@
     if (status === "accepted") {
       banner = { color: "#4CAF50", label: "✓ You accepted this request", note: "You're confirmed pending final scheduling. Thank you!" };
     } else if (status === "declined") {
-      banner = { color: "#E74C3C", label: "✗ You declined this request", note: "Thanks for letting us know." };
+      banner = { color: "#E74C3C", label: "✕ You declined this request", note: "Thanks for letting us know." };
     } else if (status === "withdrawn") {
       banner = { color: "#8899a0", label: "This request has been withdrawn", note: "The production team withdrew this request. No action is needed." };
     }

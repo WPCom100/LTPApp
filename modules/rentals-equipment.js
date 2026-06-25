@@ -76,7 +76,7 @@
               },
                 h("span", { style: { color: B.text, fontWeight: 600 } }, u.barcode || u.serial || "No ID"),
                 u.barcode && u.serial && h("span", { style: { color: B.textMut, marginLeft: 8, fontSize: "11px" } }, "S/N: " + u.serial),
-                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "\u26a0 open issue")
+                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "open issue")
               );
             })
       )
@@ -378,7 +378,7 @@
 
         // Open maintenance issues on overview
         openIssues > 0 && h("div", { style: { marginBottom: 14 } },
-          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "\u26a0 Open Issues (" + openIssues + ")"),
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Open Issues (" + openIssues + ")"),
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             (eq.serialized ? allUnitLogs : lineLogs).filter(function(l) { return l.status === "open"; }).map(function(l) {
               return h("div", { key: l.id, style: { background: B.dangerBg, borderRadius: 6, padding: "10px 12px", border: "1px solid " + B.dangerBd } },
@@ -430,7 +430,7 @@
                       h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, u.barcode || u.serial || "No ID"),
                       u.barcode && u.serial && h("div", { style: { fontSize: "11px", color: B.textMut } }, "S/N: " + u.serial)),
                     h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-                      unitOpenIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "\u26a0 " + unitOpenIssues + " issue" + (unitOpenIssues > 1 ? "s" : "")),
+                      unitOpenIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, unitOpenIssues + " issue" + (unitOpenIssues > 1 ? "s" : "")),
                       h("span", { style: { fontSize: "10px", fontWeight: 700, color: u.status === "available" ? B.success : B.danger, textTransform: "uppercase" } }, u.status))
                   ),
                   h("div", { style: { display: "flex", gap: 16, fontSize: "11px", color: B.textMut } },

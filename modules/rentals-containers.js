@@ -259,7 +259,7 @@
                 onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
                 h("span", { style: { color: B.text, fontWeight: 600 } }, u.barcode || u.serial || "No ID"),
                 u.barcode && u.serial && h("span", { style: { color: B.textMut, marginLeft: 8, fontSize: "11px" } }, "S/N: " + u.serial),
-                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "\u26a0 open issue")
+                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "open issue")
               );
             })
       )
@@ -347,13 +347,13 @@
 
         // Physical details
         (dimStr || container.weightEmpty) && h("div", { style: { display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" } },
-          dimStr && h("div", { style: { background: B.raised, borderRadius: 6, padding: "8px 14px", fontSize: "12px", color: B.textSec } }, "\uD83D\uDCCF " + dimStr),
-          container.weightEmpty && h("div", { style: { background: B.raised, borderRadius: 6, padding: "8px 14px", fontSize: "12px", color: B.textSec } }, "\u2696 " + container.weightEmpty + " lbs empty")
+          dimStr && h("div", { style: { background: B.raised, borderRadius: 6, padding: "8px 14px", fontSize: "12px", color: B.textSec } }, dimStr),
+          container.weightEmpty && h("div", { style: { background: B.raised, borderRadius: 6, padding: "8px 14px", fontSize: "12px", color: B.textSec } }, container.weightEmpty + " lbs empty")
         ),
 
         // Open issues summary on overview
         openIssues > 0 && h("div", { style: { marginBottom: 14 } },
-          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "\u26a0 Open Issues (" + openIssues + ")"),
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Open Issues (" + openIssues + ")"),
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
             (container.serialized ? allUnitLogs : lineLogs).filter(function(l) { return l.status === "open"; }).map(function(l) {
               return h("div", { key: l.id, style: { background: B.dangerBg, borderRadius: 6, padding: "10px 12px", border: "1px solid " + B.dangerBd } },
@@ -412,7 +412,7 @@
                       h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, u.barcode || u.serial || "No ID"),
                       u.barcode && u.serial && h("div", { style: { fontSize: "11px", color: B.textMut } }, "S/N: " + u.serial)),
                     h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-                      unitOpenIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "\u26a0 " + unitOpenIssues + " issue" + (unitOpenIssues > 1 ? "s" : "")),
+                      unitOpenIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, unitOpenIssues + " issue" + (unitOpenIssues > 1 ? "s" : "")),
                       h("span", { style: { fontSize: "10px", fontWeight: 700, color: u.status === "available" ? B.success : B.danger, textTransform: "uppercase" } }, u.status))
                   )
                 );
@@ -560,7 +560,7 @@
             ),
 
             h("div", { style: { display: "flex", gap: 12, alignItems: "center" } },
-              openLogs > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "\u26a0 " + openLogs + " issue" + (openLogs > 1 ? "s" : "")),
+              openLogs > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, openLogs + " issue" + (openLogs > 1 ? "s" : "")),
               c.rentalRate && h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + c.rentalRate + "/3-day"),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "12px", color: B.textMut } }, rawQty + " units"),

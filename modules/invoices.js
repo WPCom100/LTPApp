@@ -1277,13 +1277,13 @@
               linkedQuote && h("span", { style: { fontSize: "10px", color: B.textMut } }, "from " + window.LTP_QUOTE_REF(linkedQuote))))),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
-          !isDraft && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "\ud83d\udd12 Locked"),
+          !isDraft && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
           // Generate PDF \u2014 only meaningful for saved invoices.
           draft.id != null && h("button", {
               onClick: generatePdf,
               disabled: generatingPdf,
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
-            generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
+            generatingPdf ? "Generating\u2026" : "Generate PDF"
           ),
           // Preview the read-only client view (?preview=1 is UX-only;
           // invoice view has no actions anyway, but stay consistent with quotes).
@@ -1292,7 +1292,7 @@
               target: "_blank",
               rel: "noopener",
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
-            "\ud83d\udc41 Preview"
+            "Preview"
           ),
           // Recall to draft (any non-draft invoice)
           !isDraft && h("button", { onClick: recallToDraft,
@@ -1301,12 +1301,12 @@
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u21a9 Recall to Draft"),
           // Send Receipt (paid invoices)
           draft.status === "paid" && h("button", { onClick: function() { openReceiptModal(); },
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Send Receipt"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),
           // Send / Resend button
           isDraft && draft.id != null && h("button", { onClick: openSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Send Invoice"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Invoice"),
           !isDraft && draft.id != null && h("button", { onClick: openSendModal,
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Resend"),
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteInvoice }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -1520,7 +1520,7 @@
             h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
               isAdmin && (qbOutOfSync || draft.qbSyncStatus === "error") && h("button", { onClick: sendToQuickBooks, disabled: qboSyncing,
                 style: { background: "#2CA01C", border: "1px solid #2CA01C", borderRadius: "6px", padding: "6px 12px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: qboSyncing ? "wait" : "pointer", opacity: qboSyncing ? 0.6 : 1, whiteSpace: "nowrap" } },
-                qboSyncing ? "⏳ Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Export to QuickBooks")),
+                qboSyncing ? "Syncing…" : (draft.qbInvoiceId ? "↻ Update QuickBooks" : "→ Export to QuickBooks")),
               qbInvoiceUrl && h("a", { href: qbInvoiceUrl, target: "_blank", rel: "noopener noreferrer",
                 style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", textDecoration: "none", whiteSpace: "nowrap" } }, "View in QuickBooks ↗"))
           ),
@@ -1748,7 +1748,7 @@
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
             // WYSIWYG body editor (see modules/quotes-builder.js for the
             // matching block + rationale). sendMessage state still keeps
             // placeholders intact; EmailBodyEditor renders the signature
@@ -1769,13 +1769,13 @@
           // the backend generates it fresh and attaches it to the email.
           h("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: B.textSec, cursor: "pointer", userSelect: "none" } },
             h("input", { type: "checkbox", checked: attachPdf, onChange: function(e) { setAttachPdf(e.target.checked); }, style: { cursor: "pointer", accentColor: B.accent } }),
-            "\ud83d\udcce Attach invoice PDF"),
+            "Attach invoice PDF"),
           h("div", { style: { display: "flex", gap: 8 } },
             h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
             h(window.Btn, {
               onClick: executeSend,
               disabled: sending || !window.LTP_GMAIL_CONNECTED,
-            }, sending ? "Sending\u2026" : (isDraft ? "\u2709 Send Invoice" : "\u2709 Resend"))))
+            }, sending ? "Sending\u2026" : (isDraft ? "Send Invoice" : "Resend"))))
       ),
 
       // Payment Receipt modal
@@ -1823,7 +1823,7 @@
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
                   style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
             // WYSIWYG body editor (see modules/quotes-builder.js for the
             // matching block + rationale). sendMessage state still keeps
             // placeholders intact; EmailBodyEditor renders the signature
@@ -1844,7 +1844,7 @@
           h(window.Btn, {
             onClick: sendReceipt,
             disabled: sending || !window.LTP_GMAIL_CONNECTED,
-          }, sending ? "Sending\u2026" : "\u2709 Send Receipt"))
+          }, sending ? "Sending\u2026" : "Send Receipt"))
       )
     );
   }

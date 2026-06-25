@@ -239,7 +239,7 @@
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, eq.name),
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.category + (eq.subcategory ? " · " + eq.subcategory : ""))
               ),
-              short && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "\u26a0 only " + available + " available"),
+              short && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "only " + available + " available"),
               h("div", { style: { textAlign: "right", minWidth: 80 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "\u00d7" + item.qty),
                 h("div", { style: { fontSize: "11px", color: B.accent } }, "$" + lineRate + "/3-day")

@@ -289,7 +289,7 @@
               h("div", { style: { textAlign: "right", minWidth: 65 } },
                 h("div", { style: { fontSize: "10px", fontWeight: 600, color: avColor } }, av.available + " / " + av.total + " avail"),
                 quoted > 0 && h("div", { style: { fontSize: "9px", fontWeight: 600, color: overquoted ? B.danger : B.warn } },
-                  quoted + " quoted" + (overquoted ? " \u26a0" : ""))
+                  quoted + " quoted")
               ),
               // Qty input
               h("div", { style: { display: "flex", alignItems: "center", gap: 2 } },
@@ -1269,7 +1269,7 @@
             });
           });
           if (activeCrew.length > 0) {
-            crewWarning = "\n\n\u26a0 Warning: The linked project has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") + ": " + activeCrew.slice(0, 5).join(", ") + (activeCrew.length > 5 ? "..." : "") + ". Consider addressing crew assignments in the Labor module before recalling this quote.";
+            crewWarning = "\n\nWarning: The linked project has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") + ": " + activeCrew.slice(0, 5).join(", ") + (activeCrew.length > 5 ? "..." : "") + ". Consider addressing crew assignments in the Labor module before recalling this quote.";
           }
         }
       }
@@ -1608,12 +1608,12 @@
         ),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),
-          (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "\ud83d\udd12 Locked"),
+          (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
           draft.id != null && h("button", {
               onClick: generatePdf,
               disabled: generatingPdf,
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: generatingPdf ? B.textMut : B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: generatingPdf ? "wait" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: generatingPdf ? 0.6 : 1 } },
-            generatingPdf ? "\u23f3 Generating\u2026" : "\ud83d\udcc4 Generate PDF"
+            generatingPdf ? "Generating\u2026" : "Generate PDF"
           ),
           // Preview the client-facing view in a new tab (?preview=1 disables
           // accept/decline so the LTP user can't accidentally finalize).
@@ -1622,25 +1622,25 @@
               target: "_blank",
               rel: "noopener",
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
-            "\ud83d\udc41 Preview"
+            "Preview"
           ),
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Send Quote"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
           // Sent: Accept / Decline / Recall / Resend
           draft.status === "sent" && h("button", { onClick: acceptQuote,
             style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
           draft.status === "sent" && h("button", { onClick: declineQuote,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.danger; e.currentTarget.style.color = B.danger; },
-            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u2717 Decline"),
+            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u2715 Decline"),
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: recallQuoteToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.warn; e.currentTarget.style.color = B.warn; },
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u21a9 Recall to Draft"),
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: openQuoteSendModal,
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2709 Resend"),
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           // Declined: Reopen
           draft.status === "declined" && h("button", { onClick: function() {
             var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
@@ -1655,7 +1655,7 @@
           // Mark All Delivered — only when accepted and items are undelivered
           hasUndelivered && h("button", { onClick: markAllDelivered,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 } },
-            "\u2714 Mark All Delivered"
+            "\u2713 Mark All Delivered"
           ),
           // Send to Invoice — only when accepted and has uninvoiced delivered items
           hasUninvoiced && h("button", { onClick: sendToInvoice,
@@ -2087,7 +2087,7 @@
             // Reconnect banner \u2014 surfaced inside the modal so the user sees
             // it AT the moment they're trying to send rather than at app load.
             !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "\u26a0 Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
+              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
             // WYSIWYG body editor — replaces the prior split-pane.
             // User sees the rendered email and edits text inline; the
             // signature block is rendered + locked (contenteditable="false"
@@ -2115,7 +2115,7 @@
           h(window.Btn, {
             onClick: executeSendQuote,
             disabled: sending || !window.LTP_GMAIL_CONNECTED,
-          }, sending ? "Sending\u2026" : (draft.status === "draft" ? "\u2709 Send Quote" : "\u2709 Resend")))
+          }, sending ? "Sending\u2026" : (draft.status === "draft" ? "Send Quote" : "Resend")))
       )
     );
   };

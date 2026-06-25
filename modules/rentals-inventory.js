@@ -66,7 +66,7 @@
             ),
 
             h("div", { style: { display: "flex", gap: 16, alignItems: "center" } },
-              openIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, "\u26a0 " + openIssues + " issue" + (openIssues > 1 ? "s" : "")),
+              openIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, openIssues + " issue" + (openIssues > 1 ? "s" : "")),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + R.baseRate(eq) + "/3-day"),
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : ""))

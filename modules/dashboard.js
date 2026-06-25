@@ -145,7 +145,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
         // Overdue Invoices
         h("div", { style: Object.assign({}, cardStyle, overdue.length > 0 ? { borderColor: B.danger + "44" } : {}) },
           h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 } },
-            h("div", { style: Object.assign({}, headerStyle, { color: overdue.length > 0 ? B.danger : B.textMut }) }, "\u26a0 Overdue (" + overdue.length + ")"),
+            h("div", { style: Object.assign({}, headerStyle, { color: overdue.length > 0 ? B.danger : B.textMut }) }, "Overdue (" + overdue.length + ")"),
             h("button", { onClick: function() { nav("invoices"); }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 8px", color: B.textMut, fontSize: "9px", cursor: "pointer", fontFamily: "inherit" } }, "Invoices \u203a")),
           overdue.length === 0 && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } }, "No overdue invoices. \u2713"),
           overdue.map(function(o) {

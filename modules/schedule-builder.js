@@ -453,7 +453,7 @@
             projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
             if (projectConflicts.length === 0) return null;
             return h("div", { style: { background: B.danger + "11", border: "1px solid " + B.danger + "44", borderRadius: "8px", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "\u26a0 Scheduling Conflicts"),
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
                   return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + B.danger + "33" } },

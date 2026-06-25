@@ -110,7 +110,7 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 6 } },
               h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
                 h("span", { style: { fontSize: "12px", fontWeight: 600, color: B.accent } }, n.author),
-                linkedMeeting && h("span", { style: { fontSize: "10px", color: B.info, padding: "1px 6px", background: B.infoBg, borderRadius: "3px" } }, "\ud83d\uddd3 " + linkedMeeting.title)
+                linkedMeeting && h("span", { style: { fontSize: "10px", color: B.info, padding: "1px 6px", background: B.infoBg, borderRadius: "3px" } }, linkedMeeting.title)
               ),
               h("span", { style: { fontSize: "11px", color: B.textMut } }, fmt(n.date))
             ),

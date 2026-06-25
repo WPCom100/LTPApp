@@ -184,7 +184,7 @@
         var cm = (contacts || []).find(function(c) { return c.id === crewId; });
         var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
         setConflictWarn({
-          title: "\u26a0 Scheduling Conflict",
+          title: "Scheduling Conflict",
           message: crewName + " on " + (item && item.date ? fmt(item.date) : "this day") + ":\n\n" + warnings.join("\n") + "\n\nAssign anyway?",
           onConfirm: function() { doAssignCrewToDay(schedId, pos, crewId); setConflictWarn(null); }
         });

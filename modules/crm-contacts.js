@@ -42,13 +42,11 @@
       // Contact info
       h("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: B.raised, borderRadius: "8px" } },
-          h("span", { style: { fontSize: "16px", color: B.textMut } }, "\u2709"),
           h("div", null,
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Email"),
             h("a", { href: "mailto:" + contact.email, style: { fontSize: "13px", color: B.accent, textDecoration: "none" } }, contact.email))
         ),
         h("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: B.raised, borderRadius: "8px" } },
-          h("span", { style: { fontSize: "16px", color: B.textMut } }, "\u260e"),
           h("div", null,
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Phone"),
             h("a", { href: "tel:" + contact.phone, style: { fontSize: "13px", color: B.accent, textDecoration: "none" } }, contact.phone))
