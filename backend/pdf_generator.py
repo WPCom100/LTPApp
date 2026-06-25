@@ -35,13 +35,22 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
 
-# ── Brand Colors ────────────────────────────────────────────────────────────
-BLUE_OUT       = HexColor('#233038')
-LUMIN_ORANGE   = HexColor('#EF5822')
-BACKUP_ORANGE  = HexColor('#F9B998')
-FULL_UP_GRAY   = HexColor('#D1DBDA')
-DRIFT_ORANGE   = HexColor('#64260F')
-WHITE          = white
+# ── Brand palette (light theme) ─────────────────────────────────────────────
+# The document renders on a WHITE page (see _bg), so every color below is
+# chosen for legibility on white. Brand orange carries the headings/accents; a
+# dark blue-gray "ink" (the brand's deep color) carries the body text. Contrast
+# ratios on white are noted: all body/label text clears WCAG AA (≥4.5:1) and
+# every orange heading is large enough (≥14pt bold / ≥18pt) to clear AA large
+# text (≥3:1). Small orange figures use DEEP_ORANGE so they clear 4.5:1 too.
+PAGE_BG        = white                 # the page itself
+INK            = HexColor('#233038')   # primary text — ~12:1 on white
+INK_SOFT       = HexColor('#52616B')   # secondary text / labels — ~6.4:1
+MUTED          = HexColor('#6B7980')   # tertiary text (notes, email, struck) — ~4.5:1
+LUMIN_ORANGE   = HexColor('#EF5822')   # brand orange — large headings & accents
+DEEP_ORANGE    = HexColor('#C2410C')   # deeper orange — small emphasis text — ~5.2:1
+SOFT_ORANGE    = HexColor('#F4C9AD')   # soft peach — section frame / light rule
+ROW_STRIPE     = HexColor('#F6F3F0')   # faint warm zebra stripe for table rows
+HAIRLINE       = HexColor('#E2E6E8')   # light separators / table rules
 
 # ── Asset paths ─────────────────────────────────────────────────────────────
 # Project root = two levels up from this file (backend/pdf_generator.py).
@@ -266,13 +275,13 @@ class _DocPDF:
 
     # ── Page chrome ────────────────────────────────────────────────────────
     def _bg(self):
-        self.c.setFillColor(BLUE_OUT)
+        self.c.setFillColor(PAGE_BG)
         self.c.rect(0, 0, self.W, self.H, fill=1, stroke=0)
 
     def _footer(self):
         _draw_gradient(self.c, 0, 0, self.W, 5)
         self.c.setFont("Roboto-Light", 8)
-        self.c.setFillColor(FULL_UP_GRAY)
+        self.c.setFillColor(INK_SOFT)
         # Footer text from settings — falls back to LTP defaults so the
         # PDF still renders cleanly before someone fills in Settings.
         cname = self.settings.get("companyName") or "Luminary Technology & Productions"
@@ -328,7 +337,7 @@ class _DocPDF:
         # Address + phone + email under company name
         info_y = name_y - 16
         c.setFont("Roboto-Light", 9)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         addr = _company_address_line(self.settings)
         if addr:
             c.drawString(text_x, info_y, addr)
@@ -350,9 +359,9 @@ class _DocPDF:
         ref = ref_prefix + _doc_ref(self.kind, self.entity)
 
         c.setFont(FONTS["heading"], 22)
-        c.setFillColor(WHITE)
+        c.setFillColor(INK)
         c.drawString(self.M, self.y, display.upper())
-        c.setFillColor(BACKUP_ORANGE)
+        c.setFillColor(LUMIN_ORANGE)
         c.drawRightString(self.W - self.M, self.y, ref)
         self.y -= 18
 
@@ -362,7 +371,7 @@ class _DocPDF:
         prepared_for = company_name or contact_name
         if prepared_for:
             c.setFont("Roboto-Bold", 11)
-            c.setFillColor(BACKUP_ORANGE)
+            c.setFillColor(INK)
             c.drawString(self.M, self.y, f"Prepared for: {prepared_for}")
         # Date label differs slightly between kinds
         date_label = "Invoice Date" if self.kind == "invoice" else "Date Generated"
@@ -371,7 +380,7 @@ class _DocPDF:
             else (self.entity.get("createdDate") or self.entity.get("sentDate") or "")
         )
         c.setFont("Roboto", 10)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         c.drawRightString(self.W - self.M, self.y, f"{date_label}: {_fmt_date(date_value)}")
         self.y -= 14
 
@@ -381,10 +390,10 @@ class _DocPDF:
         client_addr = _client_address_line(self.company if company_name else self.contact)
         if client_addr:
             c.setFont("Roboto-Light", 10)
-            c.setFillColor(FULL_UP_GRAY)
+            c.setFillColor(INK_SOFT)
             c.drawString(self.M, self.y, client_addr.replace("\n", "  "))
         c.setFont("Roboto-Light", 10)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         gen_label = "Issued by" if self.kind == "invoice" else "Quoted by"
         c.drawRightString(self.W - self.M, self.y, f"{gen_label}: {self.user_name}")
         self.y -= 14
@@ -392,7 +401,7 @@ class _DocPDF:
         # Contact name + title
         if contact_name and company_name:
             c.setFont("Roboto", 10)
-            c.setFillColor(FULL_UP_GRAY)
+            c.setFillColor(INK_SOFT)
             title = (self.contact.get("role") or "").strip()
             line = contact_name + (f"  —  {title}" if title else "")
             c.drawString(self.M, self.y, line)
@@ -401,7 +410,7 @@ class _DocPDF:
         contact_email = (self.contact.get("email") or "").strip()
         if contact_email:
             c.setFont("Roboto-Light", 9)
-            c.setFillColor(HexColor("#8899a0"))
+            c.setFillColor(MUTED)
             c.drawString(self.M, self.y, contact_email)
             self.y -= 14
 
@@ -437,7 +446,7 @@ class _DocPDF:
         self._need(60)
 
         c.setFont(FONTS["heading"], 15)
-        c.setFillColor(BACKUP_ORANGE)
+        c.setFillColor(LUMIN_ORANGE)
         c.drawString(self.M, self.y - 12, label.upper())
 
         # Rental period for equipment sections
@@ -450,7 +459,7 @@ class _DocPDF:
             if sec_start and sec_end:
                 title_w = c.stringWidth(label.upper(), FONTS["heading"], 15)
                 c.setFont("Roboto-Light", 9)
-                c.setFillColor(FULL_UP_GRAY)
+                c.setFillColor(INK_SOFT)
                 c.drawString(self.M + title_w + 12, self.y - 12,
                              f"Rental Period: {_fmt_date(sec_start)} — {_fmt_date(sec_end)}")
 
@@ -460,7 +469,7 @@ class _DocPDF:
 
         # Column headers
         c.setFont("Roboto-Bold", 9)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         c.drawString(col["item"], self.y - 12, "ITEM")
         qty_center = col["qty"] + 15
         c.drawCentredString(qty_center, self.y - 12, "QTY")
@@ -469,7 +478,7 @@ class _DocPDF:
         self.y -= 18
 
         # Header separator
-        c.setStrokeColor(HexColor("#3a4a52"))
+        c.setStrokeColor(HAIRLINE)
         c.setLineWidth(0.5)
         c.line(self.M + 4, self.y, self.W - self.M - 4, self.y)
         self.y -= 3
@@ -483,7 +492,7 @@ class _DocPDF:
             row_bot = self.y - row_h
 
             if i % 2 == 0:
-                c.setFillColor(HexColor("#2a3a42"))
+                c.setFillColor(ROW_STRIPE)
                 c.rect(self.M + 1, row_bot, self.content_w - 2, row_h, fill=1, stroke=0)
 
             fs = 9
@@ -498,37 +507,37 @@ class _DocPDF:
             while c.stringWidth(name, "Roboto", fs) > max_w and len(name) > 20:
                 name = name[:-4] + "..."
 
-            c.setFillColor(FULL_UP_GRAY)
+            c.setFillColor(INK)
             c.drawString(col["item"], vc, name)
 
             c.setFont("Roboto", fs)
-            c.setFillColor(WHITE)
+            c.setFillColor(INK)
             c.drawCentredString(qty_center, vc, str(rd["qty"]))
 
             if rd["has_adj"]:
                 # Original price — muted strikethrough, upper part of row
-                c.setFillColor(HexColor("#667777"))
+                c.setFillColor(MUTED)
                 c.setFont("Roboto-Light", 8)
                 orig_str = _fmt_money(rd["up"])
                 ow = c.stringWidth(orig_str, "Roboto-Light", 8)
                 ox = col["unit"] + 55 - ow
                 orig_y = row_bot + row_h * 0.62
                 c.drawString(ox, orig_y, orig_str)
-                c.setStrokeColor(HexColor("#667777"))
+                c.setStrokeColor(MUTED)
                 c.setLineWidth(0.5)
                 c.line(ox, orig_y + 3, ox + ow, orig_y + 3)
-                # Adjusted price — orange
+                # Adjusted price — deep orange (small bold text → keep ≥4.5:1)
                 c.setFont("Roboto-Bold", fs)
-                c.setFillColor(LUMIN_ORANGE)
+                c.setFillColor(DEEP_ORANGE)
                 adj_y = row_bot + row_h * 0.22
                 c.drawRightString(col["unit"] + 55, adj_y, _fmt_money(rd["eff"]))
             else:
-                c.setFillColor(WHITE)
+                c.setFillColor(INK)
                 c.setFont("Roboto", fs)
                 c.drawRightString(col["unit"] + 55, vc, _fmt_money(rd["eff"]))
 
             c.setFont("Roboto-Bold", fs)
-            c.setFillColor(BACKUP_ORANGE)
+            c.setFillColor(INK)
             c.drawRightString(col["total"], vc, _fmt_money(rd["lt"]))
             self.y -= row_h
 
@@ -536,7 +545,7 @@ class _DocPDF:
         for n in notes:
             self._need(16)
             c.setFont("Roboto-Light", 9)
-            c.setFillColor(HexColor("#8899a0"))
+            c.setFillColor(MUTED)
             txt = n.get("text", "") or n.get("name", "") or ""
             if len(txt) > 110:
                 txt = txt[:107] + "..."
@@ -546,17 +555,17 @@ class _DocPDF:
         box_bottom = self.y
 
         # Section border
-        c.setStrokeColor(BACKUP_ORANGE)
+        c.setStrokeColor(SOFT_ORANGE)
         c.setLineWidth(0.75)
         c.rect(self.M, box_bottom, self.content_w, box_top - box_bottom, fill=0, stroke=1)
 
         # Section subtotal below
         self.y -= 4
         c.setFont("Roboto", 11)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         c.drawRightString(col["total"] - 80, self.y - 10, f"{label} Subtotal:")
         c.setFont("Roboto-Bold", 12)
-        c.setFillColor(LUMIN_ORANGE)
+        c.setFillColor(DEEP_ORANGE)
         c.drawRightString(col["total"], self.y - 10, _fmt_money(sec_total))
         self.y -= 22
 
@@ -570,22 +579,23 @@ class _DocPDF:
         xv = self.W - self.M - 10
 
         self.y -= 12
-        c.setStrokeColor(BACKUP_ORANGE)
+        c.setStrokeColor(SOFT_ORANGE)
         c.setLineWidth(2)
         c.line(xl - 10, self.y, self.W - self.M, self.y)
         self.y -= 22
 
         c.setFont("Roboto", 12)
-        c.setFillColor(FULL_UP_GRAY)
+        c.setFillColor(INK_SOFT)
         c.drawString(xl, self.y, "Subtotal:")
         c.setFont("Roboto-Bold", 12)
+        c.setFillColor(INK)
         c.drawRightString(xv, self.y, _fmt_money(t["subtotal"]))
         self.y -= 20
 
         diff = t["subtotal"] - t["adjusted"]
         if abs(diff) > 0.01:
             c.setFont("Roboto", 10)
-            c.setFillColor(HexColor("#8899a0"))
+            c.setFillColor(MUTED)
             c.drawString(xl, self.y, "Line Adjustments:")
             sign = "-" if diff > 0 else "+"
             c.drawRightString(xv, self.y, f"{sign}{_fmt_money(abs(diff))}")
@@ -596,7 +606,7 @@ class _DocPDF:
         disc = t["adjusted"] - t["preTax"]
         if gt != "none" and abs(disc) > 0.01:
             c.setFont("Roboto", 10)
-            c.setFillColor(HexColor("#8899a0"))
+            c.setFillColor(MUTED)
             lbl = f"Discount ({gd.get('value',0)}%)" if gt == "percent" else "Discount:"
             c.drawString(xl, self.y, lbl)
             c.drawRightString(xv, self.y, f"-{_fmt_money(disc)}")
@@ -605,7 +615,7 @@ class _DocPDF:
         # Sales tax (QuickBooks-computed; invoices only)
         if t["tax"] > 0.005:
             c.setFont("Roboto", 10)
-            c.setFillColor(HexColor("#8899a0"))
+            c.setFillColor(MUTED)
             c.drawString(xl, self.y, "Sales Tax:")
             c.drawRightString(xv, self.y, _fmt_money(t["tax"]))
             self.y -= 18
@@ -619,7 +629,7 @@ class _DocPDF:
         c.setFont(FONTS["heading"], 20)
         c.setFillColor(LUMIN_ORANGE)
         c.drawString(xl, self.y, "TOTAL:")
-        c.setFillColor(WHITE)
+        c.setFillColor(INK)
         c.drawRightString(xv, self.y, _fmt_money(t["total"]))
         self.y -= 28
 
@@ -629,12 +639,12 @@ class _DocPDF:
         c = self.c
         self.y -= 16
 
-        c.setStrokeColor(HexColor("#3a4a52"))
+        c.setStrokeColor(HAIRLINE)
         c.setLineWidth(0.5)
         c.line(self.M, self.y + 6, self.W - self.M, self.y + 6)
 
         c.setFont(FONTS["subheading"], 11)
-        c.setFillColor(BACKUP_ORANGE)
+        c.setFillColor(DEEP_ORANGE)
         c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
         self.y -= 22
 
@@ -653,7 +663,7 @@ class _DocPDF:
                 "Cancellation within 72 hours of event may incur a 25% restocking fee.",
             ]
         c.setFont("Roboto-Light", 9)
-        c.setFillColor(HexColor("#8899a0"))
+        c.setFillColor(MUTED)
         for line in lines:
             c.drawString(self.M + 8, self.y, f"•  {line}")
             self.y -= 14
