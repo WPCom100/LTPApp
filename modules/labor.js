@@ -98,7 +98,10 @@
       var target = r.status === "accepted" ? "accepted" : (r.status === "declined" ? "declined" : null);
       if (!target) return;
       byProject[r.projectId] = byProject[r.projectId] || {};
-      (r.positionIds || []).forEach(function(pid) { byProject[r.projectId][pid] = target; });
+      // Keep the request's crew member with the answer so we only apply it to a
+      // position STILL assigned to them — a reassigned position must not inherit
+      // the previous person's accept/decline.
+      (r.positionIds || []).forEach(function(pid) { byProject[r.projectId][pid] = { target: target, crewId: r.contactId }; });
     });
     if (Object.keys(byProject).length === 0) return;
     setProjects(function(prev) {
@@ -108,7 +111,8 @@
         if (!map) return proj;
         return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            if (map[pos.id] && pos.status === "requested") { changed = true; return Object.assign({}, pos, { status: map[pos.id] }); }
+            var entry = map[pos.id];
+            if (entry && pos.status === "requested" && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
             return pos;
           }) });
         }) });
@@ -868,11 +872,11 @@
                                 var cm = contacts.find(function(c) { return c.id === cid; });
                                 var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
                                 setConflictWarn({ title: "\u26a0 Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
-                                  onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: cid ? bp.status : "open" }); }); setConflictWarn(null); } });
+                                  onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
                                 return;
                               }
                             }
-                            booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: cid ? bp.status : "open" }); });
+                            booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
                           }, style: { width: 150, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             h("option", { value: "" }, "Assign crew\u2026"),
                             crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; })
