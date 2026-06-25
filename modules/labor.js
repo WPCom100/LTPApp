@@ -326,14 +326,15 @@
     }
 
     // Withdraw a pending request through the server (sets status=withdrawn so the
-    // crew link shows the withdrawn screen, optionally emails crewWithdrawn, and
-    // reopens its shifts). Mirrors the Crew Requests tab's doWithdraw so the two
-    // entry points behave identically. Best-effort: a failed email never blocks.
-    function withdrawRequestRecord(req, notify) {
+    // crew link shows the withdrawn screen, reopens its shifts) and park the
+    // crew-withdrawn email in the notify tray — coalesced per person, sent on
+    // demand — instead of emailing inline. Mirrors the Crew Requests tab's
+    // doWithdraw so both no-save entry points behave identically.
+    function withdrawRequestRecord(req) {
       fetch("/api/crew-requests/" + req.id + "/withdraw", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notify: !!notify }),
+        body: JSON.stringify({ notify: false }),
       })
         .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
         .then(function(res) {
@@ -343,14 +344,9 @@
             return;
           }
           flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
-          if (!notify) {
-            window.LTP_toast("Request withdrawn", { variant: "success" });
-          } else {
-            var es = (res.body && res.body.emailStatus) || {};
-            if (es.emailed) window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " was emailed.", variant: "success" });
-            else if (es.needsReconnect) window.LTP_toast("Withdrawn — email not sent", { message: "Connect Google in Settings to notify " + crewLabel(req.contactId) + ".", variant: "warn" });
-            else window.LTP_toast("Withdrawn — email not sent", { message: (es.error || "the notification email failed"), variant: "error" });
-          }
+          var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
+          window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: proj ? proj.name : "", positionIds: req.positionIds });
+          window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
           if (reloadCrewRequests) reloadCrewRequests();
         })
         .catch(function() { if (reloadCrewRequests) reloadCrewRequests(); });
@@ -375,8 +371,9 @@
         var requestedMsg = req
           ? "This withdraws " + crewName + "'s entire request for " + (pos.projectName || "this project") +
             (reqShifts > 1 ? " (" + reqShifts + " shifts)" : "") +
-            ". Those shifts reopen and the crew link stops working. Let them know by email, or withdraw quietly."
-          : "This will withdraw the request sent to " + crewName + " for " + context + ".";
+            ". Those shifts reopen and the crew link stops working. They're added to the notify tray, where you can email them (or decline) when ready."
+          : "This will withdraw the request sent to " + crewName + " for " + context +
+            ". They're added to the notify tray, where you can email them (or decline) when ready.";
         var messages = {
           "confirmed": "This will cancel " + crewName + "'s confirmed position on " + context + ". They should be notified of the cancellation.",
           "accepted": crewName + " already accepted this position on " + context + ". This will release their assignment.",
@@ -385,7 +382,7 @@
         var actions = {
           "confirmed": "Cancel & Notify",
           "accepted": "Release & Notify",
-          "requested": "✉ Withdraw & Notify",
+          "requested": "Withdraw Request",
         };
         setStatusDlg({
           pos: pos, newStatus: newStatus, req: req,
@@ -408,19 +405,22 @@
       var clearCrew = statusDlg.clearCrew;
       // Withdrawing a tracked pending request goes through the server so the
       // request record is actually withdrawn (crew link → withdrawn screen) and
-      // the crewWithdrawn email fires from the live schedule. That call reopens
-      // its shifts locally, so skip the local cascade below.
+      // its shifts reopen; the crewWithdrawn email is parked in the notify tray.
+      // That call handles everything, so skip the local cascade below.
       if (pos.status === "requested" && statusDlg.req) {
-        withdrawRequestRecord(statusDlg.req, notify);
+        withdrawRequestRecord(statusDlg.req);
         setStatusDlg(null);
         return;
       }
-      // Notify the crew member of the change (best-effort) when requested.
-      // pos.status is still the PRE-change status here: accepted → "not
-      // selected", confirmed → "cancelled", requested → "withdrawn" (the
-      // fallback path when no request record is tracked).
-      if (notify) {
-        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : pos.status === "confirmed" ? "crewCancelled" : pos.status === "requested" ? "crewWithdrawn" : null;
+      // pos.status is still the PRE-change status here. Requested with no tracked
+      // request (drift) reopens locally and parks a withdrawal notice in the tray
+      // — never emails inline. Accepted/confirmed downgrades email immediately
+      // (crewNotSelected / crewCancelled) when the producer chose to notify.
+      if (pos.status === "requested") {
+        window.LTP_outbox.add({ crewId: pos.crewId, crewName: crewLabel(pos.crewId), projectId: pos.projectId, projectName: pos.projectName || "", positionIds: [pos.posId] });
+        window.LTP_toast("Request withdrawn", { message: crewLabel(pos.crewId) + " queued in the notify tray.", variant: "success" });
+      } else if (notify) {
+        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : pos.status === "confirmed" ? "crewCancelled" : null;
         if (ntmpl) crewNotify(pos.crewId, pos.projectId, ntmpl, [pos.posId]);
       }
       // Cascade to ALL positions for this crew on this date in this project
@@ -915,11 +915,11 @@
           var isCancel = pos.status === "confirmed";
           var isWithdraw = pos.status === "requested";
           // showEmail gates the client-rendered preview (crewNotSelected /
-          // crewCancelled use simple vars). Withdraw emails crewWithdrawn, whose
-          // {{shifts}} block is rendered server-side, so it's offered (canNotify)
-          // but summarized in the message rather than previewed here.
+          // crewCancelled use simple vars and email immediately). Withdraw has no
+          // inline send/skip — confirming parks a crewWithdrawn notice in the
+          // notify tray (sent on demand), so it's a single confirm here.
           var showEmail = isRelease || isCancel;
-          var canNotify = showEmail || isWithdraw;
+          var canNotify = showEmail;
           var emailPreview = "";
           var emailSubject = "";
           var emailTo = "";
@@ -955,7 +955,7 @@
             ),
             h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
               h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
-              canNotify && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, isCancel ? "Cancel Without Email" : isWithdraw ? "Withdraw Quietly" : "Release Quietly"),
+              canNotify && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, isCancel ? "Cancel Without Email" : "Release Quietly"),
               h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(canNotify); } }, statusDlg.actionLabel))
           );
         }()
@@ -1194,15 +1194,16 @@
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
     function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
 
-    // Withdraw a pending request, optionally emailing the crew member that it's
-    // been withdrawn (crewWithdrawn template, best-effort — failure never blocks
-    // the withdrawal).
-    function doWithdraw(req, notify) {
+    // Withdraw a pending request: kill the crew link now, reopen its shifts, and
+    // park the crew-withdrawn email in the notify tray (coalesced per person,
+    // sent on demand) rather than emailing inline — so withdrawing several of one
+    // person's requests doesn't email them once each.
+    function doWithdraw(req) {
       setWithdrawDlg(null);
       fetch("/api/crew-requests/" + req.id + "/withdraw", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notify: !!notify }),
+        body: JSON.stringify({ notify: false }),
       })
         .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
         .then(function(res) {
@@ -1212,14 +1213,8 @@
             return;
           }
           flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
-          if (!notify) {
-            window.LTP_toast("Request withdrawn", { variant: "success" });
-          } else {
-            var es = (res.body && res.body.emailStatus) || {};
-            if (es.emailed) window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " was emailed.", variant: "success" });
-            else if (es.needsReconnect) window.LTP_toast("Withdrawn — email not sent", { message: "Connect Google in Settings to notify " + crewLabel(req.contactId) + ".", variant: "warn" });
-            else window.LTP_toast("Withdrawn — email not sent", { message: (es.error || "the notification email failed"), variant: "error" });
-          }
+          window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: projLabel(req.projectId), positionIds: req.positionIds });
+          window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
           reloadCrewRequests();
         })
         .catch(function() { reloadCrewRequests(); });
@@ -1267,17 +1262,18 @@
               );
             })),
 
-      // Withdraw confirmation — mirrors the Assignments "Cancel & Notify / Without
-      // Email" pattern, since withdrawing now sends an outward-facing email.
+      // Withdraw confirmation. Withdrawing reopens the shifts and parks a
+      // crew-withdrawn notice in the notify tray (bottom-left) — the producer
+      // sends it (combined with any other withdrawals for that person) or
+      // declines from there, so the email is never fired one-per-withdrawal.
       withdrawDlg && h(window.LTPModal, { title: "Withdraw Request", onClose: function() { setWithdrawDlg(null); } },
         h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
           "Withdraw the request to ", h("strong", { style: { color: B.text } }, crewLabel(withdrawDlg.contactId)),
           " for ", h("strong", { style: { color: B.text } }, projLabel(withdrawDlg.projectId)),
-          "? Their requested shifts reopen. Let them know by email, or withdraw quietly."),
+          "? Their requested shifts reopen, and they're added to the notify tray so you can email them (or decline) when ready."),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setWithdrawDlg(null); } }, "Cancel"),
-          h(window.Btn, { variant: "ghost", onClick: function() { doWithdraw(withdrawDlg, false); } }, "Withdraw Without Email"),
-          h(window.Btn, { onClick: function() { doWithdraw(withdrawDlg, true); } }, "✉ Withdraw & Notify")))
+          h(window.Btn, { variant: "danger", onClick: function() { doWithdraw(withdrawDlg); } }, "Withdraw")))
     );
   }
 

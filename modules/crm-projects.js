@@ -230,6 +230,7 @@
     var [sched, setSched] = useState(initial ? initial.schedule.map(function(s) { return Object.assign({}, s); }) : []);
 
     var [schedError, setSchedError] = useState("");
+    var [withdrawDigest, setWithdrawDigest] = useState(null);  // { affected, proceed } when Save pulls crew off shifts
 
     function validateSchedule() {
       if (!start || !end) return true; // no project dates to check against
@@ -247,6 +248,24 @@
       }
       setSchedError("");
       return true;
+    }
+
+    function doSubmit() {
+      onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
+    }
+
+    // Editing an existing project: if Save pulls crew off shifts they were on,
+    // prompt ONCE to notify them (batched, one combined email per person), then
+    // save. Notify runs before doSubmit persists so the shifts still resolve.
+    function handleSaveClick() {
+      if (!name.trim() || !compId) return;
+      if (!validateSchedule()) return;
+      var removed = (initial && initial.id) ? window.LTP_diffWithdrawnCrew(initial.schedule, sched, ctx.contacts) : [];
+      if (removed.length > 0) {
+        setWithdrawDigest({ affected: removed, proceed: doSubmit });
+        return;
+      }
+      doSubmit();
     }
 
     return h(window.LTPModal, { title: initial ? "Edit Project" : "Create Project", onClose: onClose, wide: true, disableBackdrop: true },
@@ -269,9 +288,19 @@
           h(window.LTPInput, { label: "Rentals", value: budR, onChange: function(v) { setBudR(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Misc", value: budM, onChange: function(v) { setBudM(Number(v) || 0); }, type: "number" })
         ),
-        h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services, projectId: initial && initial.id }),
+        h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services }),
         schedError && h("div", { style: { fontSize: "12px", color: B.danger, padding: "8px 12px", background: B.dangerBg, borderRadius: "6px", border: "1px solid " + B.dangerBd } }, schedError),
-        h(window.Btn, { onClick: function() { if (!name.trim() || !compId) return; if (!validateSchedule()) return; onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) }); } }, initial ? "Save Changes" : "Create Project")
+        h(window.Btn, { onClick: handleSaveClick }, initial ? "Save Changes" : "Create Project"),
+
+        // Batched withdrawal prompt — see handleSaveClick. Notify emails one
+        // combined crewWithdrawn each then saves; Skip saves silently; Cancel
+        // aborts the save.
+        withdrawDigest && h(window.CrewWithdrawDigest, {
+          affected: withdrawDigest.affected,
+          onNotify: function() { var d = withdrawDigest; setWithdrawDigest(null); window.LTP_notifyWithdrawAll(d.affected, initial.id); d.proceed(); },
+          onSkip: function() { var d = withdrawDigest; setWithdrawDigest(null); d.proceed(); },
+          onCancel: function() { setWithdrawDigest(null); },
+        })
       )
     );
   };

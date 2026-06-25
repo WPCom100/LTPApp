@@ -52,6 +52,7 @@
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);
     var [viewActivity, setViewActivity] = useState(null);
+    var [withdrawDigest, setWithdrawDigest] = useState(null);  // { affected, proceed } — set when a save pulls crew from shifts
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
 
@@ -131,7 +132,21 @@
     }
 
     // ── Actions ──────────────────────────────────────────────────────────────
+    // Save in two steps: if this save pulls any crew off shifts they were on,
+    // prompt ONCE to notify them (batched — one combined email per person across
+    // every shift removed this session), then persist. The notify fires before
+    // doSave persists, so the endpoint can still render the withdrawn shifts.
     function save() {
+      var removed = project.id ? window.LTP_diffWithdrawnCrew(cleanRef.current.schedule, draft.schedule, contacts) : [];
+      if (removed.length > 0) {
+        setWithdrawDigest({ affected: removed, proceed: doSave });
+        return;
+      }
+      doSave();
+    }
+
+    function doSave() {
+      setWithdrawDigest(null);
       var changes = computeSchedChanges(cleanRef.current, draft);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Schedule saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
@@ -370,7 +385,6 @@
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: "auto", minWidth: 0 } },
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: services,
-            projectId: project.id,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {
               var otherBookings = [];
@@ -495,7 +509,17 @@
       ),
 
       // Confirm dialog
-      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } })
+      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
+
+      // Batched "notify removed crew?" prompt, shown by save() when this save
+      // pulls crew off shifts. Notify emails one combined withdrawal each, then
+      // persists; Skip persists silently; Cancel aborts the save (stays dirty).
+      withdrawDigest && h(window.CrewWithdrawDigest, {
+        affected: withdrawDigest.affected,
+        onNotify: function() { window.LTP_notifyWithdrawAll(withdrawDigest.affected, project.id); withdrawDigest.proceed(); },
+        onSkip: function() { withdrawDigest.proceed(); },
+        onCancel: function() { setWithdrawDigest(null); },
+      })
     );
   };
 })();

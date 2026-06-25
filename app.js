@@ -526,7 +526,8 @@ function LTPSignedInApp(props) {
       h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 0" : "22px" } }, renderModule())
     )
    ),
-   h(window.LTPErrorToasts)
+   h(window.LTPErrorToasts),
+   h(window.LTPCrewOutbox)
   );
 }
 

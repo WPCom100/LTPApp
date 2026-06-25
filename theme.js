@@ -392,6 +392,38 @@ window.LTP_notifyWithdrawAll = function(affected, projectId) {
   });
 };
 
+// Diff two schedule snapshots and return the crew members who LOST an active
+// (requested/accepted/confirmed) assignment between them — because the position
+// was removed, the day was deleted, or the crew was cleared/reassigned. Grouped
+// per crew member (so each gets ONE combined withdrawal email) keyed on the
+// BEFORE assignment. `positionIds` are the pre-edit ids; call this BEFORE the
+// edit persists so the notify endpoint can still render their shifts. Returns
+// [{ crewId, crewName, positionIds }] — feed straight to LTP_notifyWithdrawAll.
+window.LTP_diffWithdrawnCrew = function(before, after, contacts) {
+  var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+  // Every position id still present in `after`, mapped to its current crew.
+  var afterById = {};
+  (after || []).forEach(function(s) {
+    (s.positions || []).forEach(function(p) { afterById[p.id] = p.crewId || null; });
+  });
+  var byCrew = {};
+  (before || []).forEach(function(s) {
+    (s.positions || []).forEach(function(p) {
+      if (!p.crewId || !ACTIVE[p.status]) return;
+      var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
+      // Lost the assignment if the position is gone, or it now belongs to
+      // someone else / no one (crew cleared or reassigned).
+      if (stillThere && afterById[p.id] === p.crewId) return;
+      if (!byCrew[p.crewId]) {
+        var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
+        byCrew[p.crewId] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", positionIds: [] };
+      }
+      byCrew[p.crewId].positionIds.push(p.id);
+    });
+  });
+  return Object.keys(byCrew).map(function(k) { return byCrew[k]; });
+};
+
 // ── textToHtml ──────────────────────────────────────────────────────────
 // Convert a body that was typed as plain text (blank lines = paragraphs,
 // single newlines = line breaks) into the HTML that the email pipeline
