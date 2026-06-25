@@ -484,6 +484,46 @@ def test_notify_rejects_unknown_template():
     assert r.status_code == 400
 
 
+def test_notify_with_snapshot_shifts_works_without_live_project():
+    """The notify tray flushing a removal after its project was deleted: an
+    explicit shift snapshot + projectName render the email even though the
+    project (and its positions) no longer exist."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "snap-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": 999999,  # no such project
+                              "template": "crewCancelled", "projectName": "Deleted Gala",
+                              "shifts": [{"roleLabel": "A1 — Audio", "date": "2026-07-01",
+                                          "shiftTitle": "Load-in", "startTime": "08:00", "endTime": "17:00"}]},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    assert captured["to"] == ["casey@crew.com"]
+    assert "Deleted Gala" in captured["subject"]
+    assert "Load-in" in captured["html_body"]  # the snapshot shift rendered
+
+
+def test_notify_missing_project_without_snapshot_is_404():
+    """The live path (positionIds, no snapshot) still needs the project to resolve
+    its shifts, so a gone project is a 404."""
+    client, tok = _setup()
+    r = client.post("/api/crew-requests/notify",
+                    json={"contactId": C1, "projectId": 999999, "template": "crewWithdrawn", "positionIds": ["x"]},
+                    cookies={"ltp_session": tok})
+    assert r.status_code == 404
+
+
 def test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen():
     """Producer removes the shifts a pending request covers → the save hook
     auto-withdraws it; the crew link reports withdrawn and accept is refused."""
@@ -612,6 +652,8 @@ def main() -> int:
         test_resend_non_pending_is_409,
         test_notify_sends_named_template_email,
         test_notify_rejects_unknown_template,
+        test_notify_with_snapshot_shifts_works_without_live_project,
+        test_notify_missing_project_without_snapshot_is_404,
         test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen,
         test_partial_removal_trims_request_but_stays_answerable,
         test_project_delete_auto_withdraws_request,

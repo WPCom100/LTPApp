@@ -230,7 +230,6 @@
     var [sched, setSched] = useState(initial ? initial.schedule.map(function(s) { return Object.assign({}, s); }) : []);
 
     var [schedError, setSchedError] = useState("");
-    var [withdrawDigest, setWithdrawDigest] = useState(null);  // { affected, proceed } when Save pulls crew off shifts
 
     function validateSchedule() {
       if (!start || !end) return true; // no project dates to check against
@@ -254,16 +253,22 @@
       onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
     }
 
-    // Editing an existing project: if Save pulls crew off shifts they were on,
-    // prompt ONCE to notify them (batched, one combined email per person), then
-    // save. Notify runs before doSubmit persists so the shifts still resolve.
+    // Editing an existing project: park a removal notice (per person, per type)
+    // for any crew this save pulls off shifts, into the notify tray. Snapshot
+    // here (the positions are about to be deleted) so the email still renders.
     function handleSaveClick() {
       if (!name.trim() || !compId) return;
       if (!validateSchedule()) return;
-      var removed = (initial && initial.id) ? window.LTP_diffWithdrawnCrew(initial.schedule, sched, ctx.contacts) : [];
-      if (removed.length > 0) {
-        setWithdrawDigest({ affected: removed, proceed: doSubmit });
-        return;
+      if (initial && initial.id) {
+        var removed = window.LTP_diffRemovedCrew(initial.schedule, sched, ctx.contacts, ctx.services);
+        removed.forEach(function(g) {
+          window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: initial.id, projectName: name || initial.name || "", template: g.template, shifts: g.shifts });
+        });
+        if (removed.length) {
+          var people = {}; removed.forEach(function(g) { people[g.crewId] = true; });
+          var n = Object.keys(people).length;
+          window.LTP_toast("Added to notify tray", { message: n + " crew member" + (n !== 1 ? "s" : "") + " queued — send from the tray (bottom-left).", variant: "info" });
+        }
       }
       doSubmit();
     }
@@ -290,17 +295,7 @@
         ),
         h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services }),
         schedError && h("div", { style: { fontSize: "12px", color: B.danger, padding: "8px 12px", background: B.dangerBg, borderRadius: "6px", border: "1px solid " + B.dangerBd } }, schedError),
-        h(window.Btn, { onClick: handleSaveClick }, initial ? "Save Changes" : "Create Project"),
-
-        // Batched withdrawal prompt — see handleSaveClick. Notify emails one
-        // combined crewWithdrawn each then saves; Skip saves silently; Cancel
-        // aborts the save.
-        withdrawDigest && h(window.CrewWithdrawDigest, {
-          affected: withdrawDigest.affected,
-          onNotify: function() { var d = withdrawDigest; setWithdrawDigest(null); window.LTP_notifyWithdrawAll(d.affected, initial.id); d.proceed(); },
-          onSkip: function() { var d = withdrawDigest; setWithdrawDigest(null); d.proceed(); },
-          onCancel: function() { setWithdrawDigest(null); },
-        })
+        h(window.Btn, { onClick: handleSaveClick }, initial ? "Save Changes" : "Create Project")
       )
     );
   };

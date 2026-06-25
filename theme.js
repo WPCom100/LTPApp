@@ -355,74 +355,97 @@ window.LTP_resolveTemplate = function(template, vars) {
   });
 };
 
-// Best-effort crew notification. Used wherever a crew member's request/position
-// is removed (schedule editor, project delete, Assignments tab) to email them
-// the relevant notice (e.g. crewWithdrawn). POSTs to the producer notify
-// endpoint and resolves to { ok, body } where body.emailStatus is
-// { emailed, needsReconnect, error }. NEVER rejects — callers surface the
-// result as a toast. The endpoint renders the shift list from the project's
-// CURRENT schedule, so call this BEFORE the removal is saved (the positions
-// must still exist server-side for the email to list them).
-window.LTP_crewNotify = function(contactId, projectId, template, positionIds) {
+// Best-effort crew notification (POSTs to the producer notify endpoint, resolves
+// to { ok, body } where body.emailStatus is { emailed, needsReconnect, error };
+// NEVER rejects). The notify tray (components/crew-outbox.js) is the only caller
+// — it sends a parked removal notice on demand.
+// `opts` is either { positionIds } (resolve the shift list live from the
+// project's current schedule — the project must still exist) or { shifts,
+// projectName } (a snapshot captured at removal time — works even after the
+// shifts/project are gone, which is how the notify tray sends). projectName is
+// only needed when the project itself was deleted.
+window.LTP_crewNotify = function(contactId, projectId, template, opts) {
+  opts = opts || {};
+  var payload = { contactId: contactId, projectId: projectId, template: template };
+  if (opts.shifts) { payload.shifts = opts.shifts; if (opts.projectName) payload.projectName = opts.projectName; }
+  else { payload.positionIds = opts.positionIds || []; }
   return fetch("/api/crew-requests/notify", {
     method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ contactId: contactId, projectId: projectId, template: template, positionIds: positionIds || [] }),
+    body: JSON.stringify(payload),
   }).then(function(r) {
     return r.json().then(function(j) { return { ok: r.ok, body: j }; },
                         function() { return { ok: r.ok, body: {} }; });
   }, function(e) { return { ok: false, body: { error: String(e) } }; });
 };
 
-// Email a set of affected crew the crewWithdrawn notice and surface ONE summary
-// toast. `affected` is [{ crewId, crewName, positionIds }]. Shared by every
-// "remove → notify" path (schedule editor, project delete) so the behaviour +
-// wording stay identical. Returns a promise (resolves after the toast).
-window.LTP_notifyWithdrawAll = function(affected, projectId) {
-  if (!projectId || !window.LTP_crewNotify || !(affected && affected.length)) return Promise.resolve();
-  return Promise.all(affected.map(function(a) {
-    return window.LTP_crewNotify(a.crewId, projectId, "crewWithdrawn", a.positionIds)
-      .then(function(res) { return (res.ok && res.body && res.body.emailStatus) || {}; });
-  })).then(function(statuses) {
-    var sent = statuses.filter(function(s) { return s.emailed; }).length;
-    var reconnect = statuses.some(function(s) { return s.needsReconnect; });
-    if (sent === statuses.length) window.LTP_toast("Crew notified", { message: sent + " crew member" + (sent !== 1 ? "s" : "") + " emailed about the withdrawal.", variant: "success" });
-    else if (reconnect) window.LTP_toast("Crew not all notified", { message: "Connect Google in Settings to email the crew, then withdraw again.", variant: "warn" });
-    else window.LTP_toast(sent ? "Some crew notified" : "Notification failed", { message: sent + " of " + statuses.length + " emailed.", variant: sent ? "warn" : "error" });
-  });
-};
+// Crew-removal notification helpers. A removal is notified by *type*, derived
+// from the shift's status when it was removed:
+//   requested  → crewWithdrawn   (the request is withdrawn)
+//   accepted   → crewNotSelected (they accepted but were released)
+//   confirmed  → crewCancelled   (their confirmed booking is cancelled)
+// Every removal path snapshots the affected shifts and parks them in the notify
+// tray (components/crew-outbox.js), grouped per person+project+type, so one
+// combined email per type is sent on demand — never one-per-shift.
+(function() {
+  function shiftSnap(shift, pos, svcById) {
+    var svc = svcById[pos.serviceId];
+    var roleLabel = svc
+      ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")).replace(/^\s*—\s*|\s*—\s*$/g, "").trim()
+      : (pos.role || "");
+    return {
+      positionId: pos.id, roleLabel: roleLabel || "Crew",
+      department: svc ? (svc.department || "") : "", status: pos.status,
+      shiftTitle: shift.title || "", date: shift.date || "",
+      startTime: shift.time || "", endTime: shift.endTime || "",
+    };
+  }
 
-// Diff two schedule snapshots and return the crew members who LOST an active
-// (requested/accepted/confirmed) assignment between them — because the position
-// was removed, the day was deleted, or the crew was cleared/reassigned. Grouped
-// per crew member (so each gets ONE combined withdrawal email) keyed on the
-// BEFORE assignment. `positionIds` are the pre-edit ids; call this BEFORE the
-// edit persists so the notify endpoint can still render their shifts. Returns
-// [{ crewId, crewName, positionIds }] — feed straight to LTP_notifyWithdrawAll.
-window.LTP_diffWithdrawnCrew = function(before, after, contacts) {
-  var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
-  // Every position id still present in `after`, mapped to its current crew.
-  var afterById = {};
-  (after || []).forEach(function(s) {
-    (s.positions || []).forEach(function(p) { afterById[p.id] = p.crewId || null; });
-  });
-  var byCrew = {};
-  (before || []).forEach(function(s) {
-    (s.positions || []).forEach(function(p) {
-      if (!p.crewId || !ACTIVE[p.status]) return;
-      var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
-      // Lost the assignment if the position is gone, or it now belongs to
-      // someone else / no one (crew cleared or reassigned).
-      if (stillThere && afterById[p.id] === p.crewId) return;
-      if (!byCrew[p.crewId]) {
-        var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
-        byCrew[p.crewId] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", positionIds: [] };
-      }
-      byCrew[p.crewId].positionIds.push(p.id);
+  // Snapshot the named positions out of a (still-live) schedule into the shape
+  // the notify email renders — so the email survives the positions being deleted.
+  window.LTP_shiftSnapshots = function(schedule, positionIds, services) {
+    var ids = {}; (positionIds || []).forEach(function(id) { ids[id] = true; });
+    var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
+    var out = [];
+    (schedule || []).forEach(function(sh) {
+      (sh.positions || []).forEach(function(p) { if (ids[p.id]) out.push(shiftSnap(sh, p, svcById)); });
     });
-  });
-  return Object.keys(byCrew).map(function(k) { return byCrew[k]; });
-};
+    return out;
+  };
+
+  window.LTP_removalTemplate = function(status) {
+    return status === "confirmed" ? "crewCancelled" : status === "accepted" ? "crewNotSelected" : "crewWithdrawn";
+  };
+
+  // Diff two schedule snapshots; return the crew who LOST an active assignment
+  // (position removed, day deleted, or reassigned away), bucketed per person AND
+  // per notice type with the snapshotted shifts. Returns
+  // [{ crewId, crewName, template, shifts: [...] }] — park each into the tray.
+  window.LTP_diffRemovedCrew = function(before, after, contacts, services) {
+    var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+    var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
+    var afterById = {};
+    (after || []).forEach(function(s) {
+      (s.positions || []).forEach(function(p) { afterById[p.id] = p.crewId || null; });
+    });
+    var groups = {};  // "crewId:template"
+    (before || []).forEach(function(sh) {
+      (sh.positions || []).forEach(function(p) {
+        if (!p.crewId || !ACTIVE[p.status]) return;
+        var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
+        if (stillThere && afterById[p.id] === p.crewId) return;  // still theirs
+        var template = window.LTP_removalTemplate(p.status);
+        var k = p.crewId + ":" + template;
+        if (!groups[k]) {
+          var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
+          groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: template, shifts: [] };
+        }
+        groups[k].shifts.push(shiftSnap(sh, p, svcById));
+      });
+    });
+    return Object.keys(groups).map(function(k) { return groups[k]; });
+  };
+})();
 
 // ── textToHtml ──────────────────────────────────────────────────────────
 // Convert a body that was typed as plain text (blank lines = paragraphs,
