@@ -522,7 +522,12 @@ function LTPSignedInApp(props) {
           h("span", { ref: clockRef, style: { fontSize: "11px", color: B.textMut } }),
           h(LTPUserMenu, { user: props.authUser }))
       ),
-      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 0" : "22px" } }, renderModule())
+      // The quote builder manages its own internal scroll (overflow:hidden);
+      // it needs a real bottom padding here so the last card (Totals) clears
+      // the viewport edge. Padding on this wrapper (not the inner scroll
+      // columns) works in every engine — WebKit ignores padding-bottom on a
+      // scrolling flex container, so the inner-column approach fails in Safari.
+      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 16px" : "22px" } }, renderModule())
     )
    ),
    h(window.LTPErrorToasts),

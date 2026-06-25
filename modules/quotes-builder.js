@@ -1683,10 +1683,7 @@
       h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
 
         // ── Main scrollable content (left) ─────────────────────────────────
-        // paddingBottom keeps the last card (Totals) off the viewport edge so
-        // it isn't clipped / unreachable at max scroll (the body row's
-        // overflow:hidden gives the column no breathing room otherwise).
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0, paddingBottom: 16 } },
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
 
       // Metadata card
       h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 16 } },
@@ -1820,7 +1817,7 @@
       ), // end main scrollable content
 
         // ── Side Panel (right) ─────────────────────────────────────────────
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", paddingBottom: 16 } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
 
           // QUOTE SUMMARY (top)
           h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
