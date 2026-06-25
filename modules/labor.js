@@ -492,6 +492,14 @@
           dayBookings.push({ type: "single", pos: pos, items: [pos.schedTitle], allPosIds: [pos] });
           return;
         }
+        // A double-booked (conflicting) position stands on its OWN row so both
+        // sides of the conflict stay visible and individually resolvable —
+        // folding it into the crew member's day booking would collapse the two
+        // into one row and hide one of the conflicting shifts.
+        if ((crewConflicts || {})[pos.posId]) {
+          dayBookings.push({ type: "single", pos: pos, items: [pos.schedTitle], allPosIds: [pos] });
+          return;
+        }
         var ck = pos.crewId;
         if (!crewMap[ck]) {
           crewMap[ck] = { type: "day", pos: pos, items: [], allPosIds: [] };
