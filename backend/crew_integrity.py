@@ -33,7 +33,9 @@ already settled, so we leave them.
 
 Position ids are stable (``theme.js`` ``genId`` = ``pos-<ts>-<counter>``; saves,
 edits, and reordering all preserve them), so trimming only ever fires on a
-genuine removal — normal editing can't false-positive.
+genuine change — a removed shift OR a position reassigned to a different crew
+member (the request belongs to the person who was asked; reassigning the shift
+away releases it). Normal editing can't false-positive.
 """
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,15 +49,24 @@ from backend import models
 _ACTIVE = ("pending", "accepted")
 
 
-def _present_position_ids(project) -> set:
-    """Every position id that currently exists in the project's schedule."""
+def _assigned_position_ids(project, contact_id) -> set:
+    """Position ids that still exist in the schedule AND are still assigned to
+    ``contact_id``.
+
+    A request owns only the shifts its crew member currently holds. A position
+    that was reassigned to someone else (or unassigned) is no longer live for the
+    request even though the position itself still exists — so it must be trimmed
+    just like a deleted one. This is safe to key on crew because the send
+    endpoint only ever requests positions already assigned to the member
+    (routes/crew.py), so a freshly-created request matches exactly; this only
+    ever trims on a *later* reassignment."""
     present = set()
     if project is None:
         return present
     for shift in (project.schedule or []):
         for pos in (shift.get("positions") or []):
             pid = pos.get("id")
-            if pid is not None:
+            if pid is not None and pos.get("crewId") == contact_id:
                 present.add(pid)
     return present
 
@@ -65,14 +76,16 @@ def reconcile_one(req: models.CrewRequest, project) -> dict | None:
     is gone). Mutates ``req`` in place; the caller is responsible for the flush.
 
     Returns a change summary dict, or ``None`` when nothing changed:
-      - ``project`` gone OR no surviving positions → ``status='withdrawn'``
-      - some positions removed → ``position_ids`` trimmed to the survivors
+      - ``project`` gone OR none of its positions are still the member's →
+        ``status='withdrawn'``
+      - some positions removed/reassigned away → ``position_ids`` trimmed to the
+        ones the member still holds
 
     Only acts on active (pending/accepted) requests."""
     if req.status not in _ACTIVE:
         return None
     original = list(req.position_ids or [])
-    present = _present_position_ids(project)
+    present = _assigned_position_ids(project, req.contact_id)
     live = [pid for pid in original if pid in present]
     removed = [pid for pid in original if pid not in present]
     if not removed:

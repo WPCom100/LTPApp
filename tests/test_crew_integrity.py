@@ -134,6 +134,59 @@ def test_terminal_untouched():
         _check(f"{term} status preserved", req.status == term)
 
 
+def _assigned_project(positions, pid=1):
+    """A one-day project whose positions carry an explicit crewId — for the
+    crew-aware (reassignment) cases. `positions` = list of (id, crewId, status)."""
+    return models.Project(id=pid, name="Gala", schedule=[{
+        "id": "day-0", "date": "2026-07-01", "title": "Day 0",
+        "positions": [{"id": i, "crewId": c, "status": s} for (i, c, s) in positions],
+    }])
+
+
+def test_reassigned_position_trimmed():
+    print("test_reassigned_position_trimmed")
+    # Crew 5 holds p1 + p2; p2 is reassigned to crew 9 → trim p2, keep p1.
+    req = models.CrewRequest(id=1, token="tok-" + "x" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _assigned_project([("p1", 5, "accepted"), ("p2", 9, "open")])
+    ch = ci.reconcile_one(req, proj)
+    _check("reports trimmed", ch and ch["action"] == "trimmed", str(ch))
+    _check("p2 trimmed (no longer this crew's)", ch and ch["removed"] == ["p2"])
+    _check("keeps p1", req.position_ids == ["p1"])
+    _check("stays accepted", req.status == "accepted")
+
+
+def test_all_positions_reassigned_withdraws():
+    print("test_all_positions_reassigned_withdraws")
+    # Crew 5's only shift is reassigned to crew 9 → the request withdraws.
+    req = models.CrewRequest(id=2, token="tok-" + "y" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1"], status="pending")
+    proj = _assigned_project([("p1", 9, "requested")])
+    ch = ci.reconcile_one(req, proj)
+    _check("withdrawn once none remain this crew's", ch and ch["action"] == "withdrawn", str(ch))
+    _check("status withdrawn", req.status == "withdrawn")
+
+
+def test_cleared_position_withdraws():
+    print("test_cleared_position_withdraws")
+    # p1 unassigned entirely (crewId None) → no longer this crew's → withdraw.
+    req = models.CrewRequest(id=3, token="tok-" + "z" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1"], status="accepted")
+    proj = _assigned_project([("p1", None, "open")])
+    ci.reconcile_one(req, proj)
+    _check("cleared position withdraws request", req.status == "withdrawn")
+
+
+def test_held_position_untouched():
+    print("test_held_position_untouched")
+    # All positions still the crew member's → nothing changes.
+    req = models.CrewRequest(id=4, token="tok-" + "w" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _assigned_project([("p1", 5, "accepted"), ("p2", 5, "confirmed")])
+    _check("no change when member still holds all", ci.reconcile_one(req, proj) is None)
+    _check("position_ids preserved", req.position_ids == ["p1", "p2"])
+
+
 # ── Real-DB integration ──────────────────────────────────────────────────────
 
 async def _reset_schema():
@@ -241,6 +294,8 @@ def main():
         test_healthy_untouched, test_partial_removal_trims, test_full_removal_withdraws,
         test_deleted_project_withdraws, test_accepted_partial_keeps_accepted,
         test_accepted_full_removal_withdraws, test_terminal_untouched,
+        test_reassigned_position_trimmed, test_all_positions_reassigned_withdraws,
+        test_cleared_position_withdraws, test_held_position_untouched,
     ]
     async_tests = [
         test_reconcile_project_trims_and_withdraws, test_reconcile_project_deleted_withdraws,
