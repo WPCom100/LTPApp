@@ -112,7 +112,7 @@
         setDeletionDlg({
           title: "Delete \"" + (item.title || "Untitled") + "\"",
           message: "This day has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") +
-            ". The shifts will be removed — you'll be asked whether to notify the crew when you save.",
+            ". The shifts will be removed — the crew are added to the notify tray when you save, where you can email them or decline.",
           confirmLabel: "Delete Day",
           onConfirm: function() { doRemove(); setDeletionDlg(null); },
         });
@@ -208,7 +208,7 @@
         var crewName = cm ? cm.firstName + " " + cm.lastName : "Assigned crew";
         setDeletionDlg({
           title: "Remove Position",
-          message: crewName + " has a " + pos.status + " assignment for this position. It will be removed — you'll be asked whether to notify them when you save.",
+          message: crewName + " has a " + pos.status + " assignment for this position. It will be removed — they're added to the notify tray when you save, where you can email them or decline.",
           confirmLabel: "Remove Position",
           onConfirm: function() { doRemove(); setDeletionDlg(null); },
         });
