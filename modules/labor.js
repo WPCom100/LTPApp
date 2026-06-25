@@ -273,7 +273,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
-  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests }) {
+  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests }) {
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
@@ -313,6 +313,49 @@
         .catch(function() {});
     }
 
+    // The pending crew request that put this position into "requested" (matched
+    // by project + position id). Withdrawing a request MUST go through this
+    // record — reopening the position locally alone leaves the request live
+    // (integrity keys on position-id presence, not status), so the crew link
+    // would still accept. Returns undefined when no tracked request covers it.
+    function findPendingRequest(pos) {
+      return (crewRequests || []).find(function(r) {
+        return r.status === "pending" && r.projectId === pos.projectId &&
+               (r.positionIds || []).indexOf(pos.posId) !== -1;
+      });
+    }
+
+    // Withdraw a pending request through the server (sets status=withdrawn so the
+    // crew link shows the withdrawn screen, optionally emails crewWithdrawn, and
+    // reopens its shifts). Mirrors the Crew Requests tab's doWithdraw so the two
+    // entry points behave identically. Best-effort: a failed email never blocks.
+    function withdrawRequestRecord(req, notify) {
+      fetch("/api/crew-requests/" + req.id + "/withdraw", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notify: !!notify }),
+      })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+        .then(function(res) {
+          if (!res.ok) {
+            window.LTP_toast("Withdraw failed", { message: (res.body && res.body.detail && (res.body.detail.message || res.body.detail)) || "could not withdraw the request", variant: "error" });
+            if (reloadCrewRequests) reloadCrewRequests();
+            return;
+          }
+          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
+          if (!notify) {
+            window.LTP_toast("Request withdrawn", { variant: "success" });
+          } else {
+            var es = (res.body && res.body.emailStatus) || {};
+            if (es.emailed) window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " was emailed.", variant: "success" });
+            else if (es.needsReconnect) window.LTP_toast("Withdrawn — email not sent", { message: "Connect Google in Settings to notify " + crewLabel(req.contactId) + ".", variant: "warn" });
+            else window.LTP_toast("Withdrawn — email not sent", { message: (es.error || "the notification email failed"), variant: "error" });
+          }
+          if (reloadCrewRequests) reloadCrewRequests();
+        })
+        .catch(function() { if (reloadCrewRequests) reloadCrewRequests(); });
+    }
+
     // Backward status moves that need confirmation
     var SEVERITY = { confirmed: 4, accepted: 3, requested: 2, open: 1, declined: 0 };
 
@@ -324,18 +367,28 @@
 
       // Backward move with crew assigned — needs confirmation
       if (newSev < oldSev && pos.crewId && oldSev >= 2) {
+        // A pending request is withdrawn as a whole unit (the crew member sees
+        // and accepts/declines the entire request), so reflect that all of its
+        // shifts reopen — not just the one the producer clicked.
+        var req = pos.status === "requested" ? findPendingRequest(pos) : null;
+        var reqShifts = req ? (req.positionIds || []).length : 0;
+        var requestedMsg = req
+          ? "This withdraws " + crewName + "'s entire request for " + (pos.projectName || "this project") +
+            (reqShifts > 1 ? " (" + reqShifts + " shifts)" : "") +
+            ". Those shifts reopen and the crew link stops working. Let them know by email, or withdraw quietly."
+          : "This will withdraw the request sent to " + crewName + " for " + context + ".";
         var messages = {
           "confirmed": "This will cancel " + crewName + "'s confirmed position on " + context + ". They should be notified of the cancellation.",
           "accepted": crewName + " already accepted this position on " + context + ". This will release their assignment.",
-          "requested": "This will withdraw the request sent to " + crewName + " for " + context + ".",
+          "requested": requestedMsg,
         };
         var actions = {
           "confirmed": "Cancel & Notify",
           "accepted": "Release & Notify",
-          "requested": "Withdraw Request",
+          "requested": "✉ Withdraw & Notify",
         };
         setStatusDlg({
-          pos: pos, newStatus: newStatus,
+          pos: pos, newStatus: newStatus, req: req,
           title: pos.status === "confirmed" ? "Cancel Confirmed Position" : pos.status === "accepted" ? "Release Accepted Crew" : "Withdraw Request",
           message: messages[pos.status] || "Change status from " + pos.status + " to " + newStatus + "?",
           actionLabel: actions[pos.status] || "Confirm",
@@ -353,11 +406,21 @@
       var pos = statusDlg.pos;
       var newStatus = statusDlg.newStatus;
       var clearCrew = statusDlg.clearCrew;
+      // Withdrawing a tracked pending request goes through the server so the
+      // request record is actually withdrawn (crew link → withdrawn screen) and
+      // the crewWithdrawn email fires from the live schedule. That call reopens
+      // its shifts locally, so skip the local cascade below.
+      if (pos.status === "requested" && statusDlg.req) {
+        withdrawRequestRecord(statusDlg.req, notify);
+        setStatusDlg(null);
+        return;
+      }
       // Notify the crew member of the change (best-effort) when requested.
       // pos.status is still the PRE-change status here: accepted → "not
-      // selected", confirmed → "cancelled". Withdraw (requested) sends nothing.
+      // selected", confirmed → "cancelled", requested → "withdrawn" (the
+      // fallback path when no request record is tracked).
       if (notify) {
-        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : (pos.status === "confirmed" ? "crewCancelled" : null);
+        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : pos.status === "confirmed" ? "crewCancelled" : pos.status === "requested" ? "crewWithdrawn" : null;
         if (ntmpl) crewNotify(pos.crewId, pos.projectId, ntmpl, [pos.posId]);
       }
       // Cascade to ALL positions for this crew on this date in this project
@@ -850,7 +913,13 @@
           var pos = statusDlg.pos;
           var isRelease = pos.status === "accepted";
           var isCancel = pos.status === "confirmed";
+          var isWithdraw = pos.status === "requested";
+          // showEmail gates the client-rendered preview (crewNotSelected /
+          // crewCancelled use simple vars). Withdraw emails crewWithdrawn, whose
+          // {{shifts}} block is rendered server-side, so it's offered (canNotify)
+          // but summarized in the message rather than previewed here.
           var showEmail = isRelease || isCancel;
+          var canNotify = showEmail || isWithdraw;
           var emailPreview = "";
           var emailSubject = "";
           var emailTo = "";
@@ -886,8 +955,8 @@
             ),
             h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
               h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
-              showEmail && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, statusDlg.pos.status === "confirmed" ? "Cancel Without Email" : "Release Quietly"),
-              h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(showEmail); } }, statusDlg.actionLabel))
+              canNotify && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, isCancel ? "Cancel Without Email" : isWithdraw ? "Withdraw Quietly" : "Release Quietly"),
+              h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(canNotify); } }, statusDlg.actionLabel))
           );
         }()
       ),
@@ -1268,7 +1337,7 @@
           "\u26a0 " + conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
-      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests }),
+      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts })

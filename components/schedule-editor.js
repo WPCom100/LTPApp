@@ -22,13 +22,38 @@
     return String(h % 24).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict }) {
+  window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict, projectId }) {
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [deletionDlg, setDeletionDlg] = useState(null);
     var [conflictWarn, setConflictWarn] = useState(null);
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var svcs = services || [];
     var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+
+    // Crew who'd be impacted by removing `positions` — those with a sent
+    // (requested/accepted/confirmed) assignment — grouped by crew member with
+    // the position ids being removed. Used to offer "notify on withdraw".
+    function affectedCrew(positions) {
+      var byCrew = {};
+      (positions || []).forEach(function(p) {
+        if (!p.crewId || !(p.status === "requested" || p.status === "accepted" || p.status === "confirmed")) return;
+        if (!byCrew[p.crewId]) {
+          var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
+          byCrew[p.crewId] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", positionIds: [] };
+        }
+        byCrew[p.crewId].positionIds.push(p.id);
+      });
+      return Object.keys(byCrew).map(function(k) { return byCrew[k]; });
+    }
+
+    // Best-effort: email each affected crew member that their shifts are being
+    // withdrawn. MUST run before the removal saves (the notify endpoint renders
+    // the shift list from the still-live server schedule). Needs projectId — the
+    // parent passes it; without it (e.g. a brand-new project) the dialog hides
+    // the notify option.
+    function notifyWithdraw(affected) {
+      window.LTP_notifyWithdrawAll(affected, projectId);
+    }
 
     // Live conflict detection from draft schedule (before save)
     var liveConflicts = React.useMemo(function() {
@@ -99,18 +124,12 @@
     function removeItem(id) {
       var item = schedule.find(function(s) { return s.id === id; });
       if (!item) return;
-      var activeCrew = (item.positions || []).filter(function(p) {
-        return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
-      });
-      if (activeCrew.length > 0) {
-        var crewNames = activeCrew.map(function(p) {
-          var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
-          return (cm ? cm.firstName + " " + cm.lastName : "Unknown") + " (" + p.status + ")";
-        });
+      var affected = affectedCrew(item.positions);
+      if (affected.length > 0) {
         setDeletionDlg({
           title: "Delete \"" + (item.title || "Untitled") + "\"",
-          crewNames: crewNames,
-          itemId: id,
+          affected: affected,
+          remove: function() { onChange(schedule.filter(function(s) { return s.id !== id; })); },
         });
         return;
       }
@@ -193,27 +212,18 @@
     function removePosition(schedId, posId) {
       var sched = schedule.find(function(s) { return s.id === schedId; });
       var pos = sched ? (sched.positions || []).find(function(p) { return p.id === posId; }) : null;
-      if (pos && pos.crewId && (pos.status === "requested" || pos.status === "accepted" || pos.status === "confirmed")) {
-        var cm = (contacts || []).find(function(c) { return c.id === pos.crewId; });
-        var crewName = cm ? cm.firstName + " " + cm.lastName : "Assigned crew";
-        setDeletionDlg({
-          title: "Remove Position",
-          message: crewName + " has a " + pos.status + " assignment for this position. Removing it will cancel their assignment. They should be notified.",
-          variant: "danger", confirmLabel: "Remove Position",
-          onConfirm: function() {
-            onChange(schedule.map(function(s) {
-              if (s.id !== schedId) return s;
-              return Object.assign({}, s, { positions: (s.positions || []).filter(function(p) { return p.id !== posId; }) });
-            }));
-            setDeletionDlg(null);
-          }
-        });
+      var doRemove = function() {
+        onChange(schedule.map(function(s) {
+          if (s.id !== schedId) return s;
+          return Object.assign({}, s, { positions: (s.positions || []).filter(function(p) { return p.id !== posId; }) });
+        }));
+      };
+      var affected = pos ? affectedCrew([pos]) : [];
+      if (affected.length > 0) {
+        setDeletionDlg({ title: "Remove Position", affected: affected, remove: doRemove });
         return;
       }
-      onChange(schedule.map(function(s) {
-        if (s.id !== schedId) return s;
-        return Object.assign({}, s, { positions: (s.positions || []).filter(function(p) { return p.id !== posId; }) });
-      }));
+      doRemove();
     }
 
     // Break helpers
@@ -519,49 +529,31 @@
           h(window.Btn, { variant: "danger", onClick: conflictWarn.onConfirm }, "Assign Anyway"))
       ),
 
-      // Deletion confirmation dialog
+      // Deletion confirmation dialog \u2014 crew with a sent (requested/accepted/
+      // confirmed) assignment are affected, so offer to email them the
+      // withdrawal before removing. Notify fires BEFORE the removal saves so the
+      // email can still list the shifts (positions are still live server-side).
       deletionDlg && h(window.LTPModal, { title: deletionDlg.title, onClose: function() { setDeletionDlg(null); } },
-        deletionDlg.crewNames
-          ? h("div", null,
-              h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 12, lineHeight: 1.5 } },
-                "This item has " + deletionDlg.crewNames.length + " active crew assignment" + (deletionDlg.crewNames.length > 1 ? "s" : "") + " that need to be addressed:"),
-              h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 14 } },
-                deletionDlg.crewNames.map(function(cn, i) {
-                  return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "4px 8px", background: B.raised, borderRadius: "4px", border: "1px solid " + B.border } }, cn);
-                })
-              ),
-              h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-                h("button", { onClick: function() {
-                  // Release crew then delete
-                  var updated = schedule.map(function(s) {
-                    if (s.id !== deletionDlg.itemId) return s;
-                    return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
-                      if (p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed")) {
-                        return Object.assign({}, p, { status: "open", crewId: null });
-                      }
-                      return p;
-                    })});
-                  });
-                  onChange(updated.filter(function(s) { return s.id !== deletionDlg.itemId; }));
-                  setDeletionDlg(null);
-                }, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 16px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-                  "\u2709 Release Crew, Notify & Delete"),
-                h("button", { onClick: function() {
-                  onChange(schedule.filter(function(s) { return s.id !== deletionDlg.itemId; }));
-                  setDeletionDlg(null);
-                }, style: { background: "transparent", border: "1px solid " + B.danger, borderRadius: "6px", padding: "8px 16px", color: B.danger, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-                  "Delete Without Notifying"),
-                h("button", { onClick: function() { setDeletionDlg(null); },
-                  style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 16px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-                  "Cancel")
-              )
-            )
-          : h("div", null,
-              h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 16, lineHeight: 1.5 } }, deletionDlg.message),
-              h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
-                h(window.Btn, { variant: "ghost", onClick: function() { setDeletionDlg(null); } }, "Cancel"),
-                h(window.Btn, { variant: "danger", onClick: deletionDlg.onConfirm }, deletionDlg.confirmLabel))
-            )
+        h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 12, lineHeight: 1.5 } },
+          "This withdraws " + deletionDlg.affected.length + " crew assignment" + (deletionDlg.affected.length !== 1 ? "s" : "") + ". Let them know it's been withdrawn, or remove quietly:"),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 14 } },
+          deletionDlg.affected.map(function(a, i) {
+            return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "4px 8px", background: B.raised, borderRadius: "4px", border: "1px solid " + B.border } },
+              a.crewName + "  \u00b7  " + a.positionIds.length + " shift" + (a.positionIds.length !== 1 ? "s" : ""));
+          })),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          projectId && h("button", { onClick: function() {
+              notifyWithdraw(deletionDlg.affected);
+              deletionDlg.remove();
+              setDeletionDlg(null);
+            }, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 16px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
+            "\u2709 Remove & Notify Crew"),
+          h("button", { onClick: function() { deletionDlg.remove(); setDeletionDlg(null); },
+            style: { background: "transparent", border: "1px solid " + B.danger, borderRadius: "6px", padding: "8px 16px", color: B.danger, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
+            "Remove Without Notifying"),
+          h("button", { onClick: function() { setDeletionDlg(null); },
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 16px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
+            "Cancel"))
       )
     );
   };

@@ -355,6 +355,43 @@ window.LTP_resolveTemplate = function(template, vars) {
   });
 };
 
+// Best-effort crew notification. Used wherever a crew member's request/position
+// is removed (schedule editor, project delete, Assignments tab) to email them
+// the relevant notice (e.g. crewWithdrawn). POSTs to the producer notify
+// endpoint and resolves to { ok, body } where body.emailStatus is
+// { emailed, needsReconnect, error }. NEVER rejects — callers surface the
+// result as a toast. The endpoint renders the shift list from the project's
+// CURRENT schedule, so call this BEFORE the removal is saved (the positions
+// must still exist server-side for the email to list them).
+window.LTP_crewNotify = function(contactId, projectId, template, positionIds) {
+  return fetch("/api/crew-requests/notify", {
+    method: "POST", credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ contactId: contactId, projectId: projectId, template: template, positionIds: positionIds || [] }),
+  }).then(function(r) {
+    return r.json().then(function(j) { return { ok: r.ok, body: j }; },
+                        function() { return { ok: r.ok, body: {} }; });
+  }, function(e) { return { ok: false, body: { error: String(e) } }; });
+};
+
+// Email a set of affected crew the crewWithdrawn notice and surface ONE summary
+// toast. `affected` is [{ crewId, crewName, positionIds }]. Shared by every
+// "remove → notify" path (schedule editor, project delete) so the behaviour +
+// wording stay identical. Returns a promise (resolves after the toast).
+window.LTP_notifyWithdrawAll = function(affected, projectId) {
+  if (!projectId || !window.LTP_crewNotify || !(affected && affected.length)) return Promise.resolve();
+  return Promise.all(affected.map(function(a) {
+    return window.LTP_crewNotify(a.crewId, projectId, "crewWithdrawn", a.positionIds)
+      .then(function(res) { return (res.ok && res.body && res.body.emailStatus) || {}; });
+  })).then(function(statuses) {
+    var sent = statuses.filter(function(s) { return s.emailed; }).length;
+    var reconnect = statuses.some(function(s) { return s.needsReconnect; });
+    if (sent === statuses.length) window.LTP_toast("Crew notified", { message: sent + " crew member" + (sent !== 1 ? "s" : "") + " emailed about the withdrawal.", variant: "success" });
+    else if (reconnect) window.LTP_toast("Crew not all notified", { message: "Connect Google in Settings to email the crew, then withdraw again.", variant: "warn" });
+    else window.LTP_toast(sent ? "Some crew notified" : "Notification failed", { message: sent + " of " + statuses.length + " emailed.", variant: sent ? "warn" : "error" });
+  });
+};
+
 // ── textToHtml ──────────────────────────────────────────────────────────
 // Convert a body that was typed as plain text (blank lines = paragraphs,
 // single newlines = line breaks) into the HTML that the email pipeline

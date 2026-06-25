@@ -370,6 +370,7 @@
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: "auto", minWidth: 0 } },
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: services,
+            projectId: project.id,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {
               var otherBookings = [];
