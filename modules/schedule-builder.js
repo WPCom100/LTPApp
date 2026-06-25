@@ -52,6 +52,7 @@
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);
     var [viewActivity, setViewActivity] = useState(null);
+    var [quoteGroupDlg, setQuoteGroupDlg] = useState(false);  // "Send to Quote" grouping picker
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
 
@@ -199,7 +200,18 @@
     }
 
     // ── Send to Quote ────────────────────────────────────────────────────────
-    function sendToQuote() {
+    // Validate, then ask how to organize the line items (one section vs. split
+    // by department) before building the quote.
+    function openSendToQuote() {
+      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a quote."); return; }
+      if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a quote."); return; }
+      var hasPositions = draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
+      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days before creating a quote."); return; }
+      setQuoteGroupDlg(true);
+    }
+
+    function sendToQuote(grouping) {
+      setQuoteGroupDlg(false);
       if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a quote."); return; }
       if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a quote."); return; }
 
@@ -295,46 +307,52 @@
         });
       });
 
-      // Build quote sections by department
-      var sectionMap = {};
-      function ensureSection(dept) {
-        if (!sectionMap[dept]) sectionMap[dept] = [];
-        return sectionMap[dept];
-      }
+      // Build the labor line items once (identical for both groupings); each
+      // carries its department so we can either split by department or pool
+      // everything into a single section.
+      var laborItems = [];  // [{ dept, item }]
 
-      // Add day rate line items
+      // Day rate line items
       Object.keys(dayRateItems).forEach(function(key) {
         var li = dayRateItems[key];
-        var tierLabel = li.tier === "half" ? "Half Day" : "Day Rate";
         var dayList = li.dates.length <= 4 ? li.dates.join(", ") : li.dates.slice(0, 3).join(", ") + " + " + (li.dates.length - 3) + " more";
-        ensureSection(li.dept).push({
+        laborItems.push({ dept: li.dept, item: {
           id: genId("item"), type: "service", serviceId: li.svc.id,
           name: li.svc.role + " \u2014 " + li.svc.description,
           rateType: li.tier === "half" ? "half" : "day",
           qty: li.qty, unitPrice: li.rate, adjustedPrice: null, cost: li.cost,
           notes: dayList, deliveredQty: 0, invoicedQty: 0
-        });
+        } });
       });
 
-      // Add OT line items
+      // OT line items
       Object.keys(otItems).forEach(function(key) {
         var li = otItems[key];
         if (li.totalHours <= 0) return;
         var dayList = li.dates.length <= 4 ? li.dates.join(", ") : li.dates.slice(0, 3).join(", ") + " + " + (li.dates.length - 3) + " more";
-        ensureSection(li.dept).push({
+        laborItems.push({ dept: li.dept, item: {
           id: genId("item"), type: "service", serviceId: li.svc.id,
           name: li.svc.role + " \u2014 " + li.svc.description,
           rateType: "ot",
           qty: li.totalHours, unitPrice: li.otRate, adjustedPrice: null, cost: li.otCost,
           notes: "Overtime hours: " + dayList, deliveredQty: 0, invoicedQty: 0
+        } });
+      });
+
+      if (laborItems.length === 0) { showAlert("No Positions", "Add positions to schedule days before creating a quote."); return; }
+
+      // grouping === "one" \u2192 a single "Labor" section; otherwise split by
+      // department (one section each), the legacy behavior.
+      var quoteSections;
+      if (grouping === "one") {
+        quoteSections = [{ id: genId("sec"), label: "Labor", customDates: false, startDate: "", endDate: "", items: laborItems.map(function(x) { return x.item; }) }];
+      } else {
+        var sectionMap = {};
+        laborItems.forEach(function(x) { (sectionMap[x.dept] = sectionMap[x.dept] || []).push(x.item); });
+        quoteSections = Object.keys(sectionMap).map(function(dept) {
+          return { id: genId("sec"), label: dept, customDates: false, startDate: "", endDate: "", items: sectionMap[dept] };
         });
-      });
-
-      var quoteSections = Object.keys(sectionMap).map(function(dept) {
-        return { id: genId("sec"), label: dept, customDates: false, startDate: "", endDate: "", items: sectionMap[dept] };
-      });
-
-      if (quoteSections.length === 0) { showAlert("No Positions", "Add positions to schedule days before creating a quote."); return; }
+      }
 
       // Create the quote
       var quoteId = getNextQuoteId();
@@ -376,7 +394,7 @@
               (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
-          h("button", { onClick: sendToQuote,
+          h("button", { onClick: openSendToQuote,
             style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
           h("button", { onClick: printSchedule,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
@@ -513,7 +531,23 @@
       ),
 
       // Confirm dialog
-      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } })
+      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
+
+      // "Send to Quote" — choose how to organize the schedule's labor lines.
+      quoteGroupDlg && h(window.LTPModal, { title: "Send to Quote", onClose: function() { setQuoteGroupDlg(false); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 16, lineHeight: 1.5 } },
+          "How should the labor lines be organized in the quote?"),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          h("button", { onClick: function() { sendToQuote("one"); },
+            style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 14px", textAlign: "left", cursor: "pointer", fontFamily: "inherit" } },
+            h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "One section"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "All roles in a single “Labor” section.")),
+          h("button", { onClick: function() { sendToQuote("split"); },
+            style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 14px", textAlign: "left", cursor: "pointer", fontFamily: "inherit" } },
+            h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Split by department"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "One section per department (Lighting, Audio, …).")),
+          h("button", { onClick: function() { setQuoteGroupDlg(false); },
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 14px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "Cancel")))
     );
   };
 })();
