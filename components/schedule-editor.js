@@ -31,9 +31,9 @@
     var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
 
     // Removing a day/position that has crew assigned just confirms here — the
-    // crew-withdrawal email is deferred to save and batched, so one person
-    // pulled from several shifts is emailed once (see LTP_diffWithdrawnCrew +
-    // the parent's save flow), instead of once per removal.
+    // crew-removal notice is parked on save by the parent (LTP_diffRemovedCrew →
+    // the notify tray), grouped per person + type, so one person pulled from
+    // several shifts is emailed once instead of once per removal.
 
     // Live conflict detection from draft schedule (before save)
     var liveConflicts = React.useMemo(function() {
@@ -530,36 +530,6 @@
           h(window.Btn, { variant: "ghost", onClick: function() { setDeletionDlg(null); } }, "Cancel"),
           h(window.Btn, { variant: "danger", onClick: deletionDlg.onConfirm }, deletionDlg.confirmLabel))
       )
-    );
-  };
-
-  // Shared "notify removed crew?" digest, shown by the schedule editor's parents
-  // (Schedule Builder save, CRM project Save Changes) once per save. `affected`
-  // is the LTP_diffWithdrawnCrew result: [{ crewId, crewName, positionIds }].
-  // onNotify emails everyone (one combined crewWithdrawn each) then proceeds;
-  // onSkip proceeds without email; onCancel aborts the save.
-  window.CrewWithdrawDigest = function({ affected, onNotify, onSkip, onCancel }) {
-    var people = affected || [];
-    var total = people.reduce(function(n, a) { return n + (a.positionIds || []).length; }, 0);
-    return h(window.LTPModal, { title: "Notify removed crew?", onClose: onCancel },
-      h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 12, lineHeight: 1.5 } },
-        "This save removes " + people.length + " crew member" + (people.length !== 1 ? "s" : "") + " from " + total +
-        " shift" + (total !== 1 ? "s" : "") + ". Email them that their shifts have been withdrawn?"),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 14 } },
-        people.map(function(a, i) {
-          return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "4px 8px", background: B.raised, borderRadius: "4px", border: "1px solid " + B.border } },
-            a.crewName + "  \u00b7  " + a.positionIds.length + " shift" + (a.positionIds.length !== 1 ? "s" : ""));
-        })),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-        h("button", { onClick: onNotify,
-          style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 16px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-          "\u2709 Notify & Save"),
-        h("button", { onClick: onSkip,
-          style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 16px", color: B.textSec, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-          "Save Without Notifying"),
-        h("button", { onClick: onCancel,
-          style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 16px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
-          "Cancel"))
     );
   };
 })();

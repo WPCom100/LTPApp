@@ -137,6 +137,27 @@ def _crew_shifts(project, position_ids, services_by_id) -> list:
     return out
 
 
+def _coerce_shifts(raw) -> list:
+    """Sanitize a client-supplied shift snapshot (the notify tray sends these for
+    a removal whose live positions are already gone — a deleted day or project).
+    Allow-list string fields only, capped, so nothing untrusted flows verbatim
+    into the email beyond the same fields _crew_shifts would have produced."""
+    out = []
+    if not isinstance(raw, list):
+        return out
+    for s in raw[:200]:
+        if not isinstance(s, dict):
+            continue
+        out.append({
+            "roleLabel": str(s.get("roleLabel") or "")[:200],
+            "shiftTitle": str(s.get("shiftTitle") or "")[:200],
+            "date": str(s.get("date") or "")[:40],
+            "startTime": str(s.get("startTime") or "")[:20],
+            "endTime": str(s.get("endTime") or "")[:20],
+        })
+    return out
+
+
 def _request_dict(r: models.CrewRequest) -> dict:
     """Producer-facing serialization. Includes the token so the Labor UI can
     surface/copy the crew link; this is the authenticated producer's own data.
@@ -442,12 +463,13 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # Settings previews stay valid without a redesign.
 _CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn"}
 
-# Server-side fallbacks for the informational templates, used when the workspace
-# hasn't saved that template to the DB yet (load_settings reads the DB, which
-# doesn't carry the data/settings.js defaults until an admin clicks Save). Only
-# crewWithdrawn is pinned here for now — it's the one sent AUTOMATICALLY (on
-# withdraw), so an empty body would be a broken auto-email; the others are
-# producer-initiated. MUST stay in sync with data/settings.js.
+# Server-side fallbacks for the removal templates, used when the workspace hasn't
+# saved that template to the DB yet (load_settings reads the DB, which doesn't
+# carry the data/settings.js defaults until an admin clicks Save). All three
+# removal notices are pinned because the notify tray can send any of them before
+# settings are saved, so an empty body would be a broken email. Each lists
+# {{shifts}} (the tray groups per person, so a notice can cover several shifts).
+# MUST stay in sync with data/settings.js byte-for-byte.
 _NOTIFY_FALLBACKS = {
     "crewWithdrawn": {
         "subject": "Update: {{projectName}} — crew request withdrawn",
@@ -456,20 +478,41 @@ _NOTIFY_FALLBACKS = {
                  "shifts:\n\n{{shifts}}\n\nThank you for your time, and we'll keep "
                  "you in mind for future projects.\n\n{{signature}}"),
     },
+    "crewCancelled": {
+        "subject": "Schedule Update: {{projectName}} — position cancelled",
+        "body": ("Hi {{crewName}},\n\nWe're writing to let you know that your "
+                 "confirmed position on {{projectName}} has been cancelled. The "
+                 "following shifts are affected:\n\n{{shifts}}\n\nWe apologize for "
+                 "any inconvenience and hope to work with you on future "
+                 "projects.\n\n{{signature}}"),
+    },
+    "crewNotSelected": {
+        "subject": "Update: {{projectName}}",
+        "body": ("Hi {{crewName}},\n\nThank you for your interest and availability "
+                 "for {{projectName}}. Unfortunately, we've gone in a different "
+                 "direction and won't be needing your services for the following "
+                 "shifts:\n\n{{shifts}}\n\nWe appreciate your willingness to work "
+                 "with us and will absolutely keep you in mind for upcoming "
+                 "opportunities.\n\n{{signature}}"),
+    },
 }
 
 
-async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data) -> dict:
+async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data, project_name=None) -> dict:
     """Best-effort send of a crew notification email. NEVER raises (mirrors
     _send_crew_email): a delivery failure must not undo the producer's
-    confirm/release/cancel, which already happened client-side."""
+    confirm/release/cancel, which already happened client-side.
+
+    `project_name` overrides the display name — used when the notify tray flushes
+    a removal after its project was deleted (project is None by then, but the
+    snapshot carried the name)."""
     if not (contact and contact.email):
         return {"emailed": False, "error": "no email on file"}
     try:
         tmpl = ((settings_data.get("emailTemplates") or {}).get(template_key) or {})
         brand = _email_brand(settings_data)
         first = shifts[0] if shifts else {}
-        project_name = (project.name if project else "") or "Project"
+        project_name = project_name or (project.name if project else "") or "Project"
         repl = {
             "{{companyName}}": brand["company"],
             "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
@@ -820,13 +863,18 @@ async def crew_notify(
     to a crew member as the producer. Composed server-side from the named
     template; delivery is best-effort (returns emailStatus, never rolls back
     the producer's status change). Body: {contactId, projectId, template,
-    positionIds?}."""
+    positionIds?, shifts?, projectName?}. When `shifts` (a snapshot) is given it
+    is used verbatim and the project may be gone (the notify tray flushing a
+    removal whose day/project was deleted); otherwise shifts are resolved live
+    from positionIds and the project must exist."""
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be a JSON object")
     contact_id = body.get("contactId")
     project_id = body.get("projectId")
     template = body.get("template")
     position_ids = body.get("positionIds") or []
+    explicit_shifts = body.get("shifts")
+    project_name_override = body.get("projectName")
     if not isinstance(contact_id, int) or isinstance(contact_id, bool):
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "required integer"})
     if not isinstance(project_id, int) or isinstance(project_id, bool):
@@ -835,13 +883,19 @@ async def crew_notify(
         raise HTTPException(status_code=400, detail={"field": "template", "reason": f"must be one of {sorted(_CREW_NOTIFY_TEMPLATES)}"})
 
     project = await _load_project(db, project_id)
-    if project is None:
+    # A snapshot send tolerates a deleted project; a live (positionIds) send
+    # still needs it to resolve the shifts.
+    if project is None and explicit_shifts is None:
         raise HTTPException(status_code=404, detail="project not found")
     contact = (await db.execute(select(models.Contact).where(models.Contact.id == contact_id))).scalar_one_or_none()
     if contact is None:
         raise HTTPException(status_code=404, detail="crew contact not found")
-    services = (await db.execute(select(models.Service))).scalars().all()
-    shifts = _crew_shifts(project, position_ids, {s.id: s for s in services})
+    if explicit_shifts is not None:
+        shifts = _coerce_shifts(explicit_shifts)
+    else:
+        services = (await db.execute(select(models.Service))).scalars().all()
+        shifts = _crew_shifts(project, position_ids, {s.id: s for s in services})
     settings_data = await load_settings(db)
-    email_status = await _send_crew_notify(db, user, contact, project, shifts, template, settings_data)
+    project_name = project_name_override if isinstance(project_name_override, str) and project_name_override.strip() else None
+    email_status = await _send_crew_notify(db, user, contact, project, shifts, template, settings_data, project_name=project_name)
     return {"emailStatus": email_status}

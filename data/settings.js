@@ -149,14 +149,21 @@ window.LTP_DATA_SETTINGS = {
     crewCancelled: {
       label: "Position Cancellation",
       cc: "",
-      subject: "Schedule Update: {{projectName}} — {{date}}",
-      body: "Hi {{crewName}},\n\nWe're writing to let you know that your position on the following has been cancelled:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\n\nWe apologize for any inconvenience and hope to work with you on future projects.\n\n{{signature}}"
+      // Sent when a CONFIRMED booking is cancelled. Project-level + {{shifts}} so
+      // one notice can cover several cancelled shifts (the notify tray groups per
+      // person). The backend fallback in routes/crew.py::_NOTIFY_FALLBACKS must
+      // match this body byte-for-byte.
+      subject: "Schedule Update: {{projectName}} — position cancelled",
+      body: "Hi {{crewName}},\n\nWe're writing to let you know that your confirmed position on {{projectName}} has been cancelled. The following shifts are affected:\n\n{{shifts}}\n\nWe apologize for any inconvenience and hope to work with you on future projects.\n\n{{signature}}"
     },
     crewNotSelected: {
       label: "Not Selected for Position",
       cc: "",
-      subject: "Update: {{projectName}} — {{date}}",
-      body: "Hi {{crewName}},\n\nThank you for your interest and availability for {{projectName}} on {{date}}.\n\nUnfortunately, we've gone in a different direction for the {{role}} position and won't be needing your services for this particular project.\n\nWe appreciate your willingness to work with us and will absolutely keep you in mind for upcoming opportunities.\n\n{{signature}}"
+      // Sent when an ACCEPTED crew member is released. Project-level + {{shifts}}
+      // (the notify tray groups per person). The backend fallback in
+      // routes/crew.py::_NOTIFY_FALLBACKS must match this body byte-for-byte.
+      subject: "Update: {{projectName}}",
+      body: "Hi {{crewName}},\n\nThank you for your interest and availability for {{projectName}}. Unfortunately, we've gone in a different direction and won't be needing your services for the following shifts:\n\n{{shifts}}\n\nWe appreciate your willingness to work with us and will absolutely keep you in mind for upcoming opportunities.\n\n{{signature}}"
     },
     crewWithdrawn: {
       label: "Request Withdrawn",
@@ -188,7 +195,7 @@ window.LTP_TEMPLATE_VARIABLES = {
   paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],
   crewRequest:     ["companyName", "crewName", "projectName", "header", "shifts", "signature"],
   crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
-  crewCancelled:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
-  crewNotSelected: ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
+  crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
+  crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
 };

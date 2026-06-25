@@ -292,14 +292,11 @@
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
-    // Best-effort informational crew email (confirmed / cancelled / not-selected).
-    // The status change already happened locally; surface only email failures so
-    // the producer knows to reconnect Gmail / follow up manually.
+    // Immediate informational crew email — only the POSITIVE confirmation
+    // (crewConfirmed) still sends inline; removals are parked in the tray
+    // (parkRemoval) instead. Surfaces only failures so the producer can follow up.
     function crewNotify(contactId, projectId, template, positionIds) {
-      fetch("/api/crew-requests/notify", {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contactId: contactId, projectId: projectId, template: template, positionIds: positionIds || [] }),
-      }).then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+      window.LTP_crewNotify(contactId, projectId, template, { positionIds: positionIds || [] })
         .then(function(res) {
           var es = (res.ok && res.body.emailStatus) || {};
           if (!es.emailed) {
@@ -309,8 +306,21 @@
               window.LTP_toast("Notification email failed", { message: crewLabel(contactId) + ": " + (es.error || "email not sent"), variant: "error" });
             }
           }
-        })
-        .catch(function() {});
+        });
+    }
+
+    // Park a crew-removal notice (typed by the shift's prior status) into the
+    // notify tray, snapshotting the shifts so the email still renders after the
+    // positions are reopened/removed. The tray sends or declines — nothing emails
+    // inline.
+    function parkRemoval(crewId, projectId, template, positionIds) {
+      var proj = (projects || []).find(function(p) { return p.id === projectId; });
+      var cm = contacts.find(function(c) { return c.id === crewId; });
+      window.LTP_outbox.add({
+        crewId: crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew",
+        projectId: projectId, projectName: proj ? proj.name : "", template: template,
+        shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, positionIds, services) : [],
+      });
     }
 
     // The pending crew request that put this position into "requested" (matched
@@ -344,8 +354,7 @@
             return;
           }
           flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
-          var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
-          window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: proj ? proj.name : "", positionIds: req.positionIds });
+          parkRemoval(req.contactId, req.projectId, "crewWithdrawn", req.positionIds);
           window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
           if (reloadCrewRequests) reloadCrewRequests();
         })
@@ -368,20 +377,19 @@
         // shifts reopen — not just the one the producer clicked.
         var req = pos.status === "requested" ? findPendingRequest(pos) : null;
         var reqShifts = req ? (req.positionIds || []).length : 0;
+        var tray = " They're added to the notify tray (bottom-left), where you can email them — or decline — when ready.";
         var requestedMsg = req
           ? "This withdraws " + crewName + "'s entire request for " + (pos.projectName || "this project") +
-            (reqShifts > 1 ? " (" + reqShifts + " shifts)" : "") +
-            ". Those shifts reopen and the crew link stops working. They're added to the notify tray, where you can email them (or decline) when ready."
-          : "This will withdraw the request sent to " + crewName + " for " + context +
-            ". They're added to the notify tray, where you can email them (or decline) when ready.";
+            (reqShifts > 1 ? " (" + reqShifts + " shifts)" : "") + ". Those shifts reopen and the crew link stops working." + tray
+          : "This will withdraw the request sent to " + crewName + " for " + context + "." + tray;
         var messages = {
-          "confirmed": "This will cancel " + crewName + "'s confirmed position on " + context + ". They should be notified of the cancellation.",
-          "accepted": crewName + " already accepted this position on " + context + ". This will release their assignment.",
+          "confirmed": "This cancels " + crewName + "'s confirmed position on " + context + "." + tray,
+          "accepted": crewName + " already accepted this position on " + context + ". This releases their assignment." + tray,
           "requested": requestedMsg,
         };
         var actions = {
-          "confirmed": "Cancel & Notify",
-          "accepted": "Release & Notify",
+          "confirmed": "Cancel Position",
+          "accepted": "Release",
           "requested": "Withdraw Request",
         };
         setStatusDlg({
@@ -398,31 +406,36 @@
       updatePosition(setProjects, pos.projectId, pos.schedItemId, pos.posId, { status: newStatus });
     }
 
-    function executeStatusChange(notify) {
+    function executeStatusChange() {
       if (!statusDlg) return;
       var pos = statusDlg.pos;
       var newStatus = statusDlg.newStatus;
       var clearCrew = statusDlg.clearCrew;
       // Withdrawing a tracked pending request goes through the server so the
       // request record is actually withdrawn (crew link → withdrawn screen) and
-      // its shifts reopen; the crewWithdrawn email is parked in the notify tray.
-      // That call handles everything, so skip the local cascade below.
+      // its shifts reopen; the notice is parked in the tray. That call handles
+      // everything, so skip the cascade/park below.
       if (pos.status === "requested" && statusDlg.req) {
         withdrawRequestRecord(statusDlg.req);
         setStatusDlg(null);
         return;
       }
-      // pos.status is still the PRE-change status here. Requested with no tracked
-      // request (drift) reopens locally and parks a withdrawal notice in the tray
-      // — never emails inline. Accepted/confirmed downgrades email immediately
-      // (crewNotSelected / crewCancelled) when the producer chose to notify.
-      if (pos.status === "requested") {
-        window.LTP_outbox.add({ crewId: pos.crewId, crewName: crewLabel(pos.crewId), projectId: pos.projectId, projectName: pos.projectName || "", positionIds: [pos.posId] });
-        window.LTP_toast("Request withdrawn", { message: crewLabel(pos.crewId) + " queued in the notify tray.", variant: "success" });
-      } else if (notify) {
-        var ntmpl = pos.status === "accepted" ? "crewNotSelected" : pos.status === "confirmed" ? "crewCancelled" : null;
-        if (ntmpl) crewNotify(pos.crewId, pos.projectId, ntmpl, [pos.posId]);
-      }
+      // Park a typed notice (requested→withdrawn, accepted→not-selected,
+      // confirmed→cancelled) for EVERY shift this crew member holds on this date
+      // — the same set the cascade below changes. Snapshot from the live schedule
+      // first (before the cascade mutates it). Nothing emails inline.
+      var template = window.LTP_removalTemplate(pos.status);
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var affectedIds = [];
+      if (proj) (proj.schedule || []).forEach(function(s) {
+        if (s.date !== pos.date) return;
+        (s.positions || []).forEach(function(ps) {
+          if (ps.crewId === pos.crewId && (ps.status === "requested" || ps.status === "accepted" || ps.status === "confirmed")) affectedIds.push(ps.id);
+        });
+      });
+      parkRemoval(pos.crewId, pos.projectId, template, affectedIds);
+      var doneLabel = pos.status === "confirmed" ? "Position cancelled" : pos.status === "accepted" ? "Crew released" : "Request withdrawn";
+      window.LTP_toast(doneLabel, { message: (pos.crewName || "Crew") + " queued in the notify tray.", variant: "success" });
       // Cascade to ALL positions for this crew on this date in this project
       setProjects(function(prev) {
         return prev.map(function(p) {
@@ -907,58 +920,15 @@
           h(window.Btn, { variant: "danger", onClick: conflictWarn.onConfirm }, "Assign Anyway"))
       ),
 
-      // Status change confirmation dialog
-      statusDlg && h(window.LTPModal, { title: statusDlg.title, onClose: function() { setStatusDlg(null); }, wide: statusDlg.pos.status === "accepted" || statusDlg.pos.status === "confirmed" },
-        function() {
-          var pos = statusDlg.pos;
-          var isRelease = pos.status === "accepted";
-          var isCancel = pos.status === "confirmed";
-          var isWithdraw = pos.status === "requested";
-          // showEmail gates the client-rendered preview (crewNotSelected /
-          // crewCancelled use simple vars and email immediately). Withdraw has no
-          // inline send/skip — confirming parks a crewWithdrawn notice in the
-          // notify tray (sent on demand), so it's a single confirm here.
-          var showEmail = isRelease || isCancel;
-          var canNotify = showEmail;
-          var emailPreview = "";
-          var emailSubject = "";
-          var emailTo = "";
-          if (showEmail) {
-            var s = settings || {};
-            var tmplKey = isRelease ? "crewNotSelected" : "crewCancelled";
-            var tmpl = (s.emailTemplates || {})[tmplKey] || { subject: "", body: "" };
-            var cm = contacts.find(function(c) { return c.id === pos.crewId; });
-            var proj = (projects || []).find(function(pr) { return pr.id === pos.projectId; });
-            var vars = { companyName: s.companyName || "LTP", crewName: cm ? cm.firstName : "there",
-              projectName: pos.projectName || "", role: pos.svcName || pos.role || "",
-              date: pos.date ? fmt(pos.date) : "", callTime: pos.dayCall ? ft(pos.dayCall) : "",
-              wrapTime: pos.dayWrap ? ft(pos.dayWrap) : "", location: proj ? proj.venue || "" : "",
-              signature: s.emailSignature || "" };
-            emailSubject = window.LTP_resolveTemplate(tmpl.subject, vars);
-            emailPreview = window.LTP_resolveTemplate(tmpl.body, vars);
-            emailTo = cm ? cm.email || "(no email)" : "?";
-          }
-          return h("div", null,
-            h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: showEmail ? 12 : 16, lineHeight: 1.5 } }, statusDlg.message),
-            showEmail && h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", marginBottom: 16, overflow: "hidden" } },
-              h("div", { style: { padding: "8px 12px", borderBottom: "1px solid " + B.border, background: B.surface } },
-                h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } },
-                  isRelease ? "Not Selected Email Preview" : "Cancellation Email Preview"),
-                h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 3 } },
-                  h("span", { style: { fontSize: "10px", color: B.textMut, width: 30 } }, "To:"),
-                  h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, emailTo)),
-                h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                  h("span", { style: { fontSize: "10px", color: B.textMut, width: 30 } }, "Subj:"),
-                  h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, emailSubject))),
-              h("div", { style: { padding: "10px 12px", maxHeight: 180, overflowY: "auto" } },
-                h("pre", { style: { fontSize: "10px", color: B.textSec, lineHeight: 1.5, fontFamily: "inherit", margin: 0, whiteSpace: "pre-wrap" } }, emailPreview))
-            ),
-            h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
-              h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
-              canNotify && h(window.Btn, { variant: "ghost", onClick: function() { executeStatusChange(false); } }, isCancel ? "Cancel Without Email" : "Release Quietly"),
-              h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(canNotify); } }, statusDlg.actionLabel))
-          );
-        }()
+      // Status change confirmation dialog. The notification itself is decided in
+      // the notify tray (send / decline), so this is a single confirm — no inline
+      // email preview or send/skip split.
+      statusDlg && h(window.LTPModal, { title: statusDlg.title, onClose: function() { setStatusDlg(null); } },
+        h("div", null,
+          h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 16, lineHeight: 1.5 } }, statusDlg.message),
+          h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
+            h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(); } }, statusDlg.actionLabel)))
       ),
 
       // Send Requests review panel with email preview
@@ -1183,7 +1153,7 @@
   // crew member left, plus Resend / Withdraw on still-pending ones. Crew
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
-  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects }) {
+  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services }) {
     // Resend / withdraw confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // request awaiting a withdraw decision
 
@@ -1212,8 +1182,10 @@
             reloadCrewRequests();
             return;
           }
+          var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
           flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
-          window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: projLabel(req.projectId), positionIds: req.positionIds });
+          window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: projLabel(req.projectId),
+            template: "crewWithdrawn", shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [] });
           window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
           reloadCrewRequests();
         })
@@ -1334,7 +1306,7 @@
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
-      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects }),
+      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts })
     );

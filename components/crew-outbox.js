@@ -1,47 +1,69 @@
-// Crew withdrawal outbox — a pinned, can't-be-missed notification tray.
+// Crew notification tray — a pinned, can't-be-missed outbox for crew-removal
+// emails.
 //
-// Withdrawals made OUTSIDE the schedule editor (Crew Requests tab, Assignments)
-// have no Save to batch against. Emailing the crew the instant each request is
-// withdrawn spams anyone pulled from several shifts/requests. Instead the
-// withdrawal itself happens immediately (the crew link dies, the request is
-// withdrawn) and the *email* is parked here, coalesced per crew member. The
-// producer sends them all (one combined crewWithdrawn email each) when ready,
-// or declines to inform. The tray is a pinned card that persists — and survives
-// reload via localStorage — so a pending notice can't be forgotten.
+// Every path that removes a crew member from shifts (schedule editor save,
+// project delete, Crew Requests tab, Assignments) does the removal immediately
+// but parks the *email* here instead of sending inline. Notices are grouped per
+// person + project + TYPE, where type follows the shift's status when removed:
+//   crewWithdrawn   — a pending request was withdrawn
+//   crewNotSelected — an accepted crew member was released
+//   crewCancelled   — a confirmed booking was cancelled
+// Shifts are snapshotted at removal time, so a notice still renders after its
+// day/project is deleted. The producer sends them on demand — one combined
+// email per group — or declines. The tray persists across reload (localStorage)
+// so a pending notice can't be forgotten.
 //
-// Store is a window global (window.LTP_outbox) so labor.js can enqueue from deep
-// in its tree while the card mounts once at the app root — same split as the
-// LTP_toast event surface. Changes broadcast on the "ltp-outbox-change" event.
+// Store is a window global (window.LTP_outbox) so any module can enqueue while
+// the card mounts once at the app root — same split as the LTP_toast surface.
+// Changes broadcast on the "ltp-outbox-change" event.
 (function() {
   var h = React.createElement;
   var LS_KEY = "ltp_crew_outbox";
 
+  // template → short human label for the tray row + summary toast.
+  var TYPE_LABEL = { crewWithdrawn: "withdrawn", crewNotSelected: "released", crewCancelled: "cancelled" };
+
   function loadEntries() {
-    try { var raw = window.localStorage.getItem(LS_KEY); return raw ? JSON.parse(raw) : {}; }
-    catch (e) { return {}; }
+    try {
+      var raw = window.localStorage.getItem(LS_KEY);
+      var obj = raw ? JSON.parse(raw) : {};
+      // Drop anything not in the current shape (e.g. a pre-type-grouping entry
+      // left in storage) — it can't be sent and would wedge the tray.
+      var clean = {};
+      Object.keys(obj).forEach(function(k) {
+        var e = obj[k];
+        if (e && e.template && Array.isArray(e.shifts)) clean[k] = e;
+      });
+      return clean;
+    } catch (e) { return {}; }
   }
   function persist(entries) {
     try { window.localStorage.setItem(LS_KEY, JSON.stringify(entries)); } catch (e) { /* private mode / quota */ }
   }
 
-  // key "crewId:projectId" → { crewId, crewName, projectId, projectName, positionIds: [] }
+  // key "crewId:projectId:template" → { crewId, crewName, projectId, projectName, template, shifts: [snapshot] }
   var entries = loadEntries();
 
-  function keyFor(crewId, projectId) { return String(crewId) + ":" + String(projectId); }
+  function keyFor(crewId, projectId, template) { return String(crewId) + ":" + String(projectId) + ":" + String(template); }
   function emit() {
     persist(entries);
     try { window.dispatchEvent(new CustomEvent("ltp-outbox-change")); } catch (e) { /* unsupported */ }
   }
 
   window.LTP_outbox = {
-    // Park a withdrawal for later notification. positionIds merge into any
-    // existing notice for the same person+project, so one combined email covers
-    // every shift they were pulled from.
+    // Park a removal notice. `shifts` are snapshots (LTP_shiftSnapshots shape).
+    // Merges into any existing notice for the same person+project+type, deduped
+    // by positionId, so one combined email covers every shift of that type.
     add: function(entry) {
-      if (!entry || entry.crewId == null || entry.projectId == null) return;
-      var k = keyFor(entry.crewId, entry.projectId);
-      var cur = entries[k] || { crewId: entry.crewId, crewName: entry.crewName || "Crew", projectId: entry.projectId, projectName: entry.projectName || "", positionIds: [] };
-      (entry.positionIds || []).forEach(function(pid) { if (cur.positionIds.indexOf(pid) === -1) cur.positionIds.push(pid); });
+      if (!entry || entry.crewId == null || entry.projectId == null || !entry.template) return;
+      var k = keyFor(entry.crewId, entry.projectId, entry.template);
+      var cur = entries[k] || { crewId: entry.crewId, crewName: entry.crewName || "Crew", projectId: entry.projectId, projectName: entry.projectName || "", template: entry.template, shifts: [] };
+      var seen = {}; cur.shifts.forEach(function(s) { if (s.positionId != null) seen[s.positionId] = true; });
+      (entry.shifts || []).forEach(function(s) {
+        if (s.positionId != null && seen[s.positionId]) return;
+        if (s.positionId != null) seen[s.positionId] = true;
+        cur.shifts.push(s);
+      });
       if (entry.crewName) cur.crewName = entry.crewName;
       if (entry.projectName) cur.projectName = entry.projectName;
       entries[k] = cur;
@@ -67,21 +89,21 @@
 
     var items = window.LTP_outbox.list();
     if (items.length === 0) return null;
-    var totalShifts = items.reduce(function(n, it) { return n + (it.positionIds || []).length; }, 0);
+    var totalShifts = items.reduce(function(n, it) { return n + (it.shifts || []).length; }, 0);
 
     function sendAll() {
       if (sending || !window.LTP_crewNotify) return;
       setSending(true);
       Promise.all(items.map(function(it) {
-        return window.LTP_crewNotify(it.crewId, it.projectId, "crewWithdrawn", it.positionIds)
+        return window.LTP_crewNotify(it.crewId, it.projectId, it.template, { shifts: it.shifts, projectName: it.projectName })
           .then(function(res) { return { it: it, es: (res.ok && res.body && res.body.emailStatus) || {} }; });
       })).then(function(results) {
         var emailed = results.filter(function(r) { return r.es.emailed; }).length;
         var reconnect = results.some(function(r) { return r.es.needsReconnect; });
         // Clear the ones that sent; leave failures in the tray to retry.
-        results.forEach(function(r) { if (r.es.emailed) window.LTP_outbox.removeKey(keyFor(r.it.crewId, r.it.projectId)); });
+        results.forEach(function(r) { if (r.es.emailed) window.LTP_outbox.removeKey(keyFor(r.it.crewId, r.it.projectId, r.it.template)); });
         setSending(false);
-        if (emailed === results.length) window.LTP_toast("Crew notified", { message: emailed + " crew member" + (emailed !== 1 ? "s" : "") + " emailed about their withdrawn shifts.", variant: "success" });
+        if (emailed === results.length) window.LTP_toast("Crew notified", { message: emailed + " notice" + (emailed !== 1 ? "s" : "") + " emailed.", variant: "success" });
         else if (reconnect) window.LTP_toast("Some not notified", { message: "Connect Google in Settings, then Notify again from the tray.", variant: "warn" });
         else window.LTP_toast(emailed ? "Some crew notified" : "Notification failed", { message: emailed + " of " + results.length + " emailed; the rest stay in the tray to retry.", variant: emailed ? "warn" : "error" });
       }, function() {
@@ -90,10 +112,10 @@
       });
     }
 
-    function declineOne(it) { window.LTP_outbox.removeKey(keyFor(it.crewId, it.projectId)); }
+    function declineOne(it) { window.LTP_outbox.removeKey(keyFor(it.crewId, it.projectId, it.template)); }
     function declineAll() {
       window.LTP_outbox.clear();
-      window.LTP_toast("Withdrawal notices dismissed", { message: "Crew were not emailed.", variant: "info" });
+      window.LTP_toast("Notices dismissed", { message: "Crew were not emailed.", variant: "info" });
     }
 
     var accent = B.warn || "#d29922";
@@ -105,13 +127,15 @@
         h("div", { style: { flex: 1, minWidth: 0 } },
           h("div", { style: { fontSize: "12px", fontWeight: 700 } }, "Crew to notify (" + items.length + ")"),
           h("div", { style: { fontSize: "10px", color: B.textMut || "#888", marginTop: 1 } },
-            "Withdrawn from " + totalShifts + " shift" + (totalShifts !== 1 ? "s" : "") + " — not emailed yet"))),
+            totalShifts + " shift" + (totalShifts !== 1 ? "s" : "") + " across " + items.length + " notice" + (items.length !== 1 ? "s" : "") + " — not emailed yet"))),
       h("div", { style: { maxHeight: 200, overflowY: "auto", padding: "6px 8px", display: "flex", flexDirection: "column", gap: 4 } },
         items.map(function(it) {
-          var n = (it.positionIds || []).length;
-          return h("div", { key: keyFor(it.crewId, it.projectId), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#000", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
+          var n = (it.shifts || []).length;
+          var type = TYPE_LABEL[it.template] || "removed";
+          return h("div", { key: keyFor(it.crewId, it.projectId, it.template), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#000", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
             h("div", { style: { flex: 1, minWidth: 0 } },
-              h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text || "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, it.crewName),
+              h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text || "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                it.crewName, h("span", { style: { color: accent, fontWeight: 600 } }, "  ·  " + type)),
               h("div", { style: { fontSize: "9px", color: B.textMut || "#888" } }, (it.projectName || "Project") + " · " + n + " shift" + (n !== 1 ? "s" : ""))),
             h("button", { onClick: function() { declineOne(it); }, title: "Don't notify", "aria-label": "Don't notify " + it.crewName,
               style: { background: "transparent", border: "none", color: B.textMut || "#888", fontSize: "13px", lineHeight: 1, cursor: "pointer", padding: "2px 4px", fontFamily: "inherit", flexShrink: 0 } }, "✕"));

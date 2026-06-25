@@ -84,7 +84,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       var projInvoices = (invoices || []).filter(function(i) { return i.projectId === dc.id; });
       var proj = projects.find(function(p) { return p.id === dc.id; });
       var crewPositions = [];
-      var crewById = {};
+      var buckets = {};  // "crewId:template" — one notify-tray notice per person + type
       if (proj && proj.schedule) {
         proj.schedule.forEach(function(s) {
           (s.positions || []).forEach(function(p) {
@@ -92,20 +92,27 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
               var cm = contacts.find(function(c) { return c.id === p.crewId; });
               var nm = cm ? cm.firstName + " " + cm.lastName : "Unknown";
               crewPositions.push({ crewName: nm, status: p.status });
-              // Group by crew member so we can email each one ONE crewWithdrawn
-              // notice listing all their pulled shifts (positionIds → {{shifts}}).
-              if (!crewById[p.crewId]) crewById[p.crewId] = { crewId: p.crewId, crewName: nm, positionIds: [] };
-              crewById[p.crewId].positionIds.push(p.id);
+              // Confirmed crew get a cancellation, accepted a not-selected,
+              // requested a withdrawal — not all "withdrawn".
+              var template = window.LTP_removalTemplate(p.status);
+              var k = p.crewId + ":" + template;
+              if (!buckets[k]) buckets[k] = { crewId: p.crewId, crewName: nm, template: template, positionIds: [] };
+              buckets[k].positionIds.push(p.id);
             }
           });
         });
       }
-      var affectedCrew = Object.keys(crewById).map(function(k) { return crewById[k]; });
+      // Snapshot the shifts now (before the project is deleted) so each notice
+      // still renders its shift list when the tray sends it.
+      var affectedGroups = Object.keys(buckets).map(function(k) {
+        var g = buckets[k];
+        return { crewId: g.crewId, crewName: g.crewName, template: g.template, shifts: window.LTP_shiftSnapshots(proj.schedule, g.positionIds, services) };
+      });
 
       if (projQuotes.length > 0 || projInvoices.length > 0 || crewPositions.length > 0) {
         setDeleteConfirm(null);
         setDeleteWizard({ projectId: dc.id, name: dc.name, crewReleased: false, quotesHandled: false, invoicesHandled: false,
-          crewPositions: crewPositions, affectedCrew: affectedCrew, projQuotes: projQuotes, projInvoices: projInvoices });
+          crewPositions: crewPositions, affectedGroups: affectedGroups, projQuotes: projQuotes, projInvoices: projInvoices });
         return;
       }
       setProjects(function(p) { return p.filter(function(x) { return x.id !== dc.id; }); });
@@ -114,12 +121,17 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     setDeleteConfirm(null);
   }
 
-  function wizardReleaseCrew(notify) {
+  function wizardReleaseCrew() {
     if (!deleteWizard) return;
-    // Email each affected crew member BEFORE the release mutates the schedule —
-    // the notify endpoint renders {{shifts}} from the project's still-live
-    // server schedule, so the positions must still exist when this fires.
-    if (notify) window.LTP_notifyWithdrawAll(deleteWizard.affectedCrew, deleteWizard.projectId);
+    // Park a removal notice per person + type into the notify tray (send or
+    // decline there). Snapshots were captured at delete time, so they survive
+    // the project being deleted.
+    (deleteWizard.affectedGroups || []).forEach(function(g) {
+      window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: deleteWizard.projectId, projectName: deleteWizard.name, template: g.template, shifts: g.shifts });
+    });
+    if ((deleteWizard.affectedGroups || []).length) {
+      window.LTP_toast("Added to notify tray", { message: "Crew queued — send or decline from the tray (bottom-left).", variant: "info" });
+    }
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== deleteWizard.projectId) return p;
@@ -294,9 +306,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
                 w.crewReleased
                   ? w.crewPositions.length + " crew member" + (w.crewPositions.length > 1 ? "s" : "") + " released from positions"
                   : w.crewPositions.map(function(c) { return c.crewName + " (" + c.status + ")"; }).slice(0, 4).join(", ") + (w.crewPositions.length > 4 ? "..." : ""))),
-            w.crewReleased ? checkmark : h("div", { style: { display: "flex", gap: 6 } },
-              h(window.Btn, { small: true, variant: "danger", onClick: function() { wizardReleaseCrew(true); } }, "Release & Notify"),
-              h(window.Btn, { small: true, variant: "ghost", onClick: function() { wizardReleaseCrew(false); } }, "Release Quietly"))
+            w.crewReleased ? checkmark : h(window.Btn, { small: true, variant: "danger", onClick: function() { wizardReleaseCrew(); } }, "Release Crew")
           ),
 
           // Step 2: Quotes
