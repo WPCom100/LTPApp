@@ -11,6 +11,12 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; }
+    /* The SPA shell fills #root. Use the DYNAMIC viewport height (dvh) so on
+       iOS Safari the app matches the actually-visible area — `100vh` there is
+       the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
+       quote builder's Totals) below the visible viewport. `100vh` first as a
+       fallback for engines without dvh support. */
+    #root { height: 100vh; height: 100dvh; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
