@@ -71,14 +71,18 @@
   // currently at `fromStatus`. Mirrors what the server already did (send/withdraw
   // mutate positions server-side); keeps the UI in sync without a project refetch.
   // Same-result writes converge with the debounced PUT.
-  function flipPositionsLocal(setProjects, projectId, posIds, fromStatus, toStatus) {
+  function flipPositionsLocal(setProjects, projectId, posIds, fromStatus, toStatus, clearCrew) {
     var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
     setProjects(function(prev) {
       return prev.map(function(proj) {
         if (projectId != null && proj.id !== projectId) return proj;
         return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            if (idSet[pos.id] && pos.status === fromStatus) return Object.assign({}, pos, { status: toStatus });
+            if (idSet[pos.id] && pos.status === fromStatus) {
+              var patch = { status: toStatus };
+              if (clearCrew) patch.crewId = null;
+              return Object.assign({}, pos, patch);
+            }
             return pos;
           }) });
         }) });
@@ -1163,9 +1167,12 @@
             return;
           }
           var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
-          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open");
+          // Snapshot the shifts BEFORE flipping (it reads the live positions),
+          // then reopen them AND clear the crew so the slot returns to empty.
+          var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [];
+          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open", true);
           window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: projLabel(req.projectId),
-            template: "crewWithdrawn", shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [] });
+            template: "crewWithdrawn", shifts: snapshotShifts });
           window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });
           reloadCrewRequests();
         })

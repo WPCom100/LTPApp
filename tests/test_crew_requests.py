@@ -210,6 +210,14 @@ def _pos_status(project_json, pos_id):
     return None
 
 
+def _pos_crew(project_json, pos_id):
+    for sh in project_json.get("schedule", []):
+        for p in sh.get("positions", []):
+            if p.get("id") == pos_id:
+                return p.get("crewId")
+    return None
+
+
 def _send(client, tok, pid, cid, position_ids=None):
     body = {"projectId": pid, "contactId": cid}
     if position_ids is not None:
@@ -327,11 +335,15 @@ def test_decline_sets_positions_declined():
 def test_withdraw_pending_reopens_positions():
     client, tok = _setup()
     req = _send(client, tok, P_WITHDRAW, C1).json()
-    assert _pos_status(_project(client, tok, P_WITHDRAW), "p5a") == "requested"
+    proj = _project(client, tok, P_WITHDRAW)
+    assert _pos_status(proj, "p5a") == "requested"
+    assert _pos_crew(proj, "p5a") == C1  # assigned before withdraw
 
     r = client.post(f"/api/crew-requests/{req['id']}/withdraw", cookies={"ltp_session": tok})
     assert r.status_code == 200 and r.json()["status"] == "withdrawn", r.text
-    assert _pos_status(_project(client, tok, P_WITHDRAW), "p5a") == "open"
+    proj = _project(client, tok, P_WITHDRAW)
+    assert _pos_status(proj, "p5a") == "open"
+    assert _pos_crew(proj, "p5a") is None  # withdraw unassigns the crew member too
 
 
 def test_withdraw_after_answer_is_blocked():

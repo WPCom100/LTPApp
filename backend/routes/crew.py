@@ -81,11 +81,14 @@ async def _load_project(db: AsyncSession, project_id):
     return r.scalar_one_or_none()
 
 
-def _update_positions(project, position_ids, *, to_status, require_from=None) -> int:
+def _update_positions(project, position_ids, *, to_status, require_from=None, clear_crew=False) -> int:
     """Set status=to_status on every position in project.schedule whose id is
     in position_ids — optionally only when its current status is in
-    `require_from`. Mutates the JSON in place and flag_modifies the column so
-    SQLAlchemy persists it. Returns the number of positions changed."""
+    `require_from`. With `clear_crew`, also unassign the crew member (crewId=None)
+    — used on withdraw so the reopened slot returns to an empty selection rather
+    than still showing the withdrawn person. Mutates the JSON in place and
+    flag_modifies the column so SQLAlchemy persists it. Returns the number of
+    positions changed."""
     ids = set(position_ids or [])
     if not ids:
         return 0
@@ -98,6 +101,8 @@ def _update_positions(project, position_ids, *, to_status, require_from=None) ->
             if require_from is not None and pos.get("status") not in require_from:
                 continue
             pos["status"] = to_status
+            if clear_crew:
+                pos["crewId"] = None
             changed += 1
     if changed:
         flag_modified(project, "schedule")
@@ -802,7 +807,9 @@ async def withdraw_crew_request(
         )
     project = await _load_project(db, req.project_id)
     if project is not None:
-        _update_positions(project, req.position_ids, to_status="open", require_from={"requested"})
+        # Reopen the shifts AND unassign the crew member — a withdrawn ask returns
+        # the slot to an empty selection, not "still penciled in".
+        _update_positions(project, req.position_ids, to_status="open", require_from={"requested"}, clear_crew=True)
     req.status = "withdrawn"
     await db.flush()
     await db.refresh(req)
