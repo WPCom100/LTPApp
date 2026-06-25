@@ -209,7 +209,7 @@ async def test_reconcile_all_backfills_orphans():
     # Healthy request (p1 present) + an orphan whose project_id is null.
     proj_id, healthy_id = await _seed_project_and_request(["p1"], ["p1"])
     async with async_session() as db:
-        orphan = models.CrewRequest(token="tok-orphan-xyz123", project_id=None,
+        orphan = models.CrewRequest(token="tok-orphan-xyz123", project_id=None,  # gitleaks:allow - hand-typed fake fixture token, not a real secret
                                     position_ids=["gone1", "gone2"], status="accepted")
         db.add(orphan)
         await db.flush()
