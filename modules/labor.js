@@ -355,7 +355,11 @@
     // Backward status moves that need confirmation
     var SEVERITY = { confirmed: 4, accepted: 3, requested: 2, open: 1, declined: 0 };
 
-    function handleStatusChange(pos, newStatus) {
+    // posIds (optional) scopes the change to a specific booking's positions. A
+    // conflicting (double-booked) shift is its own booking, so resolving it must
+    // touch ONLY its position — not blanket-match every shift this crew holds
+    // that day, which would clear the conflicting shift you meant to keep.
+    function handleStatusChange(pos, newStatus, posIds) {
       var oldSev = SEVERITY[pos.status] || 0;
       var newSev = SEVERITY[newStatus] || 0;
       var crewName = pos.crewName || "this crew member";
@@ -385,7 +389,7 @@
           "requested": "Withdraw Request",
         };
         setStatusDlg({
-          pos: pos, newStatus: newStatus, req: req,
+          pos: pos, newStatus: newStatus, req: req, posIds: posIds,
           title: pos.status === "confirmed" ? "Cancel Confirmed Position" : pos.status === "accepted" ? "Release Accepted Crew" : "Withdraw Request",
           message: messages[pos.status] || "Change status from " + pos.status + " to " + newStatus + "?",
           actionLabel: actions[pos.status] || "Confirm",
@@ -403,6 +407,11 @@
       var pos = statusDlg.pos;
       var newStatus = statusDlg.newStatus;
       var clearCrew = statusDlg.clearCrew;
+      // Scope the change to this booking's positions when known (so a conflict
+      // resolution touches only its shift); fall back to every same-date shift
+      // for this crew (the legacy whole-day behaviour) when not.
+      var scopeIds = (statusDlg.posIds && statusDlg.posIds.length) ? statusDlg.posIds : null;
+      var affectIds = scopeIds ? scopeIds.reduce(function(m, id) { m[id] = true; return m; }, {}) : null;
       // Withdrawing a tracked pending request goes through the server so the
       // request record is actually withdrawn (crew link → withdrawn screen) and
       // its shifts reopen; the crewWithdrawn email is parked in the notify tray.
@@ -417,7 +426,7 @@
       // — never emails inline. Accepted/confirmed downgrades email immediately
       // (crewNotSelected / crewCancelled) when the producer chose to notify.
       if (pos.status === "requested") {
-        window.LTP_outbox.add({ crewId: pos.crewId, crewName: crewLabel(pos.crewId), projectId: pos.projectId, projectName: pos.projectName || "", positionIds: [pos.posId] });
+        window.LTP_outbox.add({ crewId: pos.crewId, crewName: crewLabel(pos.crewId), projectId: pos.projectId, projectName: pos.projectName || "", positionIds: scopeIds || [pos.posId] });
         window.LTP_toast("Request withdrawn", { message: crewLabel(pos.crewId) + " queued in the notify tray.", variant: "success" });
       } else if (notify) {
         var ntmpl = pos.status === "accepted" ? "crewNotSelected" : pos.status === "confirmed" ? "crewCancelled" : null;
@@ -431,7 +440,8 @@
           var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
             if (s.date !== pos.date) return s;
             return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              if (ps.crewId === pos.crewId) {
+              var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
+              if (hit) {
                 changeCount++;
                 var patch = { status: newStatus };
                 if (clearCrew) patch.crewId = null;
@@ -665,7 +675,7 @@
     }
 
     // Quick action: confirm a single position (cascades to all same crew+day)
-    function confirmPosition(pos) {
+    function confirmPosition(pos, posIds) {
       var cm = contacts.find(function(c) { return c.id === pos.crewId; });
       var s = settings || {};
       var tmpl = (s.emailTemplates || {}).crewConfirmed || { subject: "", body: "" };
@@ -676,7 +686,7 @@
         wrapTime: pos.dayWrap ? ft(pos.dayWrap) : "", location: proj ? proj.venue || "" : "",
         signature: s.emailSignature || "" };
       setConfirmDlg({
-        pos: pos,
+        pos: pos, posIds: posIds,
         crewName: cm ? cm.firstName + " " + cm.lastName : "?",
         emailTo: cm ? cm.email || "(no email)" : "?",
         emailSubject: window.LTP_resolveTemplate(tmpl.subject, vars),
@@ -687,17 +697,19 @@
     function executeConfirm(notify) {
       if (!confirmDlg) return;
       var p = confirmDlg.pos;
-      confirmDayBooking(p);
-      if (notify) crewNotify(p.crewId, p.projectId, "crewConfirmed", [p.posId]);
+      confirmDayBooking(p, confirmDlg.posIds);
+      if (notify) crewNotify(p.crewId, p.projectId, "crewConfirmed", confirmDlg.posIds || [p.posId]);
       setConfirmDlg(null);
     }
 
-    // Confirm all positions for a crew member on a day
-    function confirmDayBooking(pos) {
-      // Find all positions for this crew on this date in this project
+    // Confirm this booking's positions. posIds scopes it to one booking (so a
+    // conflicting shift isn't confirmed alongside the one you clicked); without
+    // it, confirm every same-date shift for this crew (legacy whole-day).
+    function confirmDayBooking(pos, posIds) {
       var targetDate = pos.date;
       var targetCrew = pos.crewId;
       var targetProject = pos.projectId;
+      var affectIds = (posIds && posIds.length) ? posIds.reduce(function(m, id) { m[id] = true; return m; }, {}) : null;
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== targetProject) return p;
@@ -705,7 +717,8 @@
           var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
             if (s.date !== targetDate) return s;
             return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              if (ps.crewId === targetCrew && (ps.status === "accepted" || ps.status === "requested" || ps.status === "open")) {
+              var hit = affectIds ? affectIds[ps.id] : (ps.crewId === targetCrew);
+              if (hit && (ps.status === "accepted" || ps.status === "requested" || ps.status === "open")) {
                 confirmedCount++;
                 return Object.assign({}, ps, { status: "confirmed" });
               }
@@ -725,8 +738,8 @@
     }
 
     // Quick action: release an accepted position (polite decline)
-    function releasePosition(pos) {
-      handleStatusChange(pos, "open");
+    function releasePosition(pos, posIds) {
+      handleStatusChange(pos, "open", posIds);
     }
 
     return h("div", null,
@@ -791,6 +804,10 @@
                     h("div", { style: { display: "flex", flexDirection: "column" } },
                       isg.bookings.map(function(booking, bi) {
                         var pos = booking.pos;
+                        // The positions this booking represents — status actions
+                        // act on exactly these (a conflicting shift is its own
+                        // booking, so it isn't swept up with the one you click).
+                        var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
                         var conflicts = (crewConflicts || {})[pos.posId];
                         var hasConflict = conflicts && conflicts.length > 0;
                         return h("div", { key: pos.posId + "-" + bi, style: { padding: "6px 10px", display: "flex", gap: 8, alignItems: "center", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
@@ -802,7 +819,7 @@
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
                           h("select", { value: pos.crewId || "", onChange: function(e) {
                             var cid = Number(e.target.value) || null;
-                            if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open"); return; }
+                            if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
                             // Check for conflicts before assigning
                             if (cid && pos.date) {
                               var otherBookings = [];
@@ -849,13 +866,13 @@
                           pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
                           pos.status === "requested" && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600, background: B.warn + "18", border: "1px solid " + B.warn + "33", borderRadius: "3px", padding: "2px 8px" } }, "Awaiting\u2026"),
                           pos.status === "accepted" && h("div", { style: { display: "flex", gap: 4 } },
-                            h("button", { onClick: function() { confirmPosition(pos); },
+                            h("button", { onClick: function() { confirmPosition(pos, bkPosIds); },
                               style: { background: B.info, border: "none", borderRadius: "3px", padding: "3px 10px", color: "#000", fontSize: "9px", fontWeight: 700, cursor: "pointer" } }, "\u2713 Confirm"),
-                            h("button", { onClick: function() { releasePosition(pos); },
+                            h("button", { onClick: function() { releasePosition(pos, bkPosIds); },
                               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Release")),
                           pos.status === "confirmed" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
                             h("span", { style: { fontSize: "9px", color: B.info, fontWeight: 700, background: B.info + "18", border: "1px solid " + B.info + "33", borderRadius: "3px", padding: "2px 8px" } }, "\u2713 Confirmed"),
-                            h("button", { onClick: function() { handleStatusChange(pos, "open"); },
+                            h("button", { onClick: function() { handleStatusChange(pos, "open", bkPosIds); },
                               style: { background: "transparent", border: "none", color: B.border, cursor: "pointer", fontSize: "9px", padding: "2px 4px" } }, "cancel")),
                           pos.status === "declined" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 600, background: B.danger + "18", border: "1px solid " + B.danger + "33", borderRadius: "3px", padding: "2px 8px" } }, "Declined"),
