@@ -565,7 +565,7 @@ class _DocPDF:
         c.setFillColor(INK_SOFT)
         c.drawRightString(col["total"] - 80, self.y - 10, f"{label} Subtotal:")
         c.setFont("Roboto-Bold", 12)
-        c.setFillColor(DEEP_ORANGE)
+        c.setFillColor(LUMIN_ORANGE)
         c.drawRightString(col["total"], self.y - 10, _fmt_money(sec_total))
         self.y -= 22
 
@@ -644,7 +644,7 @@ class _DocPDF:
         c.line(self.M, self.y + 6, self.W - self.M, self.y + 6)
 
         c.setFont(FONTS["subheading"], 11)
-        c.setFillColor(DEEP_ORANGE)
+        c.setFillColor(LUMIN_ORANGE)
         c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
         self.y -= 22
 
