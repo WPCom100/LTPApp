@@ -262,8 +262,12 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
         )
     if not rows:
         return ""
+    # margin-bottom gives the shift list real separation from the text that
+    # follows it. It used to be 2px, which left the next paragraph jammed right
+    # under the last card (blank lines in the template can't fix it — they're
+    # collapsed by _paragraphs_to_html). 16px ≈ the body paragraph rhythm.
     return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-            'style="width:100%;margin:8px 0 2px">' + "".join(rows) + "</table>")
+            'style="width:100%;margin:8px 0 16px">' + "".join(rows) + "</table>")
 
 
 def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str) -> str:
