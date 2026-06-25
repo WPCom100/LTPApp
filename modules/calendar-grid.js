@@ -65,7 +65,7 @@
       { k: "meetings", l: "\u25b2 Meetings", color: B.info },
     ];
 
-    return h("div", { style: { display: "flex", flexDirection: "column", height: "calc(100vh - 134px)", overflow: "hidden" } },
+    return h("div", { className: "ltp-calendar-grid", style: { display: "flex", flexDirection: "column", overflow: "hidden" } },
       // Header
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexShrink: 0 } },
         h(window.Btn, { small: true, variant: "ghost", onClick: function() { ctx.setCalMonth(function(p) { return p.month === 0 ? { year: p.year - 1, month: 11 } : { year: p.year, month: p.month - 1 }; }); } }, "\u2190 Prev"),

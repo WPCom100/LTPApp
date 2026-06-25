@@ -17,6 +17,9 @@
        quote builder's Totals) below the visible viewport. `100vh` first as a
        fallback for engines without dvh support. */
     #root { height: 100vh; height: 100dvh; }
+    /* Calendar grid is a fixed-height, viewport-anchored container (chrome above
+       it is ~134px). Same iOS dvh rationale as #root; vh first as a fallback. */
+    .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
