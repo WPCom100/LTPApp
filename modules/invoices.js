@@ -390,11 +390,13 @@
     var [viewActivity, setViewActivity] = useState(null);
     var [showPaymentForm, setShowPaymentForm] = useState(false);
     var [showSendModal, setShowSendModal] = useState(false);
-    var [sendCc, setSendCc] = useState("");
+    // Email recipients for the send/receipt modals: { to: [email], cc: [email] }.
+    // Derived from the project's contacts (or remembered on the record) when a
+    // modal opens; edited via the RecipientEditor; serialized to to/cc on send.
+    var [sendRecipients, setSendRecipients] = useState({ to: [], cc: [] });
     var [sending, setSending] = useState(false);
     var [qboSyncing, setQboSyncing] = useState(false);
     var [showReceiptModal, setShowReceiptModal] = useState(false);
-    var [sendEmail, setSendEmail] = useState("");
     var [sendSubject, setSendSubject] = useState("");
     var [sendMessage, setSendMessage] = useState("");
     // Per-entity values baked into the {{header}} block at send time —
@@ -500,15 +502,27 @@
       }
     }
 
+    // Recipients for the send/receipt modals: the record's remembered list, else
+    // derived from the project's contacts (primary → To, the rest → Cc).
+    function initSendRecipients() {
+      var saved = draft.sendRecipients;
+      if (saved && ((saved.to || []).length || (saved.cc || []).length)) {
+        return { to: (saved.to || []).slice(), cc: (saved.cc || []).slice() };
+      }
+      return window.LTP_deriveRecipients(selectedProject, contacts, draft.clientContactId, draft.companyId);
+    }
+    // Persist recipient edits onto the record (remembered for next send) and
+    // mirror into modal state.
+    function onRecipientsChange(r) { setSendRecipients(r); patchDraft({ sendRecipients: r }); }
+
     function openReceiptModal(payments) {
-      var email = "";
       var clientName = "";
       if (draft.clientContactId) {
         var ct = contacts.find(function(c) { return c.id === draft.clientContactId; });
-        if (ct) { email = ct.email || ""; clientName = ct.firstName + " " + ct.lastName; }
+        if (ct) { clientName = ct.firstName + " " + ct.lastName; }
       } else if (draft.companyId) {
         var compContacts = contacts.filter(function(c) { return (c.companyIds || []).includes(draft.companyId); });
-        if (compContacts.length > 0) { email = compContacts[0].email || ""; clientName = compContacts[0].firstName; }
+        if (compContacts.length > 0) { clientName = compContacts[0].firstName; }
       }
       var ref = draft.id != null ? window.LTP_INVOICE_REF(draft) : "Invoice";
       var projName = selectedProject ? selectedProject.name : (draft.customName || "");
@@ -530,8 +544,7 @@
         total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         lineItems: "Payments Received:\n" + paymentLines,
       };
-      setSendEmail(email);
-      setSendCc(resolve(tmpl.cc || "", vars));
+      setSendRecipients(initSendRecipients());
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — Payment Received", vars));
       setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars));
       // headerVars feed both the editor preview and the send-time
@@ -543,7 +556,7 @@
     }
 
     function sendReceipt() {
-      if (!sendEmail) { showAlert("No Email", "Enter a recipient email address."); return; }
+      if (!(sendRecipients.to || []).length) { showAlert("No Recipient", "Add at least one To recipient."); return; }
       if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the invoice before sending so it has a stable share link."); return; }
       if (!window.LTP_GMAIL_CONNECTED) {
         showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
@@ -565,8 +578,8 @@
         body: JSON.stringify({
           entityType: "invoice",
           entityId: draft.id,
-          to: sendEmail,
-          cc: (sendCc || "").trim() || null,  // whitespace-only → omit
+          to: (sendRecipients.to || []).join(", "),
+          cc: (sendRecipients.cc || []).join(", ") || null,
           subject: sendSubject,
           bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
           receipt: true,  // claim the receipt slot so the QB auto-receipt poller won't re-send
@@ -577,7 +590,7 @@
           setSending(false);
           if (resp.status === 200) {
             setShowReceiptModal(false);
-            window.LTP_toast("Receipt Sent", { message: "Payment receipt sent to " + sendEmail + ".", variant: "success" });
+            window.LTP_toast("Receipt Sent", { message: "Payment receipt sent to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
@@ -652,8 +665,7 @@
         total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
         dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt",
       };
-      setSendEmail(email);
-      setSendCc(resolve(tmpl.cc || "", vars));
+      setSendRecipients(initSendRecipients());
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
       setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nPlease find attached invoice {{refNumber}}.\n\nDue: {{dueDate}}\n\n{{signature}}", vars));
       // {{viewUrl}} stays literal — backend swaps in the per-recipient URL.
@@ -665,7 +677,7 @@
     }
 
     function executeSend() {
-      if (!sendEmail || !window.LTP_isValidEmail(sendEmail)) { showAlert("Invalid Email", "Enter a valid email address."); return; }
+      if (!(sendRecipients.to || []).length) { showAlert("No Recipient", "Add at least one To recipient."); return; }
       if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the invoice before sending so it has a stable share link."); return; }
       if (!window.LTP_GMAIL_CONNECTED) {
         showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
@@ -688,8 +700,8 @@
         body: JSON.stringify({
           entityType: "invoice",
           entityId: draft.id,
-          to: sendEmail,
-          cc: (sendCc || "").trim() || null,  // whitespace-only → omit
+          to: (sendRecipients.to || []).join(", "),
+          cc: (sendRecipients.cc || []).join(", ") || null,
           subject: sendSubject,
           bodyHtml: bodyWithHeader,  // already paragraph-wrapped HTML (see above)
           attachPdf: attachPdf,  // backend attaches the freshly-generated invoice PDF
@@ -703,6 +715,7 @@
             var updated = Object.assign({}, draft, {
               status: isResend ? draft.status : "sent",
               sentDate: isResend ? draft.sentDate : today,
+              sendRecipients: sendRecipients,  // remember who this went to
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
@@ -710,7 +723,7 @@
             // invoice is now "sent", which is what makes it eligible to export.
             if (isAdmin && qbConnected) { persistAndPushQbo(updated); }
             setShowSendModal(false);
-            window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + sendEmail + ".", variant: "success" });
+            window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
@@ -1735,14 +1748,8 @@
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
                 h("span", { style: { fontSize: "11px", color: B.text } },
                   (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
-                h("input", { value: sendEmail, onChange: function(e) { setSendEmail(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "client@example.com" })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "CC:"),
-                h("input", { value: sendCc, onChange: function(e) { setSendCc(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "comma-separated (optional)" })),
+              h("div", { style: { marginBottom: 8 } },
+                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
@@ -1810,14 +1817,8 @@
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
                 h("span", { style: { fontSize: "11px", color: B.text } },
                   (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
-                h("input", { value: sendEmail, onChange: function(e) { setSendEmail(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "client@example.com" })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "CC:"),
-                h("input", { value: sendCc, onChange: function(e) { setSendCc(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }, placeholder: "comma-separated (optional)" })),
+              h("div", { style: { marginBottom: 8 } },
+                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
                 h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },

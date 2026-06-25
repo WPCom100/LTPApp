@@ -152,6 +152,10 @@ class Quote(Base):
                                                         #   equipmentId|serviceId|productId: int|null }
     notes = Column(Text, default="")                    # free-form text shown on the printed quote
     activity = Column(JSON, default=list)               # list[{id: str, date: str, time: str, type: str, user: str, message: str, changes: list[{cat, detail}]|null}]
+    # Remembered email recipients for the send modal: {"to": [email...], "cc":
+    # [email...]}. null = not customized yet → derive from the project's contacts
+    # (primary → To, the rest → Cc). User-set; flows through the normal CRUD.
+    send_recipients = Column(JSON, nullable=True)
     # Opaque public-view credential. Minted server-side on POST (entity
     # creation); see backend/routes/api.py create(). Same security model as
     # PdfArchive.token — anyone with the token can hit /api/view/{token}.
@@ -189,6 +193,9 @@ class Invoice(Base):
     notes = Column(Text, default="")
     payments = Column(JSON, default=list)               # list[{id: str, date: str, amount: float, method: str, reference: str, notes: str}]
     activity = Column(JSON, default=list)               # same shape as Quote.activity
+    # Remembered send recipients: {"to": [email...], "cc": [email...]}. null =
+    # derive from the project's contacts. Same as Quote.send_recipients.
+    send_recipients = Column(JSON, nullable=True)
     # Public-view credential. View-only (no accept/decline on invoices).
     # Same shape + security model as Quote.share_token; minted on POST.
     # NOT NULL because every Invoice has one (see create() in api.py).
