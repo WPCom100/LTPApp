@@ -1328,8 +1328,10 @@
 
       // Body
       h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
-        // Main content
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        // Main content. paddingBottom keeps the last card off the viewport edge
+        // so it isn't clipped / unreachable at max scroll (the body row's
+        // overflow:hidden gives the column no breathing room otherwise).
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0, paddingBottom: 16 } },
 
           // Invoice details card
           h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 16 } },
@@ -1521,7 +1523,7 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto", paddingBottom: 16 } },
           // QuickBooks section — status + actions + deep link (shown once sent)
           qbConnected && qbEligible && h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
             h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
