@@ -469,10 +469,10 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         tmpl = ((settings_data.get("emailTemplates") or {}).get(template_key) or {})
         brand = _email_brand(settings_data)
         first = shifts[0] if shifts else {}
+        project_name = (project.name if project else "") or "Project"
         repl = {
             "{{companyName}}": brand["company"],
             "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
-            "{{projectName}}": (project.name if project else "") or "Project",
             "{{role}}": first.get("roleLabel") or "",
             "{{date}}": _fmt_iso_date(first.get("date")) if first.get("date") else "",
             "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
@@ -485,13 +485,19 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
                 t = t.replace(k, v)
             return t
 
-        subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}")
+        # Subject is plain text — substitute the project name plainly there.
+        subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}").replace("{{projectName}}", project_name)
         body_text = _sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or "")
         # {{shifts}} renders the themed shift list (same block the request email
         # uses) so a withdrawal can spell out exactly which shifts it covers. The
         # block is offered to every notify template; single-position notices
         # (confirmed/cancelled/not-selected) simply don't reference it.
+        # {{projectName}} is rendered as a block too so it can carry markup —
+        # BOLD in the withdrawal email, plain elsewhere — surviving the escaping
+        # _paragraphs_to_html applies to the surrounding text.
+        project_html = ("<strong>" + escape(project_name) + "</strong>") if template_key == "crewWithdrawn" else escape(project_name)
         blocks = {
+            "{{projectName}}": project_html,
             "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]) if shifts else "",
             "{{signature}}": _render_signature(user, settings_data),
         }
