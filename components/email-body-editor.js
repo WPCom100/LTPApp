@@ -33,8 +33,12 @@
 //      allowlist. We set it via DOM API after the innerHTML write.
 //   3. Browsers differ on what tag to insert when the user presses
 //      Enter. defaultParagraphSeparator picks <p> in Chrome/Firefox;
-//      Safari ignores it and uses <div>. Both are sanitizer-allowed
-//      and render fine — we accept the inconsistency for v1.
+//      Safari ignores it and uses <div>. We no longer care which: the
+//      `.ltp-email-editor` CSS (index.html) gives <p> AND <div> the same
+//      paragraph spacing in this live preview, and theme.js's PARA_STYLE
+//      (via LTP_textToHtml) stamps the SAME inline margin onto the body at
+//      send time — so the editor, both <p>/<div>, and the recipient's mail
+//      all line up. Keep the CSS value and PARA_STYLE in sync.
 (function() {
   var h = React.createElement;
   var useRef = React.useRef;
@@ -109,6 +113,7 @@
 
     return h("div", {
       ref: ref,
+      className: "ltp-email-editor",
       contentEditable: true,
       suppressContentEditableWarning: true,
       onInput: handleInput,

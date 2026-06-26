@@ -685,16 +685,55 @@ window.LTP_textToHtml = (function() {
   // "&lt;a href=...&gt;" text in the recipient's inbox — the exact bug
   // this rewrite fixes.
   var BLOCK_DETECT_RE = /<\/?(p|div|h[1-6]|table|tr|td|th|ul|ol|li|blockquote|hr|article|section)\b/i;
+  var PLACEHOLDER_RE = /^\{\{\s*\w+\s*\}\}$/;
+
+  // Canonical paragraph spacing for every email body. Applied INLINE (email
+  // clients strip <style>; bleach's CSS allowlist keeps margin + line-height)
+  // so a single source of truth controls the gap between paragraphs in the
+  // sent mail. MUST match the editor's `.ltp-email-editor` rule in index.html
+  // so the Send-modal preview renders the same spacing the recipient sees.
+  var PARA_STYLE = "margin:0 0 14px;line-height:1.5";
+
+  // Give top-level text paragraphs the canonical spacing. This is what makes a
+  // body authored across browsers render consistently: Chrome's Enter inserts
+  // <p>, Safari's inserts <div>, and a plain-text template has neither — here
+  // they all converge on the same inline margin. Idempotent (skips anything
+  // that already carries a margin), and leaves structural blocks (tables,
+  // lists, nested layout) and lone {{placeholder}} lines untouched so the
+  // header/signature blocks substituted downstream aren't disturbed.
+  function normalizeParagraphs(htmlStr) {
+    if (!htmlStr || typeof document === "undefined") return htmlStr;
+    var tmp = document.createElement("div");
+    tmp.innerHTML = String(htmlStr);
+    var kids = tmp.children;
+    for (var i = 0; i < kids.length; i++) {
+      var el = kids[i];
+      var tag = el.tagName.toLowerCase();
+      if (tag !== "p" && tag !== "div") continue;
+      var st = el.getAttribute("style") || "";
+      if (/margin/i.test(st)) continue;                                  // already spaced
+      if (PLACEHOLDER_RE.test((el.textContent || "").trim())) continue;  // lone {{placeholder}}
+      if (el.querySelector("table,ul,ol,p,div,blockquote,h1,h2,h3,h4,section,hr")) continue;  // structural
+      el.setAttribute("style", PARA_STYLE + (st ? ";" + st : ""));
+    }
+    return tmp.innerHTML;
+  }
+
   return function(input) {
     if (input == null) return "";
     var s = String(input);
-    if (BLOCK_DETECT_RE.test(s)) return s;   // already block-structured — pass through
-    // Plain-text-with-maybe-inline-HTML path: paragraph-wrap, no escape.
+    // Already block-structured (full HTML, or content round-tripped through the
+    // contentEditable editor) — normalize the paragraph spacing in place.
+    if (BLOCK_DETECT_RE.test(s)) return normalizeParagraphs(s);
+    // Plain-text-with-maybe-inline-HTML path: paragraph-wrap, no escape. Each
+    // paragraph carries the canonical spacing except a lone {{placeholder}}
+    // line, which stays bare so the downstream block injection can split it.
     var paras = s.split(/\n\s*\n+/).map(function(p) { return p.trim(); })
                  .filter(function(p) { return p.length > 0; });
     if (paras.length === 0) return "";
     return paras.map(function(p) {
-      return "<p>" + p.replace(/\n/g, "<br>") + "</p>";
+      var attr = PLACEHOLDER_RE.test(p) ? "" : ' style="' + PARA_STYLE + '"';
+      return "<p" + attr + ">" + p.replace(/\n/g, "<br>") + "</p>";
     }).join("\n");
   };
 })();
