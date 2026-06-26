@@ -727,15 +727,22 @@ window.LTP_textToHtml = (function() {
     // Already block-structured (full HTML, or content round-tripped through the
     // contentEditable editor) — normalize the paragraph spacing in place.
     if (BLOCK_DETECT_RE.test(s)) return normalizeParagraphs(s);
-    // Plain-text-with-maybe-inline-HTML path: paragraph-wrap, no escape. Each
-    // paragraph carries the canonical spacing except a lone {{placeholder}}
-    // line, which stays bare so the downstream block injection can split it.
-    var paras = s.split(/\n\s*\n+/).map(function(p) { return p.trim(); })
-                 .filter(function(p) { return p.length > 0; });
-    if (paras.length === 0) return "";
-    return paras.map(function(p) {
-      var attr = PLACEHOLDER_RE.test(p) ? "" : ' style="' + PARA_STYLE + '"';
-      return "<p" + attr + ">" + p.replace(/\n/g, "<br>") + "</p>";
+    // Plain-text-with-maybe-inline-HTML path: render newlines LITERALLY so the
+    // textarea is WYSIWYG — every line becomes its own line, and a blank line
+    // becomes a visible empty paragraph (a gap). This matches the contentEditable
+    // editor (Enter = next line, Enter-twice = a blank line) so a template and a
+    // hand-edited body space identically. No escape — inline tags pass through to
+    // the sanitizer. A lone {{placeholder}} line stays bare so the downstream
+    // block injection can split it.
+    var lines = String(s).split("\n");
+    while (lines.length && lines[0].trim() === "") lines.shift();               // trim leading blank lines
+    while (lines.length && lines[lines.length - 1].trim() === "") lines.pop();  // trim trailing blank lines
+    if (lines.length === 0) return "";
+    return lines.map(function(line) {
+      var t = line.trim();
+      if (t === "") return '<p style="' + PARA_STYLE + '"><br></p>';            // blank line → gap
+      var attr = PLACEHOLDER_RE.test(t) ? "" : ' style="' + PARA_STYLE + '"';
+      return "<p" + attr + ">" + line + "</p>";
     }).join("\n");
   };
 })();
