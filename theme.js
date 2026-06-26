@@ -692,7 +692,7 @@ window.LTP_textToHtml = (function() {
   // so a single source of truth controls the gap between paragraphs in the
   // sent mail. MUST match the editor's `.ltp-email-editor` rule in index.html
   // so the Send-modal preview renders the same spacing the recipient sees.
-  var PARA_STYLE = "margin:0 0 14px;line-height:1.5";
+  var PARA_STYLE = "margin:0 0 14px;line-height:1";
 
   // Give top-level text paragraphs the canonical spacing. This is what makes a
   // body authored across browsers render consistently: Chrome's Enter inserts

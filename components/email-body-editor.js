@@ -128,7 +128,7 @@
         padding: "14px 18px",
         outline: "none",
         overflowY: "auto",
-        lineHeight: 1.5,
+        lineHeight: 1,
         minHeight: heightStyle,
       },
     });
