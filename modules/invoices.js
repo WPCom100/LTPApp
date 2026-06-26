@@ -1311,7 +1311,7 @@
           !isDraft && h("button", { onClick: recallToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.warn; e.currentTarget.style.color = B.warn; },
-            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u21a9 Recall to Draft"),
+            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Recall to Draft"),
           // Send Receipt (paid invoices)
           draft.status === "paid" && h("button", { onClick: function() { openReceiptModal(); },
             style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),

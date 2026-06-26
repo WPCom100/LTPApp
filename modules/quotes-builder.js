@@ -1650,7 +1650,7 @@
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: recallQuoteToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.warn; e.currentTarget.style.color = B.warn; },
-            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u21a9 Recall to Draft"),
+            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Recall to Draft"),
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: openQuoteSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           // Declined: Reopen
@@ -1661,7 +1661,7 @@
             var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
             setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-          }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "\u21a9 Reopen as Draft"),
+          }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Reopen as Draft"),
           // Converted: badge
           draft.status === "converted" && h("div", { style: { fontSize: "10px", color: B.success, padding: "4px 10px", border: "1px solid " + B.success, borderRadius: "6px", fontWeight: 600 } }, "CONVERTED"),
           // Mark All Delivered — only when accepted and items are undelivered
