@@ -21,12 +21,12 @@
        it is ~134px). Same iOS dvh rationale as #root; vh first as a fallback. */
     .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); }
     /* Email Send-modal editor: give every top-level paragraph the SAME spacing
-       the sent mail uses (theme.js PARA_STYLE = margin:0 0 14px;line-height:1),
-       regardless of whether the browser inserts <p> (Chrome) or <div> (Safari)
-       on Enter. Keep these two values in sync. Marker blocks (<section>) and any
-       nested layout are untouched — only direct paragraph children. */
-    .ltp-email-editor > p, .ltp-email-editor > div { margin: 0 0 14px; line-height: 1; }
-    .ltp-email-editor > p:last-child, .ltp-email-editor > div:last-child { margin-bottom: 0; }
+       the sent mail uses (theme.js PARA_STYLE = margin:0;line-height:1) —
+       single-spaced, the sender adds blank lines for gaps — regardless of
+       whether the browser inserts <p> (Chrome) or <div> (Safari) on Enter.
+       Keep these two values in sync. Marker blocks (<section>) and any nested
+       layout are untouched — only direct paragraph children. */
+    .ltp-email-editor > p, .ltp-email-editor > div { margin: 0; line-height: 1; }
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: #111; }
     ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }

@@ -687,12 +687,14 @@ window.LTP_textToHtml = (function() {
   var BLOCK_DETECT_RE = /<\/?(p|div|h[1-6]|table|tr|td|th|ul|ol|li|blockquote|hr|article|section)\b/i;
   var PLACEHOLDER_RE = /^\{\{\s*\w+\s*\}\}$/;
 
-  // Canonical paragraph spacing for every email body. Applied INLINE (email
+  // Canonical paragraph styling for every email body. Applied INLINE (email
   // clients strip <style>; bleach's CSS allowlist keeps margin + line-height)
-  // so a single source of truth controls the gap between paragraphs in the
-  // sent mail. MUST match the editor's `.ltp-email-editor` rule in index.html
-  // so the Send-modal preview renders the same spacing the recipient sees.
-  var PARA_STYLE = "margin:0 0 14px;line-height:1";
+  // so a single source of truth controls paragraph spacing in the sent mail.
+  // margin:0 = paragraphs are single-spaced (one line apart) by default; the
+  // sender adds blank lines (empty paragraphs) manually for bigger gaps. MUST
+  // match the editor's `.ltp-email-editor` rule in index.html so the Send-modal
+  // preview renders the same spacing the recipient sees.
+  var PARA_STYLE = "margin:0;line-height:1";
 
   // Give top-level text paragraphs the canonical spacing. This is what makes a
   // body authored across browsers render consistently: Chrome's Enter inserts
