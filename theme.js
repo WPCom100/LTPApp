@@ -360,14 +360,21 @@ window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
 window.LTP_calcDayLabor = function(items, services) {
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
 
-  // serviceId → [{ item, count }] — which items each role works, and how many.
+  // serviceId → [{ item, count, paidCount }]. `count` is every position of the
+  // role on that item (drives the billed RATE); `paidCount` excludes positions
+  // flagged fullMargin (e.g. the owner working — billed but not paid), and
+  // drives COST so a full-margin position is pure margin.
   var roleItemMap = {};
   (items || []).forEach(function(s) {
-    var counts = {};
-    (s.positions || []).forEach(function(p) { if (p.serviceId) counts[p.serviceId] = (counts[p.serviceId] || 0) + 1; });
+    var counts = {}, paid = {};
+    (s.positions || []).forEach(function(p) {
+      if (!p.serviceId) return;
+      counts[p.serviceId] = (counts[p.serviceId] || 0) + 1;
+      if (!p.fullMargin) paid[p.serviceId] = (paid[p.serviceId] || 0) + 1;
+    });
     Object.keys(counts).forEach(function(sid) {
       if (!roleItemMap[sid]) roleItemMap[sid] = [];
-      roleItemMap[sid].push({ item: s, count: counts[sid] });
+      roleItemMap[sid].push({ item: s, count: counts[sid], paidCount: paid[sid] || 0 });
     });
   });
 
@@ -377,8 +384,8 @@ window.LTP_calcDayLabor = function(items, services) {
     var svc = svcById[Number(sid)];
     if (!svc) return;
     var entries = roleItemMap[sid];
-    var count = 0;
-    entries.forEach(function(e) { count = Math.max(count, e.count); });
+    var count = 0, costCount = 0;
+    entries.forEach(function(e) { count = Math.max(count, e.count); costCount = Math.max(costCount, e.paidCount); });
 
     var roleItems = entries.map(function(e) { return e.item; });
     var info = window.LTP_calcLaborDay(100, roleItems);
@@ -391,13 +398,14 @@ window.LTP_calcDayLabor = function(items, services) {
     var dayCost = isHalf ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
     var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
     var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
+    // Rate bills every position (count); cost pays only non-margin ones (costCount).
     var roleRate = dayRate * count + (otHours > 0 ? otRate * otHours * count : 0);
-    var roleCost = dayCost * count + (otHours > 0 ? otCost * otHours * count : 0);
+    var roleCost = dayCost * costCount + (otHours > 0 ? otCost * otHours * costCount : 0);
     rateTotal += roleRate;
     costTotal += roleCost;
 
     roles.push({
-      svc: svc, serviceId: svc.id, count: count, tier: tier,
+      svc: svc, serviceId: svc.id, count: count, costCount: costCount, tier: tier,
       paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
       dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
       rateTotal: Math.round(roleRate * 100) / 100, costTotal: Math.round(roleCost * 100) / 100,

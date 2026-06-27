@@ -125,7 +125,7 @@
     function addPosition(schedId) {
       onChange(schedule.map(function(s) {
         if (s.id !== schedId) return s;
-        return Object.assign({}, s, { positions: (s.positions || []).concat([{ id: genId("pos"), role: "", serviceId: null, crewId: null, status: "open" }]) });
+        return Object.assign({}, s, { positions: (s.positions || []).concat([{ id: genId("pos"), role: "", serviceId: null, crewId: null, status: "open", fullMargin: false }]) });
       }));
     }
     function updatePosition(schedId, posId, patch) {
@@ -463,9 +463,16 @@
                         ),
                         // Status — read-only in schedule editor, manage via Labor module
                         h("span", { style: { width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "3px 6px" } }, pos.status),
+                        // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
+                        h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
+                          title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
+                          style: { background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                          pos.fullMargin ? "✓ MGN" : "MGN"),
                         h("div", { style: { width: 80, textAlign: "right", fontSize: "9px" } },
                           h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + posRateInfo.rate),
-                          posCostInfo.rate > 0 && h("div", { style: { color: B.textMut } }, "$" + posCostInfo.rate)),
+                          pos.fullMargin
+                            ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
+                            : (posCostInfo.rate > 0 && h("div", { style: { color: B.textMut } }, "$" + posCostInfo.rate))),
                         h("button", { onClick: function() { removePosition(s.id, pos.id); },
                           style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u00d7"),
                         i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
@@ -496,13 +503,15 @@
               allPositions.length > 0 && h("div", { style: { padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px", display: "flex", flexDirection: "column", gap: 2 } },
                 dayLabor.roles.map(function(r) {
                   var regOT = Math.round((r.otHours - r.mealPenaltyHours) * 100) / 100;
+                  var marginCount = r.count - r.costCount;
                   var extras = [];
                   if (r.mealPenaltyHours > 0) extras.push(r.mealPenaltyHours + "h meal penalty");
                   if (regOT > 0) extras.push(regOT + "h OT");
                   return h("div", { key: r.serviceId, style: { display: "flex", gap: 6 } },
                     h("span", { style: { color: B.textMut } },
                       (r.count > 1 ? r.count + "× " : "") + r.svc.role + " — " + (r.tier === "half" ? "Half" : "Full") + " " + r.paidHours + "h"),
-                    extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")));
+                    extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),
+                    marginCount > 0 && h("span", { style: { color: B.success, fontWeight: 600 } }, "· " + marginCount + " full margin"));
                 }),
                 h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: 3, borderTop: "1px solid " + B.border } },
                   h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
