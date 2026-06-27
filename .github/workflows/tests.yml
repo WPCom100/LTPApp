@@ -5,16 +5,21 @@ on:
   pull_request:
 
 jobs:
-  labor-rates:
-    name: Labor-rate engine (node)
+  frontend:
+    name: Frontend JS suites (node)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Labor-rate regression suite
-        run: node tests/test_labor_rates.js
+      - name: Run all JS test suites
+        run: |
+          set -e
+          for f in tests/test_*.js; do
+            echo "== $f =="
+            node "$f"
+          done
 
   backend:
     name: Backend (pytest)

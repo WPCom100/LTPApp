@@ -35,8 +35,10 @@ fi
 
 # Fast smoke test of the rate/labor calculations (pure Node, no deps).
 if command -v node >/dev/null 2>&1; then
-  echo "[session-start] verifying labor-rate engine..."
-  node tests/test_labor_rates.js || echo "[session-start] WARNING: labor-rate test FAILED (see output above)"
+  echo "[session-start] verifying frontend JS suites..."
+  for f in tests/test_*.js; do
+    node "$f" || echo "[session-start] WARNING: $f FAILED (see output above)"
+  done
 fi
 
 echo "[session-start] ready."
