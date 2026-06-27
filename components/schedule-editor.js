@@ -307,9 +307,25 @@
           // Rate/meal/OT use the day's actual items (contiguous items merge into
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           var dayRateInfo = dayCall && dayWrap ? window.LTP_calcLaborDay(100, dayItemList) : { paidHours: 0, tier: "", mealPenaltyHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, segments: [] };
-          // Day rate/cost totals bill per ROLE per day (same model as the quote),
+          // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
           var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
+          // Map each position to its labor unit, and pick the PRIMARY position
+          // per unit (earliest shift in the day) — the per-person rate shows on
+          // that row once; the person's other shifts read "same person" so the
+          // rows reconcile with the day total instead of repeating a rate.
+          var unitByKey = {};
+          dayLabor.units.forEach(function(u) { unitByKey[u.serviceId + "#" + u.slot] = u; });
+          var posUnitKey = {}, unitPrimaryPos = {};
+          dayItemList.forEach(function(it) {
+            var slots = window.LTP_effectiveSlots(it.positions);
+            (it.positions || []).forEach(function(p) {
+              if (!p.serviceId) return;
+              var key = p.serviceId + "#" + (slots[p.id] || 1);
+              posUnitKey[p.id] = key;
+              if (unitPrimaryPos[key] === undefined) unitPrimaryPos[key] = p.id;
+            });
+          });
           var dayPaidHours = dayRateInfo.paidHours;
           // OT / meal-penalty warnings fire per PERSON (what the quote actually
           // charges), not off the whole-day span — so a break on a position-less
@@ -437,8 +453,8 @@
                       // bills per role per day (LTP_calcDayLabor) and is the
                       // authoritative figure — rows are indicative and won't sum
                       // to it when a role spans multiple items.
-                      var posRateInfo = svc ? window.LTP_calcLaborDay(svc.dayRate, [s]) : { rate: 0 };
-                      var posCostInfo = svc ? window.LTP_calcLaborDay(svc.dayCost, [s]) : { rate: 0 };
+                      var posUnit = svc ? unitByKey[posUnitKey[pos.id]] : null;
+                      var isUnitPrimary = posUnit && unitPrimaryPos[posUnitKey[pos.id]] === pos.id;
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
@@ -486,11 +502,15 @@
                           title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
                           style: { background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
                           pos.fullMargin ? "✓ MGN" : "MGN"),
-                        h("div", { style: { width: 80, textAlign: "right", fontSize: "9px" } },
-                          h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + posRateInfo.rate),
-                          pos.fullMargin
-                            ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
-                            : (posCostInfo.rate > 0 && h("div", { style: { color: B.textMut } }, "$" + posCostInfo.rate))),
+                        h("div", { style: { width: 92, textAlign: "right", fontSize: "9px" } },
+                          !posUnit ? null : (isUnitPrimary
+                            ? [
+                                h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
+                                posUnit.fullMargin
+                                  ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
+                                  : h("div", { key: "c", style: { color: B.textMut } }, "$" + Math.round(posUnit.costTotal))
+                              ]
+                            : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
                         h("button", { onClick: function() { removePosition(s.id, pos.id); },
                           style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u00d7"),
                         i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
