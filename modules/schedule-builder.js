@@ -67,12 +67,9 @@
       var dateMap = {};
       draft.schedule.forEach(function(s) {
         var d = s.date || "_unscheduled";
-        if (!dateMap[d]) dateMap[d] = { items: [], allBreaks: [], allPositions: [], dayCall: null, dayWrap: null };
+        if (!dateMap[d]) dateMap[d] = { items: [], allPositions: [] };
         var g = dateMap[d];
         g.items.push(s);
-        if (s.time && (!g.dayCall || s.time < g.dayCall)) g.dayCall = s.time;
-        if (s.endTime && (!g.dayWrap || s.endTime > g.dayWrap)) g.dayWrap = s.endTime;
-        (s.breaks || []).forEach(function(b) { g.allBreaks.push(b); });
         (s.positions || []).forEach(function(p) { g.allPositions.push(p); });
       });
       Object.keys(dateMap).forEach(function(d) {
@@ -82,8 +79,8 @@
           if (p.status === "confirmed") filledPos++;
           var svc = p.serviceId ? services.find(function(sv) { return sv.id === p.serviceId; }) : null;
           var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-          totalRate += svc && g.dayCall ? window.LTP_calcLaborFull(svc.dayRate, g.dayCall, g.dayWrap, g.allBreaks).rate : 0;
-          totalCost += g.dayCall ? window.LTP_calcLaborFull(svc ? svc.dayCost : 0, g.dayCall, g.dayWrap, g.allBreaks).rate : 0;
+          totalRate += svc ? window.LTP_calcLaborDay(svc.dayRate, g.items).rate : 0;
+          totalCost += window.LTP_calcLaborDay(svc ? svc.dayCost : 0, g.items).rate;
         });
       });
       var days = Object.keys(dateMap).length;
@@ -219,11 +216,10 @@
       var dateGroups = {};
       draft.schedule.forEach(function(s) {
         var d = s.date || "_unscheduled";
-        if (!dateGroups[d]) dateGroups[d] = { dayCall: null, dayWrap: null, allBreaks: [], items: [], date: d };
+        if (!dateGroups[d]) dateGroups[d] = { dayCall: null, dayWrap: null, items: [], date: d };
         var g = dateGroups[d];
         if (s.time && (!g.dayCall || s.time < g.dayCall)) g.dayCall = s.time;
         if (s.endTime && (!g.dayWrap || s.endTime > g.dayWrap)) g.dayWrap = s.endTime;
-        (s.breaks || []).forEach(function(b) { g.allBreaks.push(b); });
         g.items.push(s);
       });
 
@@ -262,24 +258,21 @@
           var count = 0;
           entries.forEach(function(e) { count = Math.max(count, e.count); });
 
-          // Calculate hours per item, then aggregate
-          // Each item is a separate work block — gaps between items are NOT work time
-          var totalPaidHours = 0;
-          var totalMealPenalty = 0;
-          entries.forEach(function(e) {
-            var s = e.item;
-            if (!s.time || !s.endTime) return;
-            var itemBreaks = s.breaks || [];
-            var itemInfo = window.LTP_calcLaborFull(100, s.time, s.endTime, itemBreaks);
-            totalPaidHours += itemInfo.paidHours;
-            totalMealPenalty += itemInfo.mealPenaltyHours;
-          });
+          // Aggregate this role's worked hours across the items it appears on.
+          // Contiguous items merge into one continuous span (so back-to-back
+          // shifts share the 5h meal-penalty clock); a real gap is unpaid but
+          // resets the meal clock AND still counts toward the daily 10h OT
+          // threshold (gap hours aren't paid, worked hours on both sides are).
+          var roleItems = entries.map(function(e) { return e.item; });
+          var roleInfo = window.LTP_calcLaborDay(100, roleItems);
+          var totalPaidHours = roleInfo.paidHours;
+          var totalMealPenalty = roleInfo.mealPenaltyHours;
 
           if (totalPaidHours <= 0) return;
 
-          // Determine tier from total paid hours (excluding meal penalty)
-          var regularHours = totalPaidHours - totalMealPenalty;
-          var regularOT = Math.max(0, Math.round((regularHours - 10) * 100) / 100);
+          // Tier from regular (non-penalty) hours; OT stacks meal penalty + 10h+ OT.
+          var regularHours = roleInfo.paidHours - roleInfo.mealPenaltyHours;
+          var regularOT = roleInfo.regularOTHours;
           var totalOTHours = Math.round((totalMealPenalty + regularOT) * 100) / 100;
           var roleIsHalf = totalPaidHours <= 5 && totalOTHours === 0;
 

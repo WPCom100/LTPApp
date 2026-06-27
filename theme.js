@@ -219,46 +219,81 @@ function _decimalToTime(d) {
   return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
-// Full labor rate with break/meal penalty support
-// breaks = [{ startTime, endTime, type: "unpaid"|"paid" }, ...]
-window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
-  if (!dayRate || !callTime || !endTime) return { rate: 0, paidHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, mealPenaltyHours: 0, regularOTHours: 0, tier: "", segments: [] };
+// Full day labor rate across one or more schedule items for a single rate.
+//
+// This is the canonical engine. A "day" is a set of work blocks (schedule
+// items), each { time, endTime, breaks }. Blocks that are contiguous or
+// overlapping are merged into one continuous SPAN, so the 5-hour meal-penalty
+// clock runs across back-to-back items (an 8a–1p item immediately followed by
+// a 1p–3p item is 7 continuous hours → meal penalty). A real GAP between items
+// (crew released and called back) splits spans: the gap is unpaid and resets
+// the meal clock. Meal penalty is computed per continuous segment; OT (>10h)
+// and the half/full tier are computed on the day total.
+//
+// items = [{ time, endTime, breaks: [{ startTime, endTime, type }] }, ...]
+window.LTP_calcLaborDay = function(dayRate, items) {
+  var EMPTY = { rate: 0, paidHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, mealPenaltyHours: 0, regularOTHours: 0, tier: "", segments: [] };
+  if (!dayRate || !items || !items.length) return EMPTY;
 
-  var call = _timeToDecimal(callTime);
-  var wrap = _timeToDecimal(endTime);
-  if (wrap <= call) wrap += 24;
+  // Normalize items to decimal-hour blocks, dropping any without both times.
+  var blocks = [];
+  items.forEach(function(it) {
+    if (!it || !it.time || !it.endTime) return;
+    var start = _timeToDecimal(it.time);
+    var end = _timeToDecimal(it.endTime);
+    if (end <= start) end += 24; // overnight
+    blocks.push({ start: start, end: end, breaks: (it.breaks || []).slice() });
+  });
+  if (!blocks.length) return EMPTY;
 
-  // Sort breaks by start time
-  var sortedBreaks = (breaks || []).slice().sort(function(a, b) { return _timeToDecimal(a.startTime) - _timeToDecimal(b.startTime); });
+  // Sort by start, then merge contiguous/overlapping blocks into spans.
+  blocks.sort(function(a, b) { return a.start - b.start; });
+  var spans = [];
+  var cur = { start: blocks[0].start, end: blocks[0].end, breaks: blocks[0].breaks.slice() };
+  for (var bi = 1; bi < blocks.length; bi++) {
+    var blk = blocks[bi];
+    if (blk.start <= cur.end) { // touching or overlapping → same continuous span
+      if (blk.end > cur.end) cur.end = blk.end;
+      cur.breaks = cur.breaks.concat(blk.breaks);
+    } else {
+      spans.push(cur);
+      cur = { start: blk.start, end: blk.end, breaks: blk.breaks.slice() };
+    }
+  }
+  spans.push(cur);
 
-  // Build work segments (both break types create segment boundaries)
+  // Within each span, breaks split work segments. Only unpaid break time is
+  // deducted; paid breaks keep the crew on the clock. Any segment > 5h accrues
+  // meal-penalty OT on the excess.
   var segments = [];
-  var cursor = call;
+  var mealPenaltyHours = 0;
+  var regularHours = 0;
   var unpaidBreakHours = 0;
   var paidBreakHours = 0;
 
-  sortedBreaks.forEach(function(brk) {
-    var bs = _timeToDecimal(brk.startTime);
-    var be = _timeToDecimal(brk.endTime);
-    if (be <= bs) be += 24;
-    if (bs > cursor) {
-      segments.push({ start: cursor, end: bs, hours: Math.round((bs - cursor) * 100) / 100 });
+  spans.forEach(function(span) {
+    var sortedBreaks = span.breaks.slice().sort(function(a, b) { return _timeToDecimal(a.startTime) - _timeToDecimal(b.startTime); });
+    var cursor = span.start;
+    sortedBreaks.forEach(function(brk) {
+      var bs = _timeToDecimal(brk.startTime);
+      var be = _timeToDecimal(brk.endTime);
+      if (be <= bs) be += 24;
+      if (bs > cursor) {
+        segments.push({ start: cursor, end: bs, hours: Math.round((bs - cursor) * 100) / 100 });
+      }
+      var brkHours = Math.round((be - bs) * 100) / 100;
+      if (brk.type === "paid") {
+        paidBreakHours += brkHours;
+      } else {
+        unpaidBreakHours += brkHours;
+      }
+      cursor = be;
+    });
+    if (cursor < span.end) {
+      segments.push({ start: cursor, end: span.end, hours: Math.round((span.end - cursor) * 100) / 100 });
     }
-    var brkHours = Math.round((be - bs) * 100) / 100;
-    if (brk.type === "paid") {
-      paidBreakHours += brkHours;
-    } else {
-      unpaidBreakHours += brkHours;
-    }
-    cursor = be;
   });
-  if (cursor < wrap) {
-    segments.push({ start: cursor, end: wrap, hours: Math.round((wrap - cursor) * 100) / 100 });
-  }
 
-  // Calculate meal penalty: any segment > 5h, excess is penalty OT
-  var mealPenaltyHours = 0;
-  var regularHours = 0;
   segments.forEach(function(seg) {
     if (seg.hours > 5) {
       mealPenaltyHours += Math.round((seg.hours - 5) * 100) / 100;
@@ -270,6 +305,7 @@ window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
 
   // Paid breaks count toward paid hours (crew is on clock)
   regularHours += paidBreakHours;
+  regularHours = Math.round(regularHours * 100) / 100;
 
   var regularOTHours = Math.max(0, Math.round((regularHours - 10) * 100) / 100);
   var standardHours = Math.min(regularHours, 10);
@@ -295,6 +331,14 @@ window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
   }
 
   return { rate: rate, paidHours: paidHours, unpaidBreakHours: unpaidBreakHours, paidBreakHours: paidBreakHours, mealPenaltyHours: mealPenaltyHours, regularOTHours: regularOTHours, tier: tier, segments: segments };
+};
+
+// Single-block convenience wrapper — one call/wrap span with its breaks.
+// Equivalent to LTP_calcLaborDay with a single item, preserved for callers that
+// only ever deal with one continuous block.
+// breaks = [{ startTime, endTime, type: "unpaid"|"paid" }, ...]
+window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
+  return window.LTP_calcLaborDay(dayRate, [{ time: callTime, endTime: endTime, breaks: breaks || [] }]);
 };
 
 // Auto-generate optimal meal breaks for a call/wrap window
