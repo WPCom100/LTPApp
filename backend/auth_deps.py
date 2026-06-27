@@ -7,12 +7,10 @@ These are async FastAPI Depends helpers — wire them with `Depends(require_sess
 on a router or individual endpoint. See backend/routes/api.py for usage.
 """
 import hashlib
-import os
 from datetime import datetime, timedelta, timezone
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from backend.database import get_db
 from backend import models
 
@@ -73,60 +71,6 @@ async def _load_session_user(db: AsyncSession, token: str | None):
     return user
 
 
-# ═══════════════════════════════════════════════════════════════════════════
-#  ⚠️  TEMPORARY DEV AUTH BYPASS  —  branch claude/schedule-editor-rates-6mhnto
-# ═══════════════════════════════════════════════════════════════════════════
-#  While this block is present, the Google sign-in requirement is DISABLED:
-#  any request that lacks a valid session is transparently authenticated as a
-#  shared local "dev admin" user. It exists ONLY so this feature branch can be
-#  used/reviewed without going through OAuth during development.
-#
-#  ⚠️  DO NOT MERGE TO MASTER. The application has effectively NO authentication
-#  while this is active. Before merging back, delete this block (and the single
-#  `_AUTH_BYPASS` call site in require_session() below) to restore sign-in.
-# ═══════════════════════════════════════════════════════════════════════════
-_AUTH_BYPASS = True
-_BYPASS_GOOGLE_SUB = "dev-auth-bypass"
-_BYPASS_EMAIL = "dev-bypass@localhost"
-
-if _AUTH_BYPASS:
-    print(
-        "[LTP] ⚠️  AUTH BYPASS ACTIVE — Google sign-in is DISABLED; every "
-        "request is treated as a dev admin. Do NOT run this in production or "
-        "merge it to master.",
-        flush=True,
-    )
-
-
-async def _get_or_create_bypass_user(db: AsyncSession) -> models.User:
-    """Return the shared local dev-admin User used by the TEMPORARY auth bypass,
-    creating it on first use. Remove together with the bypass block above."""
-    result = await db.execute(
-        select(models.User).where(models.User.google_sub == _BYPASS_GOOGLE_SUB)
-    )
-    user = result.scalar_one_or_none()
-    if user is not None:
-        return user
-    user = models.User(
-        google_sub=_BYPASS_GOOGLE_SUB,
-        email=_BYPASS_EMAIL,
-        name="Dev Admin (auth bypass)",
-        role="admin",
-    )
-    db.add(user)
-    try:
-        await db.flush()
-    except IntegrityError:
-        # Another concurrent first-request created it — discard our insert
-        # (nothing else is pending at auth-resolution time) and re-read.
-        await db.rollback()
-        result = await db.execute(
-            select(models.User).where(models.User.google_sub == _BYPASS_GOOGLE_SUB)
-        )
-        user = result.scalar_one()
-    return user
-
-
 async def require_session(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -137,8 +81,6 @@ async def require_session(
     Note: expired sessions are NOT auto-deleted here (kept simple — a sweeper
     job can do that later). They just stop authenticating, same effect."""
     user = await _load_session_user(db, request.cookies.get(SESSION_COOKIE_NAME))
-    if user is None and _AUTH_BYPASS:  # TEMP dev bypass — remove before merge
-        return await _get_or_create_bypass_user(db)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
