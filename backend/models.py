@@ -116,7 +116,12 @@ class Project(Base):
     meetings = Column(JSON, default=list)                # list[{id: int, title: str, date: str, time: str, attendees: list[int], notes: str, calSynced: bool}]
     schedule = Column(JSON, default=list)                # list[{id: str, title: str, date: str, time: str, endTime: str, addToCalendar: bool,
                                                          #       breaks: list[{id, startTime, endTime, type:"paid"|"unpaid"}],
-                                                         #       positions: list[{id, role, serviceId, crewId, status}]}]
+                                                         #       positions: list[{id, role, serviceId, crewId, status, fullMargin: bool, slot?: int, breaks?: list}]}]
+                                                         #       (position.breaks: individual meal breaks for THAT person only —
+                                                         #        distinct from item.breaks which apply to the whole crew on the shift)
+                                                         #       (fullMargin: bill the rate but $0 company cost, e.g. owner working;
+                                                         #        slot: person-identity within a role/day — positions sharing role+slot
+                                                         #        are one person, different slots are different people for OT tracking)
     schedule_notes = Column(Text, default="")            # free-text notes shown in the schedule builder
     schedule_activity = Column(JSON, default=list)       # list[{id, date, time, type, message, user, userId, changes}] — schedule save log
     created_at = Column(DateTime(timezone=True), server_default=func.now())

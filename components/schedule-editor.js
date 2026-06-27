@@ -125,7 +125,7 @@
     function addPosition(schedId) {
       onChange(schedule.map(function(s) {
         if (s.id !== schedId) return s;
-        return Object.assign({}, s, { positions: (s.positions || []).concat([{ id: genId("pos"), role: "", serviceId: null, crewId: null, status: "open" }]) });
+        return Object.assign({}, s, { positions: (s.positions || []).concat([{ id: genId("pos"), role: "", serviceId: null, crewId: null, status: "open", fullMargin: false }]) });
       }));
     }
     function updatePosition(schedId, posId, patch) {
@@ -295,23 +295,45 @@
           // Day-level aggregation
           var dayItems = group.items;
           var dayCall = null, dayWrap = null;
-          var allBreaks = [];
           var allPositions = [];
+          var dayItemList = [];
           dayItems.forEach(function(di) {
             var s = di.item;
             if (s.time && (!dayCall || s.time < dayCall)) dayCall = s.time;
             if (s.endTime && (!dayWrap || s.endTime > dayWrap)) dayWrap = s.endTime;
-            (s.breaks || []).forEach(function(b) { allBreaks.push(b); });
             (s.positions || []).forEach(function(p) { allPositions.push(p); });
+            dayItemList.push(s);
           });
-          var dayRateInfo = dayCall && dayWrap ? window.LTP_calcLaborFull(100, dayCall, dayWrap, allBreaks) : { paidHours: 0, tier: "", mealPenaltyHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, segments: [] };
-          var dayPaidHours = dayRateInfo.paidHours;
-          var dayHasMealPenalty = dayRateInfo.mealPenaltyHours > 0;
-          var dayHasOT = dayPaidHours > 10;
+          // Rate/meal/OT use the day's actual items (contiguous items merge into
+          // one span; real gaps are unpaid) — NOT a flat call→wrap span.
+          // Day rate/cost totals bill per PERSON per day (same model as the quote),
+          // so the footer matches what will be billed — not a per-position sum.
+          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
+          // Map each position to its labor unit, and pick the PRIMARY position
+          // per unit (earliest shift in the day) — the per-person rate shows on
+          // that row once; the person's other shifts read "same person" so the
+          // rows reconcile with the day total instead of repeating a rate.
+          var unitByKey = {};
+          dayLabor.units.forEach(function(u) { unitByKey[u.serviceId + "#" + u.slot] = u; });
+          var posUnitKey = {}, unitPrimaryPos = {};
+          dayItemList.forEach(function(it) {
+            var slots = window.LTP_effectiveSlots(it.positions);
+            (it.positions || []).forEach(function(p) {
+              if (!p.serviceId) return;
+              var key = p.serviceId + "#" + (slots[p.id] || 1);
+              posUnitKey[p.id] = key;
+              if (unitPrimaryPos[key] === undefined) unitPrimaryPos[key] = p.id;
+            });
+          });
+          // OT / meal-penalty warnings fire per PERSON (what the quote actually
+          // charges), not off the whole-day span — so a break on a position-less
+          // item can't hide a penalty a working person still incurs.
+          var dayMealPenaltyHours = Math.round(dayLabor.units.reduce(function(t, u) { return t + u.mealPenaltyHours; }, 0) * 100) / 100;
+          var dayHasMealPenalty = dayMealPenaltyHours > 0;
+          var dayHasOT = dayLabor.units.some(function(u) { return u.paidHours > 10; });
           var dayPosCount = allPositions.length;
           var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
           var dayBorderColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
-          var dayTotalHours = dayCall && dayWrap ? calcHours(dayCall, dayWrap) : 0;
 
           return h("div", { key: group.date, style: { background: B.raised, borderRadius: "8px", border: "2px solid " + dayBorderColor, marginBottom: 8, overflow: "hidden" } },
             // Day header
@@ -324,48 +346,50 @@
                 dayPosCount > 0 && h("span", { style: { fontSize: "10px", color: dayFilled === dayPosCount ? B.success : B.textMut } }, dayFilled + "/" + dayPosCount + " confirmed")
               ),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                dayPaidHours > 0 && h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.text } }, dayPaidHours + "h paid"),
                 dayHasOT && h("span", { style: { color: "#000", background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
                 dayHasMealPenalty && h("span", { onClick: function() {
-                    var autoBreaks = window.LTP_autoGenerateBreaks(dayCall, dayWrap);
-                    // Distribute each break to the item it falls within
-                    var breaksByItemId = {};
-                    dayItems.forEach(function(di) { breaksByItemId[di.item.id] = []; });
-                    autoBreaks.forEach(function(brk) {
-                      var brkStart = brk.startTime;
-                      var bestId = null;
-                      // Find item whose time range contains the break start
-                      for (var di_idx = 0; di_idx < dayItems.length; di_idx++) {
-                        var it = dayItems[di_idx].item;
-                        if (it.time && it.endTime && brkStart >= it.time && brkStart < it.endTime) {
-                          bestId = it.id; break;
-                        }
-                      }
-                      // If not inside any item, find the item ending closest before the break
-                      if (!bestId) {
-                        var closestEnd = "";
-                        for (var di_idx2 = 0; di_idx2 < dayItems.length; di_idx2++) {
-                          var it2 = dayItems[di_idx2].item;
-                          if (it2.endTime && it2.endTime <= brkStart && it2.endTime > closestEnd) {
-                            closestEnd = it2.endTime; bestId = it2.id;
-                          }
-                        }
-                      }
-                      // Fallback to last item
-                      if (!bestId) bestId = dayItems[dayItems.length - 1].item.id;
-                      breaksByItemId[bestId].push(brk);
+                    // Per-PERSON fix: give a meal break only to the people who
+                    // actually incur a penalty, on their own position — so no one
+                    // else on the shift is docked. Crew-wide item breaks are kept
+                    // as context; individual breaks are recomputed from scratch
+                    // (idempotent on repeat clicks).
+                    var dayIds = {}; dayItems.forEach(function(di) { dayIds[di.item.id] = true; });
+                    var clearedItems = dayItems.map(function(di) {
+                      return Object.assign({}, di.item, { positions: (di.item.positions || []).map(function(p) {
+                        return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
+                      }) });
                     });
-                    // Apply: clear all existing breaks, add auto-generated to correct items
+                    var labor = window.LTP_calcDayLabor(clearedItems, svcs);
+                    var breaksByPos = {};
+                    labor.units.forEach(function(u) {
+                      if (!(u.mealPenaltyHours > 0)) return;
+                      var unitKey = u.serviceId + "#" + u.slot;
+                      var shifts = [];
+                      clearedItems.forEach(function(it) {
+                        var slots = window.LTP_effectiveSlots(it.positions);
+                        (it.positions || []).forEach(function(p) {
+                          if (!p.serviceId) return;
+                          if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
+                          shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
+                        });
+                      });
+                      window.LTP_mealFixBreaks(shifts).forEach(function(g) {
+                        (breaksByPos[g.positionId] = breaksByPos[g.positionId] || []).push({ id: g.id, startTime: g.startTime, endTime: g.endTime, type: g.type });
+                      });
+                    });
+                    // Apply: rewrite each of this day's positions' individual breaks.
                     onChange(schedule.map(function(sc) {
-                      if (breaksByItemId[sc.id] !== undefined) {
-                        return Object.assign({}, sc, { breaks: breaksByItemId[sc.id] });
-                      }
-                      return sc;
+                      if (!dayIds[sc.id]) return sc;
+                      return Object.assign({}, sc, { positions: (sc.positions || []).map(function(p) {
+                        var nb = breaksByPos[p.id] || [];
+                        if ((p.breaks && p.breaks.length) || nb.length) return Object.assign({}, p, { breaks: nb });
+                        return p;
+                      }) });
                     }));
                   },
-                  title: "Click to auto-generate meal breaks for this day",
+                  title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
                   style: { color: "#000", background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
-                  "MEAL PENALTY: " + dayRateInfo.mealPenaltyHours + "h \u2014 fix")
+                  "MEAL PENALTY: " + dayMealPenaltyHours + "h \u2014 fix")
               )
             ),
 
@@ -375,6 +399,8 @@
                 var s = di.item, i = di.index;
                 var itemBreaks = s.breaks || [];
                 var itemPositions = s.positions || [];
+                // Person-slot per position on this shift (drives the # selector).
+                var itemSlots = window.LTP_effectiveSlots(itemPositions);
 
                 return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
                   // Item header: title + times + delete
@@ -421,9 +447,13 @@
                     itemPositions.map(function(pos) {
                       var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
                       var crewMember = pos.crewId ? contacts.find(function(c) { return c.id === pos.crewId; }) : null;
-                      // Rate uses DAY-LEVEL call/wrap for correct tier calculation
-                      var posRateInfo = svc ? window.LTP_calcLaborFull(svc.dayRate, dayCall, dayWrap, allBreaks) : { rate: 0 };
-                      var posCostInfo = svc ? window.LTP_calcLaborFull(svc.dayCost, dayCall, dayWrap, allBreaks) : { rate: 0 };
+                      // Per-row rate reflects THIS shift's hours (its own item),
+                      // so a short shift reads as a half day. The day total below
+                      // bills per role per day (LTP_calcDayLabor) and is the
+                      // authoritative figure — rows are indicative and won't sum
+                      // to it when a role spans multiple items.
+                      var posUnit = svc ? unitByKey[posUnitKey[pos.id]] : null;
+                      var isUnitPrimary = posUnit && unitPrimaryPos[posUnitKey[pos.id]] === pos.id;
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
@@ -439,6 +469,22 @@
                           h("option", { value: "" }, "Role\u2026"),
                           svcs.map(function(sv) { return h("option", { key: sv.id, value: sv.id }, sv.role + " \u2014 " + sv.description); })
                         ),
+                        // Person slot \u2014 shown when a role has 2+ on the day. Give
+                        // distinct people different numbers so each is tracked
+                        // separately (own hours / OT / meal penalty); leave two
+                        // shifts on the same number to mark them the same person.
+                        (function() {
+                          var roleCountInDay = pos.serviceId ? allPositions.filter(function(p) { return p.serviceId === pos.serviceId; }).length : 0;
+                          if (roleCountInDay < 2) return null;
+                          var effSlot = itemSlots[pos.id] || 1;
+                          var opts = [];
+                          for (var n = 1; n <= roleCountInDay; n++) opts.push(n);
+                          return h("select", { value: effSlot,
+                            title: "Person #" + effSlot + " for this role. Different number = different person (tracked separately); same number across shifts = same person.",
+                            onChange: function(e) { updatePosition(s.id, pos.id, { slot: Number(e.target.value) }); },
+                            style: { width: 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                            opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
+                        })(),
                         h("select", { value: pos.crewId || "", onChange: function(e) {
                           var cid = Number(e.target.value) || null;
                           if (cid) { assignCrewToDay(s.id, pos, cid); }
@@ -450,9 +496,31 @@
                         ),
                         // Status — read-only in schedule editor, manage via Labor module
                         h("span", { style: { width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "3px 6px" } }, pos.status),
-                        h("div", { style: { width: 80, textAlign: "right", fontSize: "9px" } },
-                          h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + posRateInfo.rate),
-                          posCostInfo.rate > 0 && h("div", { style: { color: B.textMut } }, "$" + posCostInfo.rate)),
+                        // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
+                        h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
+                          title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
+                          style: { background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                          pos.fullMargin ? "✓ MGN" : "MGN"),
+                        // Individual meal break(s) for THIS person (added by the
+                        // meal-penalty fix; removable). Distinct from the item's
+                        // crew-wide breaks above.
+                        (pos.breaks && pos.breaks.length > 0) && h("div", { style: { display: "flex", gap: 2, alignItems: "center" } },
+                          pos.breaks.map(function(br) {
+                            return h("span", { key: br.id, title: "Individual meal break " + window.LTP_formatTime(br.startTime) + " – " + window.LTP_formatTime(br.endTime) + " (this person only)",
+                              style: { display: "inline-flex", alignItems: "center", gap: 2, background: B.warn + "22", border: "1px solid " + B.warn + "55", borderRadius: "3px", padding: "1px 4px", fontSize: "8px", color: B.warn, fontWeight: 600, whiteSpace: "nowrap" } },
+                              "⏸ " + window.LTP_formatTime(br.startTime),
+                              h("button", { onClick: function() { updatePosition(s.id, pos.id, { breaks: (pos.breaks || []).filter(function(x) { return x.id !== br.id; }) }); },
+                                style: { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "9px", padding: 0, lineHeight: 1 } }, "×"));
+                          })),
+                        h("div", { style: { width: 92, textAlign: "right", fontSize: "9px" } },
+                          !posUnit ? null : (isUnitPrimary
+                            ? [
+                                h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
+                                posUnit.fullMargin
+                                  ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
+                                  : h("div", { key: "c", style: { color: B.textMut } }, "$" + Math.round(posUnit.costTotal))
+                              ]
+                            : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
                         h("button", { onClick: function() { removePosition(s.id, pos.id); },
                           style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u00d7"),
                         i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
@@ -476,18 +544,30 @@
                 },
                 style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "6px", borderRadius: "4px", width: "100%", marginBottom: 4 } }, "+ Add Item to This Day"),
 
-              // Day totals
-              allPositions.length > 0 && h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px" } },
-                h("span", { style: { color: B.textMut } }, dayRateInfo.tier),
-                h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + allPositions.reduce(function(t, p) {
-                  var sv = p.serviceId ? svcs.find(function(sv2) { return sv2.id === p.serviceId; }) : null;
-                  return t + (sv ? window.LTP_calcLaborFull(sv.dayRate, dayCall, dayWrap, allBreaks).rate : 0);
-                }, 0)),
-                h("span", { style: { color: B.textMut } }, "Cost: $" + allPositions.reduce(function(t, p) {
-                  var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-                  var sv = p.serviceId ? svcs.find(function(sv2) { return sv2.id === p.serviceId; }) : null;
-                  return t + window.LTP_calcLaborFull(sv ? sv.dayCost : 0, dayCall, dayWrap, allBreaks).rate;
-                }, 0))
+              // Day totals + per-PERSON breakdown. Each unit is one person
+              // (role + slot); their meal penalty / OT depend on the shifts they
+              // work, so two people in the same role can differ. The badge up top
+              // shows the day total; this lists where it comes from, person by
+              // person. Slot numbers (#1, #2) appear when a role has 2+ people.
+              allPositions.length > 0 && h("div", { style: { padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px", display: "flex", flexDirection: "column", gap: 2 } },
+                (function() {
+                  var roleUnitCount = {};
+                  dayLabor.units.forEach(function(u) { roleUnitCount[u.serviceId] = (roleUnitCount[u.serviceId] || 0) + 1; });
+                  return dayLabor.units.map(function(u) {
+                    var regOT = Math.round((u.otHours - u.mealPenaltyHours) * 100) / 100;
+                    var extras = [];
+                    if (u.mealPenaltyHours > 0) extras.push(u.mealPenaltyHours + "h meal penalty");
+                    if (regOT > 0) extras.push(regOT + "h OT");
+                    var label = u.svc.role + (roleUnitCount[u.serviceId] > 1 ? " #" + u.slot : "") + " — " + (u.tier === "half" ? "Half" : "Full") + " " + u.paidHours + "h";
+                    return h("div", { key: u.serviceId + "#" + u.slot, style: { display: "flex", gap: 6 } },
+                      h("span", { style: { color: B.textMut } }, label),
+                      extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),
+                      u.fullMargin && h("span", { style: { color: B.success, fontWeight: 600 } }, "· full margin"));
+                  });
+                })(),
+                h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: 3, borderTop: "1px solid " + B.border } },
+                  h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
+                  h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal)))
               )
             )
           );

@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend:
+    name: Frontend JS suites (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Run all JS test suites
+        run: |
+          set -e
+          for f in tests/test_*.js; do
+            echo "== $f =="
+            node "$f"
+          done
+
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          pip install -r requirements.txt pytest pytest-asyncio
+      # pytest.ini: each test module pins its own process-global DATABASE_URL,
+      # so the suite must run one module per process (file-by-file).
+      - name: Run backend tests (file-by-file)
+        run: |
+          set -e
+          for f in tests/test_*.py; do
+            echo "== $f =="
+            python -m pytest "$f" -q
+          done
