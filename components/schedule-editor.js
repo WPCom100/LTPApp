@@ -489,11 +489,24 @@
                 },
                 style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "6px", borderRadius: "4px", width: "100%", marginBottom: 4 } }, "+ Add Item to This Day"),
 
-              // Day totals
-              allPositions.length > 0 && h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px" } },
-                h("span", { style: { color: B.textMut } }, dayRateInfo.tier),
-                h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
-                h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal))
+              // Day totals + per-role breakdown. Meal penalty / OT are billed
+              // PER ROLE — a role's penalty depends on the shifts IT works, so
+              // two roles on the same day can differ. The badge up top shows the
+              // day total; this lists where it comes from, role by role.
+              allPositions.length > 0 && h("div", { style: { padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px", display: "flex", flexDirection: "column", gap: 2 } },
+                dayLabor.roles.map(function(r) {
+                  var regOT = Math.round((r.otHours - r.mealPenaltyHours) * 100) / 100;
+                  var extras = [];
+                  if (r.mealPenaltyHours > 0) extras.push(r.mealPenaltyHours + "h meal penalty");
+                  if (regOT > 0) extras.push(regOT + "h OT");
+                  return h("div", { key: r.serviceId, style: { display: "flex", gap: 6 } },
+                    h("span", { style: { color: B.textMut } },
+                      (r.count > 1 ? r.count + "× " : "") + r.svc.role + " — " + (r.tier === "half" ? "Half" : "Full") + " " + r.paidHours + "h"),
+                    extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")));
+                }),
+                h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: 3, borderTop: "1px solid " + B.border } },
+                  h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
+                  h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal)))
               )
             )
           );
