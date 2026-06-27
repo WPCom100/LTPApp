@@ -116,7 +116,9 @@ class Project(Base):
     meetings = Column(JSON, default=list)                # list[{id: int, title: str, date: str, time: str, attendees: list[int], notes: str, calSynced: bool}]
     schedule = Column(JSON, default=list)                # list[{id: str, title: str, date: str, time: str, endTime: str, addToCalendar: bool,
                                                          #       breaks: list[{id, startTime, endTime, type:"paid"|"unpaid"}],
-                                                         #       positions: list[{id, role, serviceId, crewId, status, fullMargin: bool, slot?: int}]}]
+                                                         #       positions: list[{id, role, serviceId, crewId, status, fullMargin: bool, slot?: int, breaks?: list}]}]
+                                                         #       (position.breaks: individual meal breaks for THAT person only —
+                                                         #        distinct from item.breaks which apply to the whole crew on the shift)
                                                          #       (fullMargin: bill the rate but $0 company cost, e.g. owner working;
                                                          #        slot: person-identity within a role/day — positions sharing role+slot
                                                          #        are one person, different slots are different people for OT tracking)

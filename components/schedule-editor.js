@@ -348,43 +348,46 @@
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 dayHasOT && h("span", { style: { color: "#000", background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
                 dayHasMealPenalty && h("span", { onClick: function() {
-                    var autoBreaks = window.LTP_autoGenerateBreaks(dayCall, dayWrap);
-                    // Distribute each break to the item it falls within
-                    var breaksByItemId = {};
-                    dayItems.forEach(function(di) { breaksByItemId[di.item.id] = []; });
-                    autoBreaks.forEach(function(brk) {
-                      var brkStart = brk.startTime;
-                      var bestId = null;
-                      // Find item whose time range contains the break start
-                      for (var di_idx = 0; di_idx < dayItems.length; di_idx++) {
-                        var it = dayItems[di_idx].item;
-                        if (it.time && it.endTime && brkStart >= it.time && brkStart < it.endTime) {
-                          bestId = it.id; break;
-                        }
-                      }
-                      // If not inside any item, find the item ending closest before the break
-                      if (!bestId) {
-                        var closestEnd = "";
-                        for (var di_idx2 = 0; di_idx2 < dayItems.length; di_idx2++) {
-                          var it2 = dayItems[di_idx2].item;
-                          if (it2.endTime && it2.endTime <= brkStart && it2.endTime > closestEnd) {
-                            closestEnd = it2.endTime; bestId = it2.id;
-                          }
-                        }
-                      }
-                      // Fallback to last item
-                      if (!bestId) bestId = dayItems[dayItems.length - 1].item.id;
-                      breaksByItemId[bestId].push(brk);
+                    // Per-PERSON fix: give a meal break only to the people who
+                    // actually incur a penalty, on their own position — so no one
+                    // else on the shift is docked. Crew-wide item breaks are kept
+                    // as context; individual breaks are recomputed from scratch
+                    // (idempotent on repeat clicks).
+                    var dayIds = {}; dayItems.forEach(function(di) { dayIds[di.item.id] = true; });
+                    var clearedItems = dayItems.map(function(di) {
+                      return Object.assign({}, di.item, { positions: (di.item.positions || []).map(function(p) {
+                        return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
+                      }) });
                     });
-                    // Apply: clear all existing breaks, add auto-generated to correct items
+                    var labor = window.LTP_calcDayLabor(clearedItems, svcs);
+                    var breaksByPos = {};
+                    labor.units.forEach(function(u) {
+                      if (!(u.mealPenaltyHours > 0)) return;
+                      var unitKey = u.serviceId + "#" + u.slot;
+                      var shifts = [];
+                      clearedItems.forEach(function(it) {
+                        var slots = window.LTP_effectiveSlots(it.positions);
+                        (it.positions || []).forEach(function(p) {
+                          if (!p.serviceId) return;
+                          if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
+                          shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
+                        });
+                      });
+                      window.LTP_mealFixBreaks(shifts).forEach(function(g) {
+                        (breaksByPos[g.positionId] = breaksByPos[g.positionId] || []).push({ id: g.id, startTime: g.startTime, endTime: g.endTime, type: g.type });
+                      });
+                    });
+                    // Apply: rewrite each of this day's positions' individual breaks.
                     onChange(schedule.map(function(sc) {
-                      if (breaksByItemId[sc.id] !== undefined) {
-                        return Object.assign({}, sc, { breaks: breaksByItemId[sc.id] });
-                      }
-                      return sc;
+                      if (!dayIds[sc.id]) return sc;
+                      return Object.assign({}, sc, { positions: (sc.positions || []).map(function(p) {
+                        var nb = breaksByPos[p.id] || [];
+                        if ((p.breaks && p.breaks.length) || nb.length) return Object.assign({}, p, { breaks: nb });
+                        return p;
+                      }) });
                     }));
                   },
-                  title: "Click to auto-generate meal breaks for this day",
+                  title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
                   style: { color: "#000", background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
                   "MEAL PENALTY: " + dayMealPenaltyHours + "h \u2014 fix")
               )
@@ -498,6 +501,17 @@
                           title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
                           style: { background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
                           pos.fullMargin ? "✓ MGN" : "MGN"),
+                        // Individual meal break(s) for THIS person (added by the
+                        // meal-penalty fix; removable). Distinct from the item's
+                        // crew-wide breaks above.
+                        (pos.breaks && pos.breaks.length > 0) && h("div", { style: { display: "flex", gap: 2, alignItems: "center" } },
+                          pos.breaks.map(function(br) {
+                            return h("span", { key: br.id, title: "Individual meal break " + window.LTP_formatTime(br.startTime) + " – " + window.LTP_formatTime(br.endTime) + " (this person only)",
+                              style: { display: "inline-flex", alignItems: "center", gap: 2, background: B.warn + "22", border: "1px solid " + B.warn + "55", borderRadius: "3px", padding: "1px 4px", fontSize: "8px", color: B.warn, fontWeight: 600, whiteSpace: "nowrap" } },
+                              "⏸ " + window.LTP_formatTime(br.startTime),
+                              h("button", { onClick: function() { updatePosition(s.id, pos.id, { breaks: (pos.breaks || []).filter(function(x) { return x.id !== br.id; }) }); },
+                                style: { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "9px", padding: 0, lineHeight: 1 } }, "×"));
+                          })),
                         h("div", { style: { width: 92, textAlign: "right", fontSize: "9px" } },
                           !posUnit ? null : (isUnitPrimary
                             ? [

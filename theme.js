@@ -389,15 +389,18 @@ window.LTP_calcDayLabor = function(items, services) {
   // Group positions into labor units. A unit is full-margin only if EVERY one
   // of its positions is flagged (the owner marks all their own shifts); a mixed
   // unit is treated as paid so cost is never zeroed by accident.
-  var unitMap = {}; // "serviceId#slot" → { svc, serviceId, slot, items, allMargin }
+  var unitMap = {}; // "serviceId#slot" → { svc, serviceId, slot, shifts, allMargin }
   (items || []).forEach(function(s) {
     var slots = window.LTP_effectiveSlots(s.positions);
     (s.positions || []).forEach(function(p) {
       if (!p.serviceId) return;
       var slot = slots[p.id] || 1;
       var key = p.serviceId + "#" + slot;
-      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, items: [], allMargin: true };
-      unitMap[key].items.push(s);
+      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, shifts: [], allMargin: true };
+      // A person's shift carries the item's crew-wide breaks PLUS their own
+      // individual breaks (p.breaks) — so a meal break can be given to just
+      // this person without affecting everyone else on the shift.
+      unitMap[key].shifts.push({ time: s.time, endTime: s.endTime, breaks: (s.breaks || []).concat(p.breaks || []) });
       if (!p.fullMargin) unitMap[key].allMargin = false;
     });
   });
@@ -408,7 +411,7 @@ window.LTP_calcDayLabor = function(items, services) {
     var u = unitMap[key];
     var svc = u.svc;
     if (!svc) return;
-    var info = window.LTP_calcLaborDay(100, u.items);
+    var info = window.LTP_calcLaborDay(100, u.shifts);
     if (info.paidHours <= 0) return;
 
     var otHours = Math.round((info.mealPenaltyHours + info.regularOTHours) * 100) / 100;
@@ -461,6 +464,64 @@ window.LTP_autoGenerateBreaks = function(callTime, endTime, existingBreaks) {
     cursor += 1; // skip past the break
   }
   return newBreaks;
+};
+
+// Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
+// breaks, positionId }), return the individual unpaid breaks needed to clear
+// THEIR meal penalties — each tagged with the positionId (shift) it attaches
+// to, so the break lands only on that person, not everyone else on the shift.
+// Contiguous shifts merge into one span (the meal clock runs across them) and
+// existing breaks (crew-wide or individual) are honored, so it only adds what
+// is still missing.
+window.LTP_mealFixBreaks = function(shifts) {
+  var S = (shifts || []).filter(function(s) { return s.time && s.endTime; }).map(function(s) {
+    var st = _timeToDecimal(s.time), en = _timeToDecimal(s.endTime);
+    if (en <= st) en += 24;
+    return { start: st, end: en, breaks: s.breaks || [], positionId: s.positionId };
+  }).sort(function(a, b) { return a.start - b.start; });
+  if (!S.length) return [];
+
+  // Contiguous shifts → one span (a real gap splits spans, matching the engine).
+  var spans = [];
+  var cur = [S[0]];
+  for (var i = 1; i < S.length; i++) {
+    if (S[i].start <= cur[cur.length - 1].end) cur.push(S[i]);
+    else { spans.push(cur); cur = [S[i]]; }
+  }
+  spans.push(cur);
+
+  function posIdAt(pieces, t) {
+    for (var k = 0; k < pieces.length; k++) { if (t >= pieces[k].start && t < pieces[k].end) return pieces[k].positionId; }
+    return pieces[pieces.length - 1].positionId;
+  }
+
+  var added = [];
+  spans.forEach(function(pieces) {
+    var spanStart = pieces[0].start;
+    var spanEnd = pieces.reduce(function(m, p) { return Math.max(m, p.end); }, pieces[0].end);
+    var brks = [];
+    pieces.forEach(function(p) { (p.breaks || []).forEach(function(b) {
+      var bs = _timeToDecimal(b.startTime), be = _timeToDecimal(b.endTime); if (be <= bs) be += 24;
+      brks.push({ start: bs, end: be });
+    }); });
+    var guard = 0;
+    while (guard++ < 24) {
+      // Build work segments (span minus the breaks gathered so far).
+      var sorted = brks.slice().sort(function(a, b) { return a.start - b.start; });
+      var segs = []; var cursor = spanStart;
+      sorted.forEach(function(b) { if (b.start > cursor) segs.push({ start: cursor, end: b.start }); cursor = Math.max(cursor, b.end); });
+      if (cursor < spanEnd) segs.push({ start: cursor, end: spanEnd });
+      var bad = null;
+      for (var j = 0; j < segs.length; j++) { if (segs[j].end - segs[j].start > 5 + 1e-9) { bad = segs[j]; break; } }
+      if (!bad) break; // no segment over 5h → no penalty left
+      var bStart = bad.start + 5, bEnd = bStart + 1;
+      if (bEnd > spanEnd) { bEnd = spanEnd; bStart = Math.max(bad.start, bEnd - 1); }
+      brks.push({ start: bStart, end: bEnd });
+      added.push({ positionId: posIdAt(pieces, bStart), id: window.LTP_genId("brk"),
+        startTime: _decimalToTime(bStart), endTime: _decimalToTime(bEnd), type: "unpaid" });
+    }
+  });
+  return added;
 };
 
 // Simple rate calc (backwards compatible — no breaks)
