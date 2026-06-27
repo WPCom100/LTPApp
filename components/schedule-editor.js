@@ -306,7 +306,6 @@
           });
           // Rate/meal/OT use the day's actual items (contiguous items merge into
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
-          var dayRateInfo = dayCall && dayWrap ? window.LTP_calcLaborDay(100, dayItemList) : { paidHours: 0, tier: "", mealPenaltyHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, segments: [] };
           // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
           var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
@@ -326,7 +325,6 @@
               if (unitPrimaryPos[key] === undefined) unitPrimaryPos[key] = p.id;
             });
           });
-          var dayPaidHours = dayRateInfo.paidHours;
           // OT / meal-penalty warnings fire per PERSON (what the quote actually
           // charges), not off the whole-day span — so a break on a position-less
           // item can't hide a penalty a working person still incurs.
@@ -336,7 +334,6 @@
           var dayPosCount = allPositions.length;
           var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
           var dayBorderColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
-          var dayTotalHours = dayCall && dayWrap ? calcHours(dayCall, dayWrap) : 0;
 
           return h("div", { key: group.date, style: { background: B.raised, borderRadius: "8px", border: "2px solid " + dayBorderColor, marginBottom: 8, overflow: "hidden" } },
             // Day header
@@ -349,7 +346,6 @@
                 dayPosCount > 0 && h("span", { style: { fontSize: "10px", color: dayFilled === dayPosCount ? B.success : B.textMut } }, dayFilled + "/" + dayPosCount + " confirmed")
               ),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                dayPaidHours > 0 && h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.text } }, dayPaidHours + "h paid"),
                 dayHasOT && h("span", { style: { color: "#000", background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
                 dayHasMealPenalty && h("span", { onClick: function() {
                     var autoBreaks = window.LTP_autoGenerateBreaks(dayCall, dayWrap);
