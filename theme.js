@@ -341,6 +341,72 @@ window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
   return window.LTP_calcLaborDay(dayRate, [{ time: callTime, endTime: endTime, breaks: breaks || [] }]);
 };
 
+// Per-day, per-ROLE labor aggregation — the canonical billing model shared by
+// the quote builder, the schedule summary, and the editor day totals so all
+// three agree on what a day costs.
+//
+// A day bills each ROLE once, not each position. If a role appears on several
+// items in the day it is a SINGLE day rate, sized by the MAX count of that role
+// on any one item (2 stagehands on load-in + 1 on strike → bill 2 for the day),
+// and its hours are that role's items merged into spans — so OT and meal penalty
+// are computed across the shifts that role actually works, and the same person
+// spread over several items isn't charged as several days.
+//
+// items    = [{ time, endTime, breaks, positions: [{ serviceId }] }]
+// services = [{ id, dayRate, dayCost, halfDay?, halfDayCost?, otRate?, otCost? }]
+// Returns { roles: [{ svc, serviceId, count, tier:"half"|"full", paidHours,
+//   mealPenaltyHours, otHours, dayRate, dayCost, otRate, otCost,
+//   rateTotal, costTotal }], rateTotal, costTotal }.
+window.LTP_calcDayLabor = function(items, services) {
+  var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
+
+  // serviceId → [{ item, count }] — which items each role works, and how many.
+  var roleItemMap = {};
+  (items || []).forEach(function(s) {
+    var counts = {};
+    (s.positions || []).forEach(function(p) { if (p.serviceId) counts[p.serviceId] = (counts[p.serviceId] || 0) + 1; });
+    Object.keys(counts).forEach(function(sid) {
+      if (!roleItemMap[sid]) roleItemMap[sid] = [];
+      roleItemMap[sid].push({ item: s, count: counts[sid] });
+    });
+  });
+
+  var roles = [];
+  var rateTotal = 0, costTotal = 0;
+  Object.keys(roleItemMap).forEach(function(sid) {
+    var svc = svcById[Number(sid)];
+    if (!svc) return;
+    var entries = roleItemMap[sid];
+    var count = 0;
+    entries.forEach(function(e) { count = Math.max(count, e.count); });
+
+    var roleItems = entries.map(function(e) { return e.item; });
+    var info = window.LTP_calcLaborDay(100, roleItems);
+    if (info.paidHours <= 0) return;
+
+    var otHours = Math.round((info.mealPenaltyHours + info.regularOTHours) * 100) / 100;
+    var isHalf = info.paidHours <= 5 && otHours === 0;
+    var tier = isHalf ? "half" : "full";
+    var dayRate = isHalf ? (svc.halfDay || svc.dayRate * 0.5) : svc.dayRate;
+    var dayCost = isHalf ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
+    var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
+    var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
+    var roleRate = dayRate * count + (otHours > 0 ? otRate * otHours * count : 0);
+    var roleCost = dayCost * count + (otHours > 0 ? otCost * otHours * count : 0);
+    rateTotal += roleRate;
+    costTotal += roleCost;
+
+    roles.push({
+      svc: svc, serviceId: svc.id, count: count, tier: tier,
+      paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
+      dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
+      rateTotal: Math.round(roleRate * 100) / 100, costTotal: Math.round(roleCost * 100) / 100,
+    });
+  });
+
+  return { roles: roles, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
+};
+
 // Auto-generate optimal meal breaks for a call/wrap window
 // Returns an array of break objects placed every 5h
 window.LTP_autoGenerateBreaks = function(callTime, endTime, existingBreaks) {

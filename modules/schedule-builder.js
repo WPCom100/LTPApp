@@ -63,28 +63,27 @@
     // ── Compute summary stats ────────────────────────────────────────────────
     var stats = useMemo(function() {
       var totalPos = 0, filledPos = 0, totalRate = 0, totalCost = 0;
-      // Group by date for day-level rate calculation
+      // Positions are counted per-position, but rate/cost are billed per ROLE
+      // per day via LTP_calcDayLabor — the same model the quote uses — so the
+      // summary previews the actual quote total instead of charging each
+      // position a full day (which double-counts a role spread over items).
       var dateMap = {};
       draft.schedule.forEach(function(s) {
         var d = s.date || "_unscheduled";
-        if (!dateMap[d]) dateMap[d] = { items: [], allPositions: [] };
-        var g = dateMap[d];
-        g.items.push(s);
-        (s.positions || []).forEach(function(p) { g.allPositions.push(p); });
-      });
-      Object.keys(dateMap).forEach(function(d) {
-        var g = dateMap[d];
-        g.allPositions.forEach(function(p) {
+        if (!dateMap[d]) dateMap[d] = { items: [] };
+        dateMap[d].items.push(s);
+        (s.positions || []).forEach(function(p) {
           totalPos++;
           if (p.status === "confirmed") filledPos++;
-          var svc = p.serviceId ? services.find(function(sv) { return sv.id === p.serviceId; }) : null;
-          var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-          totalRate += svc ? window.LTP_calcLaborDay(svc.dayRate, g.items).rate : 0;
-          totalCost += window.LTP_calcLaborDay(svc ? svc.dayCost : 0, g.items).rate;
         });
       });
+      Object.keys(dateMap).forEach(function(d) {
+        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, services);
+        totalRate += dayLabor.rateTotal;
+        totalCost += dayLabor.costTotal;
+      });
       var days = Object.keys(dateMap).length;
-      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: totalRate, totalCost: totalCost, margin: totalRate - totalCost };
+      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost) };
     }, [draft.schedule]);
 
     // ── Compute changes for activity ─────────────────────────────────────────
@@ -223,78 +222,35 @@
         g.items.push(s);
       });
 
-      // For each day, determine how many of each role are needed using
-      // the MAX count of that serviceId across any single item.
-      // e.g. Item A has 1×L1, 2×L3; Item B has 1×L1, 1×L3 → day needs 1×L1, 2×L3
+      // Bill each day per ROLE (not per position): a role on several items is
+      // one day rate sized by its MAX count on any single item, rated over the
+      // role's actual worked span. LTP_calcDayLabor owns that model; here we
+      // just aggregate its per-role output across days into quote line items —
+      // day rates keyed by role+tier, OT pooled by role.
       var dayRateItems = {};
       var otItems = {};
 
       Object.keys(dateGroups).forEach(function(dateKey) {
         var g = dateGroups[dateKey];
         if (!g.dayCall || !g.dayWrap) return;
+        var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
 
-        // For each role, find which items it appears on and calculate its specific span
-        // Step 1: collect per-item role counts and which items each role is on
-        var roleItemMap = {}; // serviceId → [{ item, count }]
-        g.items.forEach(function(s) {
-          var itemCounts = {};
-          (s.positions || []).forEach(function(p) {
-            if (!p.serviceId) return;
-            itemCounts[p.serviceId] = (itemCounts[p.serviceId] || 0) + 1;
-          });
-          Object.keys(itemCounts).forEach(function(sid) {
-            if (!roleItemMap[sid]) roleItemMap[sid] = [];
-            roleItemMap[sid].push({ item: s, count: itemCounts[sid] });
-          });
-        });
-
-        // Step 2: for each role, calculate rate from its actual worked hours across items
-        Object.keys(roleItemMap).forEach(function(sid) {
-          var entries = roleItemMap[sid];
-          var svc = services.find(function(sv) { return sv.id === Number(sid); });
-          if (!svc) return;
-
-          // Max count of this role across any single item
-          var count = 0;
-          entries.forEach(function(e) { count = Math.max(count, e.count); });
-
-          // Aggregate this role's worked hours across the items it appears on.
-          // Contiguous items merge into one continuous span (so back-to-back
-          // shifts share the 5h meal-penalty clock); a real gap is unpaid but
-          // resets the meal clock AND still counts toward the daily 10h OT
-          // threshold (gap hours aren't paid, worked hours on both sides are).
-          var roleItems = entries.map(function(e) { return e.item; });
-          var roleInfo = window.LTP_calcLaborDay(100, roleItems);
-          var totalPaidHours = roleInfo.paidHours;
-          var totalMealPenalty = roleInfo.mealPenaltyHours;
-
-          if (totalPaidHours <= 0) return;
-
-          // Tier from regular (non-penalty) hours; OT stacks meal penalty + 10h+ OT.
-          var regularHours = roleInfo.paidHours - roleInfo.mealPenaltyHours;
-          var regularOT = roleInfo.regularOTHours;
-          var totalOTHours = Math.round((totalMealPenalty + regularOT) * 100) / 100;
-          var roleIsHalf = totalPaidHours <= 5 && totalOTHours === 0;
-
+        window.LTP_calcDayLabor(g.items, services).roles.forEach(function(r) {
           // Day rate line item
-          var tier = roleIsHalf ? "half" : "full";
-          var tierRate = roleIsHalf ? (svc.halfDay || svc.dayRate * 0.5) : svc.dayRate;
-          var tierCost = roleIsHalf ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
-          var drKey = sid + "|" + tier;
+          var drKey = r.serviceId + "|" + r.tier;
           if (!dayRateItems[drKey]) {
-            dayRateItems[drKey] = { svc: svc, tier: tier, rate: tierRate, cost: tierCost, qty: 0, dates: [], dept: svc.department || "Other" };
+            dayRateItems[drKey] = { svc: r.svc, tier: r.tier, rate: r.dayRate, cost: r.dayCost, qty: 0, dates: [], dept: r.svc.department || "Other" };
           }
-          dayRateItems[drKey].qty += count;
-          var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
+          dayRateItems[drKey].qty += r.count;
           if (dayRateItems[drKey].dates.indexOf(fmtDate) === -1) dayRateItems[drKey].dates.push(fmtDate);
 
           // OT line item
-          if (totalOTHours > 0) {
-            var otKey = sid;
+          if (r.otHours > 0) {
+            var otKey = r.serviceId;
             if (!otItems[otKey]) {
-              otItems[otKey] = { svc: svc, otRate: svc.otRate || (svc.dayRate / 10 * 1.5), otCost: svc.otCost || (svc.dayCost / 10 * 1.5), totalHours: 0, dates: [], dept: svc.department || "Other" };
+              otItems[otKey] = { svc: r.svc, otRate: r.otRate, otCost: r.otCost, totalHours: 0, dates: [], dept: r.svc.department || "Other" };
             }
-            otItems[otKey].totalHours = Math.round((otItems[otKey].totalHours + totalOTHours * count) * 100) / 100;
+            otItems[otKey].totalHours = Math.round((otItems[otKey].totalHours + r.otHours * r.count) * 100) / 100;
             if (otItems[otKey].dates.indexOf(fmtDate) === -1) otItems[otKey].dates.push(fmtDate);
           }
         });

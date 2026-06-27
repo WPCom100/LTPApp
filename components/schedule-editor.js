@@ -307,6 +307,9 @@
           // Rate/meal/OT use the day's actual items (contiguous items merge into
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           var dayRateInfo = dayCall && dayWrap ? window.LTP_calcLaborDay(100, dayItemList) : { paidHours: 0, tier: "", mealPenaltyHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, segments: [] };
+          // Day rate/cost totals bill per ROLE per day (same model as the quote),
+          // so the footer matches what will be billed — not a per-position sum.
+          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
           var dayPaidHours = dayRateInfo.paidHours;
           var dayHasMealPenalty = dayRateInfo.mealPenaltyHours > 0;
           var dayHasOT = dayPaidHours > 10;
@@ -423,9 +426,13 @@
                     itemPositions.map(function(pos) {
                       var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
                       var crewMember = pos.crewId ? contacts.find(function(c) { return c.id === pos.crewId; }) : null;
-                      // Rate uses the DAY's items (contiguous-merge spans) for correct tier calculation
-                      var posRateInfo = svc ? window.LTP_calcLaborDay(svc.dayRate, dayItemList) : { rate: 0 };
-                      var posCostInfo = svc ? window.LTP_calcLaborDay(svc.dayCost, dayItemList) : { rate: 0 };
+                      // Per-row rate reflects THIS shift's hours (its own item),
+                      // so a short shift reads as a half day. The day total below
+                      // bills per role per day (LTP_calcDayLabor) and is the
+                      // authoritative figure — rows are indicative and won't sum
+                      // to it when a role spans multiple items.
+                      var posRateInfo = svc ? window.LTP_calcLaborDay(svc.dayRate, [s]) : { rate: 0 };
+                      var posCostInfo = svc ? window.LTP_calcLaborDay(svc.dayCost, [s]) : { rate: 0 };
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
@@ -481,15 +488,8 @@
               // Day totals
               allPositions.length > 0 && h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px" } },
                 h("span", { style: { color: B.textMut } }, dayRateInfo.tier),
-                h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + allPositions.reduce(function(t, p) {
-                  var sv = p.serviceId ? svcs.find(function(sv2) { return sv2.id === p.serviceId; }) : null;
-                  return t + (sv ? window.LTP_calcLaborDay(sv.dayRate, dayItemList).rate : 0);
-                }, 0)),
-                h("span", { style: { color: B.textMut } }, "Cost: $" + allPositions.reduce(function(t, p) {
-                  var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-                  var sv = p.serviceId ? svcs.find(function(sv2) { return sv2.id === p.serviceId; }) : null;
-                  return t + window.LTP_calcLaborDay(sv ? sv.dayCost : 0, dayItemList).rate;
-                }, 0))
+                h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
+                h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal))
               )
             )
           );
