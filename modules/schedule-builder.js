@@ -235,27 +235,27 @@
         if (!g.dayCall || !g.dayWrap) return;
         var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
 
-        window.LTP_calcDayLabor(g.items, services).roles.forEach(function(r) {
-          // Day rate line item. qty bills every position (r.count); costAccum
-          // pays only non-margin ones (r.costCount), so full-margin positions
-          // raise the billed total but not the cost — the per-unit cost is
+        window.LTP_calcDayLabor(g.items, services).units.forEach(function(u) {
+          // Each unit is one person. The day-rate line aggregates units of the
+          // same role+tier (qty = how many people); costAccum adds $0 for a
+          // full-margin unit so its rate is pure margin. Per-unit cost is
           // blended at build time so a single line stays correct.
-          var drKey = r.serviceId + "|" + r.tier;
+          var drKey = u.serviceId + "|" + u.tier;
           if (!dayRateItems[drKey]) {
-            dayRateItems[drKey] = { svc: r.svc, tier: r.tier, rate: r.dayRate, qty: 0, costAccum: 0, dates: [], dept: r.svc.department || "Other" };
+            dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
           }
-          dayRateItems[drKey].qty += r.count;
-          dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + r.dayCost * r.costCount) * 100) / 100;
+          dayRateItems[drKey].qty += 1;
+          dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
           if (dayRateItems[drKey].dates.indexOf(fmtDate) === -1) dayRateItems[drKey].dates.push(fmtDate);
 
-          // OT line item (rate hours bill r.count, cost hours pay r.costCount)
-          if (r.otHours > 0) {
-            var otKey = r.serviceId;
+          // OT line item — this person's own OT hours (cost $0 if full margin)
+          if (u.otHours > 0) {
+            var otKey = u.serviceId;
             if (!otItems[otKey]) {
-              otItems[otKey] = { svc: r.svc, otRate: r.otRate, rateHours: 0, costAccum: 0, dates: [], dept: r.svc.department || "Other" };
+              otItems[otKey] = { svc: u.svc, otRate: u.otRate, rateHours: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
             }
-            otItems[otKey].rateHours = Math.round((otItems[otKey].rateHours + r.otHours * r.count) * 100) / 100;
-            otItems[otKey].costAccum = Math.round((otItems[otKey].costAccum + r.otCost * r.otHours * r.costCount) * 100) / 100;
+            otItems[otKey].rateHours = Math.round((otItems[otKey].rateHours + u.otHours) * 100) / 100;
+            otItems[otKey].costAccum = Math.round((otItems[otKey].costAccum + (u.fullMargin ? 0 : u.otCost * u.otHours)) * 100) / 100;
             if (otItems[otKey].dates.indexOf(fmtDate) === -1) otItems[otKey].dates.push(fmtDate);
           }
         });

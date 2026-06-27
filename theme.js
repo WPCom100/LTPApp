@@ -341,54 +341,74 @@ window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
   return window.LTP_calcLaborDay(dayRate, [{ time: callTime, endTime: endTime, breaks: breaks || [] }]);
 };
 
-// Per-day, per-ROLE labor aggregation — the canonical billing model shared by
+// Effective person-SLOT for each position within ONE shift's positions.
+// A slot is a person-identity within a role for the day: pos.slot when the user
+// has set it (> 0), else the lowest unused integer for that role — so two of the
+// same role on one shift are distinct people, and positions added in order fall
+// back predictably. Returns { [positionId]: slot }. Shared by LTP_calcDayLabor
+// and the schedule editor so display and billing group people identically.
+window.LTP_effectiveSlots = function(positions) {
+  var byRole = {};
+  (positions || []).forEach(function(p) { if (p && p.serviceId) { (byRole[p.serviceId] = byRole[p.serviceId] || []).push(p); } });
+  var out = {};
+  Object.keys(byRole).forEach(function(sid) {
+    var list = byRole[sid];
+    var used = {};
+    list.forEach(function(p) { if (p.slot > 0) used[p.slot] = true; });
+    var next = 1;
+    list.forEach(function(p) {
+      var slot;
+      if (p.slot > 0) { slot = p.slot; }
+      else { while (used[next]) next++; used[next] = true; slot = next; }
+      out[p.id] = slot;
+    });
+  });
+  return out;
+};
+
+// Per-day, per-PERSON labor aggregation — the canonical billing model shared by
 // the quote builder, the schedule summary, and the editor day totals so all
 // three agree on what a day costs.
 //
-// A day bills each ROLE once, not each position. If a role appears on several
-// items in the day it is a SINGLE day rate, sized by the MAX count of that role
-// on any one item (2 stagehands on load-in + 1 on strike → bill 2 for the day),
-// and its hours are that role's items merged into spans — so OT and meal penalty
-// are computed across the shifts that role actually works, and the same person
-// spread over several items isn't charged as several days.
+// A day's positions are grouped into UNITS keyed by (role, slot). Each unit is
+// one person: positions sharing a role+slot across shifts merge into that
+// person's day, so OT and meal penalty are computed on THEIR own hours, and the
+// same person spread over several shifts isn't charged as several days. Two of
+// the same role on different slots are two different people, tracked separately
+// even with differing schedules. Slots default (see LTP_effectiveSlots) so that
+// "same role across shifts = one person" and legacy data behave as before.
 //
-// items    = [{ time, endTime, breaks, positions: [{ serviceId }] }]
+// items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin? }] }]
 // services = [{ id, dayRate, dayCost, halfDay?, halfDayCost?, otRate?, otCost? }]
-// Returns { roles: [{ svc, serviceId, count, tier:"half"|"full", paidHours,
-//   mealPenaltyHours, otHours, dayRate, dayCost, otRate, otCost,
+// Returns { units: [{ svc, serviceId, slot, fullMargin, tier:"half"|"full",
+//   paidHours, mealPenaltyHours, otHours, dayRate, dayCost, otRate, otCost,
 //   rateTotal, costTotal }], rateTotal, costTotal }.
 window.LTP_calcDayLabor = function(items, services) {
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
 
-  // serviceId → [{ item, count, paidCount }]. `count` is every position of the
-  // role on that item (drives the billed RATE); `paidCount` excludes positions
-  // flagged fullMargin (e.g. the owner working — billed but not paid), and
-  // drives COST so a full-margin position is pure margin.
-  var roleItemMap = {};
+  // Group positions into labor units. A unit is full-margin only if EVERY one
+  // of its positions is flagged (the owner marks all their own shifts); a mixed
+  // unit is treated as paid so cost is never zeroed by accident.
+  var unitMap = {}; // "serviceId#slot" → { svc, serviceId, slot, items, allMargin }
   (items || []).forEach(function(s) {
-    var counts = {}, paid = {};
+    var slots = window.LTP_effectiveSlots(s.positions);
     (s.positions || []).forEach(function(p) {
       if (!p.serviceId) return;
-      counts[p.serviceId] = (counts[p.serviceId] || 0) + 1;
-      if (!p.fullMargin) paid[p.serviceId] = (paid[p.serviceId] || 0) + 1;
-    });
-    Object.keys(counts).forEach(function(sid) {
-      if (!roleItemMap[sid]) roleItemMap[sid] = [];
-      roleItemMap[sid].push({ item: s, count: counts[sid], paidCount: paid[sid] || 0 });
+      var slot = slots[p.id] || 1;
+      var key = p.serviceId + "#" + slot;
+      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, items: [], allMargin: true };
+      unitMap[key].items.push(s);
+      if (!p.fullMargin) unitMap[key].allMargin = false;
     });
   });
 
-  var roles = [];
+  var units = [];
   var rateTotal = 0, costTotal = 0;
-  Object.keys(roleItemMap).forEach(function(sid) {
-    var svc = svcById[Number(sid)];
+  Object.keys(unitMap).forEach(function(key) {
+    var u = unitMap[key];
+    var svc = u.svc;
     if (!svc) return;
-    var entries = roleItemMap[sid];
-    var count = 0, costCount = 0;
-    entries.forEach(function(e) { count = Math.max(count, e.count); costCount = Math.max(costCount, e.paidCount); });
-
-    var roleItems = entries.map(function(e) { return e.item; });
-    var info = window.LTP_calcLaborDay(100, roleItems);
+    var info = window.LTP_calcLaborDay(100, u.items);
     if (info.paidHours <= 0) return;
 
     var otHours = Math.round((info.mealPenaltyHours + info.regularOTHours) * 100) / 100;
@@ -398,21 +418,23 @@ window.LTP_calcDayLabor = function(items, services) {
     var dayCost = isHalf ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
     var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
     var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
-    // Rate bills every position (count); cost pays only non-margin ones (costCount).
-    var roleRate = dayRate * count + (otHours > 0 ? otRate * otHours * count : 0);
-    var roleCost = dayCost * costCount + (otHours > 0 ? otCost * otHours * costCount : 0);
-    rateTotal += roleRate;
-    costTotal += roleCost;
+    var fullMargin = u.allMargin;
+    // Rate always bills the person; cost is $0 when the unit is full margin.
+    var unitRate = dayRate + (otHours > 0 ? otRate * otHours : 0);
+    var unitCost = fullMargin ? 0 : (dayCost + (otHours > 0 ? otCost * otHours : 0));
+    rateTotal += unitRate;
+    costTotal += unitCost;
 
-    roles.push({
-      svc: svc, serviceId: svc.id, count: count, costCount: costCount, tier: tier,
+    units.push({
+      svc: svc, serviceId: svc.id, slot: u.slot, fullMargin: fullMargin, tier: tier,
       paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
       dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
-      rateTotal: Math.round(roleRate * 100) / 100, costTotal: Math.round(roleCost * 100) / 100,
+      rateTotal: Math.round(unitRate * 100) / 100, costTotal: Math.round(unitCost * 100) / 100,
     });
   });
+  units.sort(function(a, b) { return (a.serviceId - b.serviceId) || (a.slot - b.slot); });
 
-  return { roles: roles, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
+  return { units: units, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
 };
 
 // Auto-generate optimal meal breaks for a call/wrap window

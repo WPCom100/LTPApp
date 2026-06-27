@@ -311,12 +311,12 @@
           // so the footer matches what will be billed — not a per-position sum.
           var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
           var dayPaidHours = dayRateInfo.paidHours;
-          // OT / meal-penalty warnings fire per BILLED role (what the quote
-          // actually charges), not off the whole-day span — so a break on a
-          // position-less item can't hide a penalty a working role still incurs.
-          var dayMealPenaltyHours = Math.round(dayLabor.roles.reduce(function(t, r) { return t + r.mealPenaltyHours; }, 0) * 100) / 100;
+          // OT / meal-penalty warnings fire per PERSON (what the quote actually
+          // charges), not off the whole-day span — so a break on a position-less
+          // item can't hide a penalty a working person still incurs.
+          var dayMealPenaltyHours = Math.round(dayLabor.units.reduce(function(t, u) { return t + u.mealPenaltyHours; }, 0) * 100) / 100;
           var dayHasMealPenalty = dayMealPenaltyHours > 0;
-          var dayHasOT = dayLabor.roles.some(function(r) { return r.paidHours > 10; });
+          var dayHasOT = dayLabor.units.some(function(u) { return u.paidHours > 10; });
           var dayPosCount = allPositions.length;
           var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
           var dayBorderColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
@@ -384,6 +384,8 @@
                 var s = di.item, i = di.index;
                 var itemBreaks = s.breaks || [];
                 var itemPositions = s.positions || [];
+                // Person-slot per position on this shift (drives the # selector).
+                var itemSlots = window.LTP_effectiveSlots(itemPositions);
 
                 return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
                   // Item header: title + times + delete
@@ -452,6 +454,22 @@
                           h("option", { value: "" }, "Role\u2026"),
                           svcs.map(function(sv) { return h("option", { key: sv.id, value: sv.id }, sv.role + " \u2014 " + sv.description); })
                         ),
+                        // Person slot \u2014 shown when a role has 2+ on the day. Give
+                        // distinct people different numbers so each is tracked
+                        // separately (own hours / OT / meal penalty); leave two
+                        // shifts on the same number to mark them the same person.
+                        (function() {
+                          var roleCountInDay = pos.serviceId ? allPositions.filter(function(p) { return p.serviceId === pos.serviceId; }).length : 0;
+                          if (roleCountInDay < 2) return null;
+                          var effSlot = itemSlots[pos.id] || 1;
+                          var opts = [];
+                          for (var n = 1; n <= roleCountInDay; n++) opts.push(n);
+                          return h("select", { value: effSlot,
+                            title: "Person #" + effSlot + " for this role. Different number = different person (tracked separately); same number across shifts = same person.",
+                            onChange: function(e) { updatePosition(s.id, pos.id, { slot: Number(e.target.value) }); },
+                            style: { width: 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                            opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
+                        })(),
                         h("select", { value: pos.crewId || "", onChange: function(e) {
                           var cid = Number(e.target.value) || null;
                           if (cid) { assignCrewToDay(s.id, pos, cid); }
@@ -496,23 +514,27 @@
                 },
                 style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "6px", borderRadius: "4px", width: "100%", marginBottom: 4 } }, "+ Add Item to This Day"),
 
-              // Day totals + per-role breakdown. Meal penalty / OT are billed
-              // PER ROLE — a role's penalty depends on the shifts IT works, so
-              // two roles on the same day can differ. The badge up top shows the
-              // day total; this lists where it comes from, role by role.
+              // Day totals + per-PERSON breakdown. Each unit is one person
+              // (role + slot); their meal penalty / OT depend on the shifts they
+              // work, so two people in the same role can differ. The badge up top
+              // shows the day total; this lists where it comes from, person by
+              // person. Slot numbers (#1, #2) appear when a role has 2+ people.
               allPositions.length > 0 && h("div", { style: { padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px", display: "flex", flexDirection: "column", gap: 2 } },
-                dayLabor.roles.map(function(r) {
-                  var regOT = Math.round((r.otHours - r.mealPenaltyHours) * 100) / 100;
-                  var marginCount = r.count - r.costCount;
-                  var extras = [];
-                  if (r.mealPenaltyHours > 0) extras.push(r.mealPenaltyHours + "h meal penalty");
-                  if (regOT > 0) extras.push(regOT + "h OT");
-                  return h("div", { key: r.serviceId, style: { display: "flex", gap: 6 } },
-                    h("span", { style: { color: B.textMut } },
-                      (r.count > 1 ? r.count + "× " : "") + r.svc.role + " — " + (r.tier === "half" ? "Half" : "Full") + " " + r.paidHours + "h"),
-                    extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),
-                    marginCount > 0 && h("span", { style: { color: B.success, fontWeight: 600 } }, "· " + marginCount + " full margin"));
-                }),
+                (function() {
+                  var roleUnitCount = {};
+                  dayLabor.units.forEach(function(u) { roleUnitCount[u.serviceId] = (roleUnitCount[u.serviceId] || 0) + 1; });
+                  return dayLabor.units.map(function(u) {
+                    var regOT = Math.round((u.otHours - u.mealPenaltyHours) * 100) / 100;
+                    var extras = [];
+                    if (u.mealPenaltyHours > 0) extras.push(u.mealPenaltyHours + "h meal penalty");
+                    if (regOT > 0) extras.push(regOT + "h OT");
+                    var label = u.svc.role + (roleUnitCount[u.serviceId] > 1 ? " #" + u.slot : "") + " — " + (u.tier === "half" ? "Half" : "Full") + " " + u.paidHours + "h";
+                    return h("div", { key: u.serviceId + "#" + u.slot, style: { display: "flex", gap: 6 } },
+                      h("span", { style: { color: B.textMut } }, label),
+                      extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),
+                      u.fullMargin && h("span", { style: { color: B.success, fontWeight: 600 } }, "· full margin"));
+                  });
+                })(),
                 h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: 3, borderTop: "1px solid " + B.border } },
                   h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
                   h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal)))
