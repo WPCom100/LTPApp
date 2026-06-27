@@ -311,8 +311,12 @@
           // so the footer matches what will be billed — not a per-position sum.
           var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
           var dayPaidHours = dayRateInfo.paidHours;
-          var dayHasMealPenalty = dayRateInfo.mealPenaltyHours > 0;
-          var dayHasOT = dayPaidHours > 10;
+          // OT / meal-penalty warnings fire per BILLED role (what the quote
+          // actually charges), not off the whole-day span — so a break on a
+          // position-less item can't hide a penalty a working role still incurs.
+          var dayMealPenaltyHours = Math.round(dayLabor.roles.reduce(function(t, r) { return t + r.mealPenaltyHours; }, 0) * 100) / 100;
+          var dayHasMealPenalty = dayMealPenaltyHours > 0;
+          var dayHasOT = dayLabor.roles.some(function(r) { return r.paidHours > 10; });
           var dayPosCount = allPositions.length;
           var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
           var dayBorderColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
@@ -370,7 +374,7 @@
                   },
                   title: "Click to auto-generate meal breaks for this day",
                   style: { color: "#000", background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
-                  "MEAL PENALTY: " + dayRateInfo.mealPenaltyHours + "h \u2014 fix")
+                  "MEAL PENALTY: " + dayMealPenaltyHours + "h \u2014 fix")
               )
             ),
 
