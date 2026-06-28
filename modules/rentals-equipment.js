@@ -106,7 +106,7 @@
       // For serialized, start with existing units or generate blanks for qty
       initial && initial.serialized
         ? (initial.units || []).map(function(u) { return Object.assign({}, u); })
-        : (!initial && false ? [] : (initial && !initial.serialized ? [] : []))
+        : []
     );
     var [err, setErr] = useState("");
 

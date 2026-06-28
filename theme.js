@@ -333,14 +333,6 @@ window.LTP_calcLaborDay = function(dayRate, items) {
   return { rate: rate, paidHours: paidHours, unpaidBreakHours: unpaidBreakHours, paidBreakHours: paidBreakHours, mealPenaltyHours: mealPenaltyHours, regularOTHours: regularOTHours, tier: tier, segments: segments };
 };
 
-// Single-block convenience wrapper — one call/wrap span with its breaks.
-// Equivalent to LTP_calcLaborDay with a single item, preserved for callers that
-// only ever deal with one continuous block.
-// breaks = [{ startTime, endTime, type: "unpaid"|"paid" }, ...]
-window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
-  return window.LTP_calcLaborDay(dayRate, [{ time: callTime, endTime: endTime, breaks: breaks || [] }]);
-};
-
 // Effective person-SLOT for each position within ONE shift's positions.
 // A slot is a person-identity within a role for the day: pos.slot when the user
 // has set it (> 0), else the lowest unused integer for that role — so two of the
@@ -438,32 +430,6 @@ window.LTP_calcDayLabor = function(items, services) {
   units.sort(function(a, b) { return (a.serviceId - b.serviceId) || (a.slot - b.slot); });
 
   return { units: units, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
-};
-
-// Auto-generate optimal meal breaks for a call/wrap window
-// Returns an array of break objects placed every 5h
-window.LTP_autoGenerateBreaks = function(callTime, endTime, existingBreaks) {
-  var call = _timeToDecimal(callTime);
-  var wrap = _timeToDecimal(endTime);
-  if (wrap <= call) wrap += 24;
-  var totalHours = wrap - call;
-  if (totalHours <= 5) return existingBreaks || []; // no breaks needed
-
-  var newBreaks = [];
-  var cursor = call;
-  while (cursor + 5 < wrap) {
-    cursor += 5;
-    // Don't place a break in the last 30 min before wrap
-    if (cursor + 1 > wrap) break;
-    newBreaks.push({
-      id: window.LTP_genId("brk"),
-      startTime: _decimalToTime(cursor),
-      endTime: _decimalToTime(cursor + 1),
-      type: "unpaid"
-    });
-    cursor += 1; // skip past the break
-  }
-  return newBreaks;
 };
 
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
@@ -1001,13 +967,6 @@ window.LTP_INVOICE_REF = function(inv) {
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();
   var num = String(inv.id || 0).padStart(3, "0");
   return "INV-" + year + "-" + num;
-};
-
-window.LTP_QUOTE_REF = function(qt) {
-  if (!qt) return "QT-?";
-  var year = (qt.sentDate || "").substring(0, 4) || new Date().getFullYear();
-  var num = String(qt.id || 0).padStart(3, "0");
-  return "QT-" + year + "-" + num;
 };
 
 window.LTP_INVOICE_TOTALS = function(inv) {

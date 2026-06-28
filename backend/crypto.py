@@ -29,8 +29,8 @@ Key rotation
 Fernet supports multi-key rotation natively via MultiFernet: deploy the new
 key alongside the old (comma-separated, new first), let token refreshes
 gradually re-encrypt rows under the new key, then retire the old key in a
-follow-up deploy. v1 just supports a single key — the comma-split is
-forward-compatible but unused.
+follow-up deploy. The comma-split is implemented (see ``_load_fernet``) and
+``backend/rotate_encryption_key.py`` relies on multi-key decryption.
 """
 import os
 

@@ -21,7 +21,6 @@ could double the rate for one second per window — meaningless).
 """
 import os
 import time
-from typing import Optional
 from fastapi import Response
 
 

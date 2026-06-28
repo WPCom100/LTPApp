@@ -84,12 +84,6 @@
     }).reduce(function(sum, a) { return sum + a.qty; }, 0);
   }
 
-  function availableQty(equipment, allocations, equipmentId, startDate, endDate, exId) {
-    var eq = equipment.find(function(e) { return e.id === equipmentId; });
-    if (!eq) return 0;
-    return eqQty(eq) - allocatedQty(allocations, equipmentId, startDate, endDate, exId);
-  }
-
   // Base display rate — use 3-day as the primary display rate
   function baseRate(eq) {
     return eq.rates && eq.rates.threeDay ? eq.rates.threeDay : 0;
@@ -116,7 +110,6 @@
     eqQty:            eqQty,
     outOfServiceQty:  outOfServiceQty,
     allocatedQty:     allocatedQty,
-    availableQty:     availableQty,
     baseRate:      baseRate,
     today:         today,
     addDays:       addDays,

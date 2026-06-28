@@ -187,9 +187,9 @@ def _calc_totals(entity):
             "total": after + tax, "cost": cost}
 
 
-def _draw_gradient(c, x, y, w, h, colors=None):
+def _draw_gradient(c, x, y, w, h):
     """Horizontal gradient: FF921E → EF5822 → 64260F (light orange to deep)."""
-    cols = colors or [(0xFF, 0x92, 0x1E), (0xEF, 0x58, 0x22), (0x64, 0x26, 0x0F)]
+    cols = [(0xFF, 0x92, 0x1E), (0xEF, 0x58, 0x22), (0x64, 0x26, 0x0F)]
     steps = 80
     sw = w / steps
     for i in range(steps):

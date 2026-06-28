@@ -50,7 +50,6 @@
     return all;
   }
 
-  // ── Detect crew conflicts (same person booked on same date across projects) ─
   // ── Update a position on a project schedule ────────────────────────────
   function updatePosition(setProjects, projectId, schedItemId, posId, patch) {
     setProjects(function(prev) {
