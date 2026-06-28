@@ -69,9 +69,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from backend import gmail, models
+from backend.activity import append_activity
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
@@ -270,22 +270,12 @@ def _stamp_email_sent(
     if gmail_message_id:
         changes.append({"cat": "Gmail Message ID", "detail": gmail_message_id})
 
-    entry = {
-        "id": "es-" + secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "email_sent",
-        "user": user.name or user.email,
-        "userId": user.id,
-        "message": f"Email sent to {to[0]}" + (f" + {len(to) - 1} more" if len(to) > 1 else ""),
-        "recipients": {"to": to, "cc": cc},
-        "changes": changes,
-    }
-    activity = list(entity.activity or [])
-    activity.append(entry)
-    entity.activity = activity
-    flag_modified(entity, "activity")
-    return entry
+    return append_activity(
+        entity, id_prefix="es-", type_="email_sent",
+        user=user.name or user.email, user_id=user.id,
+        message=f"Email sent to {to[0]}" + (f" + {len(to) - 1} more" if len(to) > 1 else ""),
+        now=now, recipients={"to": to, "cc": cc}, changes=changes,
+    )
 
 
 def _stamp_email_failed(
@@ -295,26 +285,17 @@ def _stamp_email_failed(
     """Mirror of _stamp_email_sent for failed sends. Internal-only
     (email_failed is NOT in PUBLIC_TYPES) — surfaces in the LTP activity
     panel so the sender knows why their click didn't go anywhere."""
-    entry = {
-        "id": "ef-" + secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "email_failed",
-        "user": user.name or user.email,
-        "userId": user.id,
-        "message": f"Email to {to[0]} failed",
-        "recipients": {"to": to, "cc": cc},
-        "changes": [
+    return append_activity(
+        entity, id_prefix="ef-", type_="email_failed",
+        user=user.name or user.email, user_id=user.id,
+        message=f"Email to {to[0]} failed", now=now,
+        recipients={"to": to, "cc": cc},
+        changes=[
             {"cat": "Error", "detail": error[:300]},
             {"cat": "To", "detail": ", ".join(to)},
             {"cat": "Subject", "detail": subject},
         ],
-    }
-    activity = list(entity.activity or [])
-    activity.append(entry)
-    entity.activity = activity
-    flag_modified(entity, "activity")
-    return entry
+    )
 
 
 # ── Endpoint ───────────────────────────────────────────────────────────────

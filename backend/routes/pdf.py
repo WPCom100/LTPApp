@@ -25,9 +25,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from backend import models
+from backend.activity import append_activity
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
@@ -51,27 +51,13 @@ def _append_pdf_activity_entry(entity_row, user, token, filename):
     Mutates the row in place; caller must commit. flag_modified is required
     because we're mutating a JSON column's inner list (SQLAlchemy can't
     auto-detect that)."""
-    activity = list(entity_row.activity or [])
-    # The frontend's existing activity entries use string IDs like "qa1" or
-    # ISO-time-suffixed strings. Match that pattern so the existing renderer
-    # treats it identically.
-    eid = "pdf-" + secrets.token_urlsafe(6)
-    now = datetime.now()
-    entry = {
-        "id": eid,
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "pdf_generated",
-        "user": user.name,
-        "userId": user.id,
-        "message": "PDF generated",
-        "pdfToken": token,
-        "pdfFilename": filename,
-    }
-    activity.append(entry)
-    entity_row.activity = activity
-    flag_modified(entity_row, "activity")
-    return entry
+    # IDs are string-prefixed + token_urlsafe so they match the frontend's
+    # existing activity-entry id pattern and render identically.
+    return append_activity(
+        entity_row, id_prefix="pdf-", type_="pdf_generated",
+        user=user.name, user_id=user.id, message="PDF generated",
+        now=datetime.now(), pdfToken=token, pdfFilename=filename,
+    )
 
 
 async def _generate_and_archive(

@@ -24,7 +24,6 @@ Decisions baked in (confirmed with the owner):
     tax and we store TotalTax / TotalAmt read-only so totals always match.
 """
 import os
-import secrets
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -32,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend import crypto, models, quickbooks
+from backend.activity import append_activity
 from backend.quickbooks import (
     QboApiError,
     QboError,
@@ -481,22 +481,11 @@ def _actor(user):
 
 def _stamp(invoice, user, etype, message, changes):
     actor_name, actor_id = _actor(user)
-    now = datetime.now(timezone.utc)
-    entry = {
-        "id": "qb-" + secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": etype,
-        "user": actor_name,
-        "userId": actor_id,
-        "message": message,
-        "changes": changes,
-    }
-    activity = list(invoice.activity or [])
-    activity.append(entry)
-    invoice.activity = activity
-    flag_modified(invoice, "activity")
-    return entry
+    return append_activity(
+        invoice, id_prefix="qb-", type_=etype, user=actor_name,
+        user_id=actor_id, message=message, now=datetime.now(timezone.utc),
+        changes=changes,
+    )
 
 
 # ── Push ─────────────────────────────────────────────────────────────────────

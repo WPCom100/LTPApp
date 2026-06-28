@@ -544,10 +544,11 @@ def test_stamp_email_sent_structure():
     e = FakeEntity()
     e.activity = list(e.activity)  # shallow copy
     user = models.User(id=42, google_sub="g", email="s@x.com", name="Sarah")
-    # Avoid flag_modified by giving the fake entity that no-op
-    import backend.routes.email as email_mod
-    real_flag = email_mod.flag_modified
-    email_mod.flag_modified = lambda *a, **k: None
+    # flag_modified now runs inside backend.activity.append_activity; patch it
+    # there to no-op on the fake (non-mapped) entity.
+    import backend.activity as activity_mod
+    real_flag = activity_mod.flag_modified
+    activity_mod.flag_modified = lambda *a, **k: None
     try:
         entry = _stamp_email_sent(
             e, user,
@@ -556,7 +557,7 @@ def test_stamp_email_sent_structure():
             now=datetime(2026, 6, 1, 14, 30, tzinfo=timezone.utc),
         )
     finally:
-        email_mod.flag_modified = real_flag
+        activity_mod.flag_modified = real_flag
 
     _check("activity entry appended", len(e.activity) == 2)
     _check("type is email_sent", entry["type"] == "email_sent")

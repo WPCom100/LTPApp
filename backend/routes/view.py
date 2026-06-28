@@ -24,16 +24,15 @@ import asyncio
 import base64
 import binascii
 import io
-import secrets as _secrets
 from datetime import datetime, timezone
 from typing import Literal, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from backend import models, view_tracking
+from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
@@ -195,19 +194,10 @@ def _stamp_tracked_open(
         prefix = _ID_PREFIX_RECIPIENT_OPENED if recipient else _ID_PREFIX_CLIENT_VIEWED
     else:  # pdf
         prefix = _ID_PREFIX_RECIPIENT_PDF if recipient else _ID_PREFIX_CLIENT_PDF
-    entry = {
-        "id": prefix + _secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": type_,
-        "user": actor_label,
-        "userId": None,
-        "message": message,
-        "changes": changes,
-    }
-    entity.activity = list(entity.activity or []) + [entry]
-    flag_modified(entity, "activity")
-    return entry
+    return append_activity(
+        entity, id_prefix=prefix, type_=type_, user=actor_label,
+        user_id=None, message=message, now=now, changes=changes,
+    )
 
 
 def _bump_recipient_open(recipient: models.EmailRecipient, now: datetime) -> None:
@@ -369,22 +359,14 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     # Append activity + flip status
     now = datetime.now()
     ip, ua = view_tracking.extract_client_meta(request)
-    entry = {
-        "id": "ca-" + _secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "client_accepted",
-        "user": client_name,
-        "userId": None,   # no LTP user; client is external
-        "message": "Quote accepted by client",
-        "comment": comment or None,
-        "signatureDataUrl": signature,
+    entry = append_activity(
+        row, id_prefix="ca-", type_="client_accepted", user=client_name,
+        user_id=None,   # no LTP user; client is external
+        message="Quote accepted by client", now=now,
+        comment=comment or None, signatureDataUrl=signature,
         # Internal audit metadata (not echoed by public_activity).
-        "ip": ip or None,
-        "userAgent": (ua or "")[:300] or None,
-    }
-    row.activity = list(row.activity or []) + [entry]
-    flag_modified(row, "activity")
+        ip=ip or None, userAgent=(ua or "")[:300] or None,
+    )
     row.status = "accepted"
     await db.flush()
     return {"status": "accepted", "activityId": entry["id"]}
@@ -418,21 +400,13 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
 
     now = datetime.now()
     ip, ua = view_tracking.extract_client_meta(request)
-    entry = {
-        "id": "cd-" + _secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "client_declined",
-        "user": client_name,
-        "userId": None,
-        "message": "Quote declined by client",
-        "comment": comment or None,
+    entry = append_activity(
+        row, id_prefix="cd-", type_="client_declined", user=client_name,
+        user_id=None, message="Quote declined by client", now=now,
+        comment=comment or None,
         # Internal audit metadata (not echoed by public_activity).
-        "ip": ip or None,
-        "userAgent": (ua or "")[:300] or None,
-    }
-    row.activity = list(row.activity or []) + [entry]
-    flag_modified(row, "activity")
+        ip=ip or None, userAgent=(ua or "")[:300] or None,
+    )
     row.status = "declined"
     await db.flush()
     return {"status": "declined", "activityId": entry["id"]}
