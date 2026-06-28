@@ -19,7 +19,6 @@ non-guessable URL.
 """
 import asyncio
 import io
-import re
 import secrets
 from datetime import datetime
 
@@ -37,6 +36,7 @@ from backend.routes._shared import (
     invoice_dict as _invoice_dict,
     load_related as _load_related,
     load_settings as _load_settings,
+    safe_pdf_filename as _safe_filename,
 )
 
 
@@ -44,14 +44,6 @@ from backend.routes._shared import (
 # style auth), and one for the public token GET endpoint (no auth).
 api_pdf_router = APIRouter(prefix="/api", tags=["pdf"], dependencies=[Depends(require_session)])
 public_pdf_router = APIRouter(prefix="/pdf", tags=["pdf"])
-
-
-def _safe_filename(stem: str) -> str:
-    """Strip anything not safe for Content-Disposition: filename. Quote refs
-    are already safe, but be defensive in case a future ref format includes
-    something odd."""
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem)
-    return f"{safe}.pdf" if not safe.lower().endswith(".pdf") else safe
 
 
 def _append_pdf_activity_entry(entity_row, user, token, filename):

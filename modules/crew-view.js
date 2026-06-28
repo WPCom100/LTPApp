@@ -55,12 +55,7 @@
     return h12 + ":" + mm + " " + ampm;
   }
 
-  function settingsAddress(s) {
-    if (!s) return "";
-    var line1 = (s.street || "") + (s.suite ? ", " + s.suite : "");
-    var line2 = (s.city || "") + (s.state ? ", " + s.state : "") + (s.zip ? " " + s.zip : "");
-    return [line1, line2].filter(function(p) { return p && p.trim(); }).join(". ");
-  }
+  var settingsAddress = window.LTP_settingsAddress;
 
   // ── Accept / Decline form (comment only) ─────────────────────────────────
 

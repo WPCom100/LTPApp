@@ -24,7 +24,6 @@ import asyncio
 import base64
 import binascii
 import io
-import re
 import secrets as _secrets
 from datetime import datetime, timezone
 from typing import Literal, Union
@@ -42,6 +41,7 @@ from backend.routes._shared import (
     quote_dict, invoice_dict,
     load_related, load_settings,
     public_section_items, public_activity, public_settings,
+    safe_pdf_filename as _safe_filename,
 )
 
 
@@ -79,11 +79,6 @@ async def _find_entity_by_token(db: AsyncSession, token: str):
     if row is not None:
         return "invoice", row
     return None, None
-
-
-def _safe_filename(stem: str) -> str:
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem)
-    return f"{safe}.pdf" if not safe.lower().endswith(".pdf") else safe
 
 
 # Magic-number prefixes for the raster formats a signature pad can emit. SVG

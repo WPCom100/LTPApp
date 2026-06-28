@@ -962,11 +962,50 @@ window.LTP_formatAddress = function(e, joiner) {
   return [street, cityLine].filter(function(x) { return x; }).join(joiner);
 };
 
+// Settings-shaped address (street/suite/city/state/zip) → single inline string.
+// Used by the public client-view and crew-view headers. Distinct from
+// LTP_formatAddress, which works on CRM entity shapes (address/city/state/zip).
+window.LTP_settingsAddress = function(s) {
+  if (!s) return "";
+  var line1 = (s.street || "") + (s.suite ? ", " + s.suite : "");
+  var line2 = (s.city || "") + (s.state ? ", " + s.state : "") + (s.zip ? " " + s.zip : "");
+  return [line1, line2].filter(function(p) { return p && p.trim(); }).join(". ");
+};
+
+// Build a Google Calendar "add event" template URL. Shared by the CRM meetings
+// and projects views. Event runs from {time} to one hour later (same minutes,
+// hour clamped to 23). attendees is an array of emails; details is optional.
+window.LTP_gcalUrl = function(opts) {
+  opts = opts || {};
+  var time = opts.time || "00:00";
+  var d = (opts.date || "").replace(/-/g, "");
+  var eh = String(Math.min(23, parseInt(time.split(":")[0]) + 1)).padStart(2, "0");
+  var dates = d + "T" + time.replace(":", "") + "00/" + d + "T" + eh + time.split(":")[1] + "00";
+  var url = "https://calendar.google.com/calendar/render?action=TEMPLATE"
+    + "&text=" + encodeURIComponent(opts.title || "")
+    + "&dates=" + dates;
+  if (opts.details) url += "&details=" + encodeURIComponent(opts.details);
+  return url + "&add=" + (opts.attendees || []).join(",");
+};
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();
   var num = String(inv.id || 0).padStart(3, "0");
   return "INV-" + year + "-" + num;
+};
+
+// Service line rate maps. Given a service's rate card, returns { priceMap,
+// costMap } keyed by rate type (day/half/hourly/ot). Half/hourly/OT fall back
+// to derived ratios (×0.5, ÷10, ÷10×1.5) when not explicitly set. Single
+// source of truth shared by the quote builder and invoice editor so a rate-type
+// switch prices identically in both and converted invoices never drift.
+window.LTP_serviceRateMaps = function(svc) {
+  svc = svc || {};
+  return {
+    priceMap: { day: svc.dayRate, half: svc.halfDay || svc.dayRate * 0.5, hourly: svc.hourlyRate || svc.dayRate / 10, ot: svc.otRate || svc.dayRate / 10 * 1.5 },
+    costMap:  { day: svc.dayCost, half: svc.halfDayCost || svc.dayCost * 0.5, hourly: svc.hourlyCost || svc.dayCost / 10, ot: svc.otCost || svc.dayCost / 10 * 1.5 },
+  };
 };
 
 window.LTP_INVOICE_TOTALS = function(inv) {

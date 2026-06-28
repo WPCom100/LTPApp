@@ -60,7 +60,6 @@ Lifecycle
 import asyncio
 import io
 import os
-import re
 import secrets
 from datetime import datetime, timezone
 from html import escape
@@ -77,7 +76,10 @@ from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
 from backend.pdf_generator import doc_ref, generate_pdf
-from backend.routes._shared import invoice_dict, load_related, load_settings
+from backend.routes._shared import (
+    invoice_dict, load_related, load_settings,
+    safe_pdf_filename as _pdf_filename,
+)
 from backend.sanitize import email_html
 
 
@@ -113,13 +115,6 @@ class SendRequest(BaseModel):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-
-
-def _pdf_filename(stem: str) -> str:
-    """Sanitize a doc ref ('INV-2026-014') into a safe attachment filename.
-    Mirrors backend/routes/pdf.py::_safe_filename."""
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem or "invoice")
-    return safe if safe.lower().endswith(".pdf") else f"{safe}.pdf"
 
 
 def _app_origin() -> str:

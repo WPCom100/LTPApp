@@ -10,10 +10,20 @@ Naming: public functions (no underscore prefix) since they're imported
 across modules. Internally still treated as routing-layer plumbing — not
 exposed in any API surface.
 """
+import re
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import models
+
+
+def safe_pdf_filename(stem: str) -> str:
+    """Sanitize a doc ref ('INV-2026-014') into a safe Content-Disposition /
+    attachment filename, ensuring a .pdf suffix. Defensive against odd ref
+    formats and empty input."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem or "invoice")
+    return safe if safe.lower().endswith(".pdf") else f"{safe}.pdf"
 
 
 def quote_dict(q: models.Quote) -> dict:

@@ -441,9 +441,8 @@
       // Rate type selector (services only)
       item.type === "service" && !isLocked && svcData && h("select", { value: svcRateType, onChange: function(e) {
         var rt = e.target.value;
-        var priceMap = { day: svcData.dayRate, half: svcData.halfDay || svcData.dayRate * 0.5, hourly: svcData.hourlyRate || svcData.dayRate / 10, ot: svcData.otRate || svcData.dayRate / 10 * 1.5 };
-        var costMap  = { day: svcData.dayCost, half: svcData.halfDayCost || svcData.dayCost * 0.5, hourly: svcData.hourlyCost || svcData.dayCost / 10, ot: svcData.otCost || svcData.dayCost / 10 * 1.5 };
-        onUpdate(sectionId, item.id, { rateType: rt, unitPrice: priceMap[rt] || 0, cost: costMap[rt] || 0, adjustedPrice: null });
+        var maps = window.LTP_serviceRateMaps(svcData);
+        onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
       }, style: { width: 82, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 4px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none" } },
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),

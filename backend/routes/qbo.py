@@ -49,12 +49,6 @@ def _qbo_environment() -> str:
     return "production" if env in ("production", "prod") else "sandbox"
 
 
-def _aware(dt):
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
 # ── OAuth: connect ───────────────────────────────────────────────────────────
 
 @qbo_router.get("/connect")
@@ -163,7 +157,7 @@ async def status(
         return {"connected": False, "configured": bool(os.environ.get("QBO_CLIENT_ID"))}
 
     now = datetime.now(timezone.utc)
-    refresh_exp = _aware(conn.refresh_token_expires_at)
+    refresh_exp = quickbooks._aware(conn.refresh_token_expires_at)
     needs_reconnect = refresh_exp is not None and refresh_exp <= now
 
     connected_by = None
@@ -192,7 +186,7 @@ async def status(
         "realmMasked": masked_realm,
         "connectedBy": connected_by,
         "connectedAt": conn.connected_at.isoformat() if conn.connected_at else None,
-        "accessTokenExpiresAt": _aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
+        "accessTokenExpiresAt": quickbooks._aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
         "refreshTokenExpiresAt": refresh_exp.isoformat() if refresh_exp else None,
         "needsReconnect": needs_reconnect,
         # Auto-receipt surface for the Settings panel.
