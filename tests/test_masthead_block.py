@@ -1,7 +1,7 @@
 """Tests for the shared branded email container + masthead.
 
 Every email — crew AND customer (quotes/invoices/receipts) — is wrapped at send
-time in the SAME container (crew.py::email_shell: light canvas -> white card with
+time in the SAME container (email_compose.email_shell: light canvas -> white card with
 the masthead on top + footer), so the masthead and layout are identical
 everywhere. The masthead is NOT a body token; the container provides it.
 
@@ -43,16 +43,16 @@ def _brand():
 
 
 def test_render_masthead_block():
-    from backend.routes import crew
-    html = crew.render_masthead(_brand())
+    from backend import email_compose
+    html = email_compose.render_masthead(_brand())
     assert html.strip().startswith("<table") and html.strip().endswith("</table>")
     for pin in _PINS:
         assert pin in html, f"masthead missing: {pin}"
 
 
 def test_email_shell_wraps_with_masthead_on_top_and_footer_below():
-    from backend.routes import crew
-    shell = crew.email_shell("<p>HELLO BODY</p>", _brand())
+    from backend import email_compose
+    shell = email_compose.email_shell("<p>HELLO BODY</p>", _brand())
     # the card container
     assert "max-width:580px" in shell and "border-radius:14px" in shell
     # masthead present and ABOVE the body content
@@ -70,15 +70,19 @@ def test_customer_emails_wrapped_in_container_on_send():
 
 
 def test_crew_shell_is_the_shared_container():
+    # The shared shell now lives in the neutral email_compose module; crew and
+    # email both import it, so there is genuinely one container (no divergence).
+    compose = _read("backend", "email_compose.py")
+    assert "def email_shell(" in compose
+    assert "render_masthead(brand)" in compose   # shell renders the shared masthead
     crew = _read("backend", "routes", "crew.py")
-    assert "def email_shell(" in crew
-    assert "render_masthead(brand)" in crew      # shell renders the shared masthead
     assert "email_shell(inner, brand)" in crew   # crew sends use the same shell
 
 
 def test_all_email_content_is_fluid_for_small_screens():
     """No element forces width beyond a phone screen, across every template."""
     email = _read("backend", "routes", "email.py")
+    compose = _read("backend", "email_compose.py")
     settings = _read("data", "settings.js")
     theme = _read("theme.js")
     # The customer {{header}} action box is generated per type by
@@ -91,8 +95,9 @@ def test_all_email_content_is_fluid_for_small_screens():
     # nothing in the relayed customer email forces a fixed wide width
     assert "white-space:nowrap" not in email
     # signature: long email/links can break + the table can't exceed the screen
-    assert "word-break:break-word" in email and "word-break:break-word" in sig_js
-    assert "border-collapse:collapse;max-width:100%" in email and "border-collapse:collapse;max-width:100%" in sig_js
+    # (the server-side fallback signature now lives in backend/email_compose.py)
+    assert "word-break:break-word" in compose and "word-break:break-word" in sig_js
+    assert "border-collapse:collapse;max-width:100%" in compose and "border-collapse:collapse;max-width:100%" in sig_js
     # sanitizer permits the safe wrapping properties
     sani = _read("backend", "sanitize.py")
     assert '"word-break"' in sani and '"overflow-wrap"' in sani

@@ -42,8 +42,11 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend import crew_integrity, gmail, models, view_tracking
 from backend.auth_deps import require_session
 from backend.database import get_db
+from backend.email_compose import (
+    _CTA_ORANGE, _app_origin, _email_brand, _fmt_hhmm, _fmt_iso_date,
+    _paragraphs_to_html, _render_signature, email_shell,
+)
 from backend.routes._shared import load_settings, public_settings
-from backend.routes.email import _render_signature, _app_origin
 from backend.sanitize import email_html
 
 
@@ -203,68 +206,6 @@ _FALLBACK_CREW_BODY = (
     "{{signature}}"
 )
 
-# Brand defaults — mirror data/settings.js (accentColor, logoUrl) so a themed
-# email still renders before any Settings save. The LTP stacked logo doubles as
-# the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
-_DEFAULT_ACCENT = "#E8731A"
-# The exact brand orange, sampled from assets/logos — used for the masthead
-# rule (so it color-matches the logo and reads as one shape) and the CTA button.
-_BRAND_ORANGE = "#f15927"
-_CTA_ORANGE = _BRAND_ORANGE
-# Email logo: the trimmed linear lockup, served by the app itself at this path
-# (no external dependency / dead URL). The absolute URL is built per-send from
-# the app origin in _email_brand.
-_LOGO_ASSET_PATH = "/assets/logos/luminary-masthead.png"
-
-# Shared body-paragraph style — explicit font-family so template text renders
-# identically everywhere (don't rely on inheritance across table boundaries,
-# which some mail clients drop).
-_BODY_P_STYLE = ("margin:0 0 14px;font-size:14px;line-height:1.6;color:#3d4852;"
-                 "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif")
-
-
-def _fmt_iso_date(iso: str) -> str:
-    try:
-        from datetime import date
-        y, m, d = (int(x) for x in (iso or "").split("-"))
-        return date(y, m, d).strftime("%a, %b ") + str(d) + ", " + str(y)
-    except Exception:
-        return iso or ""
-
-
-def _fmt_hhmm(t: str) -> str:
-    try:
-        hh, mm = (t or "").split(":")[:2]
-        hh = int(hh)
-        return f"{hh % 12 or 12}:{mm} {'AM' if hh < 12 else 'PM'}"
-    except Exception:
-        return t or ""
-
-
-def _safe_color(c: str, fallback: str) -> str:
-    """Only let a #-hex color into inline styles (defense in depth — the value
-    is admin-set in Settings and email_html also sanitizes CSS, but validating
-    here keeps a malformed value from quietly breaking the layout)."""
-    c = (c or "").strip()
-    return c if re.match(r"^#[0-9a-fA-F]{3,8}$", c) else fallback
-
-
-def _email_brand(settings_data: dict) -> dict:
-    """Workspace branding for the themed crew-email masthead.
-
-    The masthead deliberately uses the dedicated linear lockup
-    (assets/logos/luminary-masthead.png) — NOT settings.logoUrl. logoUrl is the
-    full-size company logo (PDFs, portal, etc.); the crew masthead is its own
-    treatment (mask + horizontal rule). Quote/invoice emails share this same
-    masthead/container (email.py wraps them in email_shell); their {{header}}
-    action box is generated per type by theme.js::LTP_renderHeader.
-    """
-    return {
-        "accent": _safe_color(settings_data.get("accentColor"), _DEFAULT_ACCENT),
-        "logo": (_app_origin() or "") + _LOGO_ASSET_PATH,
-        "company": (settings_data.get("companyName") or "").strip() or "Luminary Technology & Productions",
-        "website": (settings_data.get("website") or "").strip(),
-    }
 
 
 def _crew_shifts_html(shifts: list, accent: str) -> str:
@@ -319,88 +260,6 @@ def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent
     )
 
 
-def _paragraphs_to_html(text: str, blocks: dict | None = None) -> str:
-    """Plain-text body → HTML. Blank lines split paragraphs; text is escaped.
-    A paragraph that is *exactly* a block token (e.g. "{{shifts}}") is emitted
-    as that block's HTML — a sibling, NOT wrapped in <p>. That avoids both the
-    invalid table-inside-<p> the sanitizer would hoist apart AND the empty
-    <p></p> gaps it left behind, which made spacing look inconsistent above vs.
-    below the header. Inline tokens (a token mid-sentence) are still substituted."""
-    blocks = blocks or {}
-    out = []
-    for para in (text or "").split("\n\n"):
-        p = para.strip()
-        if p == "":
-            continue
-        if p in blocks:
-            out.append(blocks[p])
-            continue
-        html_p = '<p style="' + _BODY_P_STYLE + '">' + escape(p).replace("\n", "<br>") + "</p>"
-        for tok, frag in blocks.items():
-            if tok in html_p:
-                html_p = html_p.replace(tok, frag)
-        out.append(html_p)
-    return "".join(out)
-
-
-def render_masthead(brand: dict) -> str:
-    """Self-contained branded masthead block: the linear logo butting a 4px
-    color-matched rule that begins at the mask's left edge (after a 31px spacer)
-    and bleeds to the right edge. Rendered STRUCTURALLY by email_shell at the top
-    of every email — the masthead is NOT a body token; a stray {{masthead}} left
-    in a template body is stripped by email_shell, never substituted.
-
-    The rule is the logo cell's OWN border-bottom (no separate row to leak a
-    seam); border-collapse + font-size/line-height:0 kill the residual gap some
-    email clients (Gmail) render below a scaled image; the img's -1px bottom
-    margin adds overlap where clients keep it.
-
-    MUST stay in sync with theme.js::window.LTP_renderMasthead (the Send-modal
-    preview); tests/test_masthead_block.py pins both via substring checks.
-    """
-    company = escape(brand["company"])
-    if brand["logo"]:
-        logo = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
-                'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">')
-    else:
-        logo = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
-                'color:' + _BRAND_ORANGE + ';letter-spacing:0.03em">' + company + '</span>')
-    return (
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr>'
-        '<td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td>'
-        '<td style="padding:26px 30px 0 0;border-bottom:4px solid ' + _BRAND_ORANGE + ';font-size:0;line-height:0">' + logo + '</td>'
-        '</tr></table>'
-    )
-
-
-def email_shell(inner_html: str, brand: dict) -> str:
-    """Wrap composed crew-email content in the themed, branded responsive
-    layout (light canvas, centered 580px card, masthead, footer).
-
-    The masthead is part of THIS layout (render_masthead below), NOT a body
-    token — so any stray {{masthead}} in the content is dead. Strip it here so it
-    can never render literally; this is the single door the crew + crew-notify
-    paths go through (the customer path in routes/email.py strips it too)."""
-    inner_html = (inner_html or "").replace("{{masthead}}", "")
-    company = escape(brand["company"])
-    footer = company + (('&nbsp;&nbsp;·&nbsp;&nbsp;' + escape(brand["website"])) if brand["website"] else "")
-    # width:100% + max-width (NOT a fixed width:600px) so the card fills a phone
-    # screen and stays centered — a hard 600px overflows and looks off-center.
-    return (
-        '<div style="background-color:#f1f3f5;padding:24px 10px;'
-        "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif\">"
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f1f3f5">'
-        '<tr><td align="center">'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
-        'style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px">'
-        '<tr><td style="padding:0">' + render_masthead(brand) + '</td></tr>'
-        '<tr><td style="padding:22px 30px 26px">' + inner_html + '</td></tr>'
-        '</table>'
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px">'
-        '<tr><td style="padding:16px 28px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">' + footer + '</td></tr>'
-        '</table>'
-        '</td></tr></table></div>'
-    )
 
 
 def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html) -> str:

@@ -52,6 +52,10 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from backend import gmail, models, qbo_sync, quickbooks
 from backend.database import async_session
+from backend.email_compose import (
+    _build_view_url, _email_brand, _fmt_iso_date, _paragraphs_to_html,
+    _render_signature, email_shell,
+)
 from backend.email_validate import RecipientError, parse_recipients
 from backend.routes._shared import load_settings
 from backend.sanitize import email_html
@@ -90,7 +94,6 @@ _METHOD_LABELS = {
 def _payment_lines(payments: list) -> str:
     """One indented line per payment — the same shape openReceiptModal builds:
     '  Fri, Jun 12, 2026 — $1,234.50 via QuickBooks (ref)'."""
-    from backend.routes.crew import _fmt_iso_date
     out = []
     for p in (payments or []):
         when = _fmt_iso_date(p.get("date"))
@@ -166,11 +169,6 @@ def build_receipt_email(settings_data: dict, sender: models.User, text_vars: dic
     drop in the receipt header + the sender's signature at block level, and return
     ``(subject, inner_html)``. ``inner_html`` still carries a literal {{viewUrl}}
     for the send path to swap per recipient; it is NOT yet shell-wrapped."""
-    # Lazy import: routes.crew imports routes.email which lazy-imports crew back;
-    # importing here (not at module top) keeps the import graph acyclic.
-    from backend.routes.crew import _paragraphs_to_html
-    from backend.routes.email import _render_signature
-
     templates = (settings_data.get("emailTemplates") or {})
     tmpl = templates.get("paymentReceipt") or {}
     subject = _resolve(tmpl.get("subject") or _FALLBACK_SUBJECT, text_vars)
@@ -187,7 +185,6 @@ def build_receipt_email(settings_data: dict, sender: models.User, text_vars: dic
 def _finalize_html(inner_html: str, view_url: str, settings_data: dict) -> str:
     """Substitute {{viewUrl}}, sanitize, and wrap in the shared branded shell —
     the same final stages routes/email.py runs before the wire."""
-    from backend.routes.crew import email_shell, _email_brand
     rendered = inner_html.replace("{{viewUrl}}", view_url).replace("{{masthead}}", "")
     sanitized = email_html(rendered)
     return email_html(email_shell(sanitized, _email_brand(settings_data)))
@@ -260,9 +257,7 @@ async def _send_receipt(db, invoice, sender, settings_data, to_list, cc_list,
     Gmail, and stamp activity — the server-side twin of routes/email.py's send
     block. Returns the new receipt_email_status ('sent' | 'pending' | 'failed').
     """
-    from backend.routes.email import (
-        _build_view_url, _stamp_email_failed, _stamp_email_sent,
-    )
+    from backend.routes.email import _stamp_email_failed, _stamp_email_sent
 
     primary_tracking = secrets.token_urlsafe(24)
     rows = [models.EmailRecipient(

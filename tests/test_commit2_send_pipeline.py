@@ -31,10 +31,10 @@ from backend import crypto, gmail, models  # noqa: E402
 from backend.email_validate import (  # noqa: E402
     parse_recipients, validate_subject, RecipientError,
 )
-from backend.routes.email import (  # noqa: E402
+from backend.email_compose import (  # noqa: E402
     _app_origin, _build_view_url, _render_signature,
-    _stamp_email_sent, _stamp_email_failed,
 )
+from backend.routes.email import _stamp_email_sent, _stamp_email_failed  # noqa: E402
 from backend.sanitize import email_html  # noqa: E402
 
 
