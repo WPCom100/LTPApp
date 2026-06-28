@@ -684,8 +684,8 @@
 
     // Company
     if (before.companyId !== after.companyId) {
-      var cB = before.companyId ? ((companies.find(function(c) { return c.id === before.companyId; }) || {}).name || "ID " + before.companyId) : "None";
-      var cA = after.companyId ? ((companies.find(function(c) { return c.id === after.companyId; }) || {}).name || "ID " + after.companyId) : "None";
+      var cB = window.LTP_diffEntityName(companies, before.companyId);
+      var cA = window.LTP_diffEntityName(companies, after.companyId);
       changes.push({ cat: "Company", detail: cB + " \u2192 " + cA });
     }
 

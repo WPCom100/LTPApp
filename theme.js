@@ -988,6 +988,14 @@ window.LTP_gcalUrl = function(opts) {
   return url + "&add=" + (opts.attendees || []).join(",");
 };
 
+// Resolve an entity's display name for an activity-log diff: its name, else
+// "ID <n>" when the row is missing, else "None" when unset. Shared by the
+// quote/invoice change-diff engines (company + project fields).
+window.LTP_diffEntityName = function(list, id) {
+  if (!id) return "None";
+  return (((list || []).find(function(x) { return x.id === id; }) || {}).name) || ("ID " + id);
+};
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();

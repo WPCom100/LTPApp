@@ -1036,13 +1036,13 @@
         changes.push({ cat: "Invoice Date", detail: ibf + " \u2192 " + iaf });
       }
       if (before.companyId !== after.companyId) {
-        var cBefore = before.companyId ? ((companies.find(function(c) { return c.id === before.companyId; }) || {}).name || "ID " + before.companyId) : "None";
-        var cAfter = after.companyId ? ((companies.find(function(c) { return c.id === after.companyId; }) || {}).name || "ID " + after.companyId) : "None";
+        var cBefore = window.LTP_diffEntityName(companies, before.companyId);
+        var cAfter = window.LTP_diffEntityName(companies, after.companyId);
         changes.push({ cat: "Company", detail: cBefore + " \u2192 " + cAfter });
       }
       if (before.projectId !== after.projectId) {
-        var pBefore = before.projectId ? ((projects.find(function(p) { return p.id === before.projectId; }) || {}).name || "ID " + before.projectId) : "None";
-        var pAfter = after.projectId ? ((projects.find(function(p) { return p.id === after.projectId; }) || {}).name || "ID " + after.projectId) : "None";
+        var pBefore = window.LTP_diffEntityName(projects, before.projectId);
+        var pAfter = window.LTP_diffEntityName(projects, after.projectId);
         changes.push({ cat: "Project", detail: pBefore + " \u2192 " + pAfter });
       }
       if (before.clientType !== after.clientType) changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
