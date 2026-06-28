@@ -277,7 +277,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     showAddNote    && h(window.CRMAddNote,    { ctx: ctx }),
     viewNote       && h(window.CRMNoteViewer, { ctx: ctx }),
     editNote       && h(window.CRMNoteEditor, { ctx: ctx }),
-    deleteConfirm  && h(window.ConfirmDeleteDialog, { deleteConfirm: deleteConfirm, onCancel: function() { setDeleteConfirm(null); }, onConfirm: handleDelete }),
+    deleteConfirm  && h(window.LTPConfirmDialog, { dlg: { title: "Confirm Delete", message: 'Are you sure you want to delete "' + deleteConfirm.name + '"? This cannot be undone.', variant: "danger", confirmLabel: "Delete", onConfirm: function() { handleDelete(deleteConfirm); } }, onCancel: function() { setDeleteConfirm(null); } }),
 
     // Guided project deletion wizard
     deleteWizard && function() {

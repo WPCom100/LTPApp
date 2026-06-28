@@ -458,10 +458,14 @@
           },
         })
       ),
-      deleteConfirm && h(window.ConfirmDeleteDialog, {
-        deleteConfirm: { name: container.name },
+      deleteConfirm && h(window.LTPConfirmDialog, {
+        dlg: {
+          title: "Confirm Delete",
+          message: 'Are you sure you want to delete "' + container.name + '"? This cannot be undone.',
+          variant: "danger", confirmLabel: "Delete",
+          onConfirm: function() { setDeleteConfirm(false); onDelete(); },
+        },
         onCancel: function() { setDeleteConfirm(false); },
-        onConfirm: function() { setDeleteConfirm(false); onDelete(); },
       })
     );
   };
