@@ -374,7 +374,7 @@
   //   LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, services }) {
+  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, services, products, equipment }) {
     if (item.type === "note") {
       return h("div", {
         draggable: true,
@@ -403,6 +403,15 @@
     // Lookup service for rate type changes
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
 
+    // Detect when the catalog record this line was built from has since been
+    // deleted. The line keeps its snapshot price/qty (totals are unaffected),
+    // but we surface a note so the user knows it can no longer be re-sourced.
+    var sourceMissing =
+      (item.type === "service"   && item.serviceId   != null && !svcData) ||
+      (item.type === "product"   && item.productId   != null && !(products  || []).some(function(p) { return p.id === item.productId; })) ||
+      (item.type === "equipment" && item.equipmentId != null && !(equipment || []).some(function(e) { return e.id === item.equipmentId; }));
+    var missingLabel = item.type === "service" ? "Service" : item.type === "product" ? "Product" : "Equipment";
+
     var unitP = Number(item.unitPrice) || 0;
     var effectivePrice = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lineTotal = effectivePrice * (Number(item.qty) || 0);
@@ -426,7 +435,8 @@
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
         item.type === "equipment" && h("div", { style: { fontSize: "10px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
-        item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes)
+        item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+        sourceMissing && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked to quote")
       ),
       // Rate type selector (services only)
       item.type === "service" && !isLocked && svcData && h("select", { value: svcRateType, onChange: function(e) {
@@ -440,7 +450,9 @@
         h("option", { value: "hourly" }, "Hourly"),
         h("option", { value: "ot" }, "OT")
       ),
-      item.type === "service" && isLocked && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
+      // Read-only rate-type label when locked, OR when the source service was
+      // deleted (no svcData to recompute prices from — see Option B).
+      item.type === "service" && (isLocked || !svcData) && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
         svcRateType === "day" ? "Day" : svcRateType === "half" ? "Half Day" : svcRateType === "hourly" ? "Hourly" : "OT"),
       // Qty — locked when accepted/converted
       h("div", { style: { width: 60 } },
@@ -498,7 +510,7 @@
 
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
-                          sectionSubtotal, sectionMargin, services }) {
+                          sectionSubtotal, sectionMargin, services, products, equipment }) {
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
       ? { start: section.startDate, end: section.endDate }
@@ -556,7 +568,7 @@
           return h(LineItemRow, { key: it.id, item: it, sectionId: section.id, quoteStatus: quoteStatus,
             onUpdate: function(sid, iid, patch) { onItemUpdate(sid, iid, patch); },
             onDelete: onItemDelete,
-            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services });
+            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment });
         })
       ),
 
@@ -1809,7 +1821,7 @@
           return h(SectionBlock, { key: sec.id, section: sec,
             quoteDates: quoteDates, quoteStatus: draft.status,
             sectionSubtotal: t.subtotal, sectionMargin: t.margin,
-            services: services,
+            services: services, products: products, equipment: equipment,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
             onDelete: deleteSection,

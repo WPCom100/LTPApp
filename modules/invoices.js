@@ -232,7 +232,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, customerTaxable }) {
+  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, customerTaxable }) {
     if (item.type === "note") {
       return h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
         h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase" } }, "Note"),
@@ -248,6 +248,13 @@
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : "qty";
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
+    // Source catalog record deleted since this line was created. The snapshot
+    // price/qty stay intact; we just flag that it can no longer be re-sourced.
+    var sourceMissing =
+      (item.type === "service"   && item.serviceId   != null && !svcData) ||
+      (item.type === "product"   && item.productId   != null && !(products  || []).some(function(p) { return p.id === item.productId; })) ||
+      (item.type === "equipment" && item.equipmentId != null && !(equipment || []).some(function(e) { return e.id === item.equipmentId; }));
+    var missingLabel = item.type === "service" ? "Service" : item.type === "product" ? "Product" : "Equipment";
     var unitP = Number(item.unitPrice) || 0;
     var adjusted = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
     var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
@@ -257,7 +264,8 @@
       h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "2px 5px", borderRadius: "3px" } }, typeBadge),
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
-        item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes)
+        item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+        sourceMissing && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked to invoice")
       ),
       // Rate type selector (services only)
       item.type === "service" && isDraft && svcData && h("select", { value: svcRateType, onChange: function(e) {
@@ -271,7 +279,9 @@
         h("option", { value: "hourly" }, "Hourly"),
         h("option", { value: "ot" }, "OT")
       ),
-      item.type === "service" && !isDraft && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
+      // Read-only rate-type label when the invoice is locked, OR when the source
+      // service was deleted (no svcData to recompute prices from — Option B).
+      item.type === "service" && (!isDraft || !svcData) && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
         svcRateType === "day" ? "Day" : svcRateType === "half" ? "Half Day" : svcRateType === "hourly" ? "Hourly" : svcRateType === "ot" ? "OT" : "Day"),
       // Qty
       h("div", { style: { width: 55 } },
@@ -1467,7 +1477,7 @@
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
                 sec.items.length === 0 && h("div", { style: { padding: 14, textAlign: "center", color: B.textMut, fontSize: "11px", fontStyle: "italic", background: B.surface, borderRadius: "4px", border: "1px dashed " + B.border } }, "No items yet."),
                 sec.items.map(function(it) {
-                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, customerTaxable: customerTaxable });
+                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, products: products, equipment: equipment, customerTaxable: customerTaxable });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },

@@ -98,7 +98,7 @@
           });
         });
       });
-      var refWarning = refs.length > 0 ? "\n\nThis service is referenced in " + refs.length + " place" + (refs.length > 1 ? "s" : "") + ":\n" + refs.slice(0, 5).join("\n") + (refs.length > 5 ? "\n..." : "") + "\n\nPositions and line items using this service will lose their rate data." : "";
+      var refWarning = refs.length > 0 ? "\n\nThis service is referenced in " + refs.length + " place" + (refs.length > 1 ? "s" : "") + ":\n" + refs.slice(0, 5).join("\n") + (refs.length > 5 ? "\n..." : "") + "\n\nQuote/invoice line items keep their last quoted price but can no longer switch rate type; schedule positions lose their rate lookup." : "";
       setDlg({
         title: "Delete Service",
         message: "Delete \"" + name + "\"?" + refWarning,
