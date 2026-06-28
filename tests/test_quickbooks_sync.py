@@ -337,6 +337,89 @@ async def test_delete_synced_calls_qb():
     _check("QB delete called once", qbo_sync.quickbooks.delete_invoice.await_count == 1)
 
 
+# ── Quote sales tax via temporary estimate ───────────────────────────────────
+
+def _fake_quote(**over):
+    base = dict(
+        id=5, client_type="company", company_id=1, client_contact_id=None,
+        status="sent", sent_date="2026-06-21", global_discount={"type": "none"},
+        sections=[{"id": "s1", "items": [
+            {"type": "equipment", "name": "Solaframe 3000", "qty": 4, "unitPrice": 100, "adjustedPrice": None, "taxable": True},
+            {"type": "service", "name": "L1 — Lead Tech", "qty": 1, "unitPrice": 500, "adjustedPrice": 450, "taxable": True},
+        ]}],
+        qb_tax_total=None, qb_tax_signature=None, activity=[],
+    )
+    base.update(over)
+    return types.SimpleNamespace(**base)
+
+
+def _taxable_company():
+    return types.SimpleNamespace(name="Acme", taxable=True, address="1 Main", city="Dallas",
+                                 state="TX", zip="75001", qb_customer_id="CUST-1")
+
+
+def _mock_estimate_calls(*, tax=8.25, delete_side_effect=None):
+    qbo_sync.find_or_create_customer = AsyncMock(return_value="CUST-1")
+    qbo_sync._settings_get = AsyncMock(return_value=None)
+    qbo_sync._resolve_line_item_id = AsyncMock(side_effect=lambda c, d, item, **k: "ITEM-" + item["type"])
+    qbo_sync.quickbooks.load_connection = AsyncMock(return_value=object())
+    qbo_sync.quickbooks.create_estimate = AsyncMock(
+        return_value={"Estimate": {"Id": "E1", "SyncToken": "0", "TxnTaxDetail": {"TotalTax": tax}}})
+    qbo_sync.quickbooks.delete_estimate = AsyncMock(
+        side_effect=delete_side_effect) if delete_side_effect else AsyncMock(return_value={})
+    qbo_sync._stamp = MagicMock()  # avoid SQLAlchemy flag_modified on a fake row
+
+
+async def test_estimate_tax_creates_reads_deletes():
+    print("test_estimate_tax_creates_reads_deletes")
+    qbo_sync._billing_party = AsyncMock(return_value=(_taxable_company(), "company"))
+    _mock_estimate_calls(tax=8.25)
+    q = _fake_quote()
+    db = MagicMock(); db.flush = AsyncMock()
+    result = await qbo_sync.get_quote_estimate_tax(db, q, user=None, client_id="c", client_secret="s")
+    _check("tax read from TxnTaxDetail.TotalTax", result["qbTaxTotal"] == 8.25)
+    _check("tax stored on the quote row", q.qb_tax_total == 8.25)
+    _check("estimate created once", qbo_sync.quickbooks.create_estimate.await_count == 1)
+    _check("estimate DELETED (not left behind)", qbo_sync.quickbooks.delete_estimate.await_count == 1)
+    _check("estimateDeleted reported true", result["estimateDeleted"] is True)
+    payload = qbo_sync.quickbooks.create_estimate.await_args.args[2]
+    sales = [l for l in payload["Line"] if l["DetailType"] == "SalesItemLineDetail"]
+    _check("estimate payload has the sales lines", len(sales) == 2)
+    _check("taxable line → TAX code", sales[0]["SalesItemLineDetail"]["TaxCodeRef"]["value"] == "TAX")
+    _check("no DocNumber (QB auto-numbers the estimate)", "DocNumber" not in payload)
+
+
+async def test_estimate_tax_exempt_skips_qb():
+    print("test_estimate_tax_exempt_skips_qb")
+    exempt = types.SimpleNamespace(name="NonProfit", taxable=False, address="", city="",
+                                   state="", zip="", qb_customer_id=None)
+    qbo_sync._billing_party = AsyncMock(return_value=(exempt, "company"))
+    qbo_sync.quickbooks.create_estimate = AsyncMock()
+    qbo_sync._stamp = MagicMock()
+    q = _fake_quote()
+    db = MagicMock(); db.flush = AsyncMock()
+    result = await qbo_sync.get_quote_estimate_tax(db, q, user=None, client_id="c", client_secret="s")
+    _check("exempt client → $0 tax", result["qbTaxTotal"] == 0.0)
+    _check("exempt client → taxable False", result["taxable"] is False)
+    _check("exempt client → NO QB estimate created", qbo_sync.quickbooks.create_estimate.await_count == 0)
+    _check("exempt client → tax stored 0 on quote", q.qb_tax_total == 0.0)
+
+
+async def test_estimate_tax_stale_token_delete_retry():
+    print("test_estimate_tax_stale_token_delete_retry")
+    qbo_sync._billing_party = AsyncMock(return_value=(_taxable_company(), "company"))
+    stale = QboApiError(400, '{"Fault":{"Error":[{"code":"5010"}]}}', fault_code="5010")
+    _mock_estimate_calls(tax=5.0, delete_side_effect=[stale, {}])
+    qbo_sync.quickbooks.get_estimate = AsyncMock(return_value={"SyncToken": "9"})
+    q = _fake_quote()
+    db = MagicMock(); db.flush = AsyncMock()
+    result = await qbo_sync.get_quote_estimate_tax(db, q, user=None, client_id="c", client_secret="s")
+    _check("tax still read despite stale-token delete", result["qbTaxTotal"] == 5.0)
+    _check("delete retried after token refetch", qbo_sync.quickbooks.delete_estimate.await_count == 2)
+    _check("get_estimate used to refetch token", qbo_sync.quickbooks.get_estimate.await_count == 1)
+    _check("estimate ultimately deleted", result["estimateDeleted"] is True)
+
+
 # ── Runner ──────────────────────────────────────────────────────────────────
 
 def main():
@@ -348,6 +431,8 @@ def main():
         test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
         test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
         test_delete_not_synced, test_delete_synced_calls_qb,
+        test_estimate_tax_creates_reads_deletes, test_estimate_tax_exempt_skips_qb,
+        test_estimate_tax_stale_token_delete_retry,
     ]
     for t in sync_tests:
         t()

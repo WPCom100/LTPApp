@@ -1118,9 +1118,12 @@ window.LTP_QUOTE_TOTALS = function(q) {
   else if (gd.type === "amount") afterDiscount = adjusted - (Number(gd.value) || 0);
   else if (gd.type === "target") afterDiscount = Number(gd.value) || 0;
   if (afterDiscount < 0) afterDiscount = 0;
-  var taxRate = window.LTP_TAX_RATE || 0;
-  var taxAmount = taxRate > 0 ? Math.round(afterDiscount * (taxRate / 100) * 100) / 100 : 0;
-  return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + taxAmount, preTax: afterDiscount, taxRate: taxRate, taxAmount: taxAmount, cost: cost };
+  // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB
+  // estimate (backend/qbo_sync.py::get_quote_estimate_tax), stored read-only as
+  // qbTaxTotal. Null until calculated → $0, exactly like invoices + the client
+  // view. The legacy flat LTP_TAX_RATE no longer applies to quotes.
+  var tax = (q.qbTaxTotal != null) ? (Number(q.qbTaxTotal) || 0) : 0;
+  return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + tax, preTax: afterDiscount, tax: tax, taxAmount: tax, cost: cost };
 };
 
 window.LTP_QUOTE_REF = function(q) {

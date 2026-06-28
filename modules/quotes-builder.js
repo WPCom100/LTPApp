@@ -23,6 +23,36 @@
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
 
+  // QuickBooks tax change-signature: a compact fingerprint of everything that
+  // affects the QB-computed sales tax for a quote (line amounts + per-line
+  // taxability + customer taxable flag + customer billing address). The stored
+  // qbTaxTotal is "fresh" iff this matches quote.qbTaxSignature; otherwise the
+  // builder shows "Recalculate". MUST stay aligned with
+  // backend/qbo_sync.py::_build_sales_lines (what maps into the QB estimate).
+  function qbHash(s) {
+    var h1 = 5381, h2 = 52711, i = s.length;
+    while (i--) { var c = s.charCodeAt(i); h1 = (h1 * 33) ^ c; h2 = (h2 * 33) ^ c; }
+    return (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16) + "-" + s.length;
+  }
+  function quoteQbSignature(q, customer, customerTaxable) {
+    if (!q) return "";
+    var gd = q.globalDiscount || {};
+    var parts = [gd.type || "none", String(gd.value || 0), String(!!customerTaxable)];
+    (q.sections || []).forEach(function(sec) {
+      (sec.items || []).forEach(function(it) {
+        if (it.type === "note") return;
+        var price = it.adjustedPrice != null ? it.adjustedPrice : (it.unitPrice || 0);
+        parts.push([it.type, it.name || "", it.qty || 0, price,
+                    (typeof it.taxable === "boolean" ? it.taxable : "")].join("|"));
+      });
+    });
+    if (customer) {
+      parts.push(customer.name || ((customer.firstName || "") + " " + (customer.lastName || "")).trim());
+      parts.push(customer.address || "", customer.city || "", customer.state || "", customer.zip || "");
+    }
+    return qbHash(parts.join(""));
+  }
+
   function emptyDraft() {
     return {
       id: null,
@@ -213,7 +243,7 @@
         id: genId("item"), type: "equipment",
         equipmentId: eq.id, name: eq.name, qty: qty,
         rateType: rp.rateType, rentalLabel: rp.label, unitPrice: rp.totalPrice, adjustedPrice: null,
-        cost: 0, notes: "",
+        cost: 0, notes: "", taxable: true,
       });
     }
     function addProduct(p) {
@@ -221,7 +251,7 @@
         id: genId("item"), type: "product",
         productId: p.id, name: p.name, qty: 1,
         unitPrice: p.unitPrice || 0, adjustedPrice: null,
-        cost: p.cost || 0, notes: "",
+        cost: p.cost || 0, notes: "", taxable: true,
       });
     }
     function addService(s) {
@@ -230,7 +260,7 @@
         serviceId: s.id, name: s.role + " \u2014 " + s.description, qty: 1,
         rateType: "day",
         unitPrice: s.dayRate || 0, adjustedPrice: null,
-        cost: s.dayCost || 0, notes: "",
+        cost: s.dayCost || 0, notes: "", taxable: true,
       });
     }
     function addNote() {
@@ -374,7 +404,7 @@
   //   LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, services, products, equipment }) {
+  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, services, products, equipment, customerTaxable }) {
     if (item.type === "note") {
       return h("div", {
         draggable: true,
@@ -497,6 +527,13 @@
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
         h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lineTotal).toLocaleString())
       ),
+      // Per-line tax override — shown only for taxable customers (most are
+      // exempt, so the row stays clean). Checked = taxable; unchecked = exempt
+      // this line. QuickBooks computes the actual tax from these flags.
+      !isLocked && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 3, fontSize: "9px", color: B.textMut, cursor: "pointer" } },
+        h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true,
+          onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }),
+        h("span", null, "tax")),
       // Delete — hidden when locked
       !isLocked && h("button", { onClick: function() { onDelete(sectionId, item.id); },
         style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px", padding: "2px 6px" } }, "\u00d7")
@@ -509,7 +546,7 @@
 
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
-                          sectionSubtotal, sectionMargin, services, products, equipment }) {
+                          sectionSubtotal, sectionMargin, services, products, equipment, customerTaxable }) {
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
       ? { start: section.startDate, end: section.endDate }
@@ -567,7 +604,7 @@
           return h(LineItemRow, { key: it.id, item: it, sectionId: section.id, quoteStatus: quoteStatus,
             onUpdate: function(sid, iid, patch) { onItemUpdate(sid, iid, patch); },
             onDelete: onItemDelete,
-            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment });
+            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment, customerTaxable: customerTaxable });
         })
       ),
 
@@ -581,8 +618,10 @@
   //   TOTALS PANEL
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function TotalsPanel({ draft, isLocked, onDiscountChange }) {
+  function TotalsPanel({ draft, isLocked, onDiscountChange, customerTaxable, qbConnected, isAdmin, taxFresh, calcTax, onCalcTax }) {
     var t = window.LTP_QUOTE_TOTALS(draft);
+    var hasTax = draft.qbTaxTotal != null;
+    var canCalcTax = isAdmin && qbConnected && (customerTaxable || hasTax) && !isLocked;
     var autoAdjustment = t.subtotal - t.adjusted; // positive = client got a discount
     var globalDiscountAmount = t.adjusted - t.total;
     var marginTotal = t.total - t.cost;
@@ -628,6 +667,17 @@
           h("span", null, gd.type === "percent" ? "(\u2212" + gd.value + "%)" : gd.type === "target" ? "(target)" : "(\u2212$" + gd.value + ")"),
           h("span", null, "\u2212$" + Math.round(globalDiscountAmount).toLocaleString())
         )
+      ),
+
+      // Sales tax (QuickBooks-computed via a temporary estimate — see calcQuoteTax)
+      (hasTax || canCalcTax) && h("div", { style: { borderTop: "1px solid " + B.border, marginTop: 6, paddingTop: 10 } },
+        hasTax && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textSec, padding: "2px 0" } },
+          h("span", null, "Sales Tax (QuickBooks)"),
+          h("span", null, "$" + (Number(draft.qbTaxTotal) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+        ),
+        canCalcTax && h("button", { onClick: onCalcTax, disabled: calcTax,
+          style: { marginTop: hasTax ? 6 : 0, width: "100%", background: "transparent", border: "1px solid " + (hasTax && !taxFresh ? B.warn : B.border), borderRadius: "6px", padding: "6px 10px", color: calcTax ? B.textMut : (hasTax && !taxFresh ? B.warn : B.accent), fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: calcTax ? "wait" : "pointer" } },
+          calcTax ? "Calculating…" : (!hasTax ? "Calculate Sales Tax" : (taxFresh ? "↻ Recalculate Tax" : "⚠ Recalculate — out of date")))
       ),
 
       row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent, topBorder: true }),
@@ -796,7 +846,7 @@
   }
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     // Load initial draft
     var initial = useMemo(function() {
       if (isNew) {
@@ -861,6 +911,7 @@
     var [pickerForSection, setPickerForSection] = useState(null);
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);
+    var [calcTax, setCalcTax] = useState(false);  // sales-tax calc in flight
     var [viewActivity, setViewActivity] = useState(null);
     var [invPickerData, setInvPickerData] = useState(null);
     var [showSendModal, setShowSendModal] = useState(false);
@@ -1071,6 +1122,42 @@
       window.LTP_toast(title, { message: message, variant: variant || "error" });
     }
 
+    // Calculate QuickBooks-authoritative sales tax via a temporary QB estimate.
+    // Returns a Promise that resolves to the updated draft (or null on failure)
+    // so the send flow can await it. Persists qbTaxTotal + qbTaxSignature
+    // server-side; we mirror them onto the local draft (read-only fields).
+    function calcQuoteTax() {
+      if (draft.id == null) { showAlert("Save First", "Save the quote before calculating sales tax.", "info"); return Promise.resolve(null); }
+      if (!isAdmin || !qbConnected) return Promise.resolve(null);
+      setCalcTax(true);
+      return fetch("/api/qbo/quotes/" + draft.id + "/estimate-tax", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ signature: qbTaxSig }),
+      })
+        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(resp) {
+          setCalcTax(false);
+          if (resp.status === 200) {
+            var b = resp.body || {};
+            var updated = Object.assign({}, draft, {
+              qbTaxTotal: b.qbTaxTotal,
+              qbTaxSignature: b.qbTaxSignature != null ? b.qbTaxSignature : qbTaxSig,
+            });
+            // Server-authoritative fields — make this the new clean baseline so
+            // the calc doesn't register as an unsaved user edit.
+            setDraftRaw(updated);
+            cleanRef.current = updated;
+            setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+            window.LTP_toast("Sales tax calculated", { message: "$" + (Number(b.qbTaxTotal) || 0).toFixed(2) + (b.taxable === false ? " — client is tax-exempt" : ""), variant: "success" });
+            return updated;
+          }
+          var err = (resp.body && resp.body.error) || "Could not calculate sales tax.";
+          window.LTP_toast("Tax calculation failed", { message: err, variant: "error" });
+          return null;
+        })
+        .catch(function() { setCalcTax(false); window.LTP_toast("Tax calculation failed", { message: "Network error.", variant: "error" }); return null; });
+    }
+
     function save() {
       if (draft.clientType === "company" && !draft.companyId) {
         showAlert("Missing Information", "Please select a company before saving.");
@@ -1198,24 +1285,33 @@
         showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
         return;
       }
-      var isResend = draft.status !== "draft";
-      // Backend owns the activity entry now \u2014 see backend/routes/email.py.
-      // Frontend posts the message; on 2xx we just refresh the draft from
-      // setQuotes since the server already appended `email_sent` to the
-      // activity log + minted email_recipients rows with tracking tokens.
+      // Auto-calc QuickBooks sales tax before sending so the client's PDF +
+      // email show an accurate tax-inclusive total, then send with the
+      // freshened draft. Skipped when tax is already fresh or N/A.
+      if (isAdmin && qbConnected && customerTaxable && !taxFresh) {
+        setSending(true);
+        calcQuoteTax().then(function(updated) { sendQuoteEmail(updated || draft); });
+        return;
+      }
+      sendQuoteEmail(draft);
+    }
+
+    // Build + POST the quote email for `baseDraft` (the freshest draft, which
+    // may carry a just-calculated qbTaxTotal). Kept separate from
+    // executeSendQuote so the optional tax calc can resolve first.
+    function sendQuoteEmail(baseDraft) {
+      var isResend = baseDraft.status !== "draft";
       setSending(true);
-      // Expand {{header}} into its rendered HTML (with refNumber /
-      // projectName / total baked in) JUST before send. We keep
-      // {{header}} literal in sendMessage state so the editor can wrap
-      // it as a non-editable block; backend stays simple and only
-      // resolves the per-recipient {{viewUrl}} + per-sender {{signature}}.
-      //
-      // Paragraph-wrap the (possibly plain-text) body BEFORE injecting the
-      // header: the header's <table> would otherwise trip textToHtml's
-      // block-detection, passing the whole body through and collapsing every
-      // plain-text paragraph break. {{signature}} is re-flattened to a bare
-      // token so the backend-resolved <table> also lands at block level.
-      var headerHtml = window.LTP_renderHeader("quote", sendHeaderVars || {});
+      // Bake {{header}} HTML with a total that reflects baseDraft's (possibly
+      // just-calculated) sales tax. {{signature}} stays a token the backend
+      // resolves per sender. Paragraph-wrap the body BEFORE injecting the header
+      // so the header <table> doesn't trip textToHtml's block detection.
+      var hv = sendHeaderVars || {};
+      if (sendHeaderVars) {
+        var nt = window.LTP_QUOTE_TOTALS(baseDraft);
+        hv = Object.assign({}, sendHeaderVars, { total: "$" + Math.round(nt.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) });
+      }
+      var headerHtml = window.LTP_renderHeader("quote", hv);
       var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
       bodyWithHeader = window.LTP_injectBlock(bodyWithHeader, "{{signature}}", "{{signature}}");
       fetch("/api/email/send", {
@@ -1223,13 +1319,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           entityType: "quote",
-          entityId: draft.id,
+          entityId: baseDraft.id,
           to: (sendRecipients.to || []).join(", "),
           cc: (sendRecipients.cc || []).join(", ") || null,
           subject: sendSubject,
-          // bodyWithHeader is already paragraph-wrapped HTML (see above).
-          // Server re-resolves {{viewUrl}} + {{signature}} and sanitizes via
-          // bleach before sending.
           bodyHtml: bodyWithHeader,
         }),
       })
@@ -1239,13 +1332,10 @@
         .then(function(resp) {
           setSending(false);
           if (resp.status === 200) {
-            // Mark the quote sent locally so the UI flips status without a
-            // round-trip. Backend already stamped `email_sent` on the
-            // entity's activity \u2014 the next list refresh will surface it.
             var today = todayISO();
-            var updated = Object.assign({}, draft, {
-              status: isResend ? draft.status : "sent",
-              sentDate: isResend ? draft.sentDate : today,
+            var updated = Object.assign({}, baseDraft, {
+              status: isResend ? baseDraft.status : "sent",
+              sentDate: isResend ? baseDraft.sentDate : today,
               sendRecipients: sendRecipients,  // remember who this went to
             });
             setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
@@ -1255,8 +1345,6 @@
             return;
           }
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            // Token revoked / refresh failed \u2014 Gmail send won't work until
-            // the user re-consents.
             showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
             return;
           }
@@ -1554,6 +1642,16 @@
     // ── Derived data ───────────────────────────────────────────────────────────
     var selectedProject = draft.projectId ? projects.find(function(p) { return p.id === draft.projectId; }) : null;
     var selectedCompany = draft.companyId ? companies.find(function(c) { return c.id === draft.companyId; }) : null;
+    // QuickBooks tax state. Contacts billed directly are always taxable;
+    // companies use their own taxable flag. Tax is QB-authoritative — computed
+    // via a temporary estimate (calcQuoteTax → /api/qbo/quotes/:id/estimate-tax).
+    var custParty = draft.clientType === "contact"
+      ? (draft.clientContactId ? contacts.find(function(c) { return c.id === draft.clientContactId; }) : null)
+      : selectedCompany;
+    var customerTaxable = draft.clientType === "contact" ? !!custParty : !!(custParty && custParty.taxable);
+    var qbConnected = !!(qbo && qbo.connected);
+    var qbTaxSig = qbConnected ? quoteQbSignature(draft, custParty, customerTaxable) : "";
+    var taxFresh = qbTaxSig === (draft.qbTaxSignature || "");
     var projectContacts = selectedProject
       ? contacts.filter(function(c) { return (selectedProject.contactIds || []).includes(c.id); })
       : (selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : []);
@@ -1820,7 +1918,7 @@
           return h(SectionBlock, { key: sec.id, section: sec,
             quoteDates: quoteDates, quoteStatus: draft.status,
             sectionSubtotal: t.subtotal, sectionMargin: t.margin,
-            services: services, products: products, equipment: equipment,
+            services: services, products: products, equipment: equipment, customerTaxable: customerTaxable,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
             onDelete: deleteSection,
@@ -1839,7 +1937,8 @@
       ),
 
       // Totals
-      h(TotalsPanel, { draft: draft, isLocked: draft.status === "accepted" || draft.status === "converted", onDiscountChange: function(gd) { patchDraft({ globalDiscount: gd }); } })
+      h(TotalsPanel, { draft: draft, isLocked: draft.status === "accepted" || draft.status === "converted", onDiscountChange: function(gd) { patchDraft({ globalDiscount: gd }); },
+        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax })
 
       ), // end main scrollable content
 
@@ -1877,9 +1976,9 @@
                   h("span", null, "Discount"),
                   h("span", null, "-$" + Math.round(t.adjusted - (t.preTax || t.total)).toLocaleString())
                 ),
-                t.taxAmount > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
-                  h("span", null, "Tax (" + t.taxRate + "%)"),
-                  h("span", null, "$" + Math.round(t.taxAmount).toLocaleString())
+                t.tax > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
+                  h("span", null, "Sales Tax"),
+                  h("span", null, "$" + (Number(t.tax) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
                 ),
                 h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),

@@ -417,6 +417,29 @@ async def delete_invoice(conn, db, invoice_id, sync_token, *, client_id, client_
                           httpx_client=httpx_client)
 
 
+# Estimate helpers — the QB Estimate entity is API-identical to Invoice (same
+# Line/SalesItemLineDetail/TaxCodeRef, same TxnTaxDetail.TotalTax, same sparse
+# delete). We create a temporary estimate only to read QB-computed tax for a
+# quote, then delete it — the business doesn't keep QB estimates.
+async def create_estimate(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    return await _request(conn, db, "POST", "estimate", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
+async def get_estimate(conn, db, estimate_id, *, client_id, client_secret, httpx_client=None) -> dict:
+    data = await _request(conn, db, "GET", f"estimate/{estimate_id}", client_id=client_id,
+                          client_secret=client_secret, httpx_client=httpx_client)
+    return data.get("Estimate", {}) or {}
+
+
+async def delete_estimate(conn, db, estimate_id, sync_token, *, client_id, client_secret, httpx_client=None) -> dict:
+    return await _request(conn, db, "POST", "estimate", client_id=client_id,
+                          client_secret=client_secret,
+                          params={"operation": "delete"},
+                          json={"Id": str(estimate_id), "SyncToken": str(sync_token)},
+                          httpx_client=httpx_client)
+
+
 async def list_income_accounts(conn, db, *, client_id, client_secret, httpx_client=None) -> list[dict]:
     """Income accounts available to back new Items' IncomeAccountRef."""
     return await query(

@@ -5,32 +5,8 @@
   var nav = window.LTPRouter.navigate;
   var fmt = window.LTP_formatDate;
 
-  // Compute total from a quote's sections (applies per-item adjustments + global discount)
-  function computeTotals(q) {
-    var subtotal = 0, adjusted = 0, cost = 0;
-    (q.sections || []).forEach(function(sec) {
-      (sec.items || []).forEach(function(it) {
-        if (it.type === "note") return;
-        var qty = Number(it.qty) || 0;
-        var orig = (Number(it.unitPrice) || 0) * qty;
-        var adj  = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) * qty : orig;
-        subtotal += orig;
-        adjusted += adj;
-        cost     += (Number(it.cost) || 0) * qty;
-      });
-    });
-    // Apply global discount
-    var afterDiscount = adjusted;
-    var gd = q.globalDiscount || { type: "none", value: 0 };
-    if (gd.type === "percent") afterDiscount = adjusted * (1 - (Number(gd.value) || 0) / 100);
-    else if (gd.type === "amount") afterDiscount = adjusted - (Number(gd.value) || 0);
-    else if (gd.type === "target") afterDiscount = Number(gd.value) || 0;
-    if (afterDiscount < 0) afterDiscount = 0;
-    var taxRate = window.LTP_TAX_RATE || 0;
-    var taxAmount = taxRate > 0 ? Math.round(afterDiscount * (taxRate / 100) * 100) / 100 : 0;
-    var grandTotal = afterDiscount + taxAmount;
-    return { subtotal: subtotal, adjusted: adjusted, total: grandTotal, preTax: afterDiscount, taxRate: taxRate, taxAmount: taxAmount, cost: cost };
-  }
+  // Quote totals — the canonical, QB-tax-aware helper (single source of truth).
+  var computeTotals = window.LTP_QUOTE_TOTALS;
 
   // Display reference "Q-YEAR-NNN" derived from id + createdDate
   function displayRef(q) {

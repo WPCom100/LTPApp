@@ -344,7 +344,7 @@ function LTPSignedInApp(props) {
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
-        settings: settings,
+        settings: settings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "invoices":  return h(window.LTPErrorBoundary, { name: "Invoices" }, h(window.InvoicesView, {
         invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,

@@ -373,17 +373,15 @@ def _line_taxable(line: dict, customer_taxable: bool) -> bool:
     return bool(customer_taxable)
 
 
-async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, project_name="", client_id, client_secret) -> dict:
-    """Construct the QuickBooks Invoice JSON from an LTP invoice. Resolves QB
-    item ids for each billable line (find-or-create). Raises InvoiceNotSyncable
-    if there are no billable lines. `project_name` is surfaced on the QB invoice
-    (CustomerMemo) so a project/event rename is a real, pushable change."""
-    tax_code = str(await _settings_get(db, "qboTaxableCodeId") or _DEFAULT_TAX_CODE)
-    non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
-
+async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_tax_code, *, client_id, client_secret) -> tuple[list[dict], float]:
+    """Build the QB sales lines (item lines with per-line TaxCodeRef + a trailing
+    global-discount line) from any entity carrying `.sections` and
+    `.global_discount` — invoices AND quotes (for the temporary tax estimate).
+    Returns (lines, subtotal). Raises InvoiceNotSyncable if there are no billable
+    item lines. Shared so quote tax codes match the eventual invoice exactly."""
     lines: list[dict] = []
     subtotal = 0.0
-    for section in (invoice.sections or []):
+    for section in (entity.sections or []):
         for item in (section.get("items") or []):
             itype = item.get("type")
             if itype == "note":
@@ -420,10 +418,10 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
             })
 
     if not any(l.get("DetailType") == "SalesItemLineDetail" for l in lines):
-        raise InvoiceNotSyncable("invoice has no billable line items to push to QuickBooks")
+        raise InvoiceNotSyncable("no billable line items to push to QuickBooks")
 
     # Global discount → a single discount line after the item lines.
-    gd = invoice.global_discount or {}
+    gd = entity.global_discount or {}
     gtype = gd.get("type")
     if gtype == "percent" and gd.get("value"):
         lines.append({
@@ -441,6 +439,20 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
                 "Amount": round(amount, 2),
                 "DiscountLineDetail": {"PercentBased": False},
             })
+    return lines, subtotal
+
+
+async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, project_name="", client_id, client_secret) -> dict:
+    """Construct the QuickBooks Invoice JSON from an LTP invoice. Resolves QB
+    item ids for each billable line (find-or-create). Raises InvoiceNotSyncable
+    if there are no billable lines. `project_name` is surfaced on the QB invoice
+    (CustomerMemo) so a project/event rename is a real, pushable change."""
+    tax_code = str(await _settings_get(db, "qboTaxableCodeId") or _DEFAULT_TAX_CODE)
+    non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
+    lines, subtotal = await _build_sales_lines(
+        conn, db, invoice, customer_taxable, tax_code, non_tax_code,
+        client_id=client_id, client_secret=client_secret,
+    )
 
     # Recall: a draft that was previously sent. Surface it prominently as the
     # FIRST line on the QB invoice (a memo is easy to miss) and keep the memo
@@ -659,3 +671,106 @@ async def delete_from_quickbooks(db, invoice, *, client_id=None, client_secret=N
         else:
             raise
     return {"ok": True, "deleted": True, "qbInvoiceId": invoice.qb_invoice_id}
+
+
+# ── Quote sales tax via a temporary estimate ──────────────────────────────────
+
+async def _delete_estimate_quietly(conn, db, estimate_id, sync_token, *, client_id, client_secret) -> bool:
+    """Delete a temporary estimate; idempotent (5010 stale-token → refetch +
+    retry; 610/already-gone → success). NEVER raises — we've already read the
+    tax, so a failed delete is logged (the orphan can be swept later) rather than
+    losing the result."""
+    try:
+        await quickbooks.delete_estimate(
+            conn, db, estimate_id, str(sync_token), client_id=client_id, client_secret=client_secret
+        )
+        return True
+    except QboApiError as e:
+        body = (e.body or "").lower()
+        if e.fault_code == "5010":
+            try:
+                current = await quickbooks.get_estimate(
+                    conn, db, estimate_id, client_id=client_id, client_secret=client_secret
+                )
+                await quickbooks.delete_estimate(
+                    conn, db, estimate_id, str(current.get("SyncToken", sync_token)),
+                    client_id=client_id, client_secret=client_secret,
+                )
+                return True
+            except QboApiError as e2:
+                print(f"[LTP] qbo: estimate {estimate_id} delete retry failed: {e2.safe_message}", flush=True)
+                return False
+        if e.fault_code == "610" or "not found" in body:
+            return True  # already gone
+        print(f"[LTP] qbo: estimate {estimate_id} delete failed: {e.safe_message}", flush=True)
+        return False
+
+
+async def get_quote_estimate_tax(db, quote, user=None, *, client_id=None, client_secret=None) -> dict:
+    """Compute a quote's sales tax the QuickBooks-authoritative way WITHOUT
+    leaving a QB document behind: create a temporary Estimate from the quote's
+    lines, read its QB-computed TxnTaxDetail.TotalTax, then delete the estimate
+    (the business doesn't use QB estimates). Stores the result on
+    quote.qb_tax_total and stamps an activity entry.
+
+    Exempt customers short-circuit to $0 with no QB round-trip. Raises
+    QboNotConnected / QboReconnectRequired / QboApiError / InvoiceNotSyncable for
+    the route to map to HTTP."""
+    if client_id is None or client_secret is None:
+        client_id, client_secret = creds()
+
+    party, kind = await _billing_party(db, quote)
+    if party is None:
+        raise InvoiceNotSyncable("quote has no client (company or contact) to compute tax for")
+
+    customer_taxable = _party_taxable(party, kind)
+    if not customer_taxable:
+        # Tax-exempt client → tax is $0 by definition; don't touch QuickBooks.
+        quote.qb_tax_total = 0.0
+        _stamp(quote, user, "qbo_estimate_tax", "Sales tax: client is tax-exempt ($0.00)",
+               [{"cat": "Sales Tax", "detail": "$0.00 (exempt)"}])
+        await db.flush()
+        return {"ok": True, "qbTaxTotal": 0.0, "taxable": False, "estimateDeleted": False}
+
+    conn = await quickbooks.load_connection(db)
+    customer_id = await find_or_create_customer(
+        conn, db, party, kind, client_id=client_id, client_secret=client_secret
+    )
+    tax_code = str(await _settings_get(db, "qboTaxableCodeId") or _DEFAULT_TAX_CODE)
+    non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
+    lines, _subtotal = await _build_sales_lines(
+        conn, db, quote, customer_taxable, tax_code, non_tax_code,
+        client_id=client_id, client_secret=client_secret,
+    )
+    # DocNumber omitted on purpose: QB auto-assigns an estimate number, avoiding
+    # duplicate-DocNumber faults across repeated calcs (the estimate is deleted
+    # each time anyway). Only CustomerRef + Line are needed for QB to compute tax.
+    payload = {"CustomerRef": {"value": str(customer_id)}, "Line": lines}
+
+    resp = await quickbooks.create_estimate(
+        conn, db, payload, client_id=client_id, client_secret=client_secret
+    )
+    est = resp.get("Estimate") or {}
+    estimate_id = est.get("Id")
+    sync_token = est.get("SyncToken")
+
+    tax_total = 0.0
+    raw_tax = (est.get("TxnTaxDetail") or {}).get("TotalTax")
+    if raw_tax is not None:
+        try:
+            tax_total = float(raw_tax)
+        except (TypeError, ValueError):
+            tax_total = 0.0
+
+    deleted = False
+    if estimate_id:
+        deleted = await _delete_estimate_quietly(
+            conn, db, estimate_id, sync_token or "0",
+            client_id=client_id, client_secret=client_secret,
+        )
+
+    quote.qb_tax_total = tax_total
+    _stamp(quote, user, "qbo_estimate_tax", "Sales tax calculated via QuickBooks",
+           [{"cat": "Sales Tax", "detail": f"${tax_total:,.2f}"}])
+    await db.flush()
+    return {"ok": True, "qbTaxTotal": tax_total, "taxable": True, "estimateDeleted": deleted}

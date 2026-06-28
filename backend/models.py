@@ -168,6 +168,20 @@ class Quote(Base):
     # NOT NULL because every Quote has one — the create() handler mints it
     # unconditionally if the client didn't supply one.
     share_token = Column(String(64), nullable=False, unique=True, index=True)
+    # ── QuickBooks-computed sales tax ───────────────────────────────────────
+    # Quotes never become QB documents (the business doesn't use QB estimates),
+    # but we still want QB-authoritative tax. The estimate-tax flow
+    # (backend/qbo_sync.py::get_quote_estimate_tax) creates a TEMPORARY QB
+    # Estimate, reads its computed tax, and deletes it — storing the result
+    # here. SERVER-AUTHORITATIVE: written by the sync engine, stripped from
+    # inbound client writes by _READONLY_COLS in backend/routes/api.py, and
+    # surfaced read-only on GET as qbTaxTotal / qbTaxSignature.
+    qb_tax_total = Column(Float, nullable=True)
+    # Opaque change-signature captured by the frontend at the last tax calc.
+    # The stored tax is "fresh" iff the frontend's live signature matches this;
+    # otherwise the builder shows "Recalculate — out of date". Mirrors
+    # Invoice.qb_synced_signature.
+    qb_tax_signature = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

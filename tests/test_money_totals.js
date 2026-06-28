@@ -63,10 +63,13 @@ q = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "targ
 near("Q4 target discount", QT(q).preTax, 120);
 q = { sections: items([line({ unitPrice: 50 })]), globalDiscount: { type: "amount", value: 999 } };
 near("Q5 discount can't go negative", QT(q).preTax, 0);
+// Quotes are QuickBooks-tax-authoritative: the flat LTP_TAX_RATE is IGNORED;
+// tax comes from qbTaxTotal (set by the temporary-estimate flow). Null → $0.
 window.LTP_TAX_RATE = 8;
 q = { sections: items([line({ unitPrice: 100 })]) };
-near("Q6 tax amount", QT(q).taxAmount, 8); near("Q6 total with tax", QT(q).total, 108);
-q.type === undefined; // noop
+near("Q6 flat rate ignored on quotes", QT(q).tax, 0); near("Q6 total no QB tax", QT(q).total, 100);
+q = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 8.25 };
+near("Q6b qbTaxTotal applied", QT(q).tax, 8.25); near("Q6b total with QB tax", QT(q).total, 108.25);
 eq("Q7 quote ref Q-YYYY-NNN", QREF({ id: 3, createdDate: "2026-02-09" }), "Q-2026-003");
 eq("Q8 note rows skipped", (function () { window.LTP_TAX_RATE = 0; return QT({ sections: items([line({ type: "note", unitPrice: 500 }), line({ unitPrice: 25 })]) }).subtotal; })(), 25);
 
