@@ -225,45 +225,13 @@
     );
   };
 
-  // ── Private: Unit serial/barcode search (mirrors equipment SerialSearch) ─────
-  function ContainerSerialSearch({ units, value, onChange }) {
-    var B = window.LTP_THEME;
-    var sel = value ? (units || []).find(function(u) { return u.id === value; }) : null;
-    function displayLabel(u) { return u.barcode || u.serial || ("Unit " + u.id); }
-    var [query,   setQuery]   = useState(sel ? displayLabel(sel) : "");
-    var [focused, setFocused] = useState(false);
-    var q = query.toLowerCase();
-    var filtered = (units || []).filter(function(u) {
-      return (u.barcode || "").toLowerCase().indexOf(q) !== -1 || (u.serial || "").toLowerCase().indexOf(q) !== -1;
-    });
-    return h("div", { style: { position: "relative" } },
-      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
-        sel && h("span", { style: { background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
-          displayLabel(sel),
-          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "\u00d7")),
-        h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : "Type barcode or serial\u2026",
-          onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },
-          onFocus: function() { if (!sel) setFocused(true); },
-          onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
-          onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
-          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" } })
-      ),
-      focused && !sel && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 160, overflowY: "auto", zIndex: 20 } },
-        filtered.length === 0
-          ? h("div", { style: { padding: "10px 12px", fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, query ? "No matching units." : "Type to search\u2026")
-          : filtered.map(function(u) {
-              var hasIssue = (u.maintenanceLogs || []).some(function(l) { return l.status === "open"; });
-              return h("div", { key: u.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { onChange(u.id); setQuery(""); setFocused(false); },
-                style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", borderBottom: "1px solid " + B.border },
-                onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
-                onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
-                h("span", { style: { color: B.text, fontWeight: 600 } }, u.barcode || u.serial || "No ID"),
-                u.barcode && u.serial && h("span", { style: { color: B.textMut, marginLeft: 8, fontSize: "11px" } }, "S/N: " + u.serial),
-                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "open issue")
-              );
-            })
-      )
-    );
+  // ── Private: Unit serial/barcode search — thin wrapper over the shared
+  // LTP_RENTALS SerialSearch with this surface's placeholder text.
+  function ContainerSerialSearch(props) {
+    return h(window.LTP_RENTALS.SerialSearch, Object.assign({
+      placeholder: "Type barcode or serial\u2026",
+      emptyHint: "Type to search\u2026",
+    }, props));
   }
 
   // ── Container Detail Modal ──────────────────────────────────────────────────
