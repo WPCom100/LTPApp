@@ -821,6 +821,12 @@
     // cleanRef tracks the last "clean" state — what Discard should reset to.
     // Updated on mount, after save, and after automated price recalculations.
     var cleanRef = useRef(initial);
+    // Guards the equipment date-recalc effect so it only fires on an in-session
+    // date change — never on the initial load or a quote switch. Without this,
+    // merely opening a quote would silently re-price equipment lines from the
+    // current inventory rates (which drift after the quote was created/sent),
+    // overwriting the snapshot the quote was built on. See the effect below.
+    var skipDateRecalcRef = useRef(true);
     var warnedSentEdit = React.useRef(false);
     // Silent draft updates — no sent-edit warning (for delivered/invoiced fields)
     function setDraftSilent(updater) { setDraftRaw(updater); setIsDirty(true); }
@@ -837,6 +843,7 @@
     useEffect(function() {
       setDraftRaw(initial);
       cleanRef.current = initial;
+      skipDateRecalcRef.current = true;
       setIsDirty(false);
     }, [quoteId, isNew]);
 
@@ -1550,8 +1557,15 @@
     // ── Recompute equipment prices when dates change ───────────────────────────
     // Equipment unitPrice and rateType are derived from the effective rental dates
     // for each section. When project dates, custom dates, or section custom dates
-    // change, we recalculate all equipment line items so the quote stays in sync.
+    // change *during this editing session*, we recalculate all equipment line
+    // items so the quote stays in sync with the new duration.
     // adjustedPrice (manual overrides) are preserved — only the base unitPrice changes.
+    //
+    // It deliberately does NOT run on the initial load (or a quote switch): the
+    // skipDateRecalcRef guard below short-circuits that first pass. Otherwise
+    // opening any quote would re-derive equipment prices from the *current*
+    // inventory rates, silently overwriting the snapshot prices the quote was
+    // created/sent at whenever a rate card changed after the fact.
     var equipLookup = {};
     (equipment || []).forEach(function(eq) { equipLookup[eq.id] = eq; });
 
@@ -1563,6 +1577,8 @@
     });
 
     useEffect(function() {
+      // Skip the load/quote-switch pass — only react to in-session date edits.
+      if (skipDateRecalcRef.current) { skipDateRecalcRef.current = false; return; }
       var changed = false;
       var newSections = draft.sections.map(function(sec) {
         var effDates = sec.customDates && sec.startDate && sec.endDate
