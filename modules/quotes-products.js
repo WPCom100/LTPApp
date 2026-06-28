@@ -5,7 +5,7 @@
 
   var UNITS = ["each", "roll", "jug", "tank", "bag", "pack", "sheet", "tube", "set"];
 
-  function ProductForm({ initial, onSave, onCancel }) {
+  function ProductForm({ initial, onSave, onCancel, onDelete }) {
     var [name,      setName]      = useState(initial ? initial.name      : "");
     var [category,  setCategory]  = useState(initial ? initial.category  : "Consumables");
     var [unit,      setUnit]      = useState(initial ? initial.unit      : "each");
@@ -39,9 +39,14 @@
           )
         ),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, placeholder: "Optional" }),
-        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-          h(window.Btn, { small: true, variant: "ghost", onClick: onCancel }, "Cancel"),
-          h(window.Btn, { small: true, onClick: submit }, initial ? "Save Changes" : "Add Product")
+        h("div", { style: { display: "flex", gap: 8, justifyContent: initial ? "space-between" : "flex-end", alignItems: "center" } },
+          // Edit mode only: delete lives here (in the item's details), matching
+          // the equipment detail pattern — no row-level delete on the list.
+          initial && h(window.Btn, { small: true, variant: "danger", onClick: onDelete }, "Delete"),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h(window.Btn, { small: true, variant: "ghost", onClick: onCancel }, "Cancel"),
+            h(window.Btn, { small: true, onClick: submit }, initial ? "Save Changes" : "Add Product")
+          )
         )
       )
     );
@@ -91,6 +96,7 @@
         confirmLabel: refs.length > 0 ? "Delete Anyway" : "Delete",
         onConfirm: function() {
           setProducts(function(prev) { return prev.filter(function(x) { return x.id !== id; }); });
+          setEditingId(null);
           setDlg(null);
         },
       });
@@ -127,7 +133,8 @@
           if (editingId === p.id) {
             return h(ProductForm, { key: p.id, initial: p,
               onSave: function(d) { updateProduct(p.id, d); },
-              onCancel: function() { setEditingId(null); } });
+              onCancel: function() { setEditingId(null); },
+              onDelete: function() { deleteProduct(p.id); } });
           }
           var margin = p.unitPrice > 0 ? Math.round(((p.unitPrice - p.cost) / p.unitPrice) * 100) : 0;
           return h("div", { key: p.id,
@@ -141,9 +148,7 @@
             ),
             h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 70, textAlign: "right" } }, "$" + p.unitPrice),
             h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 60, textAlign: "right" } }, "cost $" + p.cost),
-            h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%"),
-            h("button", { onClick: function(e) { e.stopPropagation(); deleteProduct(p.id); },
-              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px", padding: "2px 6px" } }, "\u00d7")
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%")
           );
         })
       ),

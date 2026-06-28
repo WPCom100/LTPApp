@@ -6,7 +6,7 @@
 
   var DEPARTMENTS = ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production", "Other"];
 
-  function ServiceForm({ initial, onSave, onCancel }) {
+  function ServiceForm({ initial, onSave, onCancel, onDelete }) {
     var [role,        setRole]        = useState(initial ? initial.role        : "");
     var [description, setDescription] = useState(initial ? initial.description : "");
     var [department,  setDepartment]  = useState(initial ? initial.department  : "Lighting");
@@ -40,9 +40,14 @@
           )
         ),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, placeholder: "Optional" }),
-        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-          h(window.Btn, { small: true, variant: "ghost", onClick: onCancel }, "Cancel"),
-          h(window.Btn, { small: true, onClick: submit }, initial ? "Save Changes" : "Add Service")
+        h("div", { style: { display: "flex", gap: 8, justifyContent: initial ? "space-between" : "flex-end", alignItems: "center" } },
+          // Edit mode only: delete lives here (in the item's details), matching
+          // the equipment detail pattern — no row-level delete on the list.
+          initial && h(window.Btn, { small: true, variant: "danger", onClick: onDelete }, "Delete"),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h(window.Btn, { small: true, variant: "ghost", onClick: onCancel }, "Cancel"),
+            h(window.Btn, { small: true, onClick: submit }, initial ? "Save Changes" : "Add Service")
+          )
         )
       )
     );
@@ -106,6 +111,7 @@
         confirmLabel: refs.length > 0 ? "Delete Anyway" : "Delete",
         onConfirm: function() {
           setServices(function(prev) { return prev.filter(function(x) { return x.id !== id; }); });
+          setEditingId(null);
           setDlg(null);
         },
       });
@@ -142,7 +148,8 @@
           if (editingId === s.id) {
             return h(ServiceForm, { key: s.id, initial: s,
               onSave: function(d) { updateService(s.id, d); },
-              onCancel: function() { setEditingId(null); } });
+              onCancel: function() { setEditingId(null); },
+              onDelete: function() { deleteService(s.id); } });
           }
           var margin = s.dayRate > 0 ? Math.round(((s.dayRate - s.dayCost) / s.dayRate) * 100) : 0;
           return h("div", { key: s.id,
@@ -159,9 +166,7 @@
             ),
             h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 80, textAlign: "right" } }, "$" + s.dayRate + "/day"),
             h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 70, textAlign: "right" } }, "cost $" + s.dayCost),
-            h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%"),
-            h("button", { onClick: function(e) { e.stopPropagation(); deleteService(s.id); },
-              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px", padding: "2px 6px" } }, "\u00d7")
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%")
           );
         })
       ),
