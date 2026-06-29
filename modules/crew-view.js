@@ -127,10 +127,11 @@
     var dateLine = fmtDate(s.date);
     var start = fmtTime(s.startTime);
     var end = fmtTime(s.endTime);
-    var timeRange = start ? (end ? start + " – " + end : start) : "—";
+    var timeRange = start ? (end ? start + " – " + end : start) : "";
+    var hasTimeframe = dateLine || timeRange;
     var subTitle = s.shiftTitle || "";
     var subMeta = (subTitle || s.department)
-      ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" } },
+      ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" } },
           subTitle && h("span", { style: { fontSize: "13px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
           s.department && h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
       : null;
@@ -139,15 +140,18 @@
       key: s.positionId || i,
       style: { display: "flex", alignItems: "flex-start", padding: "18px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR },
     },
-      // 1) number gutter
-      h("div", { style: { width: 36, flexShrink: 0, paddingTop: 3, fontSize: "14px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
-      // 2) main
+      // number gutter
+      h("div", { style: { width: 36, flexShrink: 0, paddingTop: 1, fontSize: "14px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
+      // content
       h("div", { style: { flex: 1, minWidth: 0 } },
-        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.2 } }, (s.roleLabel || "Crew")),
-        dateLine && h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT, marginTop: 4 } }, dateLine),
-        subMeta),
-      // 3) time (single line, right-aligned mono)
-      h("div", { style: { flexShrink: 0, marginLeft: 16, paddingTop: 3, textAlign: "right", whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 500, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, timeRange)
+        // timeframe line: date (left) · time range (right, mono)
+        hasTimeframe && h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12 } },
+          h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT } }, dateLine),
+          timeRange && h("div", { style: { flexShrink: 0, whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 500, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, timeRange)),
+        // position title — its own full-width line below the timeframe, so a long
+        // role can run the whole width instead of fighting the time column.
+        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: hasTimeframe ? 6 : 0 } }, (s.roleLabel || "Crew")),
+        subMeta)
     );
   }
 
