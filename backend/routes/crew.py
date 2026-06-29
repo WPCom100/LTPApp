@@ -593,6 +593,12 @@ async def send_crew_request(
 
     sendable = []
     for shift in (project.schedule or []):
+        # An unscheduled day (no date) is never a valid availability ask — a crew
+        # member can't be booked for a day that hasn't been scheduled. Skip its
+        # positions so a request/email can't be sent against a dateless shift,
+        # even via a direct API call (the Labor UI already hides these).
+        if not (shift.get("date") or "").strip():
+            continue
         for pos in (shift.get("positions") or []):
             if pos.get("crewId") != contact_id:
                 continue
@@ -604,7 +610,7 @@ async def send_crew_request(
     if not sendable:
         raise HTTPException(
             status_code=400,
-            detail={"reason": "no sendable positions — assign this crew member to open positions on the project first"},
+            detail={"reason": "no sendable positions — assign this crew member to a scheduled day (with a date) on the project first"},
         )
 
     req = models.CrewRequest(

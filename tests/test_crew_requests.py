@@ -69,6 +69,8 @@ P_STALE2   = 7016   # partial removal → trim, request still answerable
 P_DEL      = 7017   # project delete → auto-withdraw
 P_WD_NOTIFY = 7018  # withdraw + notify emails the crew member (crewWithdrawn)
 P_WD_QUIET  = 7019  # withdraw without notify sends no email
+P_UNSCHED   = 7020  # unscheduled day (no date) — never sendable
+P_MIXED     = 7021  # one dated + one undated position — send covers only the dated one
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -182,6 +184,18 @@ def _setup():
                 db.add(models.Project(id=P_WD_QUIET, name="Gala WD Quiet", schedule=[
                     _shift("swq", "Show", "2026-08-09", [_pos("pwq_a", C1, service=S1)]),
                 ]))
+                # An unscheduled day: a shift with NO date but a crew member
+                # already assigned. It must never be sendable for an availability
+                # request — the day has to be scheduled first.
+                db.add(models.Project(id=P_UNSCHED, name="Gala Unscheduled", schedule=[
+                    _shift("sun", "TBD", "", [_pos("pun_a", C1, service=S1)]),
+                ]))
+                # Mixed: one scheduled day + one unscheduled day, both with a C1
+                # position. A whole-project send must cover only the dated one.
+                db.add(models.Project(id=P_MIXED, name="Gala Mixed", schedule=[
+                    _shift("smx_d", "Show", "2026-08-11", [_pos("pmx_dated", C1, service=S1)]),
+                    _shift("smx_u", "TBD", "", [_pos("pmx_undated", C1, service=S1)]),
+                ]))
                 await db.commit()
 
         asyncio.run(seed())
@@ -255,6 +269,29 @@ def test_send_guards_non_crew_no_email_and_no_sendable():
     # Crew member whose only position is already confirmed (non-sendable).
     r = _send(client, tok, P_CONFIRM, C1)
     assert r.status_code == 400 and "sendable" in r.text, r.text
+
+
+def test_send_for_unscheduled_day_is_rejected():
+    # A crew member assigned only to a dateless ("unscheduled") day has no
+    # sendable positions — the day must be scheduled before a request can go out.
+    client, tok = _setup()
+    r = _send(client, tok, P_UNSCHED, C1)
+    assert r.status_code == 400 and "sendable" in r.text, r.text
+    # The dateless position must NOT have been flipped to requested.
+    proj = _project(client, tok, P_UNSCHED)
+    assert _pos_status(proj, "pun_a") == "open"
+
+
+def test_send_skips_unscheduled_positions_in_mixed_project():
+    # Whole-project send must cover only the position on the dated day; the
+    # position on the unscheduled (dateless) day is left untouched.
+    client, tok = _setup()
+    r = _send(client, tok, P_MIXED, C1)
+    assert r.status_code == 200, r.text
+    assert set(r.json()["positionIds"]) == {"pmx_dated"}, r.json()["positionIds"]
+    proj = _project(client, tok, P_MIXED)
+    assert _pos_status(proj, "pmx_dated") == "requested"
+    assert _pos_status(proj, "pmx_undated") == "open"
 
 
 def test_send_unauthenticated_is_rejected():
@@ -649,6 +686,8 @@ def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
         test_send_guards_non_crew_no_email_and_no_sendable,
+        test_send_for_unscheduled_day_is_rejected,
+        test_send_skips_unscheduled_positions_in_mixed_project,
         test_send_unauthenticated_is_rejected,
         test_public_payload_is_allow_listed,
         test_short_or_unknown_token_is_404,

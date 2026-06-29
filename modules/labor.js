@@ -28,6 +28,11 @@
       });
 
       (proj.schedule || []).forEach(function(s) {
+        // An unscheduled day (no date) is not a real, assignable shift: a crew
+        // member can't be booked — or sent an availability request — for a day
+        // with no date. Skip its positions entirely so they never surface on any
+        // Labor tab or in the send-request selection, even when crew is attached.
+        if (!s.date) return;
         var dg = dateGroups[s.date || "_unscheduled"];
         (s.positions || []).forEach(function(p) {
           var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
