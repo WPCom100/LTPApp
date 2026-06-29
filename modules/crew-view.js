@@ -29,6 +29,7 @@
   var FAINT = "#6E7E86";        // footer / receipts
   var ORANGE = "#EF5822";
   var ORANGE_SOFT = "#F9B998";
+  var MASTHEAD_ORANGE = "#f15927"; // sampled from the logo PNG so the rule reads as the masthead's own underline
   var INSET = "#1B262C";        // surfaces that recede below the field
   var HAIR = "#34454E";         // structural hairlines / borders
   var GRAD_RULE = "linear-gradient(90deg,#FF921E 0%,#EF5822 50%,#64260F 100%)";
@@ -40,8 +41,6 @@
   var MONO = "'SFMono-Regular',ui-monospace,'Roboto Mono','DM Mono',Menlo,monospace";
   var FONT = "'DM Sans','Segoe UI',system-ui,sans-serif";
   var MASTHEAD_SRC = "/assets/logos/luminary-masthead.png";
-
-  var settingsAddress = window.LTP_settingsAddress;
 
   // ── Date / time helpers (deterministic — no toLocaleString) ────────────────
   var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -103,7 +102,10 @@
   // ── Masthead hero (img with text-wordmark fallback) + gradient rule ────────
   function Masthead(props) {
     // props: { failed, onFail, companyName, maxWidth }
-    var rule = h("div", { style: { height: 4, width: "100%", background: GRAD_RULE, borderRadius: 2, marginTop: 20 } });
+    // Solid masthead-orange rule pulled up 1px to overlap the logo's base, and
+    // painted after the img (same DOM parent) so it sits ON the bottom edge —
+    // the lockup and rule read as one image, like the email masthead.
+    var rule = h("div", { style: { height: 4, width: "100%", background: MASTHEAD_ORANGE, marginTop: -1, position: "relative", zIndex: 1 } });
     var art;
     if (props.failed) {
       art = h("div", { style: { display: "block" } },
@@ -121,40 +123,31 @@
   }
 
   // ── A single ruled "call line" ─────────────────────────────────────────────
-  function renderShift(s, i, isLast, isNext) {
+  function renderShift(s, i, isLast, compact) {
     var dateLine = fmtDate(s.date);
-    var start = fmtTime(s.startTime) || "—";
-    var end = s.endTime ? "– " + fmtTime(s.endTime) : "";
+    var start = fmtTime(s.startTime);
+    var end = fmtTime(s.endTime);
+    var timeRange = start ? (end ? start + " – " + end : start) : "—";
     var subTitle = s.shiftTitle || "";
     var subMeta = (subTitle || s.department)
-      ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3, flexWrap: "wrap" } },
-          subTitle && h("span", { style: { fontSize: "12px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
-          s.department && h("span", { style: { fontSize: "10px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
+      ? h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" } },
+          subTitle && h("span", { style: { fontSize: "13px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
+          s.department && h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
       : null;
 
     return h("div", {
       key: s.positionId || i,
-      style: {
-        display: "flex", alignItems: "flex-start",
-        padding: "18px 0",
-        paddingLeft: isNext ? 16 : 0,
-        borderLeft: isNext ? "2px solid " + ORANGE : "none",
-        borderBottom: isLast ? "none" : "1px solid " + HAIR,
-      },
+      style: { display: "flex", alignItems: "flex-start", padding: "18px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR },
     },
       // 1) number gutter
-      h("div", { style: { width: 34, flexShrink: 0, paddingTop: 2, fontSize: "13px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
+      h("div", { style: { width: 36, flexShrink: 0, paddingTop: 3, fontSize: "14px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
       // 2) main
       h("div", { style: { flex: 1, minWidth: 0 } },
-        h("div", { style: { fontSize: "17px", fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.2 } },
-          (s.roleLabel || "Crew"),
-          isNext && h("span", { style: { fontSize: "9px", fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: ORANGE, marginLeft: 8 } }, "Next")),
-        dateLine && h("div", { style: { fontSize: "13px", fontWeight: 600, color: ORANGE_SOFT, marginTop: 4 } }, dateLine),
+        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.2 } }, (s.roleLabel || "Crew")),
+        dateLine && h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT, marginTop: 4 } }, dateLine),
         subMeta),
-      // 3) time column (stacked mono)
-      h("div", { style: { flexShrink: 0, marginLeft: 16, textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums" } },
-        h("div", { style: { fontSize: "14px", fontWeight: 500, color: ORANGE_SOFT } }, start),
-        end && h("div", { style: { fontSize: "14px", fontWeight: 500, color: ORANGE_SOFT, marginTop: 2 } }, end))
+      // 3) time (single line, right-aligned mono)
+      h("div", { style: { flexShrink: 0, marginLeft: 16, paddingTop: 3, textAlign: "right", whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 500, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, timeRange)
     );
   }
 
@@ -272,17 +265,6 @@
       : (dateRange[0] || "");
     var projectMeta = [project.venue, dateLine].filter(function(x) { return x; }).join("  ·  ");
 
-    // Soonest pending shift → the single "NEXT" accent (only while pending).
-    var soonestId = null;
-    if (status === "pending" && shifts.length) {
-      var best = null;
-      shifts.forEach(function(s) {
-        var key = (s.date || "9999-99-99") + " " + (s.startTime || "99:99");
-        if (best === null || key < best.key) best = { key: key, id: s.positionId };
-      });
-      soonestId = best ? best.id : null;
-    }
-
     // Overline status eyebrow per state.
     var statusEyebrow = status === "accepted" ? { t: "Confirmed", c: SUCCESS }
       : status === "declined" ? { t: "Declined", c: DECLINE }
@@ -324,27 +306,30 @@
         .catch(function(e) { setFormErr(String(e.message || e)); setSubmitting(false); });
     }
 
-    function openMode(mode) {
+    function openMode(mode, fromSticky) {
       setFormErr(null);
       setRespondMode(mode);
-      // From the mobile sticky bar, bring the in-flow action zone into view.
-      if (actionRef.current && actionRef.current.scrollIntoView) {
+      // Only the mobile sticky bar needs to pull the in-flow action zone into
+      // view; switching Accept↔Decline in place shouldn't jump the page.
+      if (fromSticky && actionRef.current && actionRef.current.scrollIntoView) {
         try { actionRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { actionRef.current.scrollIntoView(); }
       }
     }
 
     function pendingChoiceButtons(stacked) {
-      var disabled = respondMode !== null;
+      // Both stay live so a crew member can switch their choice directly —
+      // no need to hit Back first. Only a submit-in-flight disables them; the
+      // un-chosen side just dims while the other's note panel is open.
       return h("div", { style: { display: "flex", flexDirection: stacked ? "column" : "row", gap: 12 } },
         h("button", {
           type: "button", className: "ltp-accept-btn",
-          disabled: disabled, onClick: function() { openMode("accept"); },
-          style: { flex: stacked ? "0 0 auto" : "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: disabled ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (disabled && respondMode !== "accept") ? 0.4 : 1 },
+          disabled: submitting, onClick: function() { openMode("accept"); },
+          style: { flex: stacked ? "0 0 auto" : "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (respondMode === "decline") ? 0.45 : 1 },
         }, "Accept These Calls"),
         h("button", {
           type: "button", className: "ltp-decline-btn",
-          disabled: disabled, onClick: function() { openMode("decline"); },
-          style: { flex: stacked ? "0 0 auto" : "1 1 0", minHeight: 52, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, padding: "15px 24px", cursor: disabled ? "default" : "pointer", fontFamily: "inherit", boxSizing: "border-box", opacity: (disabled && respondMode !== "decline") ? 0.4 : 1 },
+          disabled: submitting, onClick: function() { openMode("decline"); },
+          style: { flex: stacked ? "0 0 auto" : "1 1 0", minHeight: 52, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, padding: "15px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxSizing: "border-box", opacity: (respondMode === "accept") ? 0.45 : 1 },
         }, "I Can't Make It"));
     }
 
@@ -396,11 +381,10 @@
         listInner = h("div", { style: { padding: "18px 0", fontSize: "13px", fontStyle: "italic", color: MUTE } }, "No calls are listed on this request yet.");
       } else {
         listInner = shifts.map(function(s, i) {
-          return renderShift(s, i, i === shifts.length - 1, s.positionId && s.positionId === soonestId);
+          return renderShift(s, i, i === shifts.length - 1, isMobile);
         });
       }
-      shiftSection = h("div", null,
-        h("div", { style: { height: 1, background: ORANGE, margin: "28px 0 24px" } }),
+      shiftSection = h("div", { style: { marginTop: 36 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: ORANGE } },
           "Shifts — " + shifts.length + " call" + (shifts.length === 1 ? "" : "s")),
         h("div", { style: { marginTop: 16, borderTop: "1px solid " + ORANGE, borderBottom: "1px solid " + ORANGE } }, listInner));
@@ -412,15 +396,24 @@
       ? h("div", { style: { position: "fixed", left: 0, right: 0, bottom: 0, background: INSET, borderTop: "1px solid " + HAIR, zIndex: 3000 } },
           h("div", { style: { height: 4, background: GRAD_RULE } }),
           h("div", { style: { display: "flex", gap: 12, padding: "12px 16px", paddingBottom: "calc(12px + env(safe-area-inset-bottom))" } },
-            h("button", { type: "button", className: "ltp-accept-btn", onClick: function() { openMode("accept"); }, style: { flex: "1.4 1 0", minHeight: 48, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, border: "none", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)" } }, "Accept"),
-            h("button", { type: "button", className: "ltp-decline-btn", onClick: function() { openMode("decline"); }, style: { flex: "1 1 0", minHeight: 48, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, cursor: "pointer", fontFamily: "inherit" } }, "I Can't Make It")))
+            h("button", { type: "button", className: "ltp-accept-btn", onClick: function() { openMode("accept", true); }, style: { flex: "1.4 1 0", minHeight: 48, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, border: "none", borderRadius: 10, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)" } }, "Accept"),
+            h("button", { type: "button", className: "ltp-decline-btn", onClick: function() { openMode("decline", true); }, style: { flex: "1 1 0", minHeight: 48, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, cursor: "pointer", fontFamily: "inherit" } }, "I Can't Make It")))
       : null;
 
     var pad = isMobile ? "28px 28px 0" : "40px 36px 0";
     var bottomPad = showSticky ? 96 : 56;
 
+    // Footer — one centered "Company · website" line, matching the email shell.
+    var websiteHref = settings.website
+      ? (/^https?:\/\//i.test(settings.website) ? settings.website : "https://" + settings.website)
+      : null;
+    var footer = h("div", { style: { marginTop: 44, paddingTop: 24, borderTop: "1px solid " + HAIR, textAlign: "center", fontSize: "11px", color: MUTE, lineHeight: 1.6 } },
+      h("span", null, settings.companyName || "Luminary Technology & Productions"),
+      settings.website && h("span", { style: { color: FAINT } }, "  ·  "),
+      settings.website && h("a", { href: websiteHref, target: "_blank", rel: "noopener noreferrer", style: { color: MUTE, textDecoration: "none" } }, settings.website));
+
     return h("div", { style: { minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, padding: "0 0 " + bottomPad + "px" } },
-      h("div", { style: { maxWidth: 640, margin: "0 auto", padding: pad } },
+      h("div", { style: { maxWidth: 820, margin: "0 auto", padding: pad } },
         // Masthead hero + gradient rule
         h(Masthead, { failed: mastheadFailed, onFail: function() { setMastheadFailed(true); }, companyName: settings.companyName, maxWidth: 360 }),
 
@@ -446,11 +439,7 @@
         actionZone,
 
         // Footer
-        h("div", { style: { marginTop: 40, paddingTop: 24, borderTop: "1px solid " + HAIR, textAlign: isMobile ? "center" : "left" } },
-          h("div", { style: { fontSize: "11px", fontWeight: 600, color: TEXT } }, settings.companyName || "Luminary Technology & Productions"),
-          settingsAddress(settings) && h("div", { style: { fontSize: "11px", color: FAINT, lineHeight: 1.7 } }, settingsAddress(settings)),
-          settings.phone && h("div", { style: { fontSize: "11px", color: FAINT, lineHeight: 1.7 } }, settings.phone),
-          settings.website && h("div", { style: { fontSize: "11px", color: FAINT, lineHeight: 1.7 } }, settings.website))
+        footer
       ),
       stickyBar
     );
