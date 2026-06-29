@@ -31,6 +31,7 @@
   var ORANGE_SOFT = "#F9B998";
   var MASTHEAD_ORANGE = "#f15927"; // sampled from the logo PNG so the rule reads as the masthead's own underline
   var INSET = "#1B262C";        // surfaces that recede below the field
+  var SHIFT_BG = "#202d35";     // the call-list panel — a hair off the page field
   var HAIR = "#34454E";         // structural hairlines / borders
   var GRAD_RULE = "linear-gradient(90deg,#FF921E 0%,#EF5822 50%,#64260F 100%)";
   var GRAD_BTN = "linear-gradient(135deg,#FF921E,#EF5822)";
@@ -391,7 +392,10 @@
       shiftSection = h("div", { style: { marginTop: 36 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: ORANGE } },
           "Shifts — " + shifts.length + " call" + (shifts.length === 1 ? "" : "s")),
-        h("div", { style: { marginTop: 16, borderTop: "1px solid " + ORANGE, borderBottom: "1px solid " + ORANGE } }, listInner));
+        // Panel fill + 10px side padding, pulled out 10px each side with negative
+        // margins so the rows keep their exact width (the table doesn't shrink) —
+        // the slightly-lighter background just bleeds 10px past the content edges.
+        h("div", { style: { marginTop: 16, marginLeft: -10, marginRight: -10, padding: "0 10px", background: SHIFT_BG, borderTop: "1px solid " + ORANGE, borderBottom: "1px solid " + ORANGE } }, listInner));
     }
 
     // ── Mobile sticky action bar (pending only, before a choice is made) ──────
