@@ -1,10 +1,27 @@
 import asyncio
+import faulthandler
 import os
+import signal
+import sys
+import traceback
 from pathlib import Path
 
 from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
+
+# ── Startup diagnostics ──────────────────────────────────────────────────────
+# init_db() runs Alembic migrations during the FastAPI lifespan. If that step
+# hangs or dies, the platform can kill the container before any traceback is
+# flushed — leaving an opaque crash-loop. faulthandler dumps every thread's
+# stack on a fatal signal AND on SIGTERM (what a platform sends to stop us), so
+# a hung migration reveals exactly where it's stuck (e.g. an ALTER blocked on a
+# lock). init_db() also arms a periodic dump while migrating; see below.
+faulthandler.enable()
+try:
+    faulthandler.register(signal.SIGTERM, chain=True)
+except (AttributeError, ValueError, OSError):
+    pass  # best-effort: not every platform/thread allows registering
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
@@ -63,12 +80,20 @@ def _run_alembic_commands(needs_stamp: bool) -> None:
     env.py internally uses asyncio.run() to drive the actual SQL, which
     works because to_thread gave us a fresh event loop slot."""
     from alembic import command
-    cfg = _alembic_config()
-    if needs_stamp:
-        print("[LTP] alembic: stamping pre-alembic schema as head (one-shot cutover)", flush=True)
-        command.stamp(cfg, "head")
-    print("[LTP] alembic: upgrade head", flush=True)
-    command.upgrade(cfg, "head")
+    try:
+        cfg = _alembic_config()
+        if needs_stamp:
+            print("[LTP] alembic: stamping pre-alembic schema as head (one-shot cutover)", flush=True)
+            command.stamp(cfg, "head")
+        print("[LTP] alembic: upgrade head", flush=True)
+        command.upgrade(cfg, "head")
+    except BaseException:
+        # Print from inside the worker thread too, so the trace survives even if
+        # it's lost crossing the to_thread boundary or the process is then killed.
+        print("[LTP] alembic command raised — traceback follows:", flush=True)
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        raise
 
 
 async def init_db():
@@ -97,5 +122,19 @@ async def init_db():
     has_alembic = "alembic_version" in tables
     has_app_tables = any(t in tables for t in ("companies", "quotes", "invoices", "users"))
     needs_stamp = has_app_tables and not has_alembic
-    await asyncio.to_thread(_run_alembic_commands, needs_stamp)
+    # Arm a periodic stack dump: if the migration hangs (e.g. an ALTER blocked on
+    # a lock), every thread's stack is dumped after 1s — so a crash-loop leaves a
+    # usable trace even when the platform kills the container a moment later.
+    # Cancelled on success, so a healthy boot stays silent.
+    faulthandler.dump_traceback_later(1, repeat=True)
+    try:
+        await asyncio.to_thread(_run_alembic_commands, needs_stamp)
+    except BaseException:
+        print("[LTP] init_db: migrations FAILED — traceback follows:", flush=True)
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
+        sys.stderr.flush()
+        raise
+    finally:
+        faulthandler.cancel_dump_traceback_later()
     print(f"[LTP] init_db complete ({engine.dialect.name})", flush=True)
