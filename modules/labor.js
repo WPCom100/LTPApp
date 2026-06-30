@@ -292,7 +292,6 @@
     var [showSendPanel, setShowSendPanel] = useState(false);
     var [sendSelection, setSendSelection] = useState({});
     var [conflictWarn, setConflictWarn] = useState(null);
-    var [confirmDlg, setConfirmDlg] = useState(null); // posId → true/false
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
     // Sending crew requests lives here (you select positions and send); the
@@ -303,23 +302,6 @@
     // (window.LTP_toast), consistent with the rest of the app.
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
-
-    // Immediate informational crew email — only the POSITIVE confirmation
-    // (crewConfirmed) still sends inline; removals are parked in the tray
-    // (parkRemoval) instead. Surfaces only failures so the producer can follow up.
-    function crewNotify(contactId, projectId, template, positionIds) {
-      window.LTP_crewNotify(contactId, projectId, template, { positionIds: positionIds || [] })
-        .then(function(res) {
-          var es = (res.ok && res.body.emailStatus) || {};
-          if (!es.emailed) {
-            if (es.needsReconnect) {
-              window.LTP_toast("Notification email not sent", { message: "Status saved — connect Google in Settings to email " + crewLabel(contactId) + ".", variant: "warn" });
-            } else {
-              window.LTP_toast("Notification email failed", { message: crewLabel(contactId) + ": " + (es.error || "email not sent"), variant: "error" });
-            }
-          }
-        });
-    }
 
     // Park a crew-removal notice (typed by the shift's prior status) into the
     // notify tray, snapshotting the shifts so the email still renders after the
@@ -544,7 +526,6 @@
       pendingSend.forEach(function(p) { var k = p.crewId + "|" + p.projectId; if (!seen[k]) { seen[k] = true; n++; } });
       return n;
     })();
-    var pendingConfirm = countUnique(allPositions, function(p) { return p.status === "accepted"; });
 
     // One request per crew member per project (the chosen default) — so the
     // selection is keyed by crewId|projectId, collapsing all of a person's open
@@ -629,90 +610,6 @@
       });
     }
 
-    function confirmAllAccepted() {
-      setProjects(function(prev) {
-        return prev.map(function(proj) {
-          var projConfirmed = 0;
-          var updated = Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-              if (pos.status === "accepted") { projConfirmed++; return Object.assign({}, pos, { status: "confirmed" }); }
-              return pos;
-            })});
-          })});
-          if (projConfirmed > 0) {
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "saved", user: (window.LTP_CURRENT_USER || "User"), message: projConfirmed + " crew position" + (projConfirmed > 1 ? "s" : "") + " confirmed",
- changes: [{ cat: "Crew Confirmed", detail: projConfirmed + " position" + (projConfirmed > 1 ? "s" : "") + " moved from accepted \u2192 confirmed" }] };
-            updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
-          }
-          return updated;
-        });
-      });
-    }
-
-    // Quick action: confirm a single position (cascades to all same crew+day)
-    function confirmPosition(pos, posIds) {
-      var cm = contacts.find(function(c) { return c.id === pos.crewId; });
-      var s = settings || {};
-      var tmpl = (s.emailTemplates || {}).crewConfirmed || { subject: "", body: "" };
-      var proj = (projects || []).find(function(pr) { return pr.id === pos.projectId; });
-      var vars = { companyName: s.companyName || "LTP", crewName: cm ? cm.firstName : "there",
-        projectName: pos.projectName || "", role: pos.svcName || pos.role || "",
-        date: pos.date ? fmt(pos.date) : "", callTime: pos.dayCall ? ft(pos.dayCall) : "",
-        wrapTime: pos.dayWrap ? ft(pos.dayWrap) : "", location: proj ? proj.venue || "" : "",
-        signature: s.emailSignature || "" };
-      setConfirmDlg({
-        pos: pos, posIds: posIds,
-        crewName: cm ? cm.firstName + " " + cm.lastName : "?",
-        emailTo: cm ? cm.email || "(no email)" : "?",
-        emailSubject: window.LTP_resolveTemplate(tmpl.subject, vars),
-        emailBody: window.LTP_resolveTemplate(tmpl.body, vars),
-      });
-    }
-
-    function executeConfirm(notify) {
-      if (!confirmDlg) return;
-      var p = confirmDlg.pos;
-      confirmDayBooking(p, confirmDlg.posIds);
-      if (notify) crewNotify(p.crewId, p.projectId, "crewConfirmed", confirmDlg.posIds || [p.posId]);
-      setConfirmDlg(null);
-    }
-
-    // Confirm this booking's positions. posIds scopes it to one booking (so a
-    // conflicting shift isn't confirmed alongside the one you clicked); without
-    // it, confirm every same-date shift for this crew (legacy whole-day).
-    function confirmDayBooking(pos, posIds) {
-      var targetDate = pos.date;
-      var targetCrew = pos.crewId;
-      var targetProject = pos.projectId;
-      var affectIds = (posIds && posIds.length) ? posIds.reduce(function(m, id) { m[id] = true; return m; }, {}) : null;
-      setProjects(function(prev) {
-        return prev.map(function(p) {
-          if (p.id !== targetProject) return p;
-          var confirmedCount = 0;
-          var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
-            if (s.date !== targetDate) return s;
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              var hit = affectIds ? affectIds[ps.id] : (ps.crewId === targetCrew);
-              if (hit && (ps.status === "accepted" || ps.status === "requested" || ps.status === "open")) {
-                confirmedCount++;
-                return Object.assign({}, ps, { status: "confirmed" });
-              }
-              return ps;
-            })});
-          })});
-          if (confirmedCount > 0) {
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "saved", user: (window.LTP_CURRENT_USER || "User"),
-              message: "Position confirmed: " + (pos.crewName || "?") + " as " + (pos.role || pos.svcName || "?") + " (" + confirmedCount + " item" + (confirmedCount > 1 ? "s" : "") + ")",
-              changes: [{ cat: (pos.schedTitle || "") + (pos.date ? " (" + fmt(pos.date) + ")" : ""), detail: (pos.crewName || "?") + " \u2192 confirmed across " + confirmedCount + " item" + (confirmedCount > 1 ? "s" : "") }] };
-            updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
-          }
-          return updated;
-        });
-      });
-    }
-
     // Quick action: release an accepted position (polite decline)
     function releasePosition(pos, posIds) {
       handleStatusChange(pos, "open", posIds);
@@ -742,8 +639,6 @@
           projOptions.map(function(p) { return h("option", { key: p.id, value: p.id }, p.name); })
         ),
         h("div", { style: { flex: 1 } }),
-        pendingConfirm > 0 && h("button", { onClick: confirmAllAccepted,
-          style: { background: B.info, border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "\u2713 Confirm All Accepted (" + pendingConfirm + ")"),
         pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
           style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
       ),
@@ -841,9 +736,8 @@
                           pos.status === "open" && !pos.crewId && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "Needs crew"),
                           pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
                           pos.status === "requested" && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600, background: B.warn + "18", border: "1px solid " + B.warn + "33", borderRadius: "3px", padding: "2px 8px" } }, "Awaiting\u2026"),
-                          pos.status === "accepted" && h("div", { style: { display: "flex", gap: 4 } },
-                            h("button", { onClick: function() { confirmPosition(pos, bkPosIds); },
-                              style: { background: B.info, border: "none", borderRadius: "3px", padding: "3px 10px", color: "#000", fontSize: "9px", fontWeight: 700, cursor: "pointer" } }, "\u2713 Confirm"),
+                          pos.status === "accepted" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+                            h("span", { title: "Confirm this position from the Crew Requests tab", style: { fontSize: "9px", color: B.success, fontWeight: 700, background: B.success + "18", border: "1px solid " + B.success + "33", borderRadius: "3px", padding: "2px 8px" } }, "Accepted"),
                             h("button", { onClick: function() { releasePosition(pos, bkPosIds); },
                               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Release")),
                           pos.status === "confirmed" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
@@ -865,40 +759,6 @@
           })
         );
       }),
-
-      // Crew confirmation email dialog
-      confirmDlg && h(window.LTPModal, { title: "Confirm " + confirmDlg.crewName, onClose: function() { setConfirmDlg(null); }, wide: true },
-        h("div", { style: { display: "flex", gap: 16, minHeight: 300 } },
-          // Left: position info
-          h("div", { style: { width: 220, flexShrink: 0 } },
-            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 } }, "Position Details"),
-            h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text, marginBottom: 4 } }, confirmDlg.crewName),
-            h("div", { style: { fontSize: "11px", color: B.textSec, marginBottom: 2 } }, confirmDlg.pos.svcName),
-            h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 2 } }, confirmDlg.pos.projectName),
-            confirmDlg.pos.date && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 2 } }, fmt(confirmDlg.pos.date)),
-            confirmDlg.pos.dayCall && h("div", { style: { fontSize: "10px", color: B.textMut } }, ft(confirmDlg.pos.dayCall) + " \u2192 " + ft(confirmDlg.pos.dayWrap))),
-          // Right: email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Confirmation Email Preview"),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
-                h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, confirmDlg.emailTo)),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.textMut } }, (settings || {}).emailFrom || "")),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, confirmDlg.emailSubject))),
-            h("div", { style: { flex: 1, padding: "14px", overflowY: "auto" } },
-              h("pre", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6, fontFamily: "inherit", margin: 0, whiteSpace: "pre-wrap" } }, confirmDlg.emailBody))
-          )
-        ),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
-          h(window.Btn, { variant: "ghost", onClick: function() { executeConfirm(false); } }, "Confirm Quietly"),
-          h(window.Btn, { onClick: function() { executeConfirm(true); } }, "Confirm & Notify"))
-      ),
 
       // Conflict warning dialog
       conflictWarn && h(window.LTPModal, { title: conflictWarn.title, onClose: function() { setConflictWarn(null); } },
@@ -1142,8 +1002,9 @@
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
   function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services }) {
-    // Resend / withdraw confirmations + errors surface as toasts (window.LTP_toast).
-    var [withdrawDlg, setWithdrawDlg] = useState(null);  // request awaiting a withdraw decision
+    // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
+    var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
+    var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
 
     // Refresh on open so a crew member's response since last load shows up here
     // (and reconciles into the Assignments view).
@@ -1200,30 +1061,124 @@
         .catch(function() { reloadCrewRequests(); });
     }
 
-    var STBADGE = { pending: B.warn, accepted: B.success, declined: B.danger, withdrawn: B.textMut };
+    function roleLabelFor(pos) {
+      var svc = pos.serviceId ? (services || []).find(function(s) { return s.id === pos.serviceId; }) : null;
+      return svc ? (svc.role + (svc.description ? " — " + svc.description : "")) : (pos.role || "Crew");
+    }
+
+    // Live positions + status counts for a request, read from its project's
+    // schedule (the request only stores position ids; the schedule is the truth).
+    function reqInfo(req) {
+      var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
+      var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+      var positions = [];
+      if (proj) (proj.schedule || []).forEach(function(s) {
+        (s.positions || []).forEach(function(p) {
+          if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date });
+        });
+      });
+      var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
+      positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
+      return { proj: proj, positions: positions, counts: counts };
+    }
+
+    // Badge label/color + which actions show, from the request + its live
+    // position statuses. Confirming lives HERE (not on the Assignments tab).
+    function displayState(req, info) {
+      if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
+      if (req.status === "declined") return { label: "Declined", color: B.danger };
+      if (req.status === "accepted") {
+        if (info.counts.accepted > 0) return { label: info.counts.confirmed > 0 ? "Confirm remaining" : "Accepted", color: B.success, confirm: true };
+        if (info.counts.confirmed > 0) return { label: "Confirmed", color: B.info };
+        return { label: "Accepted", color: B.success };
+      }
+      return { label: req.status || "—", color: B.textMut };
+    }
+
+    // Confirm a request's accepted positions → confirmed in its project, and
+    // optionally email the crew member the confirmation (server-composed).
+    function doConfirm(req, notify) {
+      setConfirmDlg(null);
+      var accepted = reqInfo(req).counts.accepted;
+      var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+      setProjects(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== req.projectId) return p;
+          var changed = 0;
+          var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
+              if (ids[ps.id] && ps.status === "accepted") { changed++; return Object.assign({}, ps, { status: "confirmed" }); }
+              return ps;
+            })});
+          })});
+          if (changed > 0) {
+            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+              type: "saved", user: (window.LTP_CURRENT_USER || "User"),
+              message: "Crew confirmed: " + crewLabel(req.contactId) + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
+              changes: [{ cat: "Crew Confirmed", detail: crewLabel(req.contactId) + " → confirmed across " + changed + " position" + (changed > 1 ? "s" : "") }] };
+            updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+          }
+          return updated;
+        });
+      });
+      if (notify) {
+        window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [] })
+          .then(function(res) {
+            var es = (res.ok && res.body.emailStatus) || {};
+            if (es.emailed) window.LTP_toast("Crew confirmed", { message: "Confirmation email sent to " + crewLabel(req.contactId) + ".", variant: "success" });
+            else if (es.needsReconnect) window.LTP_toast("Confirmed — email not sent", { message: "Connect Google in Settings to email " + crewLabel(req.contactId) + ".", variant: "warn" });
+            else window.LTP_toast("Confirmed — email failed", { message: crewLabel(req.contactId) + ": " + (es.error || "email not sent"), variant: "error" });
+          });
+      } else {
+        window.LTP_toast("Crew confirmed", { message: crewLabel(req.contactId) + (accepted ? " — " + accepted + " position" + (accepted > 1 ? "s" : "") : "") + " confirmed.", variant: "success" });
+      }
+    }
+
     var active = (crewRequests || []).filter(function(r) { return r.status !== "withdrawn"; });
+    // Group by project so a project's crew read as one linked block, mirroring
+    // the Assignments tab.
+    var byProject = {}; var order = [];
+    active.forEach(function(r) { if (!byProject[r.projectId]) { byProject[r.projectId] = []; order.push(r.projectId); } byProject[r.projectId].push(r); });
 
     return h("div", null,
       active.length === 0
         ? h(window.EmptyState, { text: "No crew requests yet. Select positions in the Assignments tab and send requests to crew." })
-        : h("div", { style: { border: "1px solid " + B.border, borderRadius: "8px", overflow: "hidden" } },
-            h("div", { style: { padding: "8px 14px", background: B.surface, borderBottom: "1px solid " + B.border, fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } },
-              "Crew Requests (" + active.length + ")"),
-            active.map(function(r, i) {
-              var st = r.status || "pending";
-              return h("div", { key: r.id, style: { display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 14px", borderBottom: i < active.length - 1 ? "1px solid " + B.border : "none" } },
-                h("div", { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
-                  h("div", { style: { fontSize: "10px", color: B.textMut } }, projLabel(r.projectId) + "  ·  " + (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
-                  // Note the crew member left when they accepted/declined.
-                  r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
-                h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: STBADGE[st] || B.textMut, background: (STBADGE[st] || B.textMut) + "18", border: "1px solid " + (STBADGE[st] || B.textMut) + "44", borderRadius: "3px", padding: "2px 8px" } }, st),
-                st === "pending" && h("button", { onClick: function() { resendRequest(r); },
-                  style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
-                st === "pending" && h("button", { onClick: function() { setWithdrawDlg(r); },
-                  style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
-              );
-            })),
+        : order.map(function(pid) {
+            var reqs = byProject[pid];
+            return h("div", { key: pid, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
+              // Project header (matches the Assignments project card)
+              h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: "pointer" }, onClick: function() { nav("projects/" + pid + "/schedule"); } }, projLabel(pid)),
+                h("span", { style: { fontSize: "10px", color: B.textMut } }, reqs.length + " crew member" + (reqs.length !== 1 ? "s" : ""))),
+              // Crew under this project
+              h("div", { style: { padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 } },
+                reqs.map(function(r) {
+                  var info = reqInfo(r);
+                  var ds = displayState(r, info);
+                  return h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
+                    h("div", { style: { flex: 1, minWidth: 0 } },
+                      h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
+                      info.positions.length > 0
+                        ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
+                            info.positions.map(function(p, pi) {
+                              return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
+                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
+                            }))
+                        : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                      // Note the crew member left when they accepted/declined.
+                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
+                    h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label),
+                    ds.confirm && h("button", { onClick: function() { setConfirmDlg(r); },
+                      style: { flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✓ Confirm"),
+                    ds.resend && h("button", { onClick: function() { resendRequest(r); },
+                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
+                    ds.withdraw && h("button", { onClick: function() { setWithdrawDlg(r); },
+                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
+                  );
+                })
+              )
+            );
+          }),
 
       // Withdraw confirmation. Withdrawing reopens the shifts and parks a
       // crew-withdrawn notice in the notify tray (bottom-left) — the producer
@@ -1236,7 +1191,19 @@
           "? Their requested shifts reopen, and they're added to the notify tray so you can email them (or decline) when ready."),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setWithdrawDlg(null); } }, "Cancel"),
-          h(window.Btn, { variant: "danger", onClick: function() { doWithdraw(withdrawDlg); } }, "Withdraw")))
+          h(window.Btn, { variant: "danger", onClick: function() { doWithdraw(withdrawDlg); } }, "Withdraw"))),
+
+      // Confirm confirmation — accepted positions → confirmed, with the same
+      // notify choice the Assignments tab used to offer.
+      confirmDlg && h(window.LTPModal, { title: "Confirm " + crewLabel(confirmDlg.contactId), onClose: function() { setConfirmDlg(null); } },
+        h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
+          "Confirm ", h("strong", { style: { color: B.text } }, crewLabel(confirmDlg.contactId)),
+          " for ", h("strong", { style: { color: B.text } }, projLabel(confirmDlg.projectId)),
+          "? Their accepted positions move to confirmed."),
+        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
+          h(window.Btn, { variant: "ghost", onClick: function() { doConfirm(confirmDlg, false); } }, "Confirm Quietly"),
+          h(window.Btn, { onClick: function() { doConfirm(confirmDlg, true); } }, "Confirm & Notify")))
     );
   }
 
