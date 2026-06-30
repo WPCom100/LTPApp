@@ -26,12 +26,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table('quotes', schema=None) as batch_op:
-        batch_op.add_column(sa.Column('qb_tax_total', sa.Float(), nullable=True))
-        batch_op.add_column(sa.Column('qb_tax_signature', sa.Text(), nullable=True))
+    # Idempotent add. Some databases already carry these columns (the quotes
+    # table was seeded by the old Base.metadata.create_all path, which builds
+    # from the current models, while alembic_version is still at the previous
+    # revision). A plain ADD COLUMN then raises DuplicateColumnError and
+    # crash-loops the deploy, so add each column only when it's actually missing
+    # — a no-op that just advances the version on a drifted DB, a real add on a
+    # fresh one. Checked per-column so a partially-drifted table heals correctly.
+    bind = op.get_bind()
+    existing = {c["name"] for c in sa.inspect(bind).get_columns("quotes")}
+    if "qb_tax_total" not in existing:
+        op.add_column("quotes", sa.Column("qb_tax_total", sa.Float(), nullable=True))
+    if "qb_tax_signature" not in existing:
+        op.add_column("quotes", sa.Column("qb_tax_signature", sa.Text(), nullable=True))
 
 
 def downgrade() -> None:
-    with op.batch_alter_table('quotes', schema=None) as batch_op:
-        batch_op.drop_column('qb_tax_signature')
-        batch_op.drop_column('qb_tax_total')
+    bind = op.get_bind()
+    existing = {c["name"] for c in sa.inspect(bind).get_columns("quotes")}
+    if "qb_tax_signature" in existing:
+        op.drop_column("quotes", "qb_tax_signature")
+    if "qb_tax_total" in existing:
+        op.drop_column("quotes", "qb_tax_total")
