@@ -162,14 +162,14 @@
     if (status === "accepted") {
       cfg = { color: SUCCESS, bg: SUCCESS_BG, bd: SUCCESS_BD,
               glyph: h("span", { className: "ltp-check-pop", style: { color: "#fff", fontSize: "16px", lineHeight: 1 } }, "✓"),
-              headline: "You're confirmed",
-              note: "Confirmed pending final scheduling — thank you" + (crewName ? ", " + crewName : "") + "." };
+              headline: "You're penciled in",
+              note: "Thanks" + (crewName ? ", " + crewName : "") + "! Please pencil these calls into your calendar — a production manager will confirm you've been selected for the position in a separate email." };
     } else if (status === "declined") {
       cfg = { color: DECLINE, bg: DECLINE_BG, bd: DECLINE_BD,
               glyph: h("svg", { width: 16, height: 16, viewBox: "0 0 16 16" },
                         h("line", { x1: 3, y1: 8, x2: 13, y2: 8, stroke: BTN_INK, strokeWidth: 2, strokeLinecap: "round" })),
               headline: "Thanks for letting us know",
-              note: "We've noted you're unavailable and will re-staff. Appreciate the heads-up." };
+              note: "We've noted your response and will re-staff. If you shared partial availability in your note, we'll review it and reach back out if we think we can work something out." };
     } else { // withdrawn
       cfg = { color: TEXT, bg: NEUTRAL_BG, bd: HAIR, glyph: null,
               headline: "This request was withdrawn",
