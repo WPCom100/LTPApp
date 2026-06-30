@@ -42,6 +42,7 @@
   var MONO = "'SFMono-Regular',ui-monospace,'Roboto Mono','DM Mono',Menlo,monospace";
   var FONT = "'DM Sans','Segoe UI',system-ui,sans-serif";
   var MASTHEAD_SRC = "/assets/logos/luminary-masthead.png";
+  var FULL_LOGO_SRC = "/assets/logos/primary.png"; // full stacked lockup (mask + wordmark)
 
   // ── Date / time helpers (deterministic — no toLocaleString) ────────────────
   var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -250,10 +251,10 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: DECLINE } }, "Link unavailable"),
           h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } }, "This call sheet isn't available"),
           h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 8, lineHeight: 1.5 } }, loadErr),
-          h("div", { style: { marginTop: 28, display: "flex", justifyContent: "center", opacity: 0.85 } },
+          h("div", { style: { marginTop: 32, display: "flex", justifyContent: "center", opacity: 0.9 } },
             mastheadFailed
               ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
-              : h("img", { src: MASTHEAD_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "160px", height: "auto" } }))));
+              : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
     }
 
     var status = data.status;
