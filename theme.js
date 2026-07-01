@@ -370,12 +370,17 @@ window.LTP_effectiveSlots = function(positions) {
 // even with differing schedules. Slots default (see LTP_effectiveSlots) so that
 // "same role across shifts = one person" and legacy data behave as before.
 //
-// items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin? }] }]
+// items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin?, crewId? }] }]
 // services = [{ id, dayRate, dayCost, halfDay?, halfDayCost?, otRate?, otCost? }]
-// Returns { units: [{ svc, serviceId, slot, fullMargin, tier:"half"|"full",
-//   paidHours, mealPenaltyHours, otHours, dayRate, dayCost, otRate, otCost,
-//   rateTotal, costTotal }], rateTotal, costTotal }.
-window.LTP_calcDayLabor = function(items, services) {
+// crewMins = optional { [crewId]: minDayCost } — a crew member's negotiated
+//   payout floor. When set, that person's COST is computed at the greater of the
+//   role's cost and their minimum (the minimum is treated like a normal day rate:
+//   half-day → min*0.5, OT → min/10*1.5). RATE (client billing) is never touched.
+//   Build one with LTP_crewMinMap(contacts). Absent → no floor (back-compat).
+// Returns { units: [{ svc, serviceId, slot, crewId, fullMargin, minApplied,
+//   tier:"half"|"full", paidHours, mealPenaltyHours, otHours, dayRate, dayCost,
+//   otRate, otCost, rateTotal, costTotal }], rateTotal, costTotal }.
+window.LTP_calcDayLabor = function(items, services, crewMins) {
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
 
   // Group positions into labor units. A unit is full-margin only if EVERY one
@@ -388,7 +393,10 @@ window.LTP_calcDayLabor = function(items, services) {
       if (!p.serviceId) return;
       var slot = slots[p.id] || 1;
       var key = p.serviceId + "#" + slot;
-      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, shifts: [], allMargin: true };
+      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, shifts: [], allMargin: true, crewId: null };
+      // A unit is one person (role+slot across the day); capture whoever fills it
+      // so a per-crew negotiated minimum can be applied to their cost below.
+      if (p.crewId != null && unitMap[key].crewId == null) unitMap[key].crewId = p.crewId;
       // A person's shift carries the item's crew-wide breaks PLUS their own
       // individual breaks (p.breaks) — so a meal break can be given to just
       // this person without affecting everyone else on the shift.
@@ -414,6 +422,20 @@ window.LTP_calcDayLabor = function(items, services) {
     var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
     var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
     var fullMargin = u.allMargin;
+    // Per-crew negotiated minimum: floor this person's COST at their minimum day
+    // rate, treated like a normal rate — so the half-day pays min*0.5 and OT pays
+    // min/10*1.5. Applied per component (never lowers cost), so a role that's
+    // already above the minimum on either the day or OT keeps its higher value.
+    // Full-margin units are excluded (the owner works their own gig at $0). RATE
+    // is deliberately left untouched — the minimum is a payout cost, not billed.
+    var minDay = (crewMins && u.crewId != null && crewMins[u.crewId] > 0) ? crewMins[u.crewId] : 0;
+    var minApplied = false;
+    if (minDay > 0 && !fullMargin) {
+      var floorDay = isHalf ? minDay * 0.5 : minDay;
+      var floorOt = minDay / 10 * 1.5;
+      if (floorDay > dayCost) { dayCost = floorDay; minApplied = true; }
+      if (floorOt > otCost) { otCost = floorOt; minApplied = true; }
+    }
     // Rate always bills the person; cost is $0 when the unit is full margin.
     var unitRate = dayRate + (otHours > 0 ? otRate * otHours : 0);
     var unitCost = fullMargin ? 0 : (dayCost + (otHours > 0 ? otCost * otHours : 0));
@@ -421,7 +443,7 @@ window.LTP_calcDayLabor = function(items, services) {
     costTotal += unitCost;
 
     units.push({
-      svc: svc, serviceId: svc.id, slot: u.slot, fullMargin: fullMargin, tier: tier,
+      svc: svc, serviceId: svc.id, slot: u.slot, crewId: u.crewId, fullMargin: fullMargin, minApplied: minApplied, tier: tier,
       paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
       dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
       rateTotal: Math.round(unitRate * 100) / 100, costTotal: Math.round(unitCost * 100) / 100,
@@ -430,6 +452,17 @@ window.LTP_calcDayLabor = function(items, services) {
   units.sort(function(a, b) { return (a.serviceId - b.serviceId) || (a.slot - b.slot); });
 
   return { units: units, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
+};
+
+// Build the { [crewId]: minDayCost } map LTP_calcDayLabor consumes from the crew
+// roster. Only crew with a positive negotiated minimum are included, so a person
+// without one behaves exactly as before (role cost, no floor).
+window.LTP_crewMinMap = function(contacts) {
+  var m = {};
+  (contacts || []).forEach(function(c) {
+    if (c && c.isCrew && c.minDayCost > 0) m[c.id] = c.minDayCost;
+  });
+  return m;
 };
 
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,

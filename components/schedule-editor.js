@@ -28,6 +28,9 @@
     var [conflictWarn, setConflictWarn] = useState(null);
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var svcs = services || [];
+    // Per-crew negotiated minimums, so the cost totals below reflect what each
+    // assigned person is actually paid (never the client rate).
+    var crewMins = window.LTP_crewMinMap(contacts);
     var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
 
     // Removing a day/position that has crew assigned just confirms here — the
@@ -308,7 +311,7 @@
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
-          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
+          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs, crewMins);
           // Map each position to its labor unit, and pick the PRIMARY position
           // per unit (earliest shift in the day) — the per-person rate shows on
           // that row once; the person's other shifts read "same person" so the
@@ -518,7 +521,9 @@
                                 h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
                                 posUnit.fullMargin
                                   ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
-                                  : h("div", { key: "c", style: { color: B.textMut } }, "$" + Math.round(posUnit.costTotal))
+                                  : h("div", { key: "c", style: { color: posUnit.minApplied ? B.warn : B.textMut },
+                                      title: posUnit.minApplied ? "Raised to this crew member's negotiated minimum (payout only — the client rate above is unchanged)." : undefined },
+                                      "$" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
                               ]
                             : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
                         h("button", { onClick: function() { removePosition(s.id, pos.id); },

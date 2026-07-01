@@ -81,6 +81,12 @@ class Contact(Base):
     crew_departments = Column(JSON, default=list)        # list[str] — dept names, e.g. ["Lighting","Rigging"]
     crew_notes = Column(Text, default="")
     crew_status = Column(String(20), default="active")   # {active, inactive}
+    # Negotiated payout floor: this crew member is paid at least this day rate,
+    # even when the role they fill costs less. Cost/payout side ONLY — never
+    # billed to the client (the Service rate card still drives what the client
+    # pays). Treated like a normal day rate (half-day, meal-penalty, and OT scale
+    # the same way). 0/null = no minimum. See theme.js::LTP_calcDayLabor.
+    min_day_cost = Column(Float, default=0)
     # QuickBooks Online customer link — used when a Contact is billed directly
     # (client_type="contact"). Taxability is a company-level concept, so there is
     # deliberately no `taxable` flag here; directly-billed contacts are treated

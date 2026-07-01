@@ -168,6 +168,61 @@ eq("F5 long shift fully cleared", D(R, [{ time: "08:00", endTime: "22:00", break
 d = day([{ time: "09:00", endTime: "14:00", breaks: [], positions: [{ id: "z", serviceId: 1, role: "L1", crewId: null, status: "open" }] }]);
 eq("G1 legacy position works", d.units.length, 1); near("G1 legacy rate", d.rateTotal, 500); eq("G1 legacy not margin", d.units[0].fullMargin, false);
 
+// ── H. Per-crew negotiated minimum (payout floor) ────────────────────────────
+// A position carrying a crewId whose id maps to a minDayCost gets its COST
+// floored at that minimum (treated like a normal rate: half → min*0.5, OT →
+// min/10*1.5). RATE (client billing) is never affected. Map is the optional 3rd
+// arg to LTP_calcDayLabor; L1 = dayCost 800, L2 = dayCost 400.
+function PC(sid, crewId, o) { o = o || {}; return { id: o.id || ("pc" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId }; }
+const CID = 7;
+
+// H1: half day, min 500 → cost floored to min*0.5 = 250; rate (300) untouched.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+near("H1 half cost floored to min*0.5", d.units[0].costTotal, 250);
+near("H1 half rate untouched", d.units[0].rateTotal, 300);
+eq("H1 minApplied", d.units[0].minApplied, true);
+
+// H2: full day (9h via a real gap, no meal/OT), min 500 → cost floored to 500; rate 600.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }, { time: "18:00", endTime: "22:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+eq("H2 one unit across shifts", d.units.length, 1); eq("H2 full tier", d.units[0].tier, "full");
+near("H2 full cost floored to min", d.units[0].costTotal, 500);
+near("H2 rate untouched", d.units[0].rateTotal, 600);
+
+// H3: min below the role's cost → no change (per-component floor never lowers).
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(1, CID)] }], S, { 7: 500 });
+near("H3 min below role cost unchanged", d.units[0].costTotal, 400);
+eq("H3 minApplied false", d.units[0].minApplied, false);
+
+// H4: OT scales with the minimum too (three gapped 4h segments = 12h, 2h reg OT).
+d = DAY([{ time: "08:00", endTime: "12:00", breaks: [], positions: [PC(2, CID)] }, { time: "13:00", endTime: "17:00", breaks: [], positions: [PC(2, CID)] }, { time: "18:00", endTime: "22:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+eq("H4 otHours 2", d.units[0].otHours, 2);
+near("H4 dayCost floored to min", d.units[0].dayCost, 500);
+near("H4 otCost floored to min/10*1.5", d.units[0].otCost, 75);
+near("H4 total cost = 500 + 2*75", d.units[0].costTotal, 650);
+
+// H5: full-margin unit ignores the minimum (owner works their own gig at $0).
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID, { fm: true })] }], S, { 7: 500 });
+eq("H5 fullMargin cost 0 despite min", d.units[0].costTotal, 0);
+eq("H5 minApplied false on margin", d.units[0].minApplied, false);
+
+// H6: absent map / crew not in map → role cost, exactly as before.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S);
+near("H6 no map => role half cost", d.units[0].costTotal, 200);
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S, { 99: 500 });
+near("H6 crew not in map => role cost", d.units[0].costTotal, 200);
+
+// H7: LTP_crewMinMap only picks up crew with a positive minimum.
+const cm = window.LTP_crewMinMap([
+  { id: 1, isCrew: true, minDayCost: 600 },
+  { id: 2, isCrew: true, minDayCost: 0 },
+  { id: 3, isCrew: true },
+  { id: 4, isCrew: false, minDayCost: 900 },
+]);
+eq("H7 map has crew1", cm[1], 600);
+eq("H7 skips zero min", cm[2], undefined);
+eq("H7 skips missing min", cm[3], undefined);
+eq("H7 skips non-crew", cm[4], undefined);
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
