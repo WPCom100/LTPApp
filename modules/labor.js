@@ -429,10 +429,22 @@
     var projSeen = {};
     allPositions.forEach(function(p) { if (!projSeen[p.projectId]) { projSeen[p.projectId] = true; projOptions.push({ id: p.projectId, name: p.projectName }); } });
 
+    // A project stays on this tab only while it still needs assignment work —
+    // any position open (unfilled or reopened by a withdrawal) or declined.
+    // Once every position is requested-or-later the whole card disappears; the
+    // Crew Requests tab manages it from there. While a project IS shown, ALL
+    // its positions show, so the full day picture stays visible. Explicit
+    // status/project filters bypass the rule (that's a search, not the queue).
+    var projNeeds = {};
+    allPositions.forEach(function(p) { if (p.status === "open" || p.status === "declined") projNeeds[p.projectId] = true; });
+    var defaultView = filter === "all" && projFilter === "all";
+    var fullyRequestedCount = projOptions.filter(function(p) { return !projNeeds[p.id]; }).length;
+
     var filtered = allPositions.filter(function(p) {
       if (filter === "conflicts") { return (crewConflicts || {})[p.posId]; }
       if (filter !== "all" && p.status !== filter) return false;
       if (projFilter !== "all" && p.projectId !== Number(projFilter)) return false;
+      if (defaultView && !projNeeds[p.projectId]) return false;
       return true;
     });
 
@@ -648,7 +660,13 @@
       ),
 
       // Grouped by project
-      projectGroups.length === 0 && h(window.EmptyState, { text: "No positions found. Add positions to project schedules." }),
+      defaultView && fullyRequestedCount > 0 && projectGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },
+        fullyRequestedCount + " fully-requested project" + (fullyRequestedCount > 1 ? "s" : "") + " hidden — manage responses on the Crew Requests tab, or use the filters above."),
+      projectGroups.length === 0 && h(window.EmptyState, { text: allPositions.length === 0
+        ? "No positions found. Add positions to project schedules."
+        : defaultView
+          ? "All positions are requested or booked — manage responses on the Crew Requests tab. Withdrawn or declined shifts reopen here automatically."
+          : "No positions match this filter." }),
       projectGroups.map(function(pg) {
         var totalBookings = pg.dates.reduce(function(s, d) { return s + (d.dayBookings || []).length; }, 0);
         return h("div", { key: pg.projectId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
