@@ -517,6 +517,9 @@
 
     // ── Accept / Decline submit (inline reveal → POST → reload) ───────────────
     function submit() {
+      // Defense in depth: the confirm buttons only exist while the reveal is
+      // open, but never fire the real decision from a closed form or preview.
+      if (isPreview || respondMode === null) return;
       setFormErr(null);
       if (!clientName.trim()) {
         setFormErr("Please enter your name.");
@@ -596,7 +599,15 @@
     function inlineReveal() {
       var open = respondMode !== null;
       var isAccept = respondMode === "accept";
-      return h("div", { style: { overflow: "hidden", transition: "max-height 280ms ease, opacity 220ms ease, margin-top 200ms ease", maxHeight: open ? 760 : 0, opacity: open ? 1 : 0, marginTop: open ? 16 : 0 } },
+      // The wrapper div persists across renders (so the max-height transition
+      // animates), but the form CONTENT only mounts while open — a collapsed
+      // overflow:hidden box would otherwise keep its inputs and Confirm button
+      // focusable from the keyboard, invisibly. The 1600px cap comfortably
+      // exceeds the tallest possible content (the textarea's user-resize is
+      // bounded below) so the confirm row can never be clipped out of reach.
+      var wrapStyle = { overflow: "hidden", transition: "max-height 280ms ease, opacity 220ms ease, margin-top 200ms ease", maxHeight: open ? 1600 : 0, opacity: open ? 1 : 0, marginTop: open ? 16 : 0 };
+      if (!open) return h("div", { style: wrapStyle });
+      return h("div", { style: wrapStyle },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: isAccept ? SUCCESS : DECLINE, marginBottom: 14 } },
           isAccept ? "Accepting — confirm with your name & signature" : "Declining — let the team know why (optional)"),
         h("label", { style: labelStyle }, "Your Name *"),
@@ -618,11 +629,11 @@
           placeholder: isAccept ? "Looking forward to working together" : "e.g. we went another direction, or the dates moved",
           onFocus: function(e) { e.target.style.borderColor = ORANGE; },
           onBlur: function(e) { e.target.style.borderColor = HAIR; },
-          style: Object.assign({}, inputStyle, { minHeight: 64, resize: "vertical", marginBottom: isAccept ? 14 : 0 }),
+          style: Object.assign({}, inputStyle, { minHeight: 64, maxHeight: 320, resize: "vertical", marginBottom: isAccept ? 14 : 0 }),
         }),
         // Signature only mounts while the accept form is open, so the pad
         // initializes against its real on-screen width.
-        (open && isAccept) && h("div", null,
+        isAccept && h("div", null,
           h("label", { style: labelStyle }, "Signature *"),
           h(SignaturePadComponent, { onReady: setSigHandle })),
         formErr && h("div", { style: { marginTop: 12, padding: "8px 12px", background: DECLINE_BG, border: "1px solid " + DECLINE_BD, borderRadius: 6, color: DECLINE, fontSize: "12px" } }, formErr),
