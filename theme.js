@@ -614,6 +614,31 @@ window.LTP_signOffDay = function(schedule, crewId, date, actuals, services, crew
   });
 };
 
+// Set the pay adjustments for ONE person's day: extras or deductions agreed for
+// situations on the shift (parking, gear rental, bonus, an advance taken, …).
+// `adjustments` = [{ id, amount, label, addedAt?, addedBy? }] — amount may be
+// negative. Stored as `adj` on each of the person's confirmed positions that
+// day (same ride-along pattern as `pay`/`work`); an empty list clears it.
+// Adjustments are independent of sign-off: they add on top of the estimate
+// before signing and on top of the frozen figure after.
+window.LTP_setPayAdjustments = function(schedule, crewId, date, adjustments) {
+  var clean = (adjustments || []).filter(function(a) { return a && typeof a.amount === "number" && !isNaN(a.amount) && a.amount !== 0; });
+  return (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed") {
+        touched = true;
+        var copy = Object.assign({}, p);
+        if (clean.length) copy.adj = clean; else delete copy.adj;
+        return copy;
+      }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
 // Undo a sign-off: strip `work` from the person's positions on that date so the
 // day returns to pending. Returns a new schedule.
 window.LTP_unsignDay = function(schedule, crewId, date) {
@@ -640,8 +665,9 @@ window.LTP_unsignDay = function(schedule, crewId, date) {
 //             a signed day's figure is frozen, drift no longer applies)
 //   signed  — { state: worked|adjusted|no_show, pay, signedAt, signedBy } from
 //             the day-of sign-off, or null while the day is still pending
-//   estimate — locked when present else current: the pre-sign-off figure
-//   payable — the FINAL figure (signed.pay.total); null until signed off.
+//   adjustments/adjTotal — manual extras/deductions for the day (LTP_setPayAdjustments)
+//   estimate — (locked else current) + adjustments: the pre-sign-off figure
+//   payable — the FINAL figure (signed.pay.total + adjustments); null until signed off.
 // Payout requires sign-off: grandTotal sums signed days only; pending days are
 // counted separately (pendingCount/pendingTotal of estimates).
 window.LTP_payoutRows = function(projects, contacts, services, startDate, endDate) {
@@ -656,14 +682,15 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       (byDate[s.date] = byDate[s.date] || []).push(s);
     });
     Object.keys(byDate).forEach(function(d) {
-      var seen = {};  // String(crewId) → { id, locked, work, states }
+      var seen = {};  // String(crewId) → { id, locked, work, states, adj }
       byDate[d].forEach(function(s) {
         (s.positions || []).forEach(function(p) {
           if (!p || p.crewId == null || p.status !== "confirmed") return;
           var k = String(p.crewId);
-          if (!seen[k]) seen[k] = { id: p.crewId, locked: null, work: null, states: {} };
+          if (!seen[k]) seen[k] = { id: p.crewId, locked: null, work: null, states: {}, adj: null };
           if (p.pay && !seen[k].locked) seen[k].locked = p.pay;
           if (p.work) { if (!seen[k].work) seen[k].work = p.work; seen[k].states[p.work.state] = true; }
+          if (p.adj && p.adj.length && !seen[k].adj) seen[k].adj = p.adj;
         });
       });
       Object.keys(seen).forEach(function(k) {
@@ -682,11 +709,17 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
           || Math.abs(locked.total - current.total) > 0.005
           || locked.paidHours !== current.paidHours
           || locked.otHours !== current.otHours));
-        var estimate = locked ? locked.total : (current ? current.total : 0);
+        // Adjustments (extras/deductions) sit on top of both the pre-sign-off
+        // estimate and the frozen final. Drift compares BASE figures only —
+        // an adjustment shifts locked and current equally.
+        var adjustments = entry.adj || [];
+        var adjTotal = Math.round(adjustments.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+        var estimate = Math.round(((locked ? locked.total : (current ? current.total : 0)) + adjTotal) * 100) / 100;
         if (!byCrew[k]) byCrew[k] = { crewId: entry.id, rows: [] };
         byCrew[k].rows.push({ crewId: entry.id, projectId: proj.id, projectName: proj.name,
           date: d, locked: locked, current: current, drift: drift,
-          signed: signed, estimate: estimate, payable: signed ? signed.pay.total : null });
+          signed: signed, adjustments: adjustments, adjTotal: adjTotal, estimate: estimate,
+          payable: signed ? Math.round((signed.pay.total + adjTotal) * 100) / 100 : null });
       });
     });
   });

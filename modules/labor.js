@@ -1033,6 +1033,25 @@
     // ── Day-of sign-off ──────────────────────────────────────────────────────
     var [adjustDlg, setAdjustDlg] = useState(null);  // { row, shifts, actuals }
     var [noShowDlg, setNoShowDlg] = useState(null);  // row awaiting no-show confirm
+    var [adjPayDlg, setAdjPayDlg] = useState(null);  // { row, list, label, amount } — pay adjustments
+
+    // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
+    function savePayAdjustments(row, list) {
+      var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+      setProjects(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== row.projectId) return p;
+          var updated = Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
+          var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+            type: "saved", user: (window.LTP_CURRENT_USER || "User"),
+            message: "Pay adjustments: " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " +
+              (list.length ? (list.length + " item" + (list.length > 1 ? "s" : "") + ", net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))) : "cleared"),
+            changes: [{ cat: "Pay Adjusted", detail: crewLabel(row.crewId) + " " + fmt(row.date) + " net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) }] };
+          return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+        });
+      });
+      window.LTP_toast("Pay adjustments saved", { message: crewLabel(row.crewId) + " · " + fmt(row.date) + (list.length ? " — net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) : " — cleared"), variant: "success" });
+    }
 
     // The person's confirmed shifts on a row's day — the entries the adjust
     // modal edits and the no-show path marks.
@@ -1150,7 +1169,7 @@
 
     function exportCSV() {
       var esc = function(v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-      var lines = [["Crew", "Date", "Project", "State", "Tier", "Paid Hours", "OT Hours", "Meal Penalty Hours", "Pay", "Locked", "Locked At", "Signed At", "Signed By", "Changed Since Lock"].join(",")];
+      var lines = [["Crew", "Date", "Project", "State", "Tier", "Paid Hours", "OT Hours", "Meal Penalty Hours", "Pay", "Adjustments", "Adjustment Notes", "Locked", "Locked At", "Signed At", "Signed By", "Changed Since Lock"].join(",")];
       data.groups.forEach(function(g) {
         g.rows.forEach(function(r) {
           var src = r.signed ? r.signed.pay : (r.locked || r.current || {});
@@ -1160,6 +1179,8 @@
             src.paidHours != null ? src.paidHours : "", src.otHours != null ? src.otHours : "",
             src.mealPenaltyHours != null ? src.mealPenaltyHours : "",
             (r.payable != null ? r.payable : r.estimate).toFixed(2),
+            r.adjTotal ? r.adjTotal.toFixed(2) : "",
+            esc((r.adjustments || []).map(function(a) { return (a.amount < 0 ? "-" : "+") + Math.abs(a.amount) + (a.label ? " " + a.label : ""); }).join("; ")),
             r.locked ? "yes" : "no", r.locked ? r.locked.lockedAt : "",
             r.signed ? r.signed.signedAt : "", r.signed ? esc(r.signed.signedBy) : "",
             r.drift ? "yes" : ""].join(","));
@@ -1234,6 +1255,8 @@
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
                       h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
+                      (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
+                        r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
                         "Changed since lock: " + fmtMoney(r.locked.total) + " locked → " + (r.current ? fmtMoney(r.current.total) : "no timed shifts") + " now")),
                     minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
@@ -1251,11 +1274,56 @@
                           canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
                           canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
                           !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
+                    sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
+                      "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct."),
                     h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
                       title: r.signed ? "Final signed-off pay." : "Estimate — becomes payable when the day is signed off." },
                       (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)));
                 })));
           }),
+
+      // Pay adjustments — extras/deductions on top of the day's pay, usable
+      // before or after sign-off (independent of the worked-hours math).
+      adjPayDlg && (function() {
+        var d = adjPayDlg;
+        var net = Math.round(d.list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+        var pendingAmt = parseFloat(d.amount);
+        var canAdd = !isNaN(pendingAmt) && pendingAmt !== 0;
+        function addItem() {
+          if (!canAdd) return;
+          setAdjPayDlg(Object.assign({}, d, { list: d.list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]), label: "", amount: "" }));
+        }
+        function save() {
+          var list = d.list;
+          if (canAdd) list = list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]);
+          setAdjPayDlg(null);
+          savePayAdjustments(d.row, list);
+        }
+        return h(window.LTPModal, { title: "Pay adjustments — " + crewLabel(d.row.crewId) + " · " + fmt(d.row.date), onClose: function() { setAdjPayDlg(null); } },
+          h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+            "Extras or deductions on top of the day's pay — parking, gear rental, a bonus, an advance. Use a negative amount to deduct. These are payout-only and never billed to the client."),
+          d.list.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } },
+            d.list.map(function(a, ai) {
+              return h("div", { key: a.id || ai, style: { display: "flex", gap: 10, alignItems: "center", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 10px" } },
+                h("span", { style: { fontSize: "12px", fontWeight: 700, color: a.amount < 0 ? B.danger : B.success, width: 80 } }, (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount))),
+                h("span", { style: { flex: 1, fontSize: "11px", color: B.text } }, a.label || "—"),
+                a.addedBy && h("span", { style: { fontSize: "9px", color: B.textMut } }, a.addedBy + (a.addedAt ? " · " + fmt(a.addedAt) : "")),
+                h("button", { onClick: function() { setAdjPayDlg(Object.assign({}, d, { list: d.list.filter(function(x, xi) { return xi !== ai; }) })); },
+                  style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "13px", padding: 0, lineHeight: 1 } }, "×"));
+            })),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14 } },
+            h("div", { style: { width: 110 } },
+              h(window.LTPInput, { label: "Amount ($)", value: d.amount, onChange: function(v) { setAdjPayDlg(Object.assign({}, d, { amount: v })); }, type: "number" })),
+            h("div", { style: { flex: 1 } },
+              h(window.LTPInput, { label: "Reason", value: d.label, onChange: function(v) { setAdjPayDlg(Object.assign({}, d, { label: v })); }, placeholder: "e.g. parking, gear rental, stayed late bonus" })),
+            h(window.Btn, { small: true, variant: "ghost", onClick: addItem, disabled: !canAdd }, "+ Add")),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" } },
+            h("span", { style: { fontSize: "12px", fontWeight: 700, color: net < 0 ? B.danger : B.accent } },
+              "Net: " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))),
+            h("div", { style: { display: "flex", gap: 8 } },
+              h(window.Btn, { variant: "ghost", onClick: function() { setAdjPayDlg(null); } }, "Cancel"),
+              h(window.Btn, { onClick: save }, "Save"))));
+      })(),
 
       // No-show confirm
       noShowDlg && h(window.LTPModal, { title: "No-show — " + crewLabel(noShowDlg.crewId), onClose: function() { setNoShowDlg(null); } },
@@ -1318,6 +1386,10 @@
     // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
     var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
+    // Default to OPEN requests only — the ones still needing action (waiting on
+    // the crew member, or accepted and awaiting confirm). Fully-confirmed and
+    // declined requests are done; the pills opt them back in.
+    var [filter, setFilter] = useState("open");
 
     // Refresh on open so a crew member's response since last load shows up here
     // (and reconciles into the Assignments view).
@@ -1456,14 +1528,45 @@
     }
 
     var active = (crewRequests || []).filter(function(r) { return r.status !== "withdrawn"; });
+
+    // Bucket each request: open (pending, or accepted with positions still
+    // awaiting confirm), confirmed (all its work confirmed), declined.
+    function categoryOf(req) {
+      if (req.status === "declined") return "declined";
+      if (req.status === "accepted") {
+        var counts = reqInfo(req).counts;
+        if (counts.accepted === 0 && counts.confirmed > 0) return "confirmed";
+      }
+      return "open";
+    }
+    var catCounts = { open: 0, confirmed: 0, declined: 0 };
+    var withCat = active.map(function(r) { var c = categoryOf(r); catCounts[c]++; return { r: r, cat: c }; });
+    var shown = withCat.filter(function(x) { return filter === "all" || x.cat === filter; }).map(function(x) { return x.r; });
+
     // Group by project so a project's crew read as one linked block, mirroring
     // the Assignments tab.
     var byProject = {}; var order = [];
-    active.forEach(function(r) { if (!byProject[r.projectId]) { byProject[r.projectId] = []; order.push(r.projectId); } byProject[r.projectId].push(r); });
+    shown.forEach(function(r) { if (!byProject[r.projectId]) { byProject[r.projectId] = []; order.push(r.projectId); } byProject[r.projectId].push(r); });
+
+    var filterPill = function(key, label, count) {
+      var isActive = filter === key;
+      return h("button", { key: key, onClick: function() { setFilter(key); },
+        style: { background: isActive ? B.accent : B.raised, color: isActive ? "#000" : B.textMut, border: "1px solid " + (isActive ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
+        label + (count != null ? " (" + count + ")" : ""));
+    };
 
     return h("div", null,
-      active.length === 0
-        ? h(window.EmptyState, { text: "No crew requests yet. Select positions in the Assignments tab and send requests to crew." })
+      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
+        filterPill("open", "Open", catCounts.open),
+        filterPill("confirmed", "Confirmed", catCounts.confirmed),
+        filterPill("declined", "Declined", catCounts.declined),
+        filterPill("all", "All", active.length)),
+      shown.length === 0
+        ? h(window.EmptyState, { text: active.length === 0
+            ? "No crew requests yet. Select positions in the Assignments tab and send requests to crew."
+            : filter === "open"
+              ? "No open requests — everything is confirmed or answered. Use the filters above to see the rest."
+              : "No " + filter + " requests in this view." })
         : order.map(function(pid) {
             var reqs = byProject[pid];
             return h("div", { key: pid, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },

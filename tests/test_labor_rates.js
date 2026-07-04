@@ -397,6 +397,44 @@ po = PAYOUT([{ id: 5, name: "MixDay", schedule: jm }], CONTACTS, S, "2026-07-01"
 eq("J9 mixed day state adjusted", po.groups[0].rows[0].signed.state, "adjusted");
 near("J9 mixed day pays worked shift", po.groups[0].rows[0].payable, 400);
 
+// ── K. Pay adjustments (extras/deductions per person-day) ────────────────────
+const ADJSET = window.LTP_setPayAdjustments;
+if (typeof ADJSET !== "function") { console.error("theme.js did not export LTP_setPayAdjustments"); process.exit(1); }
+
+// K1: stamps the person's confirmed positions that day; zero amounts filtered;
+// other crew untouched; an empty list clears.
+let ks = [
+  { id: "k1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "ka" }), PP(1, 8, "confirmed", { id: "kb" })] },
+];
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a1", amount: 50, label: "parking" }, { id: "a2", amount: 0, label: "zero" }]);
+eq("K1 adj stamped, zero filtered", findPos(ks, "ka").adj.length, 1);
+eq("K1 kept the real one", findPos(ks, "ka").adj[0].label, "parking");
+eq("K1 other crew untouched", findPos(ks, "kb").adj, undefined);
+ks = ADJSET(ks, 7, "2026-07-10", []);
+eq("K1 empty list clears", findPos(ks, "ka").adj, undefined);
+
+// K2: pending row — estimate and pendingTotal include the adjustment; no
+// payable until signed; adjustments never create drift (base compare only).
+ks = STAMP([
+  { id: "k2", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "kc" })] },
+], 7, S, null, "T5");
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a3", amount: 50, label: "parking" }]);
+po = PAYOUT([{ id: 6, name: "AdjP", schedule: ks }], CONTACTS, S, "2026-07-01", "2026-07-31");
+near("K2 estimate = base 400 + 50", po.groups[0].rows[0].estimate, 450);
+eq("K2 payable still null", po.groups[0].rows[0].payable, null);
+near("K2 pendingTotal includes adj", po.pendingTotal, 450);
+eq("K2 adj is not drift", po.groups[0].rows[0].drift, false);
+
+// K3: signed row — payable = frozen final + net adjustments (with a deduction);
+// adjustments survive sign-off and can be edited after it.
+ks = SIGN(ks, 7, "2026-07-10", {}, S, null, "TS6", "PM");
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a4", amount: 50, label: "parking" }, { id: "a5", amount: -20, label: "advance" }]);
+po = PAYOUT([{ id: 6, name: "AdjP", schedule: ks }], CONTACTS, S, "2026-07-01", "2026-07-31");
+near("K3 payable = 400 + 30 net", po.groups[0].rows[0].payable, 430);
+near("K3 adjTotal net", po.groups[0].rows[0].adjTotal, 30);
+near("K3 grand total includes adj", po.grandTotal, 430);
+eq("K3 two adjustments listed", po.groups[0].rows[0].adjustments.length, 2);
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
