@@ -533,14 +533,117 @@ window.LTP_stampPay = function(schedule, crewId, services, crewMins, lockedAt, d
   });
 };
 
+// ── Day-of execution: actuals + sign-off ─────────────────────────────────────
+//
+// After the event day, a producer signs off each person-day: worked as
+// scheduled, adjusted (actual times differ / a shift was dropped), or no-show.
+// The sign-off is recorded as a `work` field on each of the person's confirmed
+// positions that day: { state: "worked"|"adjusted"|"no_show", time?, endTime?,
+// pay, signedAt, signedBy } — `pay` being the FINAL figure computed from the
+// actual times at sign-off and frozen. Payout requires sign-off: a confirmed
+// day with no `work` is "pending" and is not payable yet.
+
+// ONE person's pay for ONE project-day from ACTUAL worked times: like
+// LTP_crewDayPay, but no_show shifts are dropped and an adjusted position's
+// work.time/work.endTime override the shift's scheduled times. Scheduled
+// crew-wide breaks are kept only when they fall inside the actual window
+// (a break outside what was actually worked didn't happen). Returns null when
+// the person worked nothing that day (full no-show).
+window.LTP_crewDayActuals = function(dayItems, crewId, services, crewMins) {
+  var items = [];
+  (dayItems || []).forEach(function(s) {
+    var pos = (s.positions || []).filter(function(p) {
+      return p && p.crewId === crewId && p.status === "confirmed" && !(p.work && p.work.state === "no_show");
+    });
+    if (!pos.length) return;
+    var adj = pos.find(function(p) { return p.work && p.work.state === "adjusted" && p.work.time && p.work.endTime; });
+    var time = adj ? adj.work.time : s.time;
+    var endTime = adj ? adj.work.endTime : s.endTime;
+    var breaks = s.breaks || [];
+    if (adj && endTime > time) { // clip on adjusted, plain "HH:MM" compare (non-overnight)
+      breaks = breaks.filter(function(b) { return b.startTime >= time && b.endTime <= endTime; });
+    }
+    items.push({ time: time, endTime: endTime, breaks: breaks, positions: pos });
+  });
+  if (!items.length) return null;
+  var day = window.LTP_calcDayLabor(items, services, crewMins);
+  if (!day.units.length) return null;
+  var paidHours = 0, otHours = 0, mealPenaltyHours = 0;
+  var units = day.units.map(function(u) {
+    paidHours += u.paidHours; otHours += u.otHours; mealPenaltyHours += u.mealPenaltyHours;
+    return { serviceId: u.serviceId, tier: u.tier, paidHours: u.paidHours, otHours: u.otHours,
+      dayCost: u.dayCost, otCost: u.otCost, minApplied: u.minApplied, fullMargin: u.fullMargin, total: u.costTotal };
+  });
+  return {
+    total: day.costTotal,
+    paidHours: Math.round(paidHours * 100) / 100,
+    otHours: Math.round(otHours * 100) / 100,
+    mealPenaltyHours: Math.round(mealPenaltyHours * 100) / 100,
+    tier: units.length === 1 ? units[0].tier : "mixed",
+    units: units,
+  };
+};
+
+// Sign off ONE person's day. `actuals` maps positionId → { state, time?,
+// endTime? }; positions not in the map are "worked" (as scheduled). Applies the
+// work states, computes the final pay from the actual times (current rates +
+// minimums — the drift flag warns the producer of rate changes BEFORE signing;
+// signing is the final agreement act), and freezes it as work.pay on every one
+// of the person's confirmed positions that day. Returns a new schedule.
+window.LTP_signOffDay = function(schedule, crewId, date, actuals, services, crewMins, signedAt, signedBy) {
+  var isMine = function(s, p) { return s.date === date && p && p.crewId === crewId && p.status === "confirmed"; };
+  var draft = (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
+      if (!isMine(s, p)) return p;
+      var a = actuals && actuals[p.id];
+      var work = { state: "worked", signedAt: signedAt, signedBy: signedBy };
+      if (a && a.state === "no_show") work.state = "no_show";
+      else if (a && a.state === "adjusted" && a.time && a.endTime) { work.state = "adjusted"; work.time = a.time; work.endTime = a.endTime; }
+      return Object.assign({}, p, { work: work });
+    }) });
+  });
+  var pay = window.LTP_crewDayActuals(draft.filter(function(s) { return s.date === date; }), crewId, services, crewMins)
+    || { total: 0, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "", units: [] };
+  return draft.map(function(s) {
+    if (s.date !== date) return s;
+    return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
+      if (!isMine(s, p)) return p;
+      return Object.assign({}, p, { work: Object.assign({}, p.work, { pay: pay }) });
+    }) });
+  });
+};
+
+// Undo a sign-off: strip `work` from the person's positions on that date so the
+// day returns to pending. Returns a new schedule.
+window.LTP_unsignDay = function(schedule, crewId, date) {
+  return (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed" && p.work) {
+        touched = true;
+        var copy = Object.assign({}, p); delete copy.work; return copy;
+      }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
 // Aggregate confirmed crew work across all projects into payout rows for a date
 // range. One row = one person's day on one project. Each row carries:
 //   locked  — the pay snapshot agreed at confirm (null on legacy pre-snapshot
-//             confirmations → "unlocked", payable falls back to current)
+//             confirmations → "unlocked")
 //   current — the same day recomputed with today's schedule/rates/minimums
-//   drift   — locked exists but no longer matches current (money or hours)
-//   payable — the authoritative figure: locked when present, else current
-// Grouped per crew member with subtotals; grandTotal sums payable.
+//   drift   — locked exists but no longer matches current (unsigned rows only —
+//             a signed day's figure is frozen, drift no longer applies)
+//   signed  — { state: worked|adjusted|no_show, pay, signedAt, signedBy } from
+//             the day-of sign-off, or null while the day is still pending
+//   estimate — locked when present else current: the pre-sign-off figure
+//   payable — the FINAL figure (signed.pay.total); null until signed off.
+// Payout requires sign-off: grandTotal sums signed days only; pending days are
+// counted separately (pendingCount/pendingTotal of estimates).
 window.LTP_payoutRows = function(projects, contacts, services, startDate, endDate) {
   var crewMins = window.LTP_crewMinMap(contacts);
   var byCrew = {};   // String(crewId) → { crewId, rows: [] }
@@ -553,27 +656,37 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       (byDate[s.date] = byDate[s.date] || []).push(s);
     });
     Object.keys(byDate).forEach(function(d) {
-      var seen = {};  // String(crewId) → { id, locked }
+      var seen = {};  // String(crewId) → { id, locked, work, states }
       byDate[d].forEach(function(s) {
         (s.positions || []).forEach(function(p) {
           if (!p || p.crewId == null || p.status !== "confirmed") return;
           var k = String(p.crewId);
-          if (!seen[k]) seen[k] = { id: p.crewId, locked: null };
+          if (!seen[k]) seen[k] = { id: p.crewId, locked: null, work: null, states: {} };
           if (p.pay && !seen[k].locked) seen[k].locked = p.pay;
+          if (p.work) { if (!seen[k].work) seen[k].work = p.work; seen[k].states[p.work.state] = true; }
         });
       });
       Object.keys(seen).forEach(function(k) {
         var entry = seen[k];
         var current = window.LTP_crewDayPay(byDate[d], entry.id, services, crewMins);
         var locked = entry.locked;
-        var drift = !!(locked && (!current
+        var signed = null;
+        if (entry.work && entry.work.pay) {
+          // Day state rolls up from the position states: all no-show → no_show,
+          // any adjusted (or a dropped shift alongside worked ones) → adjusted.
+          var st = entry.states.no_show && !entry.states.worked && !entry.states.adjusted ? "no_show"
+            : (entry.states.adjusted || entry.states.no_show) ? "adjusted" : "worked";
+          signed = { state: st, pay: entry.work.pay, signedAt: entry.work.signedAt, signedBy: entry.work.signedBy };
+        }
+        var drift = !!(!signed && locked && (!current
           || Math.abs(locked.total - current.total) > 0.005
           || locked.paidHours !== current.paidHours
           || locked.otHours !== current.otHours));
-        var payable = locked ? locked.total : (current ? current.total : 0);
+        var estimate = locked ? locked.total : (current ? current.total : 0);
         if (!byCrew[k]) byCrew[k] = { crewId: entry.id, rows: [] };
         byCrew[k].rows.push({ crewId: entry.id, projectId: proj.id, projectName: proj.name,
-          date: d, locked: locked, current: current, drift: drift, payable: payable });
+          date: d, locked: locked, current: current, drift: drift,
+          signed: signed, estimate: estimate, payable: signed ? signed.pay.total : null });
       });
     });
   });
@@ -582,16 +695,22 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
     var cm = (contacts || []).find(function(c) { return c.id === g.crewId; });
     g.crewName = cm ? ((cm.firstName || "") + " " + (cm.lastName || "")).trim() : "Unknown";
     g.rows.sort(function(a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.projectName < b.projectName ? -1 : 1); });
-    g.total = Math.round(g.rows.reduce(function(t, r) { return t + r.payable; }, 0) * 100) / 100;
+    g.total = Math.round(g.rows.reduce(function(t, r) { return t + (r.payable || 0); }, 0) * 100) / 100;
+    g.pendingTotal = Math.round(g.rows.reduce(function(t, r) { return t + (r.signed ? 0 : r.estimate); }, 0) * 100) / 100;
     return g;
   });
   groups.sort(function(a, b) { return a.crewName < b.crewName ? -1 : 1; });
-  var grandTotal = 0, driftCount = 0, unlockedCount = 0;
+  var grandTotal = 0, pendingTotal = 0, pendingCount = 0, driftCount = 0, unlockedCount = 0;
   groups.forEach(function(g) {
     grandTotal += g.total;
-    g.rows.forEach(function(r) { if (r.drift) driftCount++; if (!r.locked) unlockedCount++; });
+    pendingTotal += g.pendingTotal;
+    g.rows.forEach(function(r) {
+      if (!r.signed) { pendingCount++; if (r.drift) driftCount++; if (!r.locked) unlockedCount++; }
+    });
   });
-  return { groups: groups, grandTotal: Math.round(grandTotal * 100) / 100, driftCount: driftCount, unlockedCount: unlockedCount };
+  return { groups: groups, grandTotal: Math.round(grandTotal * 100) / 100,
+    pendingTotal: Math.round(pendingTotal * 100) / 100, pendingCount: pendingCount,
+    driftCount: driftCount, unlockedCount: unlockedCount };
 };
 
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,

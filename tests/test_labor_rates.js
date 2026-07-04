@@ -228,7 +228,7 @@ const CDP = window.LTP_crewDayPay, STAMP = window.LTP_stampPay, PAYOUT = window.
 for (const [name, fn] of Object.entries({ LTP_crewDayPay: CDP, LTP_stampPay: STAMP, LTP_payoutRows: PAYOUT })) {
   if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
 }
-function PP(sid, crewId, status, o) { o = o || {}; return { id: o.id || ("pp" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId, status: status, pay: o.pay }; }
+function PP(sid, crewId, status, o) { o = o || {}; return { id: o.id || ("pp" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId, status: status, pay: o.pay, work: o.work }; }
 
 // I1: only CONFIRMED positions count — an accepted shift the same day is ignored.
 let pd = CDP([
@@ -296,14 +296,17 @@ eq("I7 two crew groups", po.groups.length, 2);
 eq("I7 sorted by name", po.groups.map((g) => g.crewName).join(","), "Alex A,Bea B");
 const alex = po.groups[0], bea = po.groups[1];
 eq("I7 alex drift", alex.rows[0].drift, true);
-near("I7 alex payable = locked", alex.rows[0].payable, 999);
+near("I7 alex estimate = locked", alex.rows[0].estimate, 999);
+eq("I7 unsigned payable is null", alex.rows[0].payable, null);
 eq("I7 bea unlocked", bea.rows[0].locked, null);
-near("I7 bea payable = current", bea.rows[0].payable, 400);
+near("I7 bea estimate = current", bea.rows[0].estimate, 400);
 eq("I7 counts", po.driftCount + "/" + po.unlockedCount, "1/1");
-near("I7 grand total", po.grandTotal, 1399);
+eq("I7 all pending, nothing payable", po.grandTotal, 0);
+near("I7 pending total = estimates", po.pendingTotal, 1399);
+eq("I7 pending count", po.pendingCount, 2);
 eq("I7 requested crew excluded", po.groups.some((g) => g.crewId === 9), false);
 po = PAYOUT(PROJ, CONTACTS, S, "2026-07-01", "2026-07-31");
-near("I7 full range adds Expo (L2 half 200)", po.groups[0].total, 1199);
+near("I7 full range adds Expo (L2 half 200)", po.groups[0].pendingTotal, 1199);
 
 // I8: a snapshot taken by stampPay reads back with zero drift.
 const cleanSched = STAMP([
@@ -312,7 +315,87 @@ const cleanSched = STAMP([
 po = PAYOUT([{ id: 3, name: "Clean", schedule: cleanSched }], CONTACTS, S, "2026-07-01", "2026-07-31");
 eq("I8 no drift on fresh lock", po.groups[0].rows[0].drift, false);
 eq("I8 nothing unlocked", po.unlockedCount, 0);
-near("I8 payable = locked = current", po.groups[0].rows[0].payable, 400);
+near("I8 estimate = locked = current", po.groups[0].rows[0].estimate, 400);
+
+// ── J. Day-of actuals + sign-off ─────────────────────────────────────────────
+const CDA = window.LTP_crewDayActuals, SIGN = window.LTP_signOffDay, UNSIGN = window.LTP_unsignDay;
+for (const [name, fn] of Object.entries({ LTP_crewDayActuals: CDA, LTP_signOffDay: SIGN, LTP_unsignDay: UNSIGN })) {
+  if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
+}
+
+// J1: adjusted work.time/endTime override the shift's scheduled times; a
+// scheduled break inside the actual window still applies (5h sched → 9h-1h=8h full).
+let ja = CDA([{ time: "09:00", endTime: "14:00", breaks: [{ startTime: "12:00", endTime: "13:00", type: "unpaid" }],
+  positions: [PP(1, 7, "confirmed", { work: { state: "adjusted", time: "09:00", endTime: "18:00" } })] }], 7, S);
+eq("J1 actual paid 8h", ja.paidHours, 8); near("J1 actual full-day", ja.total, 800);
+
+// J2: no_show shifts are dropped; all no_show → null.
+ja = CDA([
+  { time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "no_show" } })] },
+  { time: "15:00", endTime: "20:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "worked" } })] },
+], 7, S);
+eq("J2 only worked shift counts", ja.paidHours, 5); near("J2 half day", ja.total, 400);
+eq("J2 all no-show is null", CDA([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "no_show" } })] }], 7, S), null);
+
+// J3: a scheduled break OUTSIDE the adjusted window is dropped, not misapplied.
+ja = CDA([{ time: "09:00", endTime: "14:00", breaks: [{ startTime: "13:00", endTime: "13:30", type: "unpaid" }],
+  positions: [PP(1, 7, "confirmed", { work: { state: "adjusted", time: "09:00", endTime: "13:00" } })] }], 7, S);
+eq("J3 clipped paid 4h", ja.paidHours, 4); near("J3 half day", ja.total, 400);
+
+// J4: signOffDay defaults to "worked", stamps work + final pay on every one of
+// the person's confirmed positions that day, and touches nobody else.
+let ss = SIGN([
+  { id: "w1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sa" }), PP(1, 8, "confirmed", { id: "sb" })] },
+  { id: "w2", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sc" })] },
+  { id: "w3", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sd" })] },
+], 7, "2026-07-10", {}, S, null, "TS", "PM");
+eq("J4 state worked", findPos(ss, "sa").work.state, "worked");
+near("J4 final = 5h+4h full day", findPos(ss, "sa").work.pay.total, 800);
+near("J4 same snapshot on 2nd shift", findPos(ss, "sc").work.pay.total, 800);
+eq("J4 signedBy", findPos(ss, "sa").work.signedBy, "PM");
+eq("J4 other crew untouched", findPos(ss, "sb").work, undefined);
+eq("J4 other day untouched", findPos(ss, "sd").work, undefined);
+
+// J5: dropping one shift at sign-off pays only the worked one.
+ss = SIGN(ss, 7, "2026-07-10", { sc: { state: "no_show" } }, S, null, "TS2", "PM");
+near("J5 only 5h shift pays", findPos(ss, "sa").work.pay.total, 400);
+eq("J5 dropped shift marked", findPos(ss, "sc").work.state, "no_show");
+
+// J6: whole-day no-show freezes $0.
+ss = SIGN(ss, 7, "2026-07-10", { sa: { state: "no_show" }, sc: { state: "no_show" } }, S, null, "TS3", "PM");
+eq("J6 no-show total 0", findPos(ss, "sa").work.pay.total, 0);
+
+// J7: unsignDay strips work → day is pending again.
+ss = UNSIGN(ss, 7, "2026-07-10");
+eq("J7 work cleared", findPos(ss, "sa").work, undefined);
+eq("J7 other day still untouched", findPos(ss, "sd").work, undefined);
+
+// J8: payoutRows with a signed day — payable/final counts, drift suppressed.
+let jsched = STAMP([
+  { id: "j1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "jx" })] },
+  { id: "j2", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "jy" })] },
+], 7, S, null, "T4");
+// pretend rates changed after locking: stale lock says 999
+jsched = jsched.map((s) => s.id !== "j1" ? s : Object.assign({}, s, { positions: s.positions.map((p) => Object.assign({}, p, { pay: Object.assign({}, p.pay, { total: 999 }) })) }));
+jsched = SIGN(jsched, 7, "2026-07-10", {}, S, null, "TS4", "PM");
+po = PAYOUT([{ id: 4, name: "Mix", schedule: jsched }], CONTACTS, S, "2026-07-01", "2026-07-31");
+const jrows = po.groups[0].rows;
+eq("J8 signed state worked", jrows[0].signed.state, "worked");
+near("J8 signed payable = final", jrows[0].payable, 400);
+eq("J8 drift suppressed once signed", jrows[0].drift, false);
+eq("J8 second day pending", jrows[1].signed, null);
+near("J8 grand = signed only", po.grandTotal, 400);
+near("J8 pending = unsigned estimate", po.pendingTotal, 400);
+eq("J8 pending count 1", po.pendingCount, 1);
+
+// J9: mixed worked/no-show day rolls up as "adjusted" in payout rows.
+let jm = SIGN([
+  { id: "m1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "ma" })] },
+  { id: "m2", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "mb" })] },
+], 7, "2026-07-10", { mb: { state: "no_show" } }, S, null, "TS5", "PM");
+po = PAYOUT([{ id: 5, name: "MixDay", schedule: jm }], CONTACTS, S, "2026-07-01", "2026-07-31");
+eq("J9 mixed day state adjusted", po.groups[0].rows[0].signed.state, "adjusted");
+near("J9 mixed day pays worked shift", po.groups[0].rows[0].payable, 400);
 
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
