@@ -469,6 +469,7 @@ function LTPSignedInApp(props) {
               { path: "labor/roster",      label: "Crew Roster"     },
               { path: "labor/calendar",    label: "Calendar"        },
               { path: "labor/schedule",    label: "Weekly Schedule" },
+              { path: "labor/payouts",     label: "Payouts"         },
             ];
             laborSubs.forEach(function(sub) {
               var subKey = sub.path.split("/")[1];

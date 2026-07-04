@@ -465,6 +465,135 @@ window.LTP_crewMinMap = function(contacts) {
   return m;
 };
 
+// ── Crew payout (locked pay + payouts aggregation) ───────────────────────────
+//
+// Pay is agreed at HIRE. When a producer confirms a crew member, their pay for
+// each confirmed day is computed once and stamped onto the positions as a `pay`
+// snapshot — so a later rate-card edit, minimum change, or schedule tweak can't
+// silently rewrite what someone was hired at. The Payouts tab reads snapshots
+// (never live math) as the payable figure, and shows a recomputed value next to
+// a locked one only to flag drift for an explicit re-lock.
+
+// ONE person's pay for ONE project-day, from their CONFIRMED positions only —
+// requested/accepted shifts aren't owed money. dayItems are that date's schedule
+// items; the engine merges the person's shifts (OT + meal penalty run over their
+// combined hours) exactly as billing does. Returns null when the person has no
+// confirmed, timed work that day.
+window.LTP_crewDayPay = function(dayItems, crewId, services, crewMins) {
+  var items = (dayItems || []).map(function(s) {
+    return { time: s.time, endTime: s.endTime, breaks: s.breaks,
+      positions: (s.positions || []).filter(function(p) { return p && p.crewId === crewId && p.status === "confirmed"; }) };
+  }).filter(function(s) { return s.positions.length > 0; });
+  if (!items.length) return null;
+  var day = window.LTP_calcDayLabor(items, services, crewMins);
+  if (!day.units.length) return null;
+  var paidHours = 0, otHours = 0, mealPenaltyHours = 0;
+  var units = day.units.map(function(u) {
+    paidHours += u.paidHours; otHours += u.otHours; mealPenaltyHours += u.mealPenaltyHours;
+    return { serviceId: u.serviceId, tier: u.tier, paidHours: u.paidHours, otHours: u.otHours,
+      dayCost: u.dayCost, otCost: u.otCost, minApplied: u.minApplied, fullMargin: u.fullMargin, total: u.costTotal };
+  });
+  return {
+    total: day.costTotal,
+    paidHours: Math.round(paidHours * 100) / 100,
+    otHours: Math.round(otHours * 100) / 100,
+    mealPenaltyHours: Math.round(mealPenaltyHours * 100) / 100,
+    tier: units.length === 1 ? units[0].tier : "mixed",
+    units: units,
+  };
+};
+
+// Stamp `pay` snapshots onto ONE person's confirmed positions in a schedule.
+// `dates` restricts which days are (re)locked — the caller passes exactly the
+// days its action touched, so confirming new work never silently re-locks an
+// unrelated day whose rates have since changed (that would erase drift the
+// producer should see). Omit dates to lock every day with confirmed work (the
+// Payouts tab's explicit per-day Lock passes a single date). Returns a new
+// schedule; items without changes are passed through untouched.
+window.LTP_stampPay = function(schedule, crewId, services, crewMins, lockedAt, dates) {
+  var only = null;
+  if (dates) { only = {}; dates.forEach(function(d) { only[d] = true; }); }
+  var byDate = {};
+  (schedule || []).forEach(function(s) {
+    if (s.date && (!only || only[s.date])) (byDate[s.date] = byDate[s.date] || []).push(s);
+  });
+  var payByDate = {};
+  Object.keys(byDate).forEach(function(d) {
+    var pay = window.LTP_crewDayPay(byDate[d], crewId, services, crewMins);
+    if (pay) payByDate[d] = Object.assign({ lockedAt: lockedAt }, pay);
+  });
+  return (schedule || []).map(function(s) {
+    if (!s.date || !payByDate[s.date]) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed") { touched = true; return Object.assign({}, p, { pay: payByDate[s.date] }); }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
+// Aggregate confirmed crew work across all projects into payout rows for a date
+// range. One row = one person's day on one project. Each row carries:
+//   locked  — the pay snapshot agreed at confirm (null on legacy pre-snapshot
+//             confirmations → "unlocked", payable falls back to current)
+//   current — the same day recomputed with today's schedule/rates/minimums
+//   drift   — locked exists but no longer matches current (money or hours)
+//   payable — the authoritative figure: locked when present, else current
+// Grouped per crew member with subtotals; grandTotal sums payable.
+window.LTP_payoutRows = function(projects, contacts, services, startDate, endDate) {
+  var crewMins = window.LTP_crewMinMap(contacts);
+  var byCrew = {};   // String(crewId) → { crewId, rows: [] }
+  (projects || []).forEach(function(proj) {
+    var byDate = {};
+    (proj.schedule || []).forEach(function(s) {
+      if (!s.date) return;
+      if (startDate && s.date < startDate) return;
+      if (endDate && s.date > endDate) return;
+      (byDate[s.date] = byDate[s.date] || []).push(s);
+    });
+    Object.keys(byDate).forEach(function(d) {
+      var seen = {};  // String(crewId) → { id, locked }
+      byDate[d].forEach(function(s) {
+        (s.positions || []).forEach(function(p) {
+          if (!p || p.crewId == null || p.status !== "confirmed") return;
+          var k = String(p.crewId);
+          if (!seen[k]) seen[k] = { id: p.crewId, locked: null };
+          if (p.pay && !seen[k].locked) seen[k].locked = p.pay;
+        });
+      });
+      Object.keys(seen).forEach(function(k) {
+        var entry = seen[k];
+        var current = window.LTP_crewDayPay(byDate[d], entry.id, services, crewMins);
+        var locked = entry.locked;
+        var drift = !!(locked && (!current
+          || Math.abs(locked.total - current.total) > 0.005
+          || locked.paidHours !== current.paidHours
+          || locked.otHours !== current.otHours));
+        var payable = locked ? locked.total : (current ? current.total : 0);
+        if (!byCrew[k]) byCrew[k] = { crewId: entry.id, rows: [] };
+        byCrew[k].rows.push({ crewId: entry.id, projectId: proj.id, projectName: proj.name,
+          date: d, locked: locked, current: current, drift: drift, payable: payable });
+      });
+    });
+  });
+  var groups = Object.keys(byCrew).map(function(k) {
+    var g = byCrew[k];
+    var cm = (contacts || []).find(function(c) { return c.id === g.crewId; });
+    g.crewName = cm ? ((cm.firstName || "") + " " + (cm.lastName || "")).trim() : "Unknown";
+    g.rows.sort(function(a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.projectName < b.projectName ? -1 : 1); });
+    g.total = Math.round(g.rows.reduce(function(t, r) { return t + r.payable; }, 0) * 100) / 100;
+    return g;
+  });
+  groups.sort(function(a, b) { return a.crewName < b.crewName ? -1 : 1; });
+  var grandTotal = 0, driftCount = 0, unlockedCount = 0;
+  groups.forEach(function(g) {
+    grandTotal += g.total;
+    g.rows.forEach(function(r) { if (r.drift) driftCount++; if (!r.locked) unlockedCount++; });
+  });
+  return { groups: groups, grandTotal: Math.round(grandTotal * 100) / 100, driftCount: driftCount, unlockedCount: unlockedCount };
+};
+
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
 // breaks, positionId }), return the individual unpaid breaks needed to clear
 // THEIR meal penalties — each tagged with the positionId (shift) it attaches

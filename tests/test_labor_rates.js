@@ -223,6 +223,97 @@ eq("H7 skips zero min", cm[2], undefined);
 eq("H7 skips missing min", cm[3], undefined);
 eq("H7 skips non-crew", cm[4], undefined);
 
+// ── I. Payout: crewDayPay / stampPay / payoutRows ────────────────────────────
+const CDP = window.LTP_crewDayPay, STAMP = window.LTP_stampPay, PAYOUT = window.LTP_payoutRows;
+for (const [name, fn] of Object.entries({ LTP_crewDayPay: CDP, LTP_stampPay: STAMP, LTP_payoutRows: PAYOUT })) {
+  if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
+}
+function PP(sid, crewId, status, o) { o = o || {}; return { id: o.id || ("pp" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId, status: status, pay: o.pay }; }
+
+// I1: only CONFIRMED positions count — an accepted shift the same day is ignored.
+let pd = CDP([
+  { time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed"), PP(1, 8, "confirmed")] },
+  { time: "15:00", endTime: "20:00", breaks: [], positions: [PP(1, 7, "accepted")] },
+], 7, S);
+near("I1 confirmed-only total (half)", pd.total, 400); eq("I1 paid 5h", pd.paidHours, 5); eq("I1 tier half", pd.tier, "half");
+
+// I2: person's confirmed shifts merge across items (4h + break + 4h = full day, no OT).
+pd = CDP([
+  { time: "09:00", endTime: "13:00", breaks: [], positions: [PP(1, 7, "confirmed")] },
+  { time: "13:00", endTime: "18:00", breaks: [{ startTime: "13:00", endTime: "14:00", type: "unpaid" }], positions: [PP(1, 7, "confirmed")] },
+], 7, S);
+eq("I2 paid 8h", pd.paidHours, 8); eq("I2 no OT", pd.otHours, 0); near("I2 full-day cost", pd.total, 800);
+
+// I3: negotiated minimum floors the snapshot (L2 half 200 → min 500 half = 250).
+pd = CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(2, 7, "confirmed")] }], 7, S, { 7: 500 });
+near("I3 min-floored half", pd.total, 250); eq("I3 minApplied", pd.units[0].minApplied, true);
+
+// I4: nothing confirmed → null.
+eq("I4 accepted-only is null", CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "accepted")] }], 7, S), null);
+eq("I4 other crew is null", CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 8, "confirmed")] }], 7, S), null);
+
+// I5: stampPay stamps this person's confirmed positions per day, nobody else's;
+// a dates restriction leaves other days' locks untouched.
+let sched = [
+  { id: "d1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x1" }), PP(1, 8, "confirmed", { id: "y1" })] },
+  { id: "d2", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x2" })] },
+  { id: "d3", date: "", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x3" })] },
+];
+sched = STAMP(sched, 7, S, null, "T0");
+const findPos = (sc, id) => sc.flatMap((s) => s.positions || []).find((p) => p.id === id);
+near("I5 x1 locked 400", findPos(sched, "x1").pay.total, 400); eq("I5 x1 lockedAt", findPos(sched, "x1").pay.lockedAt, "T0");
+near("I5 x2 locked 400", findPos(sched, "x2").pay.total, 400);
+eq("I5 other crew untouched", findPos(sched, "y1").pay, undefined);
+eq("I5 undated untouched", findPos(sched, "x3").pay, undefined);
+sched = STAMP(sched, 7, S, null, "T1", ["2026-07-11"]);
+eq("I5 restricted: d1 keeps T0", findPos(sched, "x1").pay.lockedAt, "T0");
+eq("I5 restricted: d2 now T1", findPos(sched, "x2").pay.lockedAt, "T1");
+
+// I6: restamping a day after more confirmed work recomputes the day total.
+sched = sched.concat([{ id: "d4", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x5" })] }]);
+sched = STAMP(sched, 7, S, null, "T2", ["2026-07-10"]);
+near("I6 restamped day total (5h+4h full)", findPos(sched, "x1").pay.total, 800);
+near("I6 new shift carries same day snapshot", findPos(sched, "x5").pay.total, 800);
+
+// I7: payoutRows — locked is authoritative, drift flagged, legacy unlocked falls
+// back to current, range filters, grouped by crew sorted by name.
+const CONTACTS = [
+  { id: 7, isCrew: true, firstName: "Alex", lastName: "A" },
+  { id: 8, isCrew: true, firstName: "Bea", lastName: "B" },
+];
+const staleLock = { total: 999, paidHours: 5, otHours: 0, mealPenaltyHours: 0, tier: "half", units: [], lockedAt: "T0" };
+const PROJ = [
+  { id: 1, name: "Gala", schedule: [
+    { id: "g1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [
+      PP(1, 7, "confirmed", { pay: staleLock }), PP(1, 8, "confirmed"), PP(1, 9, "requested")] },
+  ] },
+  { id: 2, name: "Expo", schedule: [
+    { id: "e1", date: "2026-07-20", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(2, 7, "confirmed")] },
+  ] },
+];
+let po = PAYOUT(PROJ, CONTACTS, S, "2026-07-01", "2026-07-15");
+eq("I7 two crew groups", po.groups.length, 2);
+eq("I7 sorted by name", po.groups.map((g) => g.crewName).join(","), "Alex A,Bea B");
+const alex = po.groups[0], bea = po.groups[1];
+eq("I7 alex drift", alex.rows[0].drift, true);
+near("I7 alex payable = locked", alex.rows[0].payable, 999);
+eq("I7 bea unlocked", bea.rows[0].locked, null);
+near("I7 bea payable = current", bea.rows[0].payable, 400);
+eq("I7 counts", po.driftCount + "/" + po.unlockedCount, "1/1");
+near("I7 grand total", po.grandTotal, 1399);
+eq("I7 requested crew excluded", po.groups.some((g) => g.crewId === 9), false);
+po = PAYOUT(PROJ, CONTACTS, S, "2026-07-01", "2026-07-31");
+near("I7 full range adds Expo (L2 half 200)", po.groups[0].total, 1199);
+
+// I8: a snapshot taken by stampPay reads back with zero drift.
+const cleanSched = STAMP([
+  { id: "c1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "cx" })] },
+], 7, S, null, "T3");
+po = PAYOUT([{ id: 3, name: "Clean", schedule: cleanSched }], CONTACTS, S, "2026-07-01", "2026-07-31");
+eq("I8 no drift on fresh lock", po.groups[0].rows[0].drift, false);
+eq("I8 nothing unlocked", po.unlockedCount, 0);
+near("I8 payable = locked = current", po.groups[0].rows[0].payable, 400);
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

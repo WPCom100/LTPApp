@@ -999,6 +999,139 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  //   PAYOUTS TAB
+  // ═══════════════════════════════════════════════════════════════════════════
+  // What we OWE crew for confirmed work in a pay period. Rows read the `pay`
+  // snapshot locked at confirm time (LTP_stampPay via doConfirm) — never live
+  // math — so rate-card or schedule edits after hire don't silently change the
+  // figure. A recompute runs alongside purely to FLAG drift; the producer
+  // resolves it with an explicit Re-lock. Legacy positions confirmed before
+  // snapshots existed show as "not locked" with a live figure and a Lock button.
+  function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+  function PayoutsTab({ projects, setProjects, contacts, services }) {
+    function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+    function rangeFor(preset) {
+      var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
+      if (preset === "month") {
+        return { start: iso(new Date(d.getFullYear(), d.getMonth(), 1)), end: iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)) };
+      }
+      var mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7) - (preset === "lastweek" ? 7 : 0));
+      var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+      return { start: iso(mon), end: iso(sun) };
+    }
+    var [preset, setPreset] = useState("week");
+    var [range, setRange] = useState(function() { return rangeFor("week"); });
+    function pickPreset(p) { setPreset(p); setRange(rangeFor(p)); }
+
+    var data = useMemo(function() {
+      return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
+    }, [projects, contacts, services, range.start, range.end]);
+
+    function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
+
+    // Lock (or re-lock) one person's day at today's computed figure. Explicit,
+    // per-row — this is the producer accepting the current number as agreed.
+    function lockRow(row) {
+      var wasLocked = !!row.locked;
+      var newTotal = row.current ? row.current.total : 0;
+      var mins = window.LTP_crewMinMap(contacts);
+      var now = new Date().toISOString();
+      setProjects(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== row.projectId) return p;
+          var updated = Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, services, mins, now, [row.date]) });
+          var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+            type: "saved", user: (window.LTP_CURRENT_USER || "User"),
+            message: "Pay " + (wasLocked ? "re-locked" : "locked") + ": " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(newTotal),
+            changes: [{ cat: "Pay Locked", detail: crewLabel(row.crewId) + " " + fmt(row.date) + " → " + fmtMoney(newTotal) }] };
+          return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+        });
+      });
+      window.LTP_toast(wasLocked ? "Pay re-locked" : "Pay locked", { message: crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(newTotal), variant: "success" });
+    }
+
+    function exportCSV() {
+      var esc = function(v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+      var lines = [["Crew", "Date", "Project", "Tier", "Paid Hours", "OT Hours", "Meal Penalty Hours", "Pay", "Locked", "Locked At", "Changed Since Lock"].join(",")];
+      data.groups.forEach(function(g) {
+        g.rows.forEach(function(r) {
+          var src = r.locked || r.current || {};
+          lines.push([esc(g.crewName), r.date, esc(r.projectName), src.tier || "",
+            src.paidHours != null ? src.paidHours : "", src.otHours != null ? src.otHours : "",
+            src.mealPenaltyHours != null ? src.mealPenaltyHours : "",
+            r.payable.toFixed(2), r.locked ? "yes" : "no", r.locked ? r.locked.lockedAt : "", r.drift ? "yes" : ""].join(","));
+        });
+      });
+      var blob = new Blob([lines.join("\n")], { type: "text/csv" });
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "crew-payouts_" + range.start + "_" + range.end + ".csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function tierLabel(src) {
+      if (!src) return "—";
+      var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : "Mixed";
+      var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
+      return t + " · " + hrs;
+    }
+
+    var presetBtn = function(key, label) {
+      var active = preset === key;
+      return h("button", { key: key, onClick: function() { pickPreset(key); },
+        style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+    };
+
+    return h("div", null,
+      // Range controls + export
+      h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+        presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
+        h("div", { style: { width: 130 } },
+          h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" })),
+        h("div", { style: { width: 130 } },
+          h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" })),
+        h("div", { style: { flex: 1 } }),
+        h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+
+      // Period summary
+      h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
+        h(window.StatCard, { label: "Period Payout", value: fmtMoney(data.grandTotal), accent: B.accent }),
+        h(window.StatCard, { label: "Crew Paid", value: String(data.groups.length) }),
+        data.unlockedCount > 0 && h(window.StatCard, { label: "Not Locked", value: String(data.unlockedCount), accent: B.warn }),
+        data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
+
+      data.groups.length === 0
+        ? h(window.EmptyState, { text: "No confirmed crew shifts between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
+        : data.groups.map(function(g) {
+            return h("div", { key: g.crewId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
+              h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, g.crewName),
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, fmtMoney(g.total))),
+              h("div", { style: { padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 } },
+                g.rows.map(function(r, ri) {
+                  var src = r.locked || r.current;
+                  var minApplied = !!(src && (src.units || []).some(function(u) { return u.minApplied; }));
+                  var allMargin = !!(src && (src.units || []).length > 0 && (src.units || []).every(function(u) { return u.fullMargin; }));
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "center" } },
+                    h("div", { style: { width: 86, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
+                    h("div", { style: { flex: 1, minWidth: 0 } },
+                      h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
+                      h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
+                      r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
+                        "Changed since lock: " + fmtMoney(r.locked.total) + " locked → " + (r.current ? fmtMoney(r.current.total) : "no timed shifts") + " now")),
+                    minApplied && h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warn + "18", border: "1px solid " + B.warn + "44", borderRadius: "3px", padding: "2px 6px" }, title: "Includes this crew member's negotiated minimum day rate." }, "min rate"),
+                    allMargin && h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, color: B.success, background: B.success + "18", border: "1px solid " + B.success + "44", borderRadius: "3px", padding: "2px 6px" } }, "margin"),
+                    !r.locked && h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warn + "18", border: "1px solid " + B.warn + "44", borderRadius: "3px", padding: "2px 6px" }, title: "Confirmed before pay locking existed — the figure shown is computed from today's rates." }, "not locked"),
+                    (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
+                      style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
+                    h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", fontSize: "12px", fontWeight: 700, color: B.text } }, fmtMoney(r.payable)));
+                })));
+          }));
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   //   CREW REQUESTS TAB
   // ═══════════════════════════════════════════════════════════════════════════
   // Sent tokenized crew requests with live accept/decline status + the note the
@@ -1109,13 +1242,21 @@
         return prev.map(function(p) {
           if (p.id !== req.projectId) return p;
           var changed = 0;
+          var confirmDates = {};
           var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
             return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              if (ids[ps.id] && ps.status === "accepted") { changed++; return Object.assign({}, ps, { status: "confirmed" }); }
+              if (ids[ps.id] && ps.status === "accepted") { changed++; if (s.date) confirmDates[s.date] = true; return Object.assign({}, ps, { status: "confirmed" }); }
               return ps;
             })});
           })});
           if (changed > 0) {
+            // Lock this person's pay for the days this confirm touched — the
+            // agreed figure the Payouts tab reads. Only the confirmed dates are
+            // (re)stamped so a rate change since an EARLIER confirm still shows
+            // as drift there instead of being silently re-locked here.
+            updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
+              updated.schedule, req.contactId, services, window.LTP_crewMinMap(contacts),
+              new Date().toISOString(), Object.keys(confirmDates)) });
             var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
               type: "saved", user: (window.LTP_CURRENT_USER || "User"),
               message: "Crew confirmed: " + crewLabel(req.contactId) + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
@@ -1222,7 +1363,8 @@
     //   labor/roster     → Crew Roster
     //   labor/calendar   → Calendar
     //   labor/schedule   → Weekly Schedule
-    var validTabs = { assignments: 1, requests: 1, roster: 1, calendar: 1, schedule: 1 };
+    //   labor/payouts    → Payouts
+    var validTabs = { assignments: 1, requests: 1, roster: 1, calendar: 1, schedule: 1, payouts: 1 };
     var tab = (route && validTabs[route.sub]) ? route.sub : "assignments";
     var crew = contacts.filter(function(c) { return c.isCrew; });
 
@@ -1258,6 +1400,7 @@
       : tab === "roster" ? "Crew Roster"
       : tab === "calendar" ? "Crew Calendar"
       : tab === "schedule" ? "Weekly Schedule"
+      : tab === "payouts" ? "Crew Payouts"
       : "Crew Assignments";
 
     return h("div", null,
@@ -1270,7 +1413,8 @@
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
-      tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts })
+      tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
+      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services })
     );
   };
 })();
