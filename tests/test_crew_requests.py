@@ -71,6 +71,9 @@ P_WD_NOTIFY = 7018  # withdraw + notify emails the crew member (crewWithdrawn)
 P_WD_QUIET  = 7019  # withdraw without notify sends no email
 P_UNSCHED   = 7020  # unscheduled day (no date) — never sendable
 P_MIXED     = 7021  # one dated + one undated position — send covers only the dated one
+P_ADDR      = 7022  # typed site_address flows to the public payload
+P_ADDR_CO   = 7023  # site_use_company_address derives the client company's address
+CO_ADDR     = 6001  # company with a billing address (for P_ADDR_CO)
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -195,6 +198,20 @@ def _setup():
                 db.add(models.Project(id=P_MIXED, name="Gala Mixed", schedule=[
                     _shift("smx_d", "Show", "2026-08-11", [_pos("pmx_dated", C1, service=S1)]),
                     _shift("smx_u", "TBD", "", [_pos("pmx_undated", C1, service=S1)]),
+                ]))
+                # Site address: typed directly on the project…
+                db.add(models.Project(id=P_ADDR, name="Gala Address", venue="Moody Center",
+                                      site_address="2001 Robert Dedman Dr, Austin, TX 78712", schedule=[
+                    _shift("sad", "Show", "2026-08-13", [_pos("pad_a", C1, service=S1)]),
+                ]))
+                # …or derived live from the client company's billing address
+                # (multi-line street must flatten to one line).
+                db.add(models.Company(id=CO_ADDR, name="Venue Client",
+                                      address="500 E Cesar Chavez St\nSuite 2",
+                                      city="Austin", state="TX", zip="78701"))
+                db.add(models.Project(id=P_ADDR_CO, name="Gala CompanyAddr", company_id=CO_ADDR,
+                                      site_use_company_address=True, schedule=[
+                    _shift("sac", "Show", "2026-08-15", [_pos("pac_a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -323,6 +340,24 @@ def test_public_payload_is_allow_listed():
     # No internal/foreign keys in the payload.
     for banned in ("crewId", "serviceId", "contactId", "companyId", "respondentIp", "cost"):
         assert banned not in raw, f"{banned} leaked in public payload"
+
+
+def test_public_payload_carries_typed_site_address():
+    client, tok = _setup()
+    token = _send(client, tok, P_ADDR, C1).json()["token"]
+    r = client.get(f"/api/crew/{token}")
+    assert r.status_code == 200, r.text
+    assert r.json()["project"]["siteAddress"] == "2001 Robert Dedman Dr, Austin, TX 78712"
+    assert r.json()["project"]["venue"] == "Moody Center"
+
+
+def test_company_address_checkbox_derives_site_address():
+    client, tok = _setup()
+    token = _send(client, tok, P_ADDR_CO, C1).json()["token"]
+    r = client.get(f"/api/crew/{token}")
+    assert r.status_code == 200, r.text
+    # Multi-line street flattens to one line; city + state/zip appended.
+    assert r.json()["project"]["siteAddress"] == "500 E Cesar Chavez St, Suite 2, Austin, TX 78701"
 
 
 def test_short_or_unknown_token_is_404():

@@ -208,6 +208,27 @@ _FALLBACK_CREW_BODY = (
 
 
 
+async def _resolve_site_address(db, project) -> str:
+    """Street address of the job site for crew-facing surfaces (request email,
+    public crew page, notify {{location}}). When the project opts into the
+    client company's billing address it's resolved LIVE here — so a company
+    address edit flows into future sends without re-saving the project — and
+    the typed site_address is the fallback either way."""
+    if project is None:
+        return ""
+    if getattr(project, "site_use_company_address", False) and project.company_id:
+        r = await db.execute(select(models.Company).where(models.Company.id == project.company_id))
+        c = r.scalar_one_or_none()
+        if c:
+            street = ", ".join(ln.strip() for ln in (c.address or "").splitlines() if ln.strip())
+            locality = " ".join(x for x in [(c.state or "").strip(), (c.zip or "").strip()] if x)
+            tail = ", ".join(x for x in [(c.city or "").strip(), locality] if x)
+            addr = ", ".join(x for x in [street, tail] if x)
+            if addr:
+                return addr
+    return ", ".join(ln.strip() for ln in (project.site_address or "").splitlines() if ln.strip())
+
+
 def _crew_shifts_html(shifts: list, accent: str) -> str:
     """Themed shift list — one accent-edged card per shift. Date + time on one
     line, the day description (shiftTitle) on its own line beneath so a long
@@ -237,19 +258,21 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
             'style="width:100%;margin:8px 0 16px">' + "".join(rows) + "</table>")
 
 
-def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str) -> str:
+def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str, site_address: str = "") -> str:
     """Themed call-to-action card with a single accent button that opens the
     crew landing page (where Accept / Decline + the note actually happen).
     One button — both responses live on the same page, so two links here would
     be redundant."""
     url = escape(view_url)
     n = str(shift_count) + " shift" + ("" if shift_count == 1 else "s")
+    loc = ('<div style="font-size:12px;color:#8a949e;margin:0 0 2px">📍 ' + escape(site_address) + '</div>') if site_address else ""
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
         '<tr><td style="padding:22px;text-align:center">'
         '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">You\'re requested for</div>'
         '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + escape(project_name or "Project") + '</div>'
+        + loc +
         '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + n + ' — review the details and respond</div>'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
         '<td style="background-color:' + _CTA_ORANGE + ';border-radius:7px">'
@@ -262,16 +285,18 @@ def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent
 
 
 
-def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html) -> str:
+def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html, site_address="") -> str:
     """Compose the inner (card) HTML for a crew request: template body →
     paragraphs, with the themed {{header}} CTA, {{shifts}} list, and
-    {{signature}} substituted in."""
+    {{signature}} substituted in. {{location}} carries the job-site address for
+    templates that want it inline; the header card shows it regardless."""
     body = ((body_tmpl or _FALLBACK_CREW_BODY)
             .replace("{{crewName}}", crew_name)
             .replace("{{projectName}}", project_name)
-            .replace("{{companyName}}", company))
+            .replace("{{companyName}}", company)
+            .replace("{{location}}", site_address))
     return _paragraphs_to_html(body, {
-        "{{header}}": _crew_header_html(project_name, len(shifts), view_url, brand["accent"]),
+        "{{header}}": _crew_header_html(project_name, len(shifts), view_url, brand["accent"], site_address),
         "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]),
         "{{signature}}": signature_html,
     })
@@ -299,6 +324,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
             tmpl.get("body"), crew_name=crew_name, project_name=project_name,
             company=company, brand=brand, shifts=shifts, view_url=view_url,
             signature_html=_render_signature(user, settings_data),
+            site_address=await _resolve_site_address(db, project),
         )
         final_html = email_html(email_shell(inner, brand))
 
@@ -377,6 +403,10 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         brand = _email_brand(settings_data)
         first = shifts[0] if shifts else {}
         project_name = project_name or (project.name if project else "") or "Project"
+        # {{location}} = venue name + job-site address when both exist — the
+        # venue names the place, the address gets the crew there.
+        site_address = await _resolve_site_address(db, project)
+        location = " — ".join(x for x in [((project.venue if project else "") or "").strip(), site_address] if x)
         repl = {
             "{{companyName}}": brand["company"],
             "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
@@ -384,7 +414,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             "{{date}}": _fmt_iso_date(first.get("date")) if first.get("date") else "",
             "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
             "{{wrapTime}}": _fmt_hhmm(first.get("endTime")) if first.get("endTime") else "",
-            "{{location}}": (project.venue if project else "") or "",
+            "{{location}}": location,
         }
 
         def _sub(t):
@@ -465,6 +495,7 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
         "project": {
             "name": project.name if project else "",
             "venue": project.venue if project else "",
+            "siteAddress": await _resolve_site_address(db, project),
             "startDate": project.start_date if project else "",
             "endDate": project.end_date if project else "",
         },

@@ -222,6 +222,9 @@
     var [projStatus, setProjStatus] = useState(initial ? initial.status : "upcoming");
     var [start, setStart] = useState(initial ? initial.startDate : "");
     var [end, setEnd] = useState(initial ? initial.endDate : "");
+    var [venue, setVenue] = useState(initial ? (initial.venue || "") : "");
+    var [siteAddr, setSiteAddr] = useState(initial ? (initial.siteAddress || "") : "");
+    var [siteUseComp, setSiteUseComp] = useState(initial ? !!initial.siteUseCompanyAddress : false);
     var [cIds, setCIds] = useState(initial ? initial.contactIds : []);
     var [budL, setBudL] = useState(initial ? initial.budget.lighting : 0);
     var [budLb, setBudLb] = useState(initial ? initial.budget.labor : 0);
@@ -250,7 +253,9 @@
     }
 
     function doSubmit() {
-      onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
+      onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end,
+        venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp,
+        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
     }
 
     // Editing an existing project: park a removal notice (per person, per type)
@@ -285,6 +290,26 @@
           h(window.LTPInput, { label: "Start Date", value: start, onChange: setStart, type: "date" }),
           h(window.LTPInput, { label: "End Date", value: end, onChange: setEnd, type: "date" })
         ),
+        // Site / location — sent to crew with shift requests and shown on their
+        // public call sheet. The checkbox derives the address from the client
+        // company's billing address LIVE (resolved at send time), so a company
+        // address update flows to future sends without re-saving the project.
+        (function() {
+          var comp = siteUseComp && compId ? (ctx.companies || []).find(function(c) { return c.id === compId; }) : null;
+          var compAddr = comp ? [comp.address, [comp.city, [comp.state, comp.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ").replace(/\n/g, ", ") : "";
+          return h("div", null,
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              h(window.LTPInput, { label: "Venue Name", value: venue, onChange: setVenue, placeholder: "e.g. Moody Center" }),
+              siteUseComp
+                ? h("div", null,
+                    h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 2, fontWeight: 600 } }, "Site Address"),
+                    h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "6px", padding: "7px 10px", fontSize: "11px", color: compAddr ? B.textSec : B.textMut, fontStyle: compAddr ? "normal" : "italic", minHeight: 30 } },
+                      compAddr || (compId ? "No address on the company record yet." : "Pick a company above first.")))
+                : h(window.LTPInput, { label: "Site Address", value: siteAddr, onChange: setSiteAddr, placeholder: "Street, city, state — sent to crew with requests" })),
+            h("label", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 6, cursor: "pointer", fontSize: "11px", color: B.textSec, width: "fit-content" } },
+              h("input", { type: "checkbox", checked: siteUseComp, onChange: function(e) { setSiteUseComp(e.target.checked); }, style: { cursor: "pointer" } }),
+              "Use the client company's address as the site address"));
+        })(),
         h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Preliminary Budget"),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },

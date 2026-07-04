@@ -27,6 +27,18 @@
         if (s.endTime && (!g.dayWrap || s.endTime > g.dayWrap)) g.dayWrap = s.endTime;
       });
 
+      // Person-slot per role per DAY (same identity model the schedule editor
+      // and billing use): needed to tell "L1 #1" from "L1 #2" when a role has
+      // several people, so the right person lands in the right slot.
+      var dayRoleCounts = {};   // date → { serviceId: count across the day }
+      Object.keys(dateGroups).forEach(function(dk) {
+        var counts = {};
+        dateGroups[dk].items.forEach(function(it) {
+          (it.positions || []).forEach(function(p) { if (p.serviceId) counts[p.serviceId] = (counts[p.serviceId] || 0) + 1; });
+        });
+        dayRoleCounts[dk] = counts;
+      });
+
       (proj.schedule || []).forEach(function(s) {
         // An unscheduled day (no date) is not a real, assignable shift: a crew
         // member can't be booked — or sent an availability request — for a day
@@ -34,6 +46,7 @@
         // Labor tab or in the send-request selection, even when crew is attached.
         if (!s.date) return;
         var dg = dateGroups[s.date || "_unscheduled"];
+        var slots = window.LTP_effectiveSlots(s.positions);
         (s.positions || []).forEach(function(p) {
           var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
           var cm = p.crewId ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
@@ -43,6 +56,8 @@
             date: s.date, callTime: s.time, endTime: s.endTime,
             dayCall: dg ? dg.dayCall : s.time, dayWrap: dg ? dg.dayWrap : s.endTime,
             posId: p.id, role: p.role, serviceId: p.serviceId,
+            slot: slots[p.id] || 1,
+            dayRoleCount: (dayRoleCounts[s.date] || {})[p.serviceId] || 0,
             crewId: p.crewId, status: p.status,
             svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
             dept: svc ? svc.department : "",
@@ -709,6 +724,11 @@
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
                           h("div", { style: { flex: 1, minWidth: 0 } },
                             h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, pos.svcName),
+                            // Person # within the role for this day (same numbering
+                            // as the schedule editor) — shown when a role has 2+
+                            // people so the right person goes into the right slot.
+                            pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
+                              style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
                           h("select", { value: pos.crewId || "", onChange: function(e) {
                             var cid = Number(e.target.value) || null;
@@ -884,7 +904,7 @@
                     ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
                     : peShifts.map(function(sp, i) {
                         return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
-                          h("span", { style: { fontWeight: 600 } }, sp.svcName || sp.role || "Crew"),
+                          h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
                           h("span", { style: { color: B.textMut } }, "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
                       }))
               )

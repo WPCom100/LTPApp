@@ -111,6 +111,13 @@ class Project(Base):
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     venue = Column(String(255), default="")
+    # Job-site address for crew-facing surfaces (request emails, the public
+    # crew page). Either typed directly, or derived live from the client
+    # company's billing address when site_use_company_address is set — derived
+    # so a company address edit flows to future sends without re-saving the
+    # project. See backend/routes/crew.py::_resolve_site_address.
+    site_address = Column(Text, default="")
+    site_use_company_address = Column(Boolean, default=False)
     # budget is a category breakdown, NOT a single number. The form in
     # modules/crm-projects.js (search for budL/budLb/budR/budM) saves the
     # object literal directly.

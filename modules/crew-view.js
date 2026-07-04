@@ -438,7 +438,11 @@
         // Project marquee (greyed when withdrawn)
         h("div", { style: { marginTop: 40 } },
           h("div", { style: { fontSize: "30px", fontWeight: 800, color: withdrawn ? NEUTRAL : WHITE, letterSpacing: "-0.02em", lineHeight: 1.08, textTransform: "uppercase", overflowWrap: "break-word" } }, (project.name || "Project").toUpperCase()),
-          projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta)),
+          projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta),
+          // Job-site address — linked to a map so crew can navigate in one tap.
+          project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
+            style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
+            "📍 " + project.siteAddress)),
 
         // Shifts
         shiftSection,
