@@ -235,7 +235,8 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
       fp.map(function(p) {
         var comp = companies.find(function(c) { return c.id === p.companyId; });
-        var tot  = Object.values(p.budget).reduce(function(a, b) { return a + b; }, 0);
+        // Quoted total once quotes exist; preliminary budget until then.
+        var tot  = Math.round(window.LTP_projectHeadlineTotal(p, quotes).total);
         return h("div", { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
           style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", borderLeft: "3px solid " + CAT_COLORS[p.category] },
           onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; e.currentTarget.style.borderLeft = "3px solid " + CAT_COLORS[p.category]; },

@@ -42,6 +42,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     companies: companies, setCompanies: setCompanies,
     contacts:  contacts,  setContacts:  setContacts,
     projects:  projects,  services: services || [],
+    quotes: quotes || [],
     selectedCompany: selectedCompany,
     setSelectedCompanyId: setSelectedCompanyId,
     setEditCompanyId: function(id) {

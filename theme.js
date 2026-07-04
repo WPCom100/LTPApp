@@ -1467,6 +1467,26 @@ window.LTP_QUOTE_REF = function(q) {
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
 };
 
+// A project's headline money figure. The budget entered on the project form is
+// preliminary — once real quotes exist for the project they supersede it, and
+// every surface that shows "the project's number" should show the quoted total
+// instead. Declined quotes don't count; if every quote is declined the
+// preliminary budget applies again. Returns { quoted, total, count }:
+// quoted=true means `total` is the sum of the live quotes' totals (and `count`
+// how many), quoted=false means `total` is the preliminary budget sum.
+window.LTP_projectHeadlineTotal = function(project, quotes) {
+  var live = (quotes || []).filter(function(q) {
+    return q && q.projectId === project.id && q.status !== "declined";
+  });
+  if (live.length === 0) {
+    var budget = project.budget || {};
+    var tot = Object.keys(budget).reduce(function(a, k) { return a + (Number(budget[k]) || 0); }, 0);
+    return { quoted: false, total: tot, count: 0 };
+  }
+  var sum = live.reduce(function(a, q) { return a + (window.LTP_QUOTE_TOTALS(q).total || 0); }, 0);
+  return { quoted: true, total: sum, count: live.length };
+};
+
 // Select a number field's contents when it gains focus, so the user's first
 // keystroke replaces the current value (e.g. a default 0) instead of
 // appending to it — no more "type, then go back and delete the leading 0".

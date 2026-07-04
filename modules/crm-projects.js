@@ -49,6 +49,8 @@
     var company = ctx.companies.find(function(c) { return c.id === project.companyId; });
     var projContacts = ctx.contacts.filter(function(c) { return project.contactIds.includes(c.id); });
     var totalBudget = Object.values(project.budget).reduce(function(a, b) { return a + b; }, 0);
+    // Headline figure: once quotes exist they supersede the preliminary budget.
+    var headline = window.LTP_projectHeadlineTotal(project, ctx.quotes);
     // Initial tab comes from ctx.projectOpenTab (URL-derived in projects.js, or set by
     // other callers). When it changes, update the local tab state. Local in-modal tab
     // clicks update setProjTab only — they do not navigate or clear the URL.
@@ -81,7 +83,10 @@
       // OVERVIEW
       projTab === "overview" && h("div", null,
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
-          h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Total Budget"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())),
+          h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
+            h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, headline.quoted ? "Total Quoted" : "Total Budget"),
+            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + Math.round(headline.total).toLocaleString()),
+            headline.quoted && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "across " + headline.count + " quote" + (headline.count !== 1 ? "s" : ""))),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Category"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: CAT_COLORS[project.category] } }, project.category)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Contacts"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, projContacts.length)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Quotes"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.accent } }, projectQuotes.length))
@@ -155,8 +160,18 @@
         );
       }))),
 
-      // BUDGET TAB
-      projTab === "budget" && h("div", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, Object.entries(project.budget).map(function(e) { return h("div", { key: e[0], style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px" } }, h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text, textTransform: "capitalize" } }, e[0]), h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + e[1].toLocaleString())); }), h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + B.accent } }, h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, "Total"), h("span", { style: { fontSize: "18px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())))),
+      // BUDGET TAB — the preliminary breakdown stays visible for reference,
+      // but once quotes exist the quoted total is the headline figure.
+      projTab === "budget" && h("div", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        headline.quoted && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + B.accent } },
+          h("div", null,
+            h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, "Total Quoted"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, headline.count + " quote" + (headline.count !== 1 ? "s" : "") + " — supersedes the preliminary budget")),
+          h("span", { style: { fontSize: "18px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, "$" + Math.round(headline.total).toLocaleString())),
+        Object.entries(project.budget).map(function(e) { return h("div", { key: e[0], style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px", opacity: headline.quoted ? 0.75 : 1 } }, h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text, textTransform: "capitalize" } }, e[0]), h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + e[1].toLocaleString())); }),
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: headline.quoted ? B.raised : B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + (headline.quoted ? B.border : B.accent), opacity: headline.quoted ? 0.75 : 1 } },
+          h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, headline.quoted ? "Preliminary Budget Total" : "Total"),
+          h("span", { style: { fontSize: "18px", fontWeight: 700, color: headline.quoted ? B.textSec : B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())))),
 
       // QUOTES TAB
       projTab === "quotes" && h("div", null,
