@@ -40,6 +40,29 @@ eq("R4 only title -> true", HC({ title: "Load-In" }), true);
 eq("R5 positions -> true", HC({ positions: [{ id: "p" }] }), true);
 eq("R6 empty arrays -> false", HC({ positions: [], breaks: [] }), false);
 
+// ── normalizeScheduleRows (repair hidden endDate before validate/save) ──────
+const NR = window.LTP_normalizeScheduleRows;
+eq("N1 stale endDate before date snaps to date",
+   NR([{ date: "2026-08-14", endDate: "2026-08-10" }])[0].endDate, "2026-08-14");
+eq("N2 half-typed garbage endDate snaps to date",
+   NR([{ date: "2026-08-14", endDate: "0002-08-14" }])[0].endDate, "2026-08-14");
+eq("N3 missing endDate filled with date",
+   NR([{ date: "2026-08-14", endDate: "" }])[0].endDate, "2026-08-14");
+eq("N4 multi-day span preserved",
+   NR([{ date: "2026-08-14", endDate: "2026-08-16" }])[0].endDate, "2026-08-16");
+eq("N5 same-day endDate untouched",
+   NR([{ date: "2026-08-14", endDate: "2026-08-14" }])[0].endDate, "2026-08-14");
+eq("N6 dateless row clears endDate",
+   NR([{ date: "", endDate: "0002-08-14" }])[0].endDate, "");
+eq("N7 dateless row without endDate returned as-is",
+   NR([{ date: "", endDate: "" }])[0].endDate, "");
+ok("N8 null/empty input tolerated", Array.isArray(NR(null)) && NR([]).length === 0);
+ok("N9 does not mutate the input row", (function() {
+  var row = { date: "2026-08-14", endDate: "2026-08-10" };
+  NR([row]);
+  return row.endDate === "2026-08-10";
+})());
+
 // ── formatAddress ────────────────────────────────────────────────────────────
 const A = window.LTP_formatAddress;
 eq("AD1 full address", A({ address: "123 Main", city: "Austin", state: "TX", zip: "78701" }), "123 Main, Austin, TX 78701");

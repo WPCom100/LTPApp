@@ -1266,6 +1266,28 @@ window.LTP_scheduleRowHasContent = function(s) {
   );
 };
 
+// Repair each schedule row's endDate before validating/saving. The schedule
+// editor exposes no endDate input, so a stale or half-typed value (e.g. a
+// "0002-08-14" frozen mid-keystroke by the old date-input handler, or the
+// original day left behind after a shift was moved) is impossible for the
+// user to see or fix — and the project form's range validation would reject
+// the save against that invisible date. Rules: no date → no endDate; an
+// endDate before the date is nonsense → snap to the date; a missing endDate
+// on a dated row → the date (single-day). A deliberate multi-day span
+// (endDate after date) is preserved. Used by the project form's Save.
+window.LTP_normalizeScheduleRows = function(rows) {
+  return (rows || []).map(function(s) {
+    if (!s || typeof s !== "object") return s;
+    if (!s.date) {
+      return s.endDate ? Object.assign({}, s, { endDate: "" }) : s;
+    }
+    if (!s.endDate || s.endDate < s.date) {
+      return Object.assign({}, s, { endDate: s.date });
+    }
+    return s;
+  });
+};
+
 window.LTP_formatAddress = function(e, joiner) {
   if (!e) return "";
   joiner = joiner || ", ";

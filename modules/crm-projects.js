@@ -234,11 +234,10 @@
 
     var [schedError, setSchedError] = useState("");
 
-    function validateSchedule() {
+    function validateSchedule(rows) {
       if (!start || !end) return true; // no project dates to check against
-      var validItems = sched.filter(window.LTP_scheduleRowHasContent);
-      for (var i = 0; i < validItems.length; i++) {
-        var s = validItems[i];
+      for (var i = 0; i < rows.length; i++) {
+        var s = rows[i];
         if (s.date && (s.date < start || s.date > end)) {
           setSchedError("\"" + s.title + "\" starts on " + fmt(s.date) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + ").");
           return false;
@@ -252,10 +251,10 @@
       return true;
     }
 
-    function doSubmit() {
+    function doSubmit(rows) {
       onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end,
         venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp,
-        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
+        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: rows });
     }
 
     // Editing an existing project: park a removal notice (per person, per type)
@@ -263,9 +262,15 @@
     // here (the positions are about to be deleted) so the email still renders.
     function handleSaveClick() {
       if (!name.trim() || !compId) return;
-      if (!validateSchedule()) return;
+      // Normalize before validating: the schedule editor has no endDate input,
+      // so a stale/corrupt hidden endDate (left behind by moving a shift, or
+      // frozen mid-keystroke by the old date handler) must be repaired here —
+      // otherwise validation rejects the save against a date the user can't
+      // see anywhere in the UI.
+      var cleaned = window.LTP_normalizeScheduleRows(sched.filter(window.LTP_scheduleRowHasContent));
+      if (!validateSchedule(cleaned)) return;
       if (initial && initial.id) {
-        var removed = window.LTP_diffRemovedCrew(initial.schedule, sched, ctx.contacts, ctx.services);
+        var removed = window.LTP_diffRemovedCrew(initial.schedule, cleaned, ctx.contacts, ctx.services);
         removed.forEach(function(g) {
           window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: initial.id, projectName: name || initial.name || "", template: g.template, shifts: g.shifts });
         });
@@ -275,7 +280,7 @@
           window.LTP_toast("Added to notify tray", { message: n + " crew member" + (n !== 1 ? "s" : "") + " queued — send from the tray (bottom-left).", variant: "info" });
         }
       }
-      doSubmit();
+      doSubmit(cleaned);
     }
 
     return h(window.LTPModal, { title: initial ? "Edit Project" : "Create Project", onClose: onClose, wide: true, disableBackdrop: true },

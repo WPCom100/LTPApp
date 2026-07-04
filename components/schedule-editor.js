@@ -100,7 +100,12 @@
         if (s.id !== id) return s;
         var upd = Object.assign({}, s);
         upd[field] = val;
-        if (field === "date" && !s.endDate) upd.endDate = val;
+        // endDate has no input in this editor, so it must follow the date for
+        // single-day rows — empty, tracking the old date, or now before the
+        // new date all snap to the new date. Only a deliberate multi-day span
+        // (endDate after the new date) is preserved. Leaving it behind made
+        // the project form reject saves against a date the user can't see.
+        if (field === "date" && (!s.endDate || s.endDate === s.date || s.endDate < val)) upd.endDate = val;
         return upd;
       }));
     }
@@ -411,7 +416,11 @@
                     h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
                       style: Object.assign({}, inp, { flex: 1 }) }),
                     h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
-                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); if (!s.endDate) updateItem(s.id, "endDate", e.target.value); },
+                      // One updateItem only — it syncs endDate itself. A second
+                      // call here recomputed from the stale `schedule` prop and
+                      // clobbered the date update entirely (freezing half-typed
+                      // dates like "0002-08-14" into the hidden endDate).
+                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); },
                         style: Object.assign({}, inp, { width: 120, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
                       h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
