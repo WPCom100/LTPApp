@@ -86,6 +86,22 @@
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Contacts"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, projContacts.length)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Quotes"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.accent } }, projectQuotes.length))
         ),
+        h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Location"),
+        (function() {
+          // Same live resolution the crew emails use: the "use company address"
+          // flag reads the client company's CURRENT address at render time.
+          var siteAddr = project.siteUseCompanyAddress
+            ? (company ? window.LTP_formatAddress(company) : "")
+            : (project.siteAddress || "").trim();
+          if (!project.venue && !siteAddr) {
+            return h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 16, fontStyle: "italic" } }, "No location set — add a venue or site address via Edit.");
+          }
+          return h("div", { style: { display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent, marginBottom: 16 } },
+            h("div", null,
+              project.venue && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, project.venue),
+              siteAddr && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: project.venue ? 2 : 0 } },
+                siteAddr + (project.siteUseCompanyAddress ? "  ·  client company address" : ""))));
+        })(),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Contacts"),
         projContacts.length > 0 ? projContacts.map(function(c) { return h("div", { key: c.id, style: { fontSize: "13px", color: B.textSec, marginBottom: 4, cursor: "pointer" }, onClick: function() { ctx.setSelectedProjectId(null); ctx.setEditContactId(c.id); } }, h("span", { style: { color: B.accent, textDecoration: "underline" } }, c.firstName + " " + c.lastName), " \u2014 " + c.role + " \u00b7 " + c.email); }) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No contacts assigned."),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "16px 0 8px", textTransform: "uppercase" } }, "Upcoming Schedule"),
@@ -230,20 +246,26 @@
     var [budLb, setBudLb] = useState(initial ? initial.budget.labor : 0);
     var [budR, setBudR] = useState(initial ? initial.budget.rentals : 0);
     var [budM, setBudM] = useState(initial ? initial.budget.misc : 0);
-    var [sched, setSched] = useState(initial ? initial.schedule.map(function(s) { return Object.assign({}, s); }) : []);
 
     var [schedError, setSchedError] = useState("");
 
-    function validateSchedule(rows) {
+    // The schedule itself is planned in the full-screen Schedule Builder
+    // (#/projects/<id>/schedule) — this form no longer edits it. But the
+    // project DATES are edited here, so the saved schedule is still checked
+    // against the new range before saving (normalized first: rows can carry
+    // a stale hidden endDate the editor never displays).
+    function validateSchedule() {
       if (!start || !end) return true; // no project dates to check against
+      var rows = window.LTP_normalizeScheduleRows(
+        ((initial && initial.schedule) || []).filter(window.LTP_scheduleRowHasContent));
       for (var i = 0; i < rows.length; i++) {
         var s = rows[i];
         if (s.date && (s.date < start || s.date > end)) {
-          setSchedError("\"" + s.title + "\" starts on " + fmt(s.date) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + ").");
+          setSchedError("\"" + s.title + "\" starts on " + fmt(s.date) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + "). Widen the dates here, or move that day in the Schedule Builder first.");
           return false;
         }
         if (s.endDate && (s.endDate < start || s.endDate > end)) {
-          setSchedError("\"" + s.title + "\" ends on " + fmt(s.endDate) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + ").");
+          setSchedError("\"" + s.title + "\" ends on " + fmt(s.endDate) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + "). Widen the dates here, or move that day in the Schedule Builder first.");
           return false;
         }
       }
@@ -251,36 +273,21 @@
       return true;
     }
 
-    function doSubmit(rows) {
+    // No schedule key in the payload: the edit save merges d over the project
+    // and keeps x.schedule when absent (projects.js), so the builder-managed
+    // schedule is untouched; the create save defaults it to []. Crew-removal
+    // notices are handled where removals can actually happen now — the
+    // Schedule Builder's save.
+    function doSubmit() {
       onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end,
         venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp,
-        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: rows });
+        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM } });
     }
 
-    // Editing an existing project: park a removal notice (per person, per type)
-    // for any crew this save pulls off shifts, into the notify tray. Snapshot
-    // here (the positions are about to be deleted) so the email still renders.
     function handleSaveClick() {
       if (!name.trim() || !compId) return;
-      // Normalize before validating: the schedule editor has no endDate input,
-      // so a stale/corrupt hidden endDate (left behind by moving a shift, or
-      // frozen mid-keystroke by the old date handler) must be repaired here —
-      // otherwise validation rejects the save against a date the user can't
-      // see anywhere in the UI.
-      var cleaned = window.LTP_normalizeScheduleRows(sched.filter(window.LTP_scheduleRowHasContent));
-      if (!validateSchedule(cleaned)) return;
-      if (initial && initial.id) {
-        var removed = window.LTP_diffRemovedCrew(initial.schedule, cleaned, ctx.contacts, ctx.services);
-        removed.forEach(function(g) {
-          window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: initial.id, projectName: name || initial.name || "", template: g.template, shifts: g.shifts });
-        });
-        if (removed.length) {
-          var people = {}; removed.forEach(function(g) { people[g.crewId] = true; });
-          var n = Object.keys(people).length;
-          window.LTP_toast("Added to notify tray", { message: n + " crew member" + (n !== 1 ? "s" : "") + " queued — send from the tray (bottom-left).", variant: "info" });
-        }
-      }
-      doSubmit(cleaned);
+      if (!validateSchedule()) return;
+      doSubmit();
     }
 
     return h(window.LTPModal, { title: initial ? "Edit Project" : "Create Project", onClose: onClose, wide: true, disableBackdrop: true },
@@ -323,7 +330,23 @@
           h(window.LTPInput, { label: "Rentals", value: budR, onChange: function(v) { setBudR(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Misc", value: budM, onChange: function(v) { setBudM(Number(v) || 0); }, type: "number" })
         ),
-        h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services }),
+        // Schedule hand-off — planning lives in the full-screen Schedule
+        // Builder, not this form (the inline editor here was redundant).
+        h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Schedule"),
+        initial
+          ? (function() {
+              var rows = (initial.schedule || []).filter(window.LTP_scheduleRowHasContent);
+              var posCount = rows.reduce(function(n, s) { return n + (s.positions || []).length; }, 0);
+              return h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } },
+                    rows.length + " schedule day" + (rows.length !== 1 ? "s" : "") + (posCount ? " · " + posCount + " position" + (posCount !== 1 ? "s" : "") : "")),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                    "Days, times, and crew are planned in the full-screen Schedule Builder.")),
+                h(window.Btn, { small: true, variant: "ghost", onClick: function() { window.LTPRouter.navigate("projects/" + initial.id + "/schedule"); } }, "Open Schedule Builder"));
+            })()
+          : h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } },
+              "Create the project first — then plan its days in the full-screen Schedule Builder."),
         schedError && h("div", { style: { fontSize: "12px", color: B.danger, padding: "8px 12px", background: B.dangerBg, borderRadius: "6px", border: "1px solid " + B.dangerBd } }, schedError),
         h(window.Btn, { onClick: handleSaveClick }, initial ? "Save Changes" : "Create Project")
       )
