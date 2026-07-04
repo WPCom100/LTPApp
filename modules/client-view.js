@@ -138,36 +138,28 @@
     document.head.appendChild(el);
   }
 
-  // ── Masthead hero: logo │ company block, on the brand rule ────────────────
+  // ── Masthead hero (img with text-wordmark fallback) + gradient rule ────────
   function Masthead(props) {
-    // props: { failed, onFail, companyName, info, compact }
-    // The lockup: linear logo, a vertical masthead-orange divider, then the
-    // company contact block — the whole row sits ON the 4px masthead-orange
-    // rule (pulled up 1px to overlap the logo's base and painted after it in
-    // the same parent, exactly like the crew call sheet / email masthead), so
-    // the vertical divider and the underline read as one connected frame.
+    // props: { failed, onFail, companyName, maxWidth }
+    // Identical treatment to the crew call sheet (modules/crew-view.js):
+    // solid masthead-orange rule pulled up 1px to overlap the logo's base, and
+    // painted after the img (same DOM parent) so it sits ON the bottom edge —
+    // the lockup and rule read as one image, like the email masthead.
     var rule = h("div", { style: { height: 4, width: "100%", background: MASTHEAD_ORANGE, marginTop: -1, position: "relative", zIndex: 1 } });
     var art;
     if (props.failed) {
-      art = h("div", { style: { display: "block", paddingBottom: 6 } },
-        h("span", { style: { display: "block", fontSize: props.compact ? "20px" : "30px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em", lineHeight: 1 } }, "LUMINARY"),
-        h("div", { style: { fontSize: props.compact ? "8px" : "10px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.22em", marginTop: 4 } }, "TECHNOLOGY & PRODUCTIONS"));
+      art = h("div", { style: { display: "block" } },
+        h("span", { style: { display: "block", fontSize: "30px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em", lineHeight: 1 } }, "LUMINARY"),
+        h("div", { style: { fontSize: "10px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.22em", marginTop: 4 } }, "TECHNOLOGY & PRODUCTIONS"));
     } else {
       art = h("img", {
         src: MASTHEAD_SRC,
         alt: props.companyName || "Luminary Technology & Productions",
         onError: props.onFail,
-        style: { display: "block", width: "100%", maxWidth: (props.compact ? 180 : 320) + "px", height: "auto", margin: 0 },
+        style: { display: "block", width: "100%", maxWidth: (props.maxWidth || 360) + "px", height: "auto", margin: 0 },
       });
     }
-    return h("div", null,
-      h("div", { style: { display: "flex", alignItems: "flex-end" } },
-        h("div", { style: { flexShrink: 0, maxWidth: "60%" } }, art),
-        // The vertical line — stretches from the lockup's cap down INTO the
-        // horizontal rule below so the two read as one drawn frame.
-        h("div", { style: { alignSelf: "stretch", width: 2, flexShrink: 0, background: MASTHEAD_ORANGE, margin: props.compact ? "0 12px" : "0 18px" } }),
-        h("div", { style: { flex: 1, minWidth: 0, paddingBottom: props.compact ? 4 : 8 } }, props.info)),
-      rule);
+    return h("div", null, art, rule);
   }
 
   // ── Signature pad component ────────────────────────────────────────────────
@@ -704,14 +696,6 @@
             "Questions about this invoice? Call " + settings.phone + ".")));
     }
 
-    // ── Masthead company block (right of the vertical rule) ──────────────────
-    var addrLine = settingsAddress ? settingsAddress(settings) : "";
-    var mastheadInfo = h("div", { style: { lineHeight: 1.5 } },
-      h("div", { style: { fontSize: isMobile ? "11px" : "13px", fontWeight: 800, letterSpacing: "0.08em", textTransform: "uppercase", color: ORANGE_SOFT, overflowWrap: "break-word" } },
-        settings.companyName || "Luminary Technology & Productions"),
-      addrLine && h("div", { style: { fontSize: isMobile ? "10px" : "11px", color: MUTE, marginTop: 3 } }, addrLine),
-      settings.phone && h("div", { style: { fontSize: isMobile ? "10px" : "11px", color: MUTE, marginTop: 2 } }, settings.phone));
-
     // ── Prepared-for block ────────────────────────────────────────────────────
     var clientTitle = (company && company.name) || (contact && ((contact.firstName || "") + " " + (contact.lastName || "")).trim()) || "";
     var clientAddr = company ? window.LTP_formatAddress(company) : (contact ? window.LTP_formatAddress(contact) : "");
@@ -740,14 +724,19 @@
     var pad = isMobile ? "28px 20px 0" : "40px 36px 0";
     var bottomPad = showSticky ? 96 : 56;
 
-    // Footer — one centered "Company · website" line, matching the email shell.
+    // Footer — centered "Company · website" line matching the email shell/crew
+    // page, plus a quieter address · phone line (the document's issuing-party
+    // contact block, which the crew masthead doesn't carry but an invoice must).
     var websiteHref = settings.website
       ? (/^https?:\/\//i.test(settings.website) ? settings.website : "https://" + settings.website)
       : null;
+    var addrLine = settingsAddress ? settingsAddress(settings) : "";
+    var contactBits = [addrLine, settings.phone].filter(function(x) { return x; });
     var footer = h("div", { style: { marginTop: 44, paddingTop: 24, borderTop: "1px solid " + HAIR, textAlign: "center", fontSize: "11px", color: MUTE, lineHeight: 1.6 } },
       h("span", null, settings.companyName || "Luminary Technology & Productions"),
       settings.website && h("span", { style: { color: FAINT } }, "  ·  "),
-      settings.website && h("a", { href: websiteHref, target: "_blank", rel: "noopener noreferrer", style: { color: MUTE, textDecoration: "none" } }, settings.website));
+      settings.website && h("a", { href: websiteHref, target: "_blank", rel: "noopener noreferrer", style: { color: MUTE, textDecoration: "none" } }, settings.website),
+      contactBits.length > 0 && h("div", { style: { color: FAINT, marginTop: 2 } }, contactBits.join("  ·  ")));
 
     return h("div", { style: { minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, padding: "0 0 " + bottomPad + "px" } },
       // Preview banner
@@ -755,8 +744,8 @@
         "PREVIEW MODE — Accept and Decline are disabled. Remove ?preview=1 to use the real client view."),
 
       h("div", { style: { maxWidth: 820, margin: "0 auto", padding: pad } },
-        // Masthead hero: logo │ company block, on the brand rule
-        h(Masthead, { failed: mastheadFailed, onFail: function() { setMastheadFailed(true); }, companyName: settings.companyName, info: mastheadInfo, compact: isMobile }),
+        // Masthead hero + brand rule (same lockup as the crew call sheet)
+        h(Masthead, { failed: mastheadFailed, onFail: function() { setMastheadFailed(true); }, companyName: settings.companyName, maxWidth: 360 }),
 
         // Overline row: CUSTOMER QUOTE / INVOICE · status eyebrow
         h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 18 } },
