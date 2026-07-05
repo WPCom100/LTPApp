@@ -435,6 +435,16 @@ near("K3 adjTotal net", po.groups[0].rows[0].adjTotal, 30);
 near("K3 grand total includes adj", po.grandTotal, 430);
 eq("K3 two adjustments listed", po.groups[0].rows[0].adjustments.length, 2);
 
+// ── L. Site-address resolver (client mirror of _resolve_site_address) ───────
+const SITE = window.LTP_siteAddress;
+if (typeof SITE !== "function") { console.error("theme.js did not export LTP_siteAddress"); process.exit(1); }
+const COMPS = [{ id: 11, address: "500 E Cesar Chavez St\nSuite 2", city: "Austin", state: "TX", zip: "78701" }];
+eq("L1 typed address, multi-line flattens", SITE({ siteAddress: "123 Main St\nDock B" }, COMPS), "123 Main St, Dock B");
+eq("L2 company-derived", SITE({ siteUseCompanyAddress: true, companyId: 11 }, COMPS), "500 E Cesar Chavez St, Suite 2, Austin, TX 78701");
+eq("L3 checkbox but company missing → typed fallback", SITE({ siteUseCompanyAddress: true, companyId: 99, siteAddress: "Fallback Rd" }, COMPS), "Fallback Rd");
+eq("L4 no data → empty", SITE({}, COMPS), "");
+eq("L5 null project → empty", SITE(null, COMPS), "");
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

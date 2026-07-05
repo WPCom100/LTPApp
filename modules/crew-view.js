@@ -158,7 +158,7 @@
   }
 
   // ── Terminal banner (accepted / declined / withdrawn) ──────────────────────
-  function renderBanner(status, crewName, respondedAt) {
+  function renderBanner(status, crewName, respondedAt, siteAddress) {
     var cfg;
     if (status === "accepted") {
       cfg = { color: SUCCESS, bg: SUCCESS_BG, bd: SUCCESS_BD,
@@ -179,6 +179,13 @@
     var receipt = (status !== "withdrawn" && respondedAt)
       ? h("div", { style: { fontSize: "12px", fontWeight: 500, color: FAINT, fontFamily: MONO, fontVariantNumeric: "tabular-nums", marginTop: 8 } }, "Responded " + fmtRespondedAt(respondedAt))
       : null;
+    // Where to show up — repeated inside the acceptance confirmation (the part
+    // crew screenshot / come back to), linked to a map for one-tap navigation.
+    var whereRow = (status === "accepted" && siteAddress)
+      ? h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(siteAddress), target: "_blank", rel: "noopener",
+          style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 8 } },
+          "📍 " + siteAddress)
+      : null;
 
     return h("div", { style: { background: cfg.bg, border: "1px solid " + cfg.bd, borderRadius: 14, padding: 20 } },
       h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14 } },
@@ -186,6 +193,7 @@
         h("div", null,
           h("div", { style: { fontSize: "16px", fontWeight: 700, color: cfg.color } }, cfg.headline),
           h("div", { style: { fontSize: "13px", color: TEXT, lineHeight: 1.55, marginTop: 4 } }, cfg.note),
+          whereRow,
           receipt)));
   }
 
@@ -371,7 +379,7 @@
 
     var actionZone;
     if (terminal) {
-      actionZone = h("div", { style: { marginTop: 40 } }, renderBanner(status, crewName, data.respondedAt));
+      actionZone = h("div", { style: { marginTop: 40 } }, renderBanner(status, crewName, data.respondedAt, project.siteAddress));
     } else {
       actionZone = h("div", { ref: actionRef, style: { marginTop: 40, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
         h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take these calls?"),

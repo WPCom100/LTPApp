@@ -454,6 +454,25 @@ window.LTP_calcDayLabor = function(items, services, crewMins) {
   return { units: units, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
 };
 
+// Job-site address for crew-facing surfaces — client-side mirror of
+// backend/routes/crew.py::_resolve_site_address. Company-derived when the
+// project opts in (so a company address edit flows through live), else the
+// typed address; multi-line input flattens to one line.
+window.LTP_siteAddress = function(project, companies) {
+  if (!project) return "";
+  var flat = function(t) { return String(t || "").split("\n").map(function(x) { return x.trim(); }).filter(Boolean).join(", "); };
+  if (project.siteUseCompanyAddress && project.companyId) {
+    var c = (companies || []).find(function(x) { return x.id === project.companyId; });
+    if (c) {
+      var locality = [String(c.state || "").trim(), String(c.zip || "").trim()].filter(Boolean).join(" ");
+      var tail = [String(c.city || "").trim(), locality].filter(Boolean).join(", ");
+      var addr = [flat(c.address), tail].filter(Boolean).join(", ");
+      if (addr) return addr;
+    }
+  }
+  return flat(project.siteAddress);
+};
+
 // Build the { [crewId]: minDayCost } map LTP_calcDayLabor consumes from the crew
 // roster. Only crew with a positive negotiated minimum are included, so a person
 // without one behaves exactly as before (role cost, no floor).

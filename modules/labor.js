@@ -1420,7 +1420,7 @@
   // crew member left, plus Resend / Withdraw on still-pending ones. Crew
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
-  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services }) {
+  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services, companies }) {
     // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
     var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
@@ -1657,15 +1657,20 @@
 
       // Confirm confirmation — accepted positions → confirmed, with the same
       // notify choice the Assignments tab used to offer.
-      confirmDlg && h(window.LTPModal, { title: "Confirm " + crewLabel(confirmDlg.contactId), onClose: function() { setConfirmDlg(null); } },
-        h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
-          "Confirm ", h("strong", { style: { color: B.text } }, crewLabel(confirmDlg.contactId)),
-          " for ", h("strong", { style: { color: B.text } }, projLabel(confirmDlg.projectId)),
-          "? Their accepted positions move to confirmed."),
-        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
-          h(window.Btn, { variant: "ghost", onClick: function() { doConfirm(confirmDlg, false); } }, "Confirm Quietly"),
-          h(window.Btn, { onClick: function() { doConfirm(confirmDlg, true); } }, "Confirm & Notify")))
+      confirmDlg && (function() {
+        var proj = (projects || []).find(function(p) { return p.id === confirmDlg.projectId; });
+        var site = [((proj && proj.venue) || "").trim(), window.LTP_siteAddress(proj, companies)].filter(Boolean).join(" — ");
+        return h(window.LTPModal, { title: "Confirm " + crewLabel(confirmDlg.contactId), onClose: function() { setConfirmDlg(null); } },
+          h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: site ? 8 : 16 } },
+            "Confirm ", h("strong", { style: { color: B.text } }, crewLabel(confirmDlg.contactId)),
+            " for ", h("strong", { style: { color: B.text } }, projLabel(confirmDlg.projectId)),
+            "? Their accepted positions move to confirmed."),
+          site && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 16 } }, "📍 " + site),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
+            h(window.Btn, { variant: "ghost", onClick: function() { doConfirm(confirmDlg, false); } }, "Confirm Quietly"),
+            h(window.Btn, { onClick: function() { doConfirm(confirmDlg, true); } }, "Confirm & Notify")));
+      })()
     );
   }
 
@@ -1728,7 +1733,7 @@
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
-      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services }),
+      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
       tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services })

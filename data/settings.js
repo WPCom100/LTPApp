@@ -193,7 +193,7 @@ window.LTP_TEMPLATE_VARIABLES = {
   invoiceSent:     ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   invoiceReminder: ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],
-  crewRequest:     ["companyName", "crewName", "projectName", "header", "shifts", "signature"],
+  crewRequest:     ["companyName", "crewName", "projectName", "location", "header", "shifts", "signature"],
   crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
