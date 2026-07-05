@@ -3,10 +3,11 @@
 A CrewRequest (backend/models.py) references shift positions ONLY by string id
 (``position_ids``) plus a ``project_id``. The positions themselves live inside
 ``Project.schedule[].positions[]`` (a JSON column). So removing a position,
-removing a whole schedule day, or deleting a project leaves a request's
-``position_ids`` pointing at things that no longer exist — and because the rest
-of the system silently skips ids it can't find, an ``accepted`` request keeps
-reading as a live hire forever.
+removing a whole schedule day, clearing a day's date (it becomes an
+"unscheduled" day, no longer a valid shift), or deleting a project leaves a
+request's ``position_ids`` pointing at things that are no longer live — and
+because the rest of the system silently skips ids it can't find, an
+``accepted`` request keeps reading as a live hire forever.
 
 This module is the single source of truth for detecting + healing that drift. It
 is wired into every stage of the pipeline that can remove an upstream entity, so
@@ -64,6 +65,15 @@ def _assigned_position_ids(project, contact_id) -> set:
     if project is None:
         return present
     for shift in (project.schedule or []):
+        # A shift whose date was cleared is "unscheduled" — no longer a real,
+        # assignable day. Treat its positions as gone so a request sent while the
+        # day was dated is trimmed (or auto-withdrawn, if it was the only day)
+        # when the date is later removed. This mirrors the send-side rule that a
+        # request can't be created for a dateless day in the first place
+        # (routes/crew.py send_crew_request), so the "must have a date" invariant
+        # holds in both directions.
+        if not (shift.get("date") or "").strip():
+            continue
         for pos in (shift.get("positions") or []):
             pid = pos.get("id")
             if pid is not None and pos.get("crewId") == contact_id:

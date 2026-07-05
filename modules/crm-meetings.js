@@ -31,8 +31,7 @@
             var newNotes = linkedNoteIds.length > 0 ? p.notes.map(function(n) { return linkedNoteIds.includes(n.id) ? Object.assign({}, n, { linkedMeetingId: meetingId }) : n; }) : p.notes;
             return Object.assign({}, p, { meetings: newMeetings, notes: newNotes });
           }); });
-          var eh = String(Math.min(23, parseInt(time.split(":")[0]) + 1)).padStart(2, "0");
-          window.open("https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent(title + " \u2014 " + (project ? project.name : "")) + "&dates=" + date.replace(/-/g, "") + "T" + time.replace(":", "") + "00/" + date.replace(/-/g, "") + "T" + eh + time.split(":")[1] + "00&add=" + ae.join(","), "_blank");
+          window.open(window.LTP_gcalUrl({ title: title + " \u2014 " + (project ? project.name : ""), date: date, time: time, attendees: ae }), "_blank");
           ctx.setShowAddMeeting(null);
         } }, "Create & Export to Google Calendar")
       )

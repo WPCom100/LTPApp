@@ -42,6 +42,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     companies: companies, setCompanies: setCompanies,
     contacts:  contacts,  setContacts:  setContacts,
     projects:  projects,  services: services || [],
+    quotes: quotes || [],
     selectedCompany: selectedCompany,
     setSelectedCompanyId: setSelectedCompanyId,
     setEditCompanyId: function(id) {
@@ -253,7 +254,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
 
     editContactId && h(window.CRMContactDetail, { ctx: ctx }),
 
-    deleteConfirm && h(window.ConfirmDeleteDialog, { deleteConfirm: deleteConfirm, onCancel: function() { setDeleteConfirm(null); }, onConfirm: handleDelete }),
+    deleteConfirm && h(window.LTPConfirmDialog, { dlg: { title: "Confirm Delete", message: 'Are you sure you want to delete "' + deleteConfirm.name + '"? This cannot be undone.', variant: "danger", confirmLabel: "Delete", onConfirm: function() { handleDelete(deleteConfirm); } }, onCancel: function() { setDeleteConfirm(null); } }),
 
     // Guided deletion wizard
     deleteWizard && function() {

@@ -49,12 +49,6 @@ def _qbo_environment() -> str:
     return "production" if env in ("production", "prod") else "sandbox"
 
 
-def _aware(dt):
-    if dt is None:
-        return None
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
 # ── OAuth: connect ───────────────────────────────────────────────────────────
 
 @qbo_router.get("/connect")
@@ -163,7 +157,7 @@ async def status(
         return {"connected": False, "configured": bool(os.environ.get("QBO_CLIENT_ID"))}
 
     now = datetime.now(timezone.utc)
-    refresh_exp = _aware(conn.refresh_token_expires_at)
+    refresh_exp = quickbooks._aware(conn.refresh_token_expires_at)
     needs_reconnect = refresh_exp is not None and refresh_exp <= now
 
     connected_by = None
@@ -192,7 +186,7 @@ async def status(
         "realmMasked": masked_realm,
         "connectedBy": connected_by,
         "connectedAt": conn.connected_at.isoformat() if conn.connected_at else None,
-        "accessTokenExpiresAt": _aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
+        "accessTokenExpiresAt": quickbooks._aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
         "refreshTokenExpiresAt": refresh_exp.isoformat() if refresh_exp else None,
         "needsReconnect": needs_reconnect,
         # Auto-receipt surface for the Settings panel.
@@ -273,5 +267,42 @@ async def delete_invoice_route(
     except quickbooks.QboReconnectRequired:
         return JSONResponse(status_code=409, content={"reason": "reconnect",
                             "error": "QuickBooks connection expired. Reconnect it in Settings."})
+    except quickbooks.QboApiError as e:
+        return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+
+
+# ── Compute a quote's sales tax via a temporary estimate ──────────────────────
+
+@qbo_router.post("/quotes/{quote_id}/estimate-tax")
+async def estimate_quote_tax_route(
+    quote_id: int,
+    body: PushRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Admin-only. Compute this quote's sales tax the QuickBooks-authoritative
+    way by creating a TEMPORARY QB Estimate, reading its computed tax, and
+    deleting it (the business doesn't keep QB estimates). Stores qb_tax_total +
+    the frontend change-signature on the quote. Returns the result on success;
+    on a QuickBooks error returns a structured error response (not raised) so any
+    activity stamp commits with the request transaction."""
+    result = await db.execute(select(models.Quote).where(models.Quote.id == quote_id))
+    quote = result.scalar_one_or_none()
+    if quote is None:
+        raise HTTPException(status_code=404, detail=f"quote {quote_id} not found")
+    try:
+        calc = await qbo_sync.get_quote_estimate_tax(db, quote, user=admin)
+        if body and body.signature:
+            quote.qb_tax_signature = body.signature
+            calc["qbTaxSignature"] = body.signature
+        return calc
+    except quickbooks.QboNotConnected:
+        return JSONResponse(status_code=409, content={"reason": "not_connected",
+                            "error": "QuickBooks is not connected. Connect it in Settings."})
+    except quickbooks.QboReconnectRequired:
+        return JSONResponse(status_code=409, content={"reason": "reconnect",
+                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+    except qbo_sync.InvoiceNotSyncable as e:
+        return JSONResponse(status_code=400, content={"reason": "not_syncable", "error": str(e)})
     except quickbooks.QboApiError as e:
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})

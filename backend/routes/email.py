@@ -60,24 +60,27 @@ Lifecycle
 import asyncio
 import io
 import os
-import re
 import secrets
 from datetime import datetime, timezone
-from html import escape
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm.attributes import flag_modified
 
 from backend import gmail, models
+from backend.activity import append_activity
+from backend.email_compose import (
+    _build_view_url, _email_brand, _render_signature, email_shell,
+)
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
 from backend.pdf_generator import doc_ref, generate_pdf
-from backend.routes._shared import invoice_dict, load_related, load_settings
+from backend.routes._shared import (
+    invoice_dict, load_related, load_settings,
+    safe_pdf_filename as _pdf_filename,
+)
 from backend.sanitize import email_html
 
 
@@ -113,125 +116,6 @@ class SendRequest(BaseModel):
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
-
-
-def _pdf_filename(stem: str) -> str:
-    """Sanitize a doc ref ('INV-2026-014') into a safe attachment filename.
-    Mirrors backend/routes/pdf.py::_safe_filename."""
-    safe = re.sub(r"[^A-Za-z0-9._-]", "_", stem or "invoice")
-    return safe if safe.lower().endswith(".pdf") else f"{safe}.pdf"
-
-
-def _app_origin() -> str:
-    """Public-facing origin (scheme + host) for view URLs in outbound mail.
-    Pulled from LTP_OAUTH_REDIRECT_URI so we use the same canonical host
-    Google was given for the OAuth callback. Falls back to empty string in
-    local dev where the redirect URI isn't set — the frontend will handle
-    a relative URL fine, but the email body shouldn't have one (clients
-    can't follow `#/view/...` without a host)."""
-    redirect = os.environ.get("LTP_OAUTH_REDIRECT_URI", "")
-    if not redirect:
-        return ""
-    parsed = urlparse(redirect)
-    return f"{parsed.scheme}://{parsed.netloc}"
-
-
-def _build_view_url(entity_type: str, share_token: str, tracking_token: str) -> str:
-    """Per-recipient client view URL. The `?r=` query param is what the
-    backend's view route uses to attribute opens to a specific recipient."""
-    origin = _app_origin()
-    return f"{origin}/#/view/{entity_type}/{share_token}?r={tracking_token}"
-
-
-def _render_signature(
-    user: models.User,
-    settings_data: dict,
-) -> str:
-    """Apply the workspace signature template against the sender's profile.
-    Returns the rendered HTML (or empty string if no template configured).
-    Substitutes {{userName}}, {{userEmail}}, {{userTitle}}, {{userPhone}},
-    {{userPhoto}}.
-    User fields are HTML-escaped BEFORE substitution as defense in depth
-    — the email body goes through bleach sanitization downstream too,
-    but escaping here ensures a future refactor that drops one of those
-    layers doesn't open an XSS hole.
-
-    Falls back to _FALLBACK_SIGNATURE when the workspace hasn't
-    customized a template. Reason: data/settings.js ships a rich default
-    that lives only in the frontend's merged config — it's not in the DB
-    until an admin clicks Save in Settings. Without this fallback, the
-    first send from a fresh deploy would substitute {{signature}} with
-    "" and the recipient would see the body abruptly end.
-
-    The fallback string MUST match data/settings.js::emailSignatureTemplate
-    byte-for-byte so the Send-modal preview (which reads the frontend
-    config) shows the same signature the recipient gets. Any change to
-    one MUST be mirrored in the other; tests/test_polish_pass_signature_html.py
-    pins both via substring checks."""
-    template = (settings_data.get("emailSignatureTemplate") or "").strip()
-    if not template:
-        template = _FALLBACK_SIGNATURE
-    # {{userPhoto}} resolves to the user's Google profile picture, with
-    # the LTP logo as a fallback when picture_url is empty (rare —
-    # Google OAuth users almost always have one, but a User row that
-    # pre-dates the OAuth scope grant could be photo-less). We escape
-    # picture_url too even though it's controlled by Google; an attacker
-    # who managed to inject HTML there would still be neutered.
-    photo_url = (user.picture_url or "").strip() or _PHOTO_FALLBACK_URL
-    return (
-        template
-        .replace("{{userPhoto}}", escape(photo_url))
-        .replace("{{userName}}", escape(user.name or ""))
-        .replace("{{userEmail}}", escape(user.email or ""))
-        .replace("{{userTitle}}", escape(user.title or ""))
-        .replace("{{userPhone}}", escape(user.phone or ""))
-    )
-
-
-# Used by both _render_signature (for users with no Google profile pic)
-# AND embedded in _FALLBACK_SIGNATURE; pinned here so changing the URL
-# updates both call sites in one edit. MUST stay in sync with the same
-# constant in theme.js (window.LTP_SIGNATURE_PHOTO_FALLBACK) so the
-# Send-modal preview renders the same image the recipient gets.
-_PHOTO_FALLBACK_URL = (
-    "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
-)
-
-
-# Server-side fallback signature — must stay byte-identical to the
-# data/settings.js default. When the DB has no emailSignatureTemplate
-# value (fresh deploy, settings never saved, admin set it to ""), the
-# Send pipeline renders this. Storing it here too means the recipient
-# always sees a rich signature, never the truncated "...if you have any
-# questions or would like to proceed." that motivated this fallback.
-_FALLBACK_SIGNATURE = (
-    '<table style="padding:0;margin:18px 0 0 0;border:none;border-collapse:collapse;max-width:100%">'
-    '<tr><td style="padding:0 10px 0 0;vertical-align:top">'
-    '<img alt="{{userName}}" height="120" '
-    'src="{{userPhoto}}" width="120" '
-    'style="display:block;border-radius:50%;object-fit:cover">'
-    '</td><td style="border-left:3px solid #dddddd;padding:6px 0 0 14px;word-break:break-word;'
-    "font-family:'verdana','geneva',sans-serif;font-size:12px;line-height:14px;color:#233038\">"
-    '<div style="margin-bottom:10px"><strong>'
-    '<span style="font-size:16px;color:#ef5822">{{userName}}</span>'
-    '</strong><br>{{userTitle}}</div>'
-    '<div style="margin-bottom:10px">'
-    '<a href="mailto:{{userEmail}}" style="color:#233038;text-decoration:none" target="_blank">{{userEmail}}</a>'
-    '<br>M:&nbsp;<a href="tel:{{userPhone}}" style="color:#233038;text-decoration:none" target="_blank">{{userPhone}}</a>'
-    '</div>'
-    '<div style="margin-bottom:10px">'
-    '<span style="font-size:15px;color:#ef5822"><strong>Luminary Technology &amp; Productions</strong></span>'
-    '<br>3786 Arapaho Rd.<br>Addison, TX 75001<br>'
-    '<a href="https://LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">LuminaryTechnology.Productions</a>'
-    '</div>'
-    '<div>'
-    '<a href="https://www.facebook.com/profile.php?id=61563798680454" style="color:rgb(255,146,30);text-decoration:none;margin-right:6px" target="_blank">'
-    '<img alt="facebook" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png" width="18" style="vertical-align:middle">'
-    '</a>'
-    '<a href="https://www.instagram.com/luminarytechnologyproductions/" style="color:rgb(255,146,30);text-decoration:none" target="_blank">'
-    '<img alt="instagram" height="18" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png" width="18" style="vertical-align:middle">'
-    '</a></div></td></tr></table>'
-)
 
 
 async def _load_entity(
@@ -275,22 +159,12 @@ def _stamp_email_sent(
     if gmail_message_id:
         changes.append({"cat": "Gmail Message ID", "detail": gmail_message_id})
 
-    entry = {
-        "id": "es-" + secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "email_sent",
-        "user": user.name or user.email,
-        "userId": user.id,
-        "message": f"Email sent to {to[0]}" + (f" + {len(to) - 1} more" if len(to) > 1 else ""),
-        "recipients": {"to": to, "cc": cc},
-        "changes": changes,
-    }
-    activity = list(entity.activity or [])
-    activity.append(entry)
-    entity.activity = activity
-    flag_modified(entity, "activity")
-    return entry
+    return append_activity(
+        entity, id_prefix="es-", type_="email_sent",
+        user=user.name or user.email, user_id=user.id,
+        message=f"Email sent to {to[0]}" + (f" + {len(to) - 1} more" if len(to) > 1 else ""),
+        now=now, recipients={"to": to, "cc": cc}, changes=changes,
+    )
 
 
 def _stamp_email_failed(
@@ -300,26 +174,17 @@ def _stamp_email_failed(
     """Mirror of _stamp_email_sent for failed sends. Internal-only
     (email_failed is NOT in PUBLIC_TYPES) — surfaces in the LTP activity
     panel so the sender knows why their click didn't go anywhere."""
-    entry = {
-        "id": "ef-" + secrets.token_urlsafe(6),
-        "date": now.strftime("%Y-%m-%d"),
-        "time": now.strftime("%H:%M"),
-        "type": "email_failed",
-        "user": user.name or user.email,
-        "userId": user.id,
-        "message": f"Email to {to[0]} failed",
-        "recipients": {"to": to, "cc": cc},
-        "changes": [
+    return append_activity(
+        entity, id_prefix="ef-", type_="email_failed",
+        user=user.name or user.email, user_id=user.id,
+        message=f"Email to {to[0]} failed", now=now,
+        recipients={"to": to, "cc": cc},
+        changes=[
             {"cat": "Error", "detail": error[:300]},
             {"cat": "To", "detail": ", ".join(to)},
             {"cat": "Subject", "detail": subject},
         ],
-    }
-    activity = list(entity.activity or [])
-    activity.append(entry)
-    entity.activity = activity
-    flag_modified(entity, "activity")
-    return entry
+    )
 
 
 # ── Endpoint ───────────────────────────────────────────────────────────────
@@ -396,9 +261,7 @@ async def send_email(
     inner_html = email_html(rendered_html)
     # Wrap every email in the shared branded container (light canvas → white
     # card with the masthead on top + footer) so the layout and masthead are
-    # identical across crew and customer emails. Lazy import avoids a
-    # module-load cycle (crew.py imports helpers from this module).
-    from backend.routes.crew import email_shell, _email_brand
+    # identical across crew and customer emails.
     final_html = email_html(email_shell(inner_html, _email_brand(settings_data)))
 
     # 4b. Optionally generate + attach the invoice PDF. Fresh render (the same

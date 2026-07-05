@@ -77,14 +77,15 @@
           if (p.status === "confirmed") filledPos++;
         });
       });
+      var crewMins = window.LTP_crewMinMap(contacts);
       Object.keys(dateMap).forEach(function(d) {
-        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, services);
+        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, services, crewMins);
         totalRate += dayLabor.rateTotal;
         totalCost += dayLabor.costTotal;
       });
       var days = Object.keys(dateMap).length;
       return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost) };
-    }, [draft.schedule]);
+    }, [draft.schedule, contacts]);
 
     // ── Compute changes for activity ─────────────────────────────────────────
     function computeSchedChanges(before, after) {
@@ -229,13 +230,17 @@
       // day rates keyed by role+tier, OT pooled by role.
       var dayRateItems = {};
       var otItems = {};
+      // Per-crew negotiated minimums flow into unit cost (u.dayCost / u.otCost),
+      // so the quote's margin reflects the higher payout — while unitPrice/OT rate
+      // billed to the client stays the role rate.
+      var crewMins = window.LTP_crewMinMap(contacts);
 
       Object.keys(dateGroups).forEach(function(dateKey) {
         var g = dateGroups[dateKey];
         if (!g.dayCall || !g.dayWrap) return;
         var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
 
-        window.LTP_calcDayLabor(g.items, services).units.forEach(function(u) {
+        window.LTP_calcDayLabor(g.items, services, crewMins).units.forEach(function(u) {
           // Each unit is one person. The day-rate line aggregates units of the
           // same role+tier (qty = how many people); costAccum adds $0 for a
           // full-margin unit so its rate is pure margin. Per-unit cost is

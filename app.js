@@ -147,7 +147,6 @@ function LTPSignedInApp(props) {
   // logo when this is empty (rare for Google OAuth users).
   window.LTP_SENDER_PHOTO = props.authUser.pictureUrl || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
-  window.LTP_COMPANY_SHORT = settings.companyShort || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
   window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
   window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
@@ -209,7 +208,7 @@ function LTPSignedInApp(props) {
   useEffect(function() {
     fetch("/api/qbo/status", { credentials: "include" })
       .then(function(r) { return r.ok ? r.json() : null; })
-      .then(function(s) { if (s) { setQboStatus(s); window.LTP_QBO_CONNECTED = s.connected === true; } })
+      .then(function(s) { if (s) { setQboStatus(s); } })
       .catch(function() {});
   }, []);
 
@@ -345,7 +344,7 @@ function LTPSignedInApp(props) {
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
-        settings: settings,
+        settings: settings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "invoices":  return h(window.LTPErrorBoundary, { name: "Invoices" }, h(window.InvoicesView, {
         invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
@@ -470,6 +469,7 @@ function LTPSignedInApp(props) {
               { path: "labor/roster",      label: "Crew Roster"     },
               { path: "labor/calendar",    label: "Calendar"        },
               { path: "labor/schedule",    label: "Weekly Schedule" },
+              { path: "labor/payouts",     label: "Payouts"         },
             ];
             laborSubs.forEach(function(sub) {
               var subKey = sub.path.split("/")[1];

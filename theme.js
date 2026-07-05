@@ -333,14 +333,6 @@ window.LTP_calcLaborDay = function(dayRate, items) {
   return { rate: rate, paidHours: paidHours, unpaidBreakHours: unpaidBreakHours, paidBreakHours: paidBreakHours, mealPenaltyHours: mealPenaltyHours, regularOTHours: regularOTHours, tier: tier, segments: segments };
 };
 
-// Single-block convenience wrapper — one call/wrap span with its breaks.
-// Equivalent to LTP_calcLaborDay with a single item, preserved for callers that
-// only ever deal with one continuous block.
-// breaks = [{ startTime, endTime, type: "unpaid"|"paid" }, ...]
-window.LTP_calcLaborFull = function(dayRate, callTime, endTime, breaks) {
-  return window.LTP_calcLaborDay(dayRate, [{ time: callTime, endTime: endTime, breaks: breaks || [] }]);
-};
-
 // Effective person-SLOT for each position within ONE shift's positions.
 // A slot is a person-identity within a role for the day: pos.slot when the user
 // has set it (> 0), else the lowest unused integer for that role — so two of the
@@ -378,12 +370,17 @@ window.LTP_effectiveSlots = function(positions) {
 // even with differing schedules. Slots default (see LTP_effectiveSlots) so that
 // "same role across shifts = one person" and legacy data behave as before.
 //
-// items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin? }] }]
+// items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin?, crewId? }] }]
 // services = [{ id, dayRate, dayCost, halfDay?, halfDayCost?, otRate?, otCost? }]
-// Returns { units: [{ svc, serviceId, slot, fullMargin, tier:"half"|"full",
-//   paidHours, mealPenaltyHours, otHours, dayRate, dayCost, otRate, otCost,
-//   rateTotal, costTotal }], rateTotal, costTotal }.
-window.LTP_calcDayLabor = function(items, services) {
+// crewMins = optional { [crewId]: minDayCost } — a crew member's negotiated
+//   payout floor. When set, that person's COST is computed at the greater of the
+//   role's cost and their minimum (the minimum is treated like a normal day rate:
+//   half-day → min*0.5, OT → min/10*1.5). RATE (client billing) is never touched.
+//   Build one with LTP_crewMinMap(contacts). Absent → no floor (back-compat).
+// Returns { units: [{ svc, serviceId, slot, crewId, fullMargin, minApplied,
+//   tier:"half"|"full", paidHours, mealPenaltyHours, otHours, dayRate, dayCost,
+//   otRate, otCost, rateTotal, costTotal }], rateTotal, costTotal }.
+window.LTP_calcDayLabor = function(items, services, crewMins) {
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
 
   // Group positions into labor units. A unit is full-margin only if EVERY one
@@ -396,7 +393,10 @@ window.LTP_calcDayLabor = function(items, services) {
       if (!p.serviceId) return;
       var slot = slots[p.id] || 1;
       var key = p.serviceId + "#" + slot;
-      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, shifts: [], allMargin: true };
+      if (!unitMap[key]) unitMap[key] = { svc: svcById[p.serviceId], serviceId: p.serviceId, slot: slot, shifts: [], allMargin: true, crewId: null };
+      // A unit is one person (role+slot across the day); capture whoever fills it
+      // so a per-crew negotiated minimum can be applied to their cost below.
+      if (p.crewId != null && unitMap[key].crewId == null) unitMap[key].crewId = p.crewId;
       // A person's shift carries the item's crew-wide breaks PLUS their own
       // individual breaks (p.breaks) — so a meal break can be given to just
       // this person without affecting everyone else on the shift.
@@ -422,6 +422,20 @@ window.LTP_calcDayLabor = function(items, services) {
     var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
     var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
     var fullMargin = u.allMargin;
+    // Per-crew negotiated minimum: floor this person's COST at their minimum day
+    // rate, treated like a normal rate — so the half-day pays min*0.5 and OT pays
+    // min/10*1.5. Applied per component (never lowers cost), so a role that's
+    // already above the minimum on either the day or OT keeps its higher value.
+    // Full-margin units are excluded (the owner works their own gig at $0). RATE
+    // is deliberately left untouched — the minimum is a payout cost, not billed.
+    var minDay = (crewMins && u.crewId != null && crewMins[u.crewId] > 0) ? crewMins[u.crewId] : 0;
+    var minApplied = false;
+    if (minDay > 0 && !fullMargin) {
+      var floorDay = isHalf ? minDay * 0.5 : minDay;
+      var floorOt = minDay / 10 * 1.5;
+      if (floorDay > dayCost) { dayCost = floorDay; minApplied = true; }
+      if (floorOt > otCost) { otCost = floorOt; minApplied = true; }
+    }
     // Rate always bills the person; cost is $0 when the unit is full margin.
     var unitRate = dayRate + (otHours > 0 ? otRate * otHours : 0);
     var unitCost = fullMargin ? 0 : (dayCost + (otHours > 0 ? otCost * otHours : 0));
@@ -429,7 +443,7 @@ window.LTP_calcDayLabor = function(items, services) {
     costTotal += unitCost;
 
     units.push({
-      svc: svc, serviceId: svc.id, slot: u.slot, fullMargin: fullMargin, tier: tier,
+      svc: svc, serviceId: svc.id, slot: u.slot, crewId: u.crewId, fullMargin: fullMargin, minApplied: minApplied, tier: tier,
       paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
       dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
       rateTotal: Math.round(unitRate * 100) / 100, costTotal: Math.round(unitCost * 100) / 100,
@@ -440,30 +454,315 @@ window.LTP_calcDayLabor = function(items, services) {
   return { units: units, rateTotal: Math.round(rateTotal * 100) / 100, costTotal: Math.round(costTotal * 100) / 100 };
 };
 
-// Auto-generate optimal meal breaks for a call/wrap window
-// Returns an array of break objects placed every 5h
-window.LTP_autoGenerateBreaks = function(callTime, endTime, existingBreaks) {
-  var call = _timeToDecimal(callTime);
-  var wrap = _timeToDecimal(endTime);
-  if (wrap <= call) wrap += 24;
-  var totalHours = wrap - call;
-  if (totalHours <= 5) return existingBreaks || []; // no breaks needed
-
-  var newBreaks = [];
-  var cursor = call;
-  while (cursor + 5 < wrap) {
-    cursor += 5;
-    // Don't place a break in the last 30 min before wrap
-    if (cursor + 1 > wrap) break;
-    newBreaks.push({
-      id: window.LTP_genId("brk"),
-      startTime: _decimalToTime(cursor),
-      endTime: _decimalToTime(cursor + 1),
-      type: "unpaid"
-    });
-    cursor += 1; // skip past the break
+// Job-site address for crew-facing surfaces — client-side mirror of
+// backend/routes/crew.py::_resolve_site_address. Company-derived when the
+// project opts in (so a company address edit flows through live), else the
+// typed address; multi-line input flattens to one line.
+window.LTP_siteAddress = function(project, companies) {
+  if (!project) return "";
+  var flat = function(t) { return String(t || "").split("\n").map(function(x) { return x.trim(); }).filter(Boolean).join(", "); };
+  if (project.siteUseCompanyAddress && project.companyId) {
+    var c = (companies || []).find(function(x) { return x.id === project.companyId; });
+    if (c) {
+      var locality = [String(c.state || "").trim(), String(c.zip || "").trim()].filter(Boolean).join(" ");
+      var tail = [String(c.city || "").trim(), locality].filter(Boolean).join(", ");
+      var addr = [flat(c.address), tail].filter(Boolean).join(", ");
+      if (addr) return addr;
+    }
   }
-  return newBreaks;
+  return flat(project.siteAddress);
+};
+
+// Build the { [crewId]: minDayCost } map LTP_calcDayLabor consumes from the crew
+// roster. Only crew with a positive negotiated minimum are included, so a person
+// without one behaves exactly as before (role cost, no floor).
+window.LTP_crewMinMap = function(contacts) {
+  var m = {};
+  (contacts || []).forEach(function(c) {
+    if (c && c.isCrew && c.minDayCost > 0) m[c.id] = c.minDayCost;
+  });
+  return m;
+};
+
+// ── Crew payout (locked pay + payouts aggregation) ───────────────────────────
+//
+// Pay is agreed at HIRE. When a producer confirms a crew member, their pay for
+// each confirmed day is computed once and stamped onto the positions as a `pay`
+// snapshot — so a later rate-card edit, minimum change, or schedule tweak can't
+// silently rewrite what someone was hired at. The Payouts tab reads snapshots
+// (never live math) as the payable figure, and shows a recomputed value next to
+// a locked one only to flag drift for an explicit re-lock.
+
+// ONE person's pay for ONE project-day, from their CONFIRMED positions only —
+// requested/accepted shifts aren't owed money. dayItems are that date's schedule
+// items; the engine merges the person's shifts (OT + meal penalty run over their
+// combined hours) exactly as billing does. Returns null when the person has no
+// confirmed, timed work that day.
+window.LTP_crewDayPay = function(dayItems, crewId, services, crewMins) {
+  var items = (dayItems || []).map(function(s) {
+    return { time: s.time, endTime: s.endTime, breaks: s.breaks,
+      positions: (s.positions || []).filter(function(p) { return p && p.crewId === crewId && p.status === "confirmed"; }) };
+  }).filter(function(s) { return s.positions.length > 0; });
+  if (!items.length) return null;
+  var day = window.LTP_calcDayLabor(items, services, crewMins);
+  if (!day.units.length) return null;
+  var paidHours = 0, otHours = 0, mealPenaltyHours = 0;
+  var units = day.units.map(function(u) {
+    paidHours += u.paidHours; otHours += u.otHours; mealPenaltyHours += u.mealPenaltyHours;
+    return { serviceId: u.serviceId, tier: u.tier, paidHours: u.paidHours, otHours: u.otHours,
+      dayCost: u.dayCost, otCost: u.otCost, minApplied: u.minApplied, fullMargin: u.fullMargin, total: u.costTotal };
+  });
+  return {
+    total: day.costTotal,
+    paidHours: Math.round(paidHours * 100) / 100,
+    otHours: Math.round(otHours * 100) / 100,
+    mealPenaltyHours: Math.round(mealPenaltyHours * 100) / 100,
+    tier: units.length === 1 ? units[0].tier : "mixed",
+    units: units,
+  };
+};
+
+// Stamp `pay` snapshots onto ONE person's confirmed positions in a schedule.
+// `dates` restricts which days are (re)locked — the caller passes exactly the
+// days its action touched, so confirming new work never silently re-locks an
+// unrelated day whose rates have since changed (that would erase drift the
+// producer should see). Omit dates to lock every day with confirmed work (the
+// Payouts tab's explicit per-day Lock passes a single date). Returns a new
+// schedule; items without changes are passed through untouched.
+window.LTP_stampPay = function(schedule, crewId, services, crewMins, lockedAt, dates) {
+  var only = null;
+  if (dates) { only = {}; dates.forEach(function(d) { only[d] = true; }); }
+  var byDate = {};
+  (schedule || []).forEach(function(s) {
+    if (s.date && (!only || only[s.date])) (byDate[s.date] = byDate[s.date] || []).push(s);
+  });
+  var payByDate = {};
+  Object.keys(byDate).forEach(function(d) {
+    var pay = window.LTP_crewDayPay(byDate[d], crewId, services, crewMins);
+    if (pay) payByDate[d] = Object.assign({ lockedAt: lockedAt }, pay);
+  });
+  return (schedule || []).map(function(s) {
+    if (!s.date || !payByDate[s.date]) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed") { touched = true; return Object.assign({}, p, { pay: payByDate[s.date] }); }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
+// ── Day-of execution: actuals + sign-off ─────────────────────────────────────
+//
+// After the event day, a producer signs off each person-day: worked as
+// scheduled, adjusted (actual times differ / a shift was dropped), or no-show.
+// The sign-off is recorded as a `work` field on each of the person's confirmed
+// positions that day: { state: "worked"|"adjusted"|"no_show", time?, endTime?,
+// pay, signedAt, signedBy } — `pay` being the FINAL figure computed from the
+// actual times at sign-off and frozen. Payout requires sign-off: a confirmed
+// day with no `work` is "pending" and is not payable yet.
+
+// ONE person's pay for ONE project-day from ACTUAL worked times: like
+// LTP_crewDayPay, but no_show shifts are dropped and an adjusted position's
+// work.time/work.endTime override the shift's scheduled times. Scheduled
+// crew-wide breaks are kept only when they fall inside the actual window
+// (a break outside what was actually worked didn't happen). Returns null when
+// the person worked nothing that day (full no-show).
+window.LTP_crewDayActuals = function(dayItems, crewId, services, crewMins) {
+  var items = [];
+  (dayItems || []).forEach(function(s) {
+    var pos = (s.positions || []).filter(function(p) {
+      return p && p.crewId === crewId && p.status === "confirmed" && !(p.work && p.work.state === "no_show");
+    });
+    if (!pos.length) return;
+    var adj = pos.find(function(p) { return p.work && p.work.state === "adjusted" && p.work.time && p.work.endTime; });
+    var time = adj ? adj.work.time : s.time;
+    var endTime = adj ? adj.work.endTime : s.endTime;
+    var breaks = s.breaks || [];
+    if (adj && endTime > time) { // clip on adjusted, plain "HH:MM" compare (non-overnight)
+      breaks = breaks.filter(function(b) { return b.startTime >= time && b.endTime <= endTime; });
+    }
+    items.push({ time: time, endTime: endTime, breaks: breaks, positions: pos });
+  });
+  if (!items.length) return null;
+  var day = window.LTP_calcDayLabor(items, services, crewMins);
+  if (!day.units.length) return null;
+  var paidHours = 0, otHours = 0, mealPenaltyHours = 0;
+  var units = day.units.map(function(u) {
+    paidHours += u.paidHours; otHours += u.otHours; mealPenaltyHours += u.mealPenaltyHours;
+    return { serviceId: u.serviceId, tier: u.tier, paidHours: u.paidHours, otHours: u.otHours,
+      dayCost: u.dayCost, otCost: u.otCost, minApplied: u.minApplied, fullMargin: u.fullMargin, total: u.costTotal };
+  });
+  return {
+    total: day.costTotal,
+    paidHours: Math.round(paidHours * 100) / 100,
+    otHours: Math.round(otHours * 100) / 100,
+    mealPenaltyHours: Math.round(mealPenaltyHours * 100) / 100,
+    tier: units.length === 1 ? units[0].tier : "mixed",
+    units: units,
+  };
+};
+
+// Sign off ONE person's day. `actuals` maps positionId → { state, time?,
+// endTime? }; positions not in the map are "worked" (as scheduled). Applies the
+// work states, computes the final pay from the actual times (current rates +
+// minimums — the drift flag warns the producer of rate changes BEFORE signing;
+// signing is the final agreement act), and freezes it as work.pay on every one
+// of the person's confirmed positions that day. Returns a new schedule.
+window.LTP_signOffDay = function(schedule, crewId, date, actuals, services, crewMins, signedAt, signedBy) {
+  var isMine = function(s, p) { return s.date === date && p && p.crewId === crewId && p.status === "confirmed"; };
+  var draft = (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
+      if (!isMine(s, p)) return p;
+      var a = actuals && actuals[p.id];
+      var work = { state: "worked", signedAt: signedAt, signedBy: signedBy };
+      if (a && a.state === "no_show") work.state = "no_show";
+      else if (a && a.state === "adjusted" && a.time && a.endTime) { work.state = "adjusted"; work.time = a.time; work.endTime = a.endTime; }
+      return Object.assign({}, p, { work: work });
+    }) });
+  });
+  var pay = window.LTP_crewDayActuals(draft.filter(function(s) { return s.date === date; }), crewId, services, crewMins)
+    || { total: 0, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "", units: [] };
+  return draft.map(function(s) {
+    if (s.date !== date) return s;
+    return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
+      if (!isMine(s, p)) return p;
+      return Object.assign({}, p, { work: Object.assign({}, p.work, { pay: pay }) });
+    }) });
+  });
+};
+
+// Set the pay adjustments for ONE person's day: extras or deductions agreed for
+// situations on the shift (parking, gear rental, bonus, an advance taken, …).
+// `adjustments` = [{ id, amount, label, addedAt?, addedBy? }] — amount may be
+// negative. Stored as `adj` on each of the person's confirmed positions that
+// day (same ride-along pattern as `pay`/`work`); an empty list clears it.
+// Adjustments are independent of sign-off: they add on top of the estimate
+// before signing and on top of the frozen figure after.
+window.LTP_setPayAdjustments = function(schedule, crewId, date, adjustments) {
+  var clean = (adjustments || []).filter(function(a) { return a && typeof a.amount === "number" && !isNaN(a.amount) && a.amount !== 0; });
+  return (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed") {
+        touched = true;
+        var copy = Object.assign({}, p);
+        if (clean.length) copy.adj = clean; else delete copy.adj;
+        return copy;
+      }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
+// Undo a sign-off: strip `work` from the person's positions on that date so the
+// day returns to pending. Returns a new schedule.
+window.LTP_unsignDay = function(schedule, crewId, date) {
+  return (schedule || []).map(function(s) {
+    if (s.date !== date) return s;
+    var touched = false;
+    var positions = (s.positions || []).map(function(p) {
+      if (p && p.crewId === crewId && p.status === "confirmed" && p.work) {
+        touched = true;
+        var copy = Object.assign({}, p); delete copy.work; return copy;
+      }
+      return p;
+    });
+    return touched ? Object.assign({}, s, { positions: positions }) : s;
+  });
+};
+
+// Aggregate confirmed crew work across all projects into payout rows for a date
+// range. One row = one person's day on one project. Each row carries:
+//   locked  — the pay snapshot agreed at confirm (null on legacy pre-snapshot
+//             confirmations → "unlocked")
+//   current — the same day recomputed with today's schedule/rates/minimums
+//   drift   — locked exists but no longer matches current (unsigned rows only —
+//             a signed day's figure is frozen, drift no longer applies)
+//   signed  — { state: worked|adjusted|no_show, pay, signedAt, signedBy } from
+//             the day-of sign-off, or null while the day is still pending
+//   adjustments/adjTotal — manual extras/deductions for the day (LTP_setPayAdjustments)
+//   estimate — (locked else current) + adjustments: the pre-sign-off figure
+//   payable — the FINAL figure (signed.pay.total + adjustments); null until signed off.
+// Payout requires sign-off: grandTotal sums signed days only; pending days are
+// counted separately (pendingCount/pendingTotal of estimates).
+window.LTP_payoutRows = function(projects, contacts, services, startDate, endDate) {
+  var crewMins = window.LTP_crewMinMap(contacts);
+  var byCrew = {};   // String(crewId) → { crewId, rows: [] }
+  (projects || []).forEach(function(proj) {
+    var byDate = {};
+    (proj.schedule || []).forEach(function(s) {
+      if (!s.date) return;
+      if (startDate && s.date < startDate) return;
+      if (endDate && s.date > endDate) return;
+      (byDate[s.date] = byDate[s.date] || []).push(s);
+    });
+    Object.keys(byDate).forEach(function(d) {
+      var seen = {};  // String(crewId) → { id, locked, work, states, adj }
+      byDate[d].forEach(function(s) {
+        (s.positions || []).forEach(function(p) {
+          if (!p || p.crewId == null || p.status !== "confirmed") return;
+          var k = String(p.crewId);
+          if (!seen[k]) seen[k] = { id: p.crewId, locked: null, work: null, states: {}, adj: null };
+          if (p.pay && !seen[k].locked) seen[k].locked = p.pay;
+          if (p.work) { if (!seen[k].work) seen[k].work = p.work; seen[k].states[p.work.state] = true; }
+          if (p.adj && p.adj.length && !seen[k].adj) seen[k].adj = p.adj;
+        });
+      });
+      Object.keys(seen).forEach(function(k) {
+        var entry = seen[k];
+        var current = window.LTP_crewDayPay(byDate[d], entry.id, services, crewMins);
+        var locked = entry.locked;
+        var signed = null;
+        if (entry.work && entry.work.pay) {
+          // Day state rolls up from the position states: all no-show → no_show,
+          // any adjusted (or a dropped shift alongside worked ones) → adjusted.
+          var st = entry.states.no_show && !entry.states.worked && !entry.states.adjusted ? "no_show"
+            : (entry.states.adjusted || entry.states.no_show) ? "adjusted" : "worked";
+          signed = { state: st, pay: entry.work.pay, signedAt: entry.work.signedAt, signedBy: entry.work.signedBy };
+        }
+        var drift = !!(!signed && locked && (!current
+          || Math.abs(locked.total - current.total) > 0.005
+          || locked.paidHours !== current.paidHours
+          || locked.otHours !== current.otHours));
+        // Adjustments (extras/deductions) sit on top of both the pre-sign-off
+        // estimate and the frozen final. Drift compares BASE figures only —
+        // an adjustment shifts locked and current equally.
+        var adjustments = entry.adj || [];
+        var adjTotal = Math.round(adjustments.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+        var estimate = Math.round(((locked ? locked.total : (current ? current.total : 0)) + adjTotal) * 100) / 100;
+        if (!byCrew[k]) byCrew[k] = { crewId: entry.id, rows: [] };
+        byCrew[k].rows.push({ crewId: entry.id, projectId: proj.id, projectName: proj.name,
+          date: d, locked: locked, current: current, drift: drift,
+          signed: signed, adjustments: adjustments, adjTotal: adjTotal, estimate: estimate,
+          payable: signed ? Math.round((signed.pay.total + adjTotal) * 100) / 100 : null });
+      });
+    });
+  });
+  var groups = Object.keys(byCrew).map(function(k) {
+    var g = byCrew[k];
+    var cm = (contacts || []).find(function(c) { return c.id === g.crewId; });
+    g.crewName = cm ? ((cm.firstName || "") + " " + (cm.lastName || "")).trim() : "Unknown";
+    g.rows.sort(function(a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : (a.projectName < b.projectName ? -1 : 1); });
+    g.total = Math.round(g.rows.reduce(function(t, r) { return t + (r.payable || 0); }, 0) * 100) / 100;
+    g.pendingTotal = Math.round(g.rows.reduce(function(t, r) { return t + (r.signed ? 0 : r.estimate); }, 0) * 100) / 100;
+    return g;
+  });
+  groups.sort(function(a, b) { return a.crewName < b.crewName ? -1 : 1; });
+  var grandTotal = 0, pendingTotal = 0, pendingCount = 0, driftCount = 0, unlockedCount = 0;
+  groups.forEach(function(g) {
+    grandTotal += g.total;
+    pendingTotal += g.pendingTotal;
+    g.rows.forEach(function(r) {
+      if (!r.signed) { pendingCount++; if (r.drift) driftCount++; if (!r.locked) unlockedCount++; }
+    });
+  });
+  return { groups: groups, grandTotal: Math.round(grandTotal * 100) / 100,
+    pendingTotal: Math.round(pendingTotal * 100) / 100, pendingCount: pendingCount,
+    driftCount: driftCount, unlockedCount: unlockedCount };
 };
 
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
@@ -986,6 +1285,28 @@ window.LTP_scheduleRowHasContent = function(s) {
   );
 };
 
+// Repair each schedule row's endDate before validating/saving. The schedule
+// editor exposes no endDate input, so a stale or half-typed value (e.g. a
+// "0002-08-14" frozen mid-keystroke by the old date-input handler, or the
+// original day left behind after a shift was moved) is impossible for the
+// user to see or fix — and the project form's range validation would reject
+// the save against that invisible date. Rules: no date → no endDate; an
+// endDate before the date is nonsense → snap to the date; a missing endDate
+// on a dated row → the date (single-day). A deliberate multi-day span
+// (endDate after date) is preserved. Used by the project form's Save.
+window.LTP_normalizeScheduleRows = function(rows) {
+  return (rows || []).map(function(s) {
+    if (!s || typeof s !== "object") return s;
+    if (!s.date) {
+      return s.endDate ? Object.assign({}, s, { endDate: "" }) : s;
+    }
+    if (!s.endDate || s.endDate < s.date) {
+      return Object.assign({}, s, { endDate: s.date });
+    }
+    return s;
+  });
+};
+
 window.LTP_formatAddress = function(e, joiner) {
   if (!e) return "";
   joiner = joiner || ", ";
@@ -996,6 +1317,40 @@ window.LTP_formatAddress = function(e, joiner) {
   return [street, cityLine].filter(function(x) { return x; }).join(joiner);
 };
 
+// Settings-shaped address (street/suite/city/state/zip) → single inline string.
+// Used by the public client-view and crew-view headers. Distinct from
+// LTP_formatAddress, which works on CRM entity shapes (address/city/state/zip).
+window.LTP_settingsAddress = function(s) {
+  if (!s) return "";
+  var line1 = (s.street || "") + (s.suite ? ", " + s.suite : "");
+  var line2 = (s.city || "") + (s.state ? ", " + s.state : "") + (s.zip ? " " + s.zip : "");
+  return [line1, line2].filter(function(p) { return p && p.trim(); }).join(". ");
+};
+
+// Build a Google Calendar "add event" template URL. Shared by the CRM meetings
+// and projects views. Event runs from {time} to one hour later (same minutes,
+// hour clamped to 23). attendees is an array of emails; details is optional.
+window.LTP_gcalUrl = function(opts) {
+  opts = opts || {};
+  var time = opts.time || "00:00";
+  var d = (opts.date || "").replace(/-/g, "");
+  var eh = String(Math.min(23, parseInt(time.split(":")[0]) + 1)).padStart(2, "0");
+  var dates = d + "T" + time.replace(":", "") + "00/" + d + "T" + eh + time.split(":")[1] + "00";
+  var url = "https://calendar.google.com/calendar/render?action=TEMPLATE"
+    + "&text=" + encodeURIComponent(opts.title || "")
+    + "&dates=" + dates;
+  if (opts.details) url += "&details=" + encodeURIComponent(opts.details);
+  return url + "&add=" + (opts.attendees || []).join(",");
+};
+
+// Resolve an entity's display name for an activity-log diff: its name, else
+// "ID <n>" when the row is missing, else "None" when unset. Shared by the
+// quote/invoice change-diff engines (company + project fields).
+window.LTP_diffEntityName = function(list, id) {
+  if (!id) return "None";
+  return (((list || []).find(function(x) { return x.id === id; }) || {}).name) || ("ID " + id);
+};
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();
@@ -1003,11 +1358,17 @@ window.LTP_INVOICE_REF = function(inv) {
   return "INV-" + year + "-" + num;
 };
 
-window.LTP_QUOTE_REF = function(qt) {
-  if (!qt) return "QT-?";
-  var year = (qt.sentDate || "").substring(0, 4) || new Date().getFullYear();
-  var num = String(qt.id || 0).padStart(3, "0");
-  return "QT-" + year + "-" + num;
+// Service line rate maps. Given a service's rate card, returns { priceMap,
+// costMap } keyed by rate type (day/half/hourly/ot). Half/hourly/OT fall back
+// to derived ratios (×0.5, ÷10, ÷10×1.5) when not explicitly set. Single
+// source of truth shared by the quote builder and invoice editor so a rate-type
+// switch prices identically in both and converted invoices never drift.
+window.LTP_serviceRateMaps = function(svc) {
+  svc = svc || {};
+  return {
+    priceMap: { day: svc.dayRate, half: svc.halfDay || svc.dayRate * 0.5, hourly: svc.hourlyRate || svc.dayRate / 10, ot: svc.otRate || svc.dayRate / 10 * 1.5 },
+    costMap:  { day: svc.dayCost, half: svc.halfDayCost || svc.dayCost * 0.5, hourly: svc.hourlyCost || svc.dayCost / 10, ot: svc.otCost || svc.dayCost / 10 * 1.5 },
+  };
 };
 
 window.LTP_INVOICE_TOTALS = function(inv) {
@@ -1112,14 +1473,37 @@ window.LTP_QUOTE_TOTALS = function(q) {
   else if (gd.type === "amount") afterDiscount = adjusted - (Number(gd.value) || 0);
   else if (gd.type === "target") afterDiscount = Number(gd.value) || 0;
   if (afterDiscount < 0) afterDiscount = 0;
-  var taxRate = window.LTP_TAX_RATE || 0;
-  var taxAmount = taxRate > 0 ? Math.round(afterDiscount * (taxRate / 100) * 100) / 100 : 0;
-  return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + taxAmount, preTax: afterDiscount, taxRate: taxRate, taxAmount: taxAmount, cost: cost };
+  // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB
+  // estimate (backend/qbo_sync.py::get_quote_estimate_tax), stored read-only as
+  // qbTaxTotal. Null until calculated → $0, exactly like invoices + the client
+  // view. The legacy flat LTP_TAX_RATE no longer applies to quotes.
+  var tax = (q.qbTaxTotal != null) ? (Number(q.qbTaxTotal) || 0) : 0;
+  return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + tax, preTax: afterDiscount, tax: tax, taxAmount: tax, cost: cost };
 };
 
 window.LTP_QUOTE_REF = function(q) {
   var year = (q.createdDate || "").substring(0, 4) || String(new Date().getFullYear());
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
+};
+
+// A project's headline money figure. The budget entered on the project form is
+// preliminary — once real quotes exist for the project they supersede it, and
+// every surface that shows "the project's number" should show the quoted total
+// instead. Declined quotes don't count; if every quote is declined the
+// preliminary budget applies again. Returns { quoted, total, count }:
+// quoted=true means `total` is the sum of the live quotes' totals (and `count`
+// how many), quoted=false means `total` is the preliminary budget sum.
+window.LTP_projectHeadlineTotal = function(project, quotes) {
+  var live = (quotes || []).filter(function(q) {
+    return q && q.projectId === project.id && q.status !== "declined";
+  });
+  if (live.length === 0) {
+    var budget = project.budget || {};
+    var tot = Object.keys(budget).reduce(function(a, k) { return a + (Number(budget[k]) || 0); }, 0);
+    return { quoted: false, total: tot, count: 0 };
+  }
+  var sum = live.reduce(function(a, q) { return a + (window.LTP_QUOTE_TOTALS(q).total || 0); }, 0);
+  return { quoted: true, total: sum, count: live.length };
 };
 
 // Select a number field's contents when it gains focus, so the user's first

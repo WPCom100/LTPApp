@@ -260,10 +260,14 @@
 
       kit.notes && h("div", { style: { padding: "12px 14px", background: B.raised, borderRadius: 8, borderLeft: "3px solid " + B.accent, fontSize: "12px", color: B.textSec, lineHeight: 1.5 } }, kit.notes),
 
-      deleteConfirm && h(window.ConfirmDeleteDialog, {
-        deleteConfirm: { name: kit.name },
+      deleteConfirm && h(window.LTPConfirmDialog, {
+        dlg: {
+          title: "Confirm Delete",
+          message: 'Are you sure you want to delete "' + kit.name + '"? This cannot be undone.',
+          variant: "danger", confirmLabel: "Delete",
+          onConfirm: function() { setDeleteConfirm(false); onDelete(); },
+        },
         onCancel: function() { setDeleteConfirm(false); },
-        onConfirm: function() { setDeleteConfirm(false); onDelete(); },
       })
     );
   };

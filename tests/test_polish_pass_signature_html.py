@@ -31,7 +31,7 @@ if os.path.exists(_db_path):
     os.remove(_db_path)
 
 from backend import crypto, models  # noqa: E402
-from backend.routes.email import _render_signature, _FALLBACK_SIGNATURE  # noqa: E402
+from backend.email_compose import _render_signature, _FALLBACK_SIGNATURE  # noqa: E402
 
 
 _results: list[tuple[str, bool]] = []

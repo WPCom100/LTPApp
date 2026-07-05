@@ -28,6 +28,9 @@
     var [conflictWarn, setConflictWarn] = useState(null);
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var svcs = services || [];
+    // Per-crew negotiated minimums, so the cost totals below reflect what each
+    // assigned person is actually paid (never the client rate).
+    var crewMins = window.LTP_crewMinMap(contacts);
     var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
 
     // Removing a day/position that has crew assigned just confirms here — the
@@ -97,7 +100,12 @@
         if (s.id !== id) return s;
         var upd = Object.assign({}, s);
         upd[field] = val;
-        if (field === "date" && !s.endDate) upd.endDate = val;
+        // endDate has no input in this editor, so it must follow the date for
+        // single-day rows — empty, tracking the old date, or now before the
+        // new date all snap to the new date. Only a deliberate multi-day span
+        // (endDate after the new date) is preserved. Leaving it behind made
+        // the project form reject saves against a date the user can't see.
+        if (field === "date" && (!s.endDate || s.endDate === s.date || s.endDate < val)) upd.endDate = val;
         return upd;
       }));
     }
@@ -308,7 +316,7 @@
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
-          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs);
+          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs, crewMins);
           // Map each position to its labor unit, and pick the PRIMARY position
           // per unit (earliest shift in the day) — the per-person rate shows on
           // that row once; the person's other shifts read "same person" so the
@@ -408,7 +416,11 @@
                     h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
                       style: Object.assign({}, inp, { flex: 1 }) }),
                     h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
-                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); if (!s.endDate) updateItem(s.id, "endDate", e.target.value); },
+                      // One updateItem only — it syncs endDate itself. A second
+                      // call here recomputed from the stale `schedule` prop and
+                      // clobbered the date update entirely (freezing half-typed
+                      // dates like "0002-08-14" into the hidden endDate).
+                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); },
                         style: Object.assign({}, inp, { width: 120, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
                       h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
@@ -518,7 +530,9 @@
                                 h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
                                 posUnit.fullMargin
                                   ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
-                                  : h("div", { key: "c", style: { color: B.textMut } }, "$" + Math.round(posUnit.costTotal))
+                                  : h("div", { key: "c", style: { color: posUnit.minApplied ? B.warn : B.textMut },
+                                      title: posUnit.minApplied ? "Raised to this crew member's negotiated minimum (payout only — the client rate above is unchanged)." : undefined },
+                                      "$" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
                               ]
                             : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
                         h("button", { onClick: function() { removePosition(s.id, pos.id); },

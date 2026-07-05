@@ -239,6 +239,17 @@ PDF).
   CRM. These sync to the QB customer on every push, so moving a client into a
   taxable area and re-pushing recomputes the tax.
 
+**Quotes** use the same taxability model (customer flag + per-line overrides),
+but since we don't keep QB estimates, tax is obtained on demand: the
+**Calculate Sales Tax** button in the quote builder — and the moment a quote is
+sent — creates a **temporary QB Estimate**, reads its computed tax, and
+**deletes the estimate** (so none accumulate). The result is stored on the quote
+(`qbTaxTotal`) and shown in the builder, client view, and PDF. Editing
+tax-relevant fields afterward flips the button to **Recalculate — out of date**.
+Tax-exempt quotes skip QuickBooks entirely ($0). Calculating tax may create the
+QB **customer** (reused when the quote later converts to an invoice); only the
+estimate is removed.
+
 ### Sandbox → production
 
 Start in `sandbox` against an Intuit test company. To go live: switch

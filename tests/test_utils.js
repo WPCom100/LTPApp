@@ -40,6 +40,48 @@ eq("R4 only title -> true", HC({ title: "Load-In" }), true);
 eq("R5 positions -> true", HC({ positions: [{ id: "p" }] }), true);
 eq("R6 empty arrays -> false", HC({ positions: [], breaks: [] }), false);
 
+// ── normalizeScheduleRows (repair hidden endDate before validate/save) ──────
+const NR = window.LTP_normalizeScheduleRows;
+eq("N1 stale endDate before date snaps to date",
+   NR([{ date: "2026-08-14", endDate: "2026-08-10" }])[0].endDate, "2026-08-14");
+eq("N2 half-typed garbage endDate snaps to date",
+   NR([{ date: "2026-08-14", endDate: "0002-08-14" }])[0].endDate, "2026-08-14");
+eq("N3 missing endDate filled with date",
+   NR([{ date: "2026-08-14", endDate: "" }])[0].endDate, "2026-08-14");
+eq("N4 multi-day span preserved",
+   NR([{ date: "2026-08-14", endDate: "2026-08-16" }])[0].endDate, "2026-08-16");
+eq("N5 same-day endDate untouched",
+   NR([{ date: "2026-08-14", endDate: "2026-08-14" }])[0].endDate, "2026-08-14");
+eq("N6 dateless row clears endDate",
+   NR([{ date: "", endDate: "0002-08-14" }])[0].endDate, "");
+eq("N7 dateless row without endDate returned as-is",
+   NR([{ date: "", endDate: "" }])[0].endDate, "");
+ok("N8 null/empty input tolerated", Array.isArray(NR(null)) && NR([]).length === 0);
+ok("N9 does not mutate the input row", (function() {
+  var row = { date: "2026-08-14", endDate: "2026-08-10" };
+  NR([row]);
+  return row.endDate === "2026-08-10";
+})());
+
+// ── projectHeadlineTotal (quotes supersede the preliminary budget) ──────────
+const PH = window.LTP_projectHeadlineTotal;
+const _proj = { id: 7, budget: { lighting: 1000, labor: 2000, rentals: 0, misc: 500 } };
+const _q = (id, projectId, status, price) => ({
+  id, projectId, status, createdDate: "2026-01-01",
+  sections: [{ items: [{ type: "labor", qty: 1, unitPrice: price }] }],
+});
+eq("PH1 no quotes -> budget total", PH(_proj, []).total, 3500);
+ok("PH2 no quotes -> quoted=false", PH(_proj, []).quoted === false);
+eq("PH3 quotes supersede budget", PH(_proj, [_q(1, 7, "sent", 8000)]).total, 8000);
+ok("PH4 quotes -> quoted=true, count", (function() {
+  var r = PH(_proj, [_q(1, 7, "sent", 8000), _q(2, 7, "draft", 1500)]);
+  return r.quoted === true && r.count === 2 && r.total === 9500;
+})());
+eq("PH5 declined quotes don't count", PH(_proj, [_q(1, 7, "declined", 8000)]).total, 3500);
+eq("PH6 other projects' quotes don't count", PH(_proj, [_q(1, 8, "sent", 8000)]).total, 3500);
+eq("PH7 mixed: declined excluded from sum", PH(_proj, [_q(1, 7, "sent", 8000), _q(2, 7, "declined", 999)]).total, 8000);
+eq("PH8 missing budget -> 0", PH({ id: 9 }, []).total, 0);
+
 // ── formatAddress ────────────────────────────────────────────────────────────
 const A = window.LTP_formatAddress;
 eq("AD1 full address", A({ address: "123 Main", city: "Austin", state: "TX", zip: "78701" }), "123 Main, Austin, TX 78701");

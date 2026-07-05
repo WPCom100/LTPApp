@@ -187,6 +187,48 @@ def test_held_position_untouched():
     _check("position_ids preserved", req.position_ids == ["p1", "p2"])
 
 
+def _dated_project(days, pid=1):
+    """A multi-day project with an explicit per-day date — for the date-cleared
+    cases. `days` = list of (date, [(posId, crewId, status), ...]); pass date=""
+    to make that day "unscheduled"."""
+    schedule = []
+    for i, (date, positions) in enumerate(days):
+        schedule.append({
+            "id": f"day-{i}", "date": date, "title": f"Day {i}",
+            "positions": [{"id": p, "crewId": c, "status": s} for (p, c, s) in positions],
+        })
+    return models.Project(id=pid, name="Gala", schedule=schedule)
+
+
+def test_cleared_date_trims_position():
+    print("test_cleared_date_trims_position")
+    # Crew 5 holds p1 (a dated day) + p2 whose day's date was later cleared. The
+    # unscheduled day is no longer a real shift → trim p2, keep p1.
+    req = models.CrewRequest(id=11, token="tok-" + "d" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _dated_project([
+        ("2026-07-01", [("p1", 5, "accepted")]),
+        ("", [("p2", 5, "requested")]),
+    ])
+    ch = ci.reconcile_one(req, proj)
+    _check("reports trimmed", ch and ch["action"] == "trimmed", str(ch))
+    _check("p2 trimmed (its day unscheduled)", ch and ch["removed"] == ["p2"])
+    _check("keeps p1", req.position_ids == ["p1"])
+    _check("stays accepted", req.status == "accepted")
+
+
+def test_cleared_date_only_day_withdraws():
+    print("test_cleared_date_only_day_withdraws")
+    # The request's only day has its date cleared → no live shift remains →
+    # auto-withdraw, exactly as if the day had been deleted.
+    req = models.CrewRequest(id=12, token="tok-" + "e" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1"], status="pending")
+    proj = _dated_project([("", [("p1", 5, "requested")])])
+    ch = ci.reconcile_one(req, proj)
+    _check("withdrawn when only day is unscheduled", ch and ch["action"] == "withdrawn", str(ch))
+    _check("status withdrawn", req.status == "withdrawn")
+
+
 # ── Real-DB integration ──────────────────────────────────────────────────────
 
 async def _reset_schema():
@@ -296,6 +338,7 @@ def main():
         test_accepted_full_removal_withdraws, test_terminal_untouched,
         test_reassigned_position_trimmed, test_all_positions_reassigned_withdraws,
         test_cleared_position_withdraws, test_held_position_untouched,
+        test_cleared_date_trims_position, test_cleared_date_only_day_withdraws,
     ]
     async_tests = [
         test_reconcile_project_trims_and_withdraws, test_reconcile_project_deleted_withdraws,

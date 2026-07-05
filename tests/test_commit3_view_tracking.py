@@ -316,10 +316,11 @@ def test_stamp_tracked_open_recipient_opened():
     rec = MagicMock()
     rec.recipient_email = "alice@biz.com"
 
-    # Patch flag_modified so the test doesn't need a real ORM row
-    import backend.routes.view as view_mod
-    real_flag = view_mod.flag_modified
-    view_mod.flag_modified = lambda *a, **k: None
+    # flag_modified runs inside backend.activity.append_activity; patch it there
+    # so the test doesn't need a real ORM row.
+    import backend.activity as activity_mod
+    real_flag = activity_mod.flag_modified
+    activity_mod.flag_modified = lambda *a, **k: None
     try:
         entry = _stamp_tracked_open(
             entity=e, kind="quote", recipient=rec,
@@ -327,7 +328,7 @@ def test_stamp_tracked_open_recipient_opened():
             action="view", now=datetime(2026, 6, 19, 14, 30, tzinfo=timezone.utc),
         )
     finally:
-        view_mod.flag_modified = real_flag
+        activity_mod.flag_modified = real_flag
 
     _check("type recipient_opened", entry["type"] == "recipient_opened")
     _check("id prefix ro-", entry["id"].startswith("ro-"))
@@ -346,14 +347,17 @@ def test_stamp_tracked_open_anonymous_view():
     class FakeEntity:
         activity = []
     e = FakeEntity(); e.activity = []
-    import backend.routes.view as view_mod
-    view_mod.flag_modified = lambda *a, **k: None
-
-    entry = _stamp_tracked_open(
-        entity=e, kind="quote", recipient=None,
-        ip="203.0.113.5", ua="Mozilla",
-        action="view", now=_now(),
-    )
+    import backend.activity as activity_mod
+    real_flag = activity_mod.flag_modified
+    activity_mod.flag_modified = lambda *a, **k: None
+    try:
+        entry = _stamp_tracked_open(
+            entity=e, kind="quote", recipient=None,
+            ip="203.0.113.5", ua="Mozilla",
+            action="view", now=_now(),
+        )
+    finally:
+        activity_mod.flag_modified = real_flag
     _check("anonymous type client_viewed", entry["type"] == "client_viewed")
     _check("id prefix cv-", entry["id"].startswith("cv-"))
     _check("user is Anonymous viewer", entry["user"] == "Anonymous viewer")
@@ -366,28 +370,31 @@ def test_stamp_tracked_open_pdf_variants():
     print("test_stamp_tracked_open_pdf_variants")
     class FakeEntity:
         activity = []
-    import backend.routes.view as view_mod
-    view_mod.flag_modified = lambda *a, **k: None
+    import backend.activity as activity_mod
+    real_flag = activity_mod.flag_modified
+    activity_mod.flag_modified = lambda *a, **k: None
+    try:
+        # Recipient PDF
+        e = FakeEntity(); e.activity = []
+        rec = MagicMock(); rec.recipient_email = "alice@biz.com"
+        entry = _stamp_tracked_open(
+            entity=e, kind="invoice", recipient=rec,
+            ip="1.1.1.1", ua="x", action="pdf", now=_now(),
+        )
+        _check("recipient PDF type", entry["type"] == "recipient_downloaded_pdf")
+        _check("recipient PDF id prefix rp-", entry["id"].startswith("rp-"))
+        _check("PDF message mentions download", "downloaded PDF" in entry["message"])
 
-    # Recipient PDF
-    e = FakeEntity(); e.activity = []
-    rec = MagicMock(); rec.recipient_email = "alice@biz.com"
-    entry = _stamp_tracked_open(
-        entity=e, kind="invoice", recipient=rec,
-        ip="1.1.1.1", ua="x", action="pdf", now=_now(),
-    )
-    _check("recipient PDF type", entry["type"] == "recipient_downloaded_pdf")
-    _check("recipient PDF id prefix rp-", entry["id"].startswith("rp-"))
-    _check("PDF message mentions download", "downloaded PDF" in entry["message"])
-
-    # Anonymous PDF
-    e = FakeEntity(); e.activity = []
-    entry = _stamp_tracked_open(
-        entity=e, kind="invoice", recipient=None,
-        ip="1.1.1.1", ua="x", action="pdf", now=_now(),
-    )
-    _check("anonymous PDF type", entry["type"] == "client_downloaded_pdf")
-    _check("anonymous PDF id prefix cp-", entry["id"].startswith("cp-"))
+        # Anonymous PDF
+        e = FakeEntity(); e.activity = []
+        entry = _stamp_tracked_open(
+            entity=e, kind="invoice", recipient=None,
+            ip="1.1.1.1", ua="x", action="pdf", now=_now(),
+        )
+        _check("anonymous PDF type", entry["type"] == "client_downloaded_pdf")
+        _check("anonymous PDF id prefix cp-", entry["id"].startswith("cp-"))
+    finally:
+        activity_mod.flag_modified = real_flag
 
 
 def test_bump_recipient_open_counts():

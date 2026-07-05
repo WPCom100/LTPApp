@@ -81,6 +81,12 @@ class Contact(Base):
     crew_departments = Column(JSON, default=list)        # list[str] — dept names, e.g. ["Lighting","Rigging"]
     crew_notes = Column(Text, default="")
     crew_status = Column(String(20), default="active")   # {active, inactive}
+    # Negotiated payout floor: this crew member is paid at least this day rate,
+    # even when the role they fill costs less. Cost/payout side ONLY — never
+    # billed to the client (the Service rate card still drives what the client
+    # pays). Treated like a normal day rate (half-day, meal-penalty, and OT scale
+    # the same way). 0/null = no minimum. See theme.js::LTP_calcDayLabor.
+    min_day_cost = Column(Float, default=0)
     # QuickBooks Online customer link — used when a Contact is billed directly
     # (client_type="contact"). Taxability is a company-level concept, so there is
     # deliberately no `taxable` flag here; directly-billed contacts are treated
@@ -105,6 +111,13 @@ class Project(Base):
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     venue = Column(String(255), default="")
+    # Job-site address for crew-facing surfaces (request emails, the public
+    # crew page). Either typed directly, or derived live from the client
+    # company's billing address when site_use_company_address is set — derived
+    # so a company address edit flows to future sends without re-saving the
+    # project. See backend/routes/crew.py::_resolve_site_address.
+    site_address = Column(Text, default="")
+    site_use_company_address = Column(Boolean, default=False)
     # budget is a category breakdown, NOT a single number. The form in
     # modules/crm-projects.js (search for budL/budLb/budR/budM) saves the
     # object literal directly.
@@ -168,6 +181,20 @@ class Quote(Base):
     # NOT NULL because every Quote has one — the create() handler mints it
     # unconditionally if the client didn't supply one.
     share_token = Column(String(64), nullable=False, unique=True, index=True)
+    # ── QuickBooks-computed sales tax ───────────────────────────────────────
+    # Quotes never become QB documents (the business doesn't use QB estimates),
+    # but we still want QB-authoritative tax. The estimate-tax flow
+    # (backend/qbo_sync.py::get_quote_estimate_tax) creates a TEMPORARY QB
+    # Estimate, reads its computed tax, and deletes it — storing the result
+    # here. SERVER-AUTHORITATIVE: written by the sync engine, stripped from
+    # inbound client writes by _READONLY_COLS in backend/routes/api.py, and
+    # surfaced read-only on GET as qbTaxTotal / qbTaxSignature.
+    qb_tax_total = Column(Float, nullable=True)
+    # Opaque change-signature captured by the frontend at the last tax calc.
+    # The stored tax is "fresh" iff the frontend's live signature matches this;
+    # otherwise the builder shows "Recalculate — out of date". Mirrors
+    # Invoice.qb_synced_signature.
+    qb_tax_signature = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

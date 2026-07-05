@@ -14,7 +14,7 @@
 
   window.QuotesView = function({ companies, contacts, projects, setProjects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
-                                  equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
+                                  equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
 
     // ── Route-derived state ────────────────────────────────────────────────────
     var sub    = route.sub;
@@ -69,6 +69,7 @@
         invoices:   invoices,   setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
         settings:   settings,
+        isAdmin:    isAdmin,    qbo: qbo,
       });
     }
 

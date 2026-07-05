@@ -168,6 +168,283 @@ eq("F5 long shift fully cleared", D(R, [{ time: "08:00", endTime: "22:00", break
 d = day([{ time: "09:00", endTime: "14:00", breaks: [], positions: [{ id: "z", serviceId: 1, role: "L1", crewId: null, status: "open" }] }]);
 eq("G1 legacy position works", d.units.length, 1); near("G1 legacy rate", d.rateTotal, 500); eq("G1 legacy not margin", d.units[0].fullMargin, false);
 
+// ── H. Per-crew negotiated minimum (payout floor) ────────────────────────────
+// A position carrying a crewId whose id maps to a minDayCost gets its COST
+// floored at that minimum (treated like a normal rate: half → min*0.5, OT →
+// min/10*1.5). RATE (client billing) is never affected. Map is the optional 3rd
+// arg to LTP_calcDayLabor; L1 = dayCost 800, L2 = dayCost 400.
+function PC(sid, crewId, o) { o = o || {}; return { id: o.id || ("pc" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId }; }
+const CID = 7;
+
+// H1: half day, min 500 → cost floored to min*0.5 = 250; rate (300) untouched.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+near("H1 half cost floored to min*0.5", d.units[0].costTotal, 250);
+near("H1 half rate untouched", d.units[0].rateTotal, 300);
+eq("H1 minApplied", d.units[0].minApplied, true);
+
+// H2: full day (9h via a real gap, no meal/OT), min 500 → cost floored to 500; rate 600.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }, { time: "18:00", endTime: "22:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+eq("H2 one unit across shifts", d.units.length, 1); eq("H2 full tier", d.units[0].tier, "full");
+near("H2 full cost floored to min", d.units[0].costTotal, 500);
+near("H2 rate untouched", d.units[0].rateTotal, 600);
+
+// H3: min below the role's cost → no change (per-component floor never lowers).
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(1, CID)] }], S, { 7: 500 });
+near("H3 min below role cost unchanged", d.units[0].costTotal, 400);
+eq("H3 minApplied false", d.units[0].minApplied, false);
+
+// H4: OT scales with the minimum too (three gapped 4h segments = 12h, 2h reg OT).
+d = DAY([{ time: "08:00", endTime: "12:00", breaks: [], positions: [PC(2, CID)] }, { time: "13:00", endTime: "17:00", breaks: [], positions: [PC(2, CID)] }, { time: "18:00", endTime: "22:00", breaks: [], positions: [PC(2, CID)] }], S, { 7: 500 });
+eq("H4 otHours 2", d.units[0].otHours, 2);
+near("H4 dayCost floored to min", d.units[0].dayCost, 500);
+near("H4 otCost floored to min/10*1.5", d.units[0].otCost, 75);
+near("H4 total cost = 500 + 2*75", d.units[0].costTotal, 650);
+
+// H5: full-margin unit ignores the minimum (owner works their own gig at $0).
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID, { fm: true })] }], S, { 7: 500 });
+eq("H5 fullMargin cost 0 despite min", d.units[0].costTotal, 0);
+eq("H5 minApplied false on margin", d.units[0].minApplied, false);
+
+// H6: absent map / crew not in map → role cost, exactly as before.
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S);
+near("H6 no map => role half cost", d.units[0].costTotal, 200);
+d = DAY([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PC(2, CID)] }], S, { 99: 500 });
+near("H6 crew not in map => role cost", d.units[0].costTotal, 200);
+
+// H7: LTP_crewMinMap only picks up crew with a positive minimum.
+const cm = window.LTP_crewMinMap([
+  { id: 1, isCrew: true, minDayCost: 600 },
+  { id: 2, isCrew: true, minDayCost: 0 },
+  { id: 3, isCrew: true },
+  { id: 4, isCrew: false, minDayCost: 900 },
+]);
+eq("H7 map has crew1", cm[1], 600);
+eq("H7 skips zero min", cm[2], undefined);
+eq("H7 skips missing min", cm[3], undefined);
+eq("H7 skips non-crew", cm[4], undefined);
+
+// ── I. Payout: crewDayPay / stampPay / payoutRows ────────────────────────────
+const CDP = window.LTP_crewDayPay, STAMP = window.LTP_stampPay, PAYOUT = window.LTP_payoutRows;
+for (const [name, fn] of Object.entries({ LTP_crewDayPay: CDP, LTP_stampPay: STAMP, LTP_payoutRows: PAYOUT })) {
+  if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
+}
+function PP(sid, crewId, status, o) { o = o || {}; return { id: o.id || ("pp" + (++_pp)), serviceId: sid, slot: o.slot, fullMargin: o.fm, breaks: o.breaks, crewId: crewId, status: status, pay: o.pay, work: o.work }; }
+
+// I1: only CONFIRMED positions count — an accepted shift the same day is ignored.
+let pd = CDP([
+  { time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed"), PP(1, 8, "confirmed")] },
+  { time: "15:00", endTime: "20:00", breaks: [], positions: [PP(1, 7, "accepted")] },
+], 7, S);
+near("I1 confirmed-only total (half)", pd.total, 400); eq("I1 paid 5h", pd.paidHours, 5); eq("I1 tier half", pd.tier, "half");
+
+// I2: person's confirmed shifts merge across items (4h + break + 4h = full day, no OT).
+pd = CDP([
+  { time: "09:00", endTime: "13:00", breaks: [], positions: [PP(1, 7, "confirmed")] },
+  { time: "13:00", endTime: "18:00", breaks: [{ startTime: "13:00", endTime: "14:00", type: "unpaid" }], positions: [PP(1, 7, "confirmed")] },
+], 7, S);
+eq("I2 paid 8h", pd.paidHours, 8); eq("I2 no OT", pd.otHours, 0); near("I2 full-day cost", pd.total, 800);
+
+// I3: negotiated minimum floors the snapshot (L2 half 200 → min 500 half = 250).
+pd = CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(2, 7, "confirmed")] }], 7, S, { 7: 500 });
+near("I3 min-floored half", pd.total, 250); eq("I3 minApplied", pd.units[0].minApplied, true);
+
+// I4: nothing confirmed → null.
+eq("I4 accepted-only is null", CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "accepted")] }], 7, S), null);
+eq("I4 other crew is null", CDP([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 8, "confirmed")] }], 7, S), null);
+
+// I5: stampPay stamps this person's confirmed positions per day, nobody else's;
+// a dates restriction leaves other days' locks untouched.
+let sched = [
+  { id: "d1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x1" }), PP(1, 8, "confirmed", { id: "y1" })] },
+  { id: "d2", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x2" })] },
+  { id: "d3", date: "", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x3" })] },
+];
+sched = STAMP(sched, 7, S, null, "T0");
+const findPos = (sc, id) => sc.flatMap((s) => s.positions || []).find((p) => p.id === id);
+near("I5 x1 locked 400", findPos(sched, "x1").pay.total, 400); eq("I5 x1 lockedAt", findPos(sched, "x1").pay.lockedAt, "T0");
+near("I5 x2 locked 400", findPos(sched, "x2").pay.total, 400);
+eq("I5 other crew untouched", findPos(sched, "y1").pay, undefined);
+eq("I5 undated untouched", findPos(sched, "x3").pay, undefined);
+sched = STAMP(sched, 7, S, null, "T1", ["2026-07-11"]);
+eq("I5 restricted: d1 keeps T0", findPos(sched, "x1").pay.lockedAt, "T0");
+eq("I5 restricted: d2 now T1", findPos(sched, "x2").pay.lockedAt, "T1");
+
+// I6: restamping a day after more confirmed work recomputes the day total.
+sched = sched.concat([{ id: "d4", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "x5" })] }]);
+sched = STAMP(sched, 7, S, null, "T2", ["2026-07-10"]);
+near("I6 restamped day total (5h+4h full)", findPos(sched, "x1").pay.total, 800);
+near("I6 new shift carries same day snapshot", findPos(sched, "x5").pay.total, 800);
+
+// I7: payoutRows — locked is authoritative, drift flagged, legacy unlocked falls
+// back to current, range filters, grouped by crew sorted by name.
+const CONTACTS = [
+  { id: 7, isCrew: true, firstName: "Alex", lastName: "A" },
+  { id: 8, isCrew: true, firstName: "Bea", lastName: "B" },
+];
+const staleLock = { total: 999, paidHours: 5, otHours: 0, mealPenaltyHours: 0, tier: "half", units: [], lockedAt: "T0" };
+const PROJ = [
+  { id: 1, name: "Gala", schedule: [
+    { id: "g1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [
+      PP(1, 7, "confirmed", { pay: staleLock }), PP(1, 8, "confirmed"), PP(1, 9, "requested")] },
+  ] },
+  { id: 2, name: "Expo", schedule: [
+    { id: "e1", date: "2026-07-20", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(2, 7, "confirmed")] },
+  ] },
+];
+let po = PAYOUT(PROJ, CONTACTS, S, "2026-07-01", "2026-07-15");
+eq("I7 two crew groups", po.groups.length, 2);
+eq("I7 sorted by name", po.groups.map((g) => g.crewName).join(","), "Alex A,Bea B");
+const alex = po.groups[0], bea = po.groups[1];
+eq("I7 alex drift", alex.rows[0].drift, true);
+near("I7 alex estimate = locked", alex.rows[0].estimate, 999);
+eq("I7 unsigned payable is null", alex.rows[0].payable, null);
+eq("I7 bea unlocked", bea.rows[0].locked, null);
+near("I7 bea estimate = current", bea.rows[0].estimate, 400);
+eq("I7 counts", po.driftCount + "/" + po.unlockedCount, "1/1");
+eq("I7 all pending, nothing payable", po.grandTotal, 0);
+near("I7 pending total = estimates", po.pendingTotal, 1399);
+eq("I7 pending count", po.pendingCount, 2);
+eq("I7 requested crew excluded", po.groups.some((g) => g.crewId === 9), false);
+po = PAYOUT(PROJ, CONTACTS, S, "2026-07-01", "2026-07-31");
+near("I7 full range adds Expo (L2 half 200)", po.groups[0].pendingTotal, 1199);
+
+// I8: a snapshot taken by stampPay reads back with zero drift.
+const cleanSched = STAMP([
+  { id: "c1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "cx" })] },
+], 7, S, null, "T3");
+po = PAYOUT([{ id: 3, name: "Clean", schedule: cleanSched }], CONTACTS, S, "2026-07-01", "2026-07-31");
+eq("I8 no drift on fresh lock", po.groups[0].rows[0].drift, false);
+eq("I8 nothing unlocked", po.unlockedCount, 0);
+near("I8 estimate = locked = current", po.groups[0].rows[0].estimate, 400);
+
+// ── J. Day-of actuals + sign-off ─────────────────────────────────────────────
+const CDA = window.LTP_crewDayActuals, SIGN = window.LTP_signOffDay, UNSIGN = window.LTP_unsignDay;
+for (const [name, fn] of Object.entries({ LTP_crewDayActuals: CDA, LTP_signOffDay: SIGN, LTP_unsignDay: UNSIGN })) {
+  if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
+}
+
+// J1: adjusted work.time/endTime override the shift's scheduled times; a
+// scheduled break inside the actual window still applies (5h sched → 9h-1h=8h full).
+let ja = CDA([{ time: "09:00", endTime: "14:00", breaks: [{ startTime: "12:00", endTime: "13:00", type: "unpaid" }],
+  positions: [PP(1, 7, "confirmed", { work: { state: "adjusted", time: "09:00", endTime: "18:00" } })] }], 7, S);
+eq("J1 actual paid 8h", ja.paidHours, 8); near("J1 actual full-day", ja.total, 800);
+
+// J2: no_show shifts are dropped; all no_show → null.
+ja = CDA([
+  { time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "no_show" } })] },
+  { time: "15:00", endTime: "20:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "worked" } })] },
+], 7, S);
+eq("J2 only worked shift counts", ja.paidHours, 5); near("J2 half day", ja.total, 400);
+eq("J2 all no-show is null", CDA([{ time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { work: { state: "no_show" } })] }], 7, S), null);
+
+// J3: a scheduled break OUTSIDE the adjusted window is dropped, not misapplied.
+ja = CDA([{ time: "09:00", endTime: "14:00", breaks: [{ startTime: "13:00", endTime: "13:30", type: "unpaid" }],
+  positions: [PP(1, 7, "confirmed", { work: { state: "adjusted", time: "09:00", endTime: "13:00" } })] }], 7, S);
+eq("J3 clipped paid 4h", ja.paidHours, 4); near("J3 half day", ja.total, 400);
+
+// J4: signOffDay defaults to "worked", stamps work + final pay on every one of
+// the person's confirmed positions that day, and touches nobody else.
+let ss = SIGN([
+  { id: "w1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sa" }), PP(1, 8, "confirmed", { id: "sb" })] },
+  { id: "w2", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sc" })] },
+  { id: "w3", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "sd" })] },
+], 7, "2026-07-10", {}, S, null, "TS", "PM");
+eq("J4 state worked", findPos(ss, "sa").work.state, "worked");
+near("J4 final = 5h+4h full day", findPos(ss, "sa").work.pay.total, 800);
+near("J4 same snapshot on 2nd shift", findPos(ss, "sc").work.pay.total, 800);
+eq("J4 signedBy", findPos(ss, "sa").work.signedBy, "PM");
+eq("J4 other crew untouched", findPos(ss, "sb").work, undefined);
+eq("J4 other day untouched", findPos(ss, "sd").work, undefined);
+
+// J5: dropping one shift at sign-off pays only the worked one.
+ss = SIGN(ss, 7, "2026-07-10", { sc: { state: "no_show" } }, S, null, "TS2", "PM");
+near("J5 only 5h shift pays", findPos(ss, "sa").work.pay.total, 400);
+eq("J5 dropped shift marked", findPos(ss, "sc").work.state, "no_show");
+
+// J6: whole-day no-show freezes $0.
+ss = SIGN(ss, 7, "2026-07-10", { sa: { state: "no_show" }, sc: { state: "no_show" } }, S, null, "TS3", "PM");
+eq("J6 no-show total 0", findPos(ss, "sa").work.pay.total, 0);
+
+// J7: unsignDay strips work → day is pending again.
+ss = UNSIGN(ss, 7, "2026-07-10");
+eq("J7 work cleared", findPos(ss, "sa").work, undefined);
+eq("J7 other day still untouched", findPos(ss, "sd").work, undefined);
+
+// J8: payoutRows with a signed day — payable/final counts, drift suppressed.
+let jsched = STAMP([
+  { id: "j1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "jx" })] },
+  { id: "j2", date: "2026-07-11", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "jy" })] },
+], 7, S, null, "T4");
+// pretend rates changed after locking: stale lock says 999
+jsched = jsched.map((s) => s.id !== "j1" ? s : Object.assign({}, s, { positions: s.positions.map((p) => Object.assign({}, p, { pay: Object.assign({}, p.pay, { total: 999 }) })) }));
+jsched = SIGN(jsched, 7, "2026-07-10", {}, S, null, "TS4", "PM");
+po = PAYOUT([{ id: 4, name: "Mix", schedule: jsched }], CONTACTS, S, "2026-07-01", "2026-07-31");
+const jrows = po.groups[0].rows;
+eq("J8 signed state worked", jrows[0].signed.state, "worked");
+near("J8 signed payable = final", jrows[0].payable, 400);
+eq("J8 drift suppressed once signed", jrows[0].drift, false);
+eq("J8 second day pending", jrows[1].signed, null);
+near("J8 grand = signed only", po.grandTotal, 400);
+near("J8 pending = unsigned estimate", po.pendingTotal, 400);
+eq("J8 pending count 1", po.pendingCount, 1);
+
+// J9: mixed worked/no-show day rolls up as "adjusted" in payout rows.
+let jm = SIGN([
+  { id: "m1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "ma" })] },
+  { id: "m2", date: "2026-07-10", time: "15:00", endTime: "19:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "mb" })] },
+], 7, "2026-07-10", { mb: { state: "no_show" } }, S, null, "TS5", "PM");
+po = PAYOUT([{ id: 5, name: "MixDay", schedule: jm }], CONTACTS, S, "2026-07-01", "2026-07-31");
+eq("J9 mixed day state adjusted", po.groups[0].rows[0].signed.state, "adjusted");
+near("J9 mixed day pays worked shift", po.groups[0].rows[0].payable, 400);
+
+// ── K. Pay adjustments (extras/deductions per person-day) ────────────────────
+const ADJSET = window.LTP_setPayAdjustments;
+if (typeof ADJSET !== "function") { console.error("theme.js did not export LTP_setPayAdjustments"); process.exit(1); }
+
+// K1: stamps the person's confirmed positions that day; zero amounts filtered;
+// other crew untouched; an empty list clears.
+let ks = [
+  { id: "k1", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "ka" }), PP(1, 8, "confirmed", { id: "kb" })] },
+];
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a1", amount: 50, label: "parking" }, { id: "a2", amount: 0, label: "zero" }]);
+eq("K1 adj stamped, zero filtered", findPos(ks, "ka").adj.length, 1);
+eq("K1 kept the real one", findPos(ks, "ka").adj[0].label, "parking");
+eq("K1 other crew untouched", findPos(ks, "kb").adj, undefined);
+ks = ADJSET(ks, 7, "2026-07-10", []);
+eq("K1 empty list clears", findPos(ks, "ka").adj, undefined);
+
+// K2: pending row — estimate and pendingTotal include the adjustment; no
+// payable until signed; adjustments never create drift (base compare only).
+ks = STAMP([
+  { id: "k2", date: "2026-07-10", time: "09:00", endTime: "14:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "kc" })] },
+], 7, S, null, "T5");
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a3", amount: 50, label: "parking" }]);
+po = PAYOUT([{ id: 6, name: "AdjP", schedule: ks }], CONTACTS, S, "2026-07-01", "2026-07-31");
+near("K2 estimate = base 400 + 50", po.groups[0].rows[0].estimate, 450);
+eq("K2 payable still null", po.groups[0].rows[0].payable, null);
+near("K2 pendingTotal includes adj", po.pendingTotal, 450);
+eq("K2 adj is not drift", po.groups[0].rows[0].drift, false);
+
+// K3: signed row — payable = frozen final + net adjustments (with a deduction);
+// adjustments survive sign-off and can be edited after it.
+ks = SIGN(ks, 7, "2026-07-10", {}, S, null, "TS6", "PM");
+ks = ADJSET(ks, 7, "2026-07-10", [{ id: "a4", amount: 50, label: "parking" }, { id: "a5", amount: -20, label: "advance" }]);
+po = PAYOUT([{ id: 6, name: "AdjP", schedule: ks }], CONTACTS, S, "2026-07-01", "2026-07-31");
+near("K3 payable = 400 + 30 net", po.groups[0].rows[0].payable, 430);
+near("K3 adjTotal net", po.groups[0].rows[0].adjTotal, 30);
+near("K3 grand total includes adj", po.grandTotal, 430);
+eq("K3 two adjustments listed", po.groups[0].rows[0].adjustments.length, 2);
+
+// ── L. Site-address resolver (client mirror of _resolve_site_address) ───────
+const SITE = window.LTP_siteAddress;
+if (typeof SITE !== "function") { console.error("theme.js did not export LTP_siteAddress"); process.exit(1); }
+const COMPS = [{ id: 11, address: "500 E Cesar Chavez St\nSuite 2", city: "Austin", state: "TX", zip: "78701" }];
+eq("L1 typed address, multi-line flattens", SITE({ siteAddress: "123 Main St\nDock B" }, COMPS), "123 Main St, Dock B");
+eq("L2 company-derived", SITE({ siteUseCompanyAddress: true, companyId: 11 }, COMPS), "500 E Cesar Chavez St, Suite 2, Austin, TX 78701");
+eq("L3 checkbox but company missing → typed fallback", SITE({ siteUseCompanyAddress: true, companyId: 99, siteAddress: "Fallback Rd" }, COMPS), "Fallback Rd");
+eq("L4 no data → empty", SITE({}, COMPS), "");
+eq("L5 null project → empty", SITE(null, COMPS), "");
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

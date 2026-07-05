@@ -32,6 +32,9 @@
     // QuickBooks Online connection status (non-secret booleans + masked
     // metadata from /api/qbo/status). null while loading.
     var [qbo, setQbo] = useState(null);
+    // Bump to force a re-render after clearing the (non-React) error-log global,
+    // without writing a junk key into the persisted settings draft.
+    var [, bumpErrLog] = useState(0);
 
     useEffect(function() { setDraft(Object.assign({}, settings)); cleanRef.current = settings; setIsDirty(false); }, []);
 
@@ -619,7 +622,7 @@
               }).join("\n---\n");
               if (navigator.clipboard) navigator.clipboard.writeText(text);
             }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Copy All"),
-            h("button", { onClick: function() { window.__LTP_ERROR_LOG = []; set("_errorClear", Date.now()); },
+            h("button", { onClick: function() { window.__LTP_ERROR_LOG = []; bumpErrLog(function(n) { return n + 1; }); },
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Clear Log"))
         )
       ),

@@ -2,6 +2,7 @@
 // Exposes: window.LTP_RENTALS
 (function() {
   var h = React.createElement;
+  var useState = React.useState;
   var B = window.LTP_THEME;
 
   var ALLOC_COLORS = {
@@ -84,12 +85,6 @@
     }).reduce(function(sum, a) { return sum + a.qty; }, 0);
   }
 
-  function availableQty(equipment, allocations, equipmentId, startDate, endDate, exId) {
-    var eq = equipment.find(function(e) { return e.id === equipmentId; });
-    if (!eq) return 0;
-    return eqQty(eq) - allocatedQty(allocations, equipmentId, startDate, endDate, exId);
-  }
-
   // Base display rate — use 3-day as the primary display rate
   function baseRate(eq) {
     return eq.rates && eq.rates.threeDay ? eq.rates.threeDay : 0;
@@ -103,7 +98,58 @@
     return d.toISOString().split("T")[0];
   }
 
+  // Serial/barcode typeahead: pick one unit from a serialized item's units by
+  // typing its barcode or serial. Shared by the equipment and container detail
+  // forms (each wraps this with its own placeholder/emptyHint strings).
+  function SerialSearch(props) {
+    var units = props.units, value = props.value, onChange = props.onChange;
+    var placeholder = props.placeholder || "Type barcode or serial…";
+    var emptyHint = props.emptyHint || "Type to search…";
+    var sel = value ? (units || []).find(function(u) { return u.id === value; }) : null;
+    function displayLabel(u) { return u.barcode || u.serial || ("Unit " + u.id); }
+    var qPair = useState(sel ? displayLabel(sel) : "");
+    var query = qPair[0], setQuery = qPair[1];
+    var fPair = useState(false);
+    var focused = fPair[0], setFocused = fPair[1];
+    var q = query.toLowerCase();
+    var filtered = (units || []).filter(function(u) {
+      return (u.barcode || "").toLowerCase().indexOf(q) !== -1 || (u.serial || "").toLowerCase().indexOf(q) !== -1;
+    });
+    return h("div", { style: { position: "relative" } },
+      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
+        sel && h("span", { style: { background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
+          displayLabel(sel),
+          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
+        ),
+        h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : placeholder,
+          onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },
+          onFocus: function() { if (!sel) setFocused(true); },
+          onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
+          onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
+          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" }
+        })
+      ),
+      focused && !sel && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 160, overflowY: "auto", zIndex: 20 } },
+        filtered.length === 0
+          ? h("div", { style: { padding: "10px 12px", fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, query ? "No matching units." : emptyHint)
+          : filtered.map(function(u) {
+              var hasIssue = (u.maintenanceLogs || []).some(function(l) { return l.status === "open"; });
+              return h("div", { key: u.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { onChange(u.id); setQuery(""); setFocused(false); },
+                style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", borderBottom: "1px solid " + B.border },
+                onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+                onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; }
+              },
+                h("span", { style: { color: B.text, fontWeight: 600 } }, u.barcode || u.serial || "No ID"),
+                u.barcode && u.serial && h("span", { style: { color: B.textMut, marginLeft: 8, fontSize: "11px" } }, "S/N: " + u.serial),
+                hasIssue && h("span", { style: { color: B.danger, marginLeft: 8, fontSize: "11px", fontWeight: 700 } }, "open issue")
+              );
+            })
+      )
+    );
+  }
+
   window.LTP_RENTALS = {
+    SerialSearch:  SerialSearch,
     ALLOC_COLORS:  ALLOC_COLORS,
     ALLOC_STATES:  ALLOC_STATES,
     CATEGORIES:    CATEGORIES,
@@ -116,7 +162,6 @@
     eqQty:            eqQty,
     outOfServiceQty:  outOfServiceQty,
     allocatedQty:     allocatedQty,
-    availableQty:     availableQty,
     baseRate:      baseRate,
     today:         today,
     addDays:       addDays,

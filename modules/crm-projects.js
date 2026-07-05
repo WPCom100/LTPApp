@@ -49,6 +49,8 @@
     var company = ctx.companies.find(function(c) { return c.id === project.companyId; });
     var projContacts = ctx.contacts.filter(function(c) { return project.contactIds.includes(c.id); });
     var totalBudget = Object.values(project.budget).reduce(function(a, b) { return a + b; }, 0);
+    // Headline figure: once quotes exist they supersede the preliminary budget.
+    var headline = window.LTP_projectHeadlineTotal(project, ctx.quotes);
     // Initial tab comes from ctx.projectOpenTab (URL-derived in projects.js, or set by
     // other callers). When it changes, update the local tab state. Local in-modal tab
     // clicks update setProjTab only — they do not navigate or clear the URL.
@@ -81,11 +83,30 @@
       // OVERVIEW
       projTab === "overview" && h("div", null,
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
-          h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Total Budget"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())),
+          h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
+            h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, headline.quoted ? "Total Quoted" : "Total Budget"),
+            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + Math.round(headline.total).toLocaleString()),
+            headline.quoted && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "across " + headline.count + " quote" + (headline.count !== 1 ? "s" : ""))),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Category"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: CAT_COLORS[project.category] } }, project.category)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Contacts"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, projContacts.length)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Quotes"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.accent } }, projectQuotes.length))
         ),
+        h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Location"),
+        (function() {
+          // Same live resolution the crew emails use: the "use company address"
+          // flag reads the client company's CURRENT address at render time.
+          var siteAddr = project.siteUseCompanyAddress
+            ? (company ? window.LTP_formatAddress(company) : "")
+            : (project.siteAddress || "").trim();
+          if (!project.venue && !siteAddr) {
+            return h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 16, fontStyle: "italic" } }, "No location set — add a venue or site address via Edit.");
+          }
+          return h("div", { style: { display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent, marginBottom: 16 } },
+            h("div", null,
+              project.venue && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, project.venue),
+              siteAddr && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: project.venue ? 2 : 0 } },
+                siteAddr + (project.siteUseCompanyAddress ? "  ·  client company address" : ""))));
+        })(),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Contacts"),
         projContacts.length > 0 ? projContacts.map(function(c) { return h("div", { key: c.id, style: { fontSize: "13px", color: B.textSec, marginBottom: 4, cursor: "pointer" }, onClick: function() { ctx.setSelectedProjectId(null); ctx.setEditContactId(c.id); } }, h("span", { style: { color: B.accent, textDecoration: "underline" } }, c.firstName + " " + c.lastName), " \u2014 " + c.role + " \u00b7 " + c.email); }) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No contacts assigned."),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "16px 0 8px", textTransform: "uppercase" } }, "Upcoming Schedule"),
@@ -130,7 +151,7 @@
             h("div", null, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees")),
             h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
               m.meetLink && h("a", { href: window.LTP_safeUrl(m.meetLink), target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600 } }, "Join Meet \u2197"),
-              h(window.Btn, { small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var eh = String(Math.min(23, parseInt(m.time.split(":")[0]) + 1)).padStart(2, "0"); var u = "https://calendar.google.com/calendar/render?action=TEMPLATE&text=" + encodeURIComponent(m.title + " \u2014 " + project.name) + "&dates=" + m.date.replace(/-/g, "") + "T" + m.time.replace(":", "") + "00/" + m.date.replace(/-/g, "") + "T" + eh + m.time.split(":")[1] + "00&details=" + encodeURIComponent("LTP Project: " + project.name) + "&add=" + ae.join(","); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal"))
+              h(window.Btn, { small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var u = window.LTP_gcalUrl({ title: m.title + " \u2014 " + project.name, date: m.date, time: m.time, attendees: ae, details: "LTP Project: " + project.name }); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal"))
           ),
           linkedNotes.length > 0 && h("div", { style: { marginTop: 6, padding: "6px 10px", background: B.bg, borderRadius: "4px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, marginBottom: 4 } }, "Linked Notes:"),
@@ -139,8 +160,18 @@
         );
       }))),
 
-      // BUDGET TAB
-      projTab === "budget" && h("div", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, Object.entries(project.budget).map(function(e) { return h("div", { key: e[0], style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px" } }, h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text, textTransform: "capitalize" } }, e[0]), h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + e[1].toLocaleString())); }), h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + B.accent } }, h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, "Total"), h("span", { style: { fontSize: "18px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())))),
+      // BUDGET TAB — the preliminary breakdown stays visible for reference,
+      // but once quotes exist the quoted total is the headline figure.
+      projTab === "budget" && h("div", null, h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+        headline.quoted && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + B.accent } },
+          h("div", null,
+            h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, "Total Quoted"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, headline.count + " quote" + (headline.count !== 1 ? "s" : "") + " — supersedes the preliminary budget")),
+          h("span", { style: { fontSize: "18px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, "$" + Math.round(headline.total).toLocaleString())),
+        Object.entries(project.budget).map(function(e) { return h("div", { key: e[0], style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px", opacity: headline.quoted ? 0.75 : 1 } }, h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text, textTransform: "capitalize" } }, e[0]), h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + e[1].toLocaleString())); }),
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", background: headline.quoted ? B.raised : B.accentMuted, borderRadius: "6px", borderTop: "2px solid " + (headline.quoted ? B.border : B.accent), opacity: headline.quoted ? 0.75 : 1 } },
+          h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, headline.quoted ? "Preliminary Budget Total" : "Total"),
+          h("span", { style: { fontSize: "18px", fontWeight: 700, color: headline.quoted ? B.textSec : B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + totalBudget.toLocaleString())))),
 
       // QUOTES TAB
       projTab === "quotes" && h("div", null,
@@ -222,26 +253,34 @@
     var [projStatus, setProjStatus] = useState(initial ? initial.status : "upcoming");
     var [start, setStart] = useState(initial ? initial.startDate : "");
     var [end, setEnd] = useState(initial ? initial.endDate : "");
+    var [venue, setVenue] = useState(initial ? (initial.venue || "") : "");
+    var [siteAddr, setSiteAddr] = useState(initial ? (initial.siteAddress || "") : "");
+    var [siteUseComp, setSiteUseComp] = useState(initial ? !!initial.siteUseCompanyAddress : false);
     var [cIds, setCIds] = useState(initial ? initial.contactIds : []);
     var [budL, setBudL] = useState(initial ? initial.budget.lighting : 0);
     var [budLb, setBudLb] = useState(initial ? initial.budget.labor : 0);
     var [budR, setBudR] = useState(initial ? initial.budget.rentals : 0);
     var [budM, setBudM] = useState(initial ? initial.budget.misc : 0);
-    var [sched, setSched] = useState(initial ? initial.schedule.map(function(s) { return Object.assign({}, s); }) : []);
 
     var [schedError, setSchedError] = useState("");
 
+    // The schedule itself is planned in the full-screen Schedule Builder
+    // (#/projects/<id>/schedule) — this form no longer edits it. But the
+    // project DATES are edited here, so the saved schedule is still checked
+    // against the new range before saving (normalized first: rows can carry
+    // a stale hidden endDate the editor never displays).
     function validateSchedule() {
       if (!start || !end) return true; // no project dates to check against
-      var validItems = sched.filter(window.LTP_scheduleRowHasContent);
-      for (var i = 0; i < validItems.length; i++) {
-        var s = validItems[i];
+      var rows = window.LTP_normalizeScheduleRows(
+        ((initial && initial.schedule) || []).filter(window.LTP_scheduleRowHasContent));
+      for (var i = 0; i < rows.length; i++) {
+        var s = rows[i];
         if (s.date && (s.date < start || s.date > end)) {
-          setSchedError("\"" + s.title + "\" starts on " + fmt(s.date) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + ").");
+          setSchedError("\"" + s.title + "\" starts on " + fmt(s.date) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + "). Widen the dates here, or move that day in the Schedule Builder first.");
           return false;
         }
         if (s.endDate && (s.endDate < start || s.endDate > end)) {
-          setSchedError("\"" + s.title + "\" ends on " + fmt(s.endDate) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + ").");
+          setSchedError("\"" + s.title + "\" ends on " + fmt(s.endDate) + " which is outside the project date range (" + fmt(start) + " \u2192 " + fmt(end) + "). Widen the dates here, or move that day in the Schedule Builder first.");
           return false;
         }
       }
@@ -249,27 +288,20 @@
       return true;
     }
 
+    // No schedule key in the payload: the edit save merges d over the project
+    // and keeps x.schedule when absent (projects.js), so the builder-managed
+    // schedule is untouched; the create save defaults it to []. Crew-removal
+    // notices are handled where removals can actually happen now — the
+    // Schedule Builder's save.
     function doSubmit() {
-      onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end, contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM }, schedule: sched.filter(window.LTP_scheduleRowHasContent) });
+      onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end,
+        venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp,
+        contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM } });
     }
 
-    // Editing an existing project: park a removal notice (per person, per type)
-    // for any crew this save pulls off shifts, into the notify tray. Snapshot
-    // here (the positions are about to be deleted) so the email still renders.
     function handleSaveClick() {
       if (!name.trim() || !compId) return;
       if (!validateSchedule()) return;
-      if (initial && initial.id) {
-        var removed = window.LTP_diffRemovedCrew(initial.schedule, sched, ctx.contacts, ctx.services);
-        removed.forEach(function(g) {
-          window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: initial.id, projectName: name || initial.name || "", template: g.template, shifts: g.shifts });
-        });
-        if (removed.length) {
-          var people = {}; removed.forEach(function(g) { people[g.crewId] = true; });
-          var n = Object.keys(people).length;
-          window.LTP_toast("Added to notify tray", { message: n + " crew member" + (n !== 1 ? "s" : "") + " queued — send from the tray (bottom-left).", variant: "info" });
-        }
-      }
       doSubmit();
     }
 
@@ -285,6 +317,26 @@
           h(window.LTPInput, { label: "Start Date", value: start, onChange: setStart, type: "date" }),
           h(window.LTPInput, { label: "End Date", value: end, onChange: setEnd, type: "date" })
         ),
+        // Site / location — sent to crew with shift requests and shown on their
+        // public call sheet. The checkbox derives the address from the client
+        // company's billing address LIVE (resolved at send time), so a company
+        // address update flows to future sends without re-saving the project.
+        (function() {
+          var comp = siteUseComp && compId ? (ctx.companies || []).find(function(c) { return c.id === compId; }) : null;
+          var compAddr = comp ? [comp.address, [comp.city, [comp.state, comp.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ").replace(/\n/g, ", ") : "";
+          return h("div", null,
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              h(window.LTPInput, { label: "Venue Name", value: venue, onChange: setVenue, placeholder: "e.g. Moody Center" }),
+              siteUseComp
+                ? h("div", null,
+                    h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 2, fontWeight: 600 } }, "Site Address"),
+                    h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "6px", padding: "7px 10px", fontSize: "11px", color: compAddr ? B.textSec : B.textMut, fontStyle: compAddr ? "normal" : "italic", minHeight: 30 } },
+                      compAddr || (compId ? "No address on the company record yet." : "Pick a company above first.")))
+                : h(window.LTPInput, { label: "Site Address", value: siteAddr, onChange: setSiteAddr, placeholder: "Street, city, state — sent to crew with requests" })),
+            h("label", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 6, cursor: "pointer", fontSize: "11px", color: B.textSec, width: "fit-content" } },
+              h("input", { type: "checkbox", checked: siteUseComp, onChange: function(e) { setSiteUseComp(e.target.checked); }, style: { cursor: "pointer" } }),
+              "Use the client company's address as the site address"));
+        })(),
         h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Preliminary Budget"),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },
@@ -293,7 +345,23 @@
           h(window.LTPInput, { label: "Rentals", value: budR, onChange: function(v) { setBudR(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Misc", value: budM, onChange: function(v) { setBudM(Number(v) || 0); }, type: "number" })
         ),
-        h(window.ScheduleEditor, { schedule: sched, onChange: function(v) { setSched(v); setSchedError(""); }, contacts: ctx.contacts, services: ctx.services }),
+        // Schedule hand-off — planning lives in the full-screen Schedule
+        // Builder, not this form (the inline editor here was redundant).
+        h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Schedule"),
+        initial
+          ? (function() {
+              var rows = (initial.schedule || []).filter(window.LTP_scheduleRowHasContent);
+              var posCount = rows.reduce(function(n, s) { return n + (s.positions || []).length; }, 0);
+              return h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } },
+                    rows.length + " schedule day" + (rows.length !== 1 ? "s" : "") + (posCount ? " · " + posCount + " position" + (posCount !== 1 ? "s" : "") : "")),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                    "Days, times, and crew are planned in the full-screen Schedule Builder.")),
+                h(window.Btn, { small: true, variant: "ghost", onClick: function() { window.LTPRouter.navigate("projects/" + initial.id + "/schedule"); } }, "Open Schedule Builder"));
+            })()
+          : h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } },
+              "Create the project first — then plan its days in the full-screen Schedule Builder."),
         schedError && h("div", { style: { fontSize: "12px", color: B.danger, padding: "8px 12px", background: B.dangerBg, borderRadius: "6px", border: "1px solid " + B.dangerBd } }, schedError),
         h(window.Btn, { onClick: handleSaveClick }, initial ? "Save Changes" : "Create Project")
       )
