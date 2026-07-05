@@ -265,7 +265,7 @@ def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent
     be redundant."""
     url = escape(view_url)
     n = str(shift_count) + " shift" + ("" if shift_count == 1 else "s")
-    loc = ('<div style="font-size:12px;color:#8a949e;margin:0 0 2px">📍 ' + escape(site_address) + '</div>') if site_address else ""
+    loc = ('<div style="font-size:12px;color:#8a949e;margin:0 0 2px">' + escape(site_address) + '</div>') if site_address else ""
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'

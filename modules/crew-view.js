@@ -184,7 +184,7 @@
     var whereRow = (status === "accepted" && siteAddress)
       ? h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(siteAddress), target: "_blank", rel: "noopener",
           style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 8 } },
-          "📍 " + siteAddress)
+          siteAddress)
       : null;
 
     return h("div", { style: { background: cfg.bg, border: "1px solid " + cfg.bd, borderRadius: 14, padding: 20 } },
@@ -450,7 +450,7 @@
           // Job-site address — linked to a map so crew can navigate in one tap.
           project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
             style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
-            "📍 " + project.siteAddress)),
+            project.siteAddress)),
 
         // Shifts
         shiftSection,

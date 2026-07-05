@@ -1665,7 +1665,7 @@
             "Confirm ", h("strong", { style: { color: B.text } }, crewLabel(confirmDlg.contactId)),
             " for ", h("strong", { style: { color: B.text } }, projLabel(confirmDlg.projectId)),
             "? Their accepted positions move to confirmed."),
-          site && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 16 } }, "📍 " + site),
+          site && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 16 } }, site),
           h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
             h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
             h(window.Btn, { variant: "ghost", onClick: function() { doConfirm(confirmDlg, false); } }, "Confirm Quietly"),
