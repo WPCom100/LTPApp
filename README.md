@@ -222,7 +222,11 @@ on the Playground — always use the app's button.)
 - **Customers & items** are created in QuickBooks automatically the first time
   they're referenced (matched by name, then cached by id) — no pre-creation
   needed. Equipment lines map to one generic "Equipment Rental" item; each
-  product/service maps to its own item.
+  product/service maps to its own item. A product's **pricing variants**
+  (multiple pricing structures for the same product, e.g. Transportation:
+  flat local delivery vs. per-mile — set up in Quotes → Products) all share
+  that product's single QB item: the variant label rides in the line
+  description and QB takes each line's own amount.
 
 ### Income accounts
 

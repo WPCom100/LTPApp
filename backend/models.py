@@ -166,6 +166,7 @@ class Quote(Base):
                                                         #   id: str, type: "equipment"|"service"|"product"|"note",
                                                         #   name: str, qty: float, unitPrice: float, adjustedPrice: float|null,
                                                         #   rateType: "day"|"halfDay"|"hourly"|"ot"  (services only),
+                                                        #   productVariantId: str|null  (products only — chosen pricing variant),
                                                         #   deliveredQty: float, invoicedQty: float,
                                                         #   equipmentId|serviceId|productId: int|null }
     notes = Column(Text, default="")                    # free-form text shown on the printed quote
@@ -220,7 +221,8 @@ class Invoice(Base):
     global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
     sections = Column(JSON, default=list)               # list[{id, label, items: list[InvoiceLineItem]}]
                                                         # InvoiceLineItem = {id, type, name, qty, unitPrice, adjustedPrice,
-                                                        #                    rateType, serviceId|equipmentId|productId,
+                                                        #                    rateType, productVariantId,
+                                                        #                    serviceId|equipmentId|productId,
                                                         #                    sourceItemId: str}  (source = quote line id)
     notes = Column(Text, default="")
     payments = Column(JSON, default=list)               # list[{id: str, date: str, amount: float, method: str, reference: str, notes: str}]
@@ -329,6 +331,15 @@ class Product(Base):
     unit = Column(String(50), default="ea")              # selling unit: "roll", "jug", "sheet", etc.
     unit_price = Column(Float, default=0)                # price per unit (what we charge)
     cost = Column(Float, default=0)                      # our cost per unit (for margin)
+    # Pricing variants — alternative pricing structures for the same product
+    # (e.g. Transportation: Local Delivery flat / Per Mile / Client Goods).
+    # When non-empty, the quote/invoice pickers offer one row per variant and
+    # unit_price/cost above are used only as the "Base price" fallback. Lines
+    # snapshot the chosen variant's price and carry `productVariantId`; every
+    # variant shares this product's single QB item (label rides in the line
+    # name), so the QuickBooks sync engine is unaffected. Normalization/lookup
+    # live in theme.js (LTP_productVariants / LTP_findProductVariant).
+    variants = Column(JSON, default=list)                # list[{id: str, label: str, unitPrice: float, cost: float}]
     notes = Column(Text, default="")
     qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
     # Income account override for the QB item backing this product. null = use

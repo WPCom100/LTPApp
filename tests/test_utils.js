@@ -190,6 +190,33 @@ conf = DCC([
 ]);
 eq("CC4 declined ignored -> no conflict", Object.keys(conf).length, 0);
 
+// ── product pricing variants ─────────────────────────────────────────────────
+const PV = window.LTP_productVariants, FV = window.LTP_findProductVariant, VN = window.LTP_productVariantName;
+const transport = { name: "Transportation", unitPrice: 0, cost: 0, variants: [
+  { id: "v1", label: "Local Delivery", unitPrice: 150, cost: 60 },
+  { id: "v2", label: "Per Mile", unitPrice: 2.5, cost: 1.1 },
+  { id: 3, label: "  Client Goods  ", unitPrice: "200", cost: null },   // messy row: numeric id, padded label, string/absent numbers
+  { id: "v4", label: "   ", unitPrice: 99 },                            // unlabeled → dropped
+  null,                                                                 // junk → dropped
+] };
+eq("PV1 usable variants kept, junk dropped", PV(transport).length, 3);
+eq("PV2 label trimmed", PV(transport)[2].label, "Client Goods");
+eq("PV3 numeric id normalized to string", PV(transport)[2].id, "3");
+eq("PV4 string price coerced", PV(transport)[2].unitPrice, 200);
+eq("PV5 missing cost -> 0", PV(transport)[2].cost, 0);
+eq("PV6 no variants field -> []", PV({ name: "Gaff Tape" }).length, 0);
+eq("PV7 null product -> []", PV(null).length, 0);
+eq("PV8 non-array variants tolerated", PV({ variants: "junk" }).length, 0);
+eq("FV1 lookup by id", FV(transport, "v2").unitPrice, 2.5);
+eq("FV2 numeric id arg matches", FV(transport, 3).label, "Client Goods");
+eq("FV3 unknown id -> null", FV(transport, "nope"), null);
+eq("FV4 empty id -> null (base price)", FV(transport, ""), null);
+eq("FV5 null id -> null", FV(transport, null), null);
+eq("FV6 unlabeled variant not findable", FV(transport, "v4"), null);
+eq("VN1 name with variant", VN(transport, FV(transport, "v1")), "Transportation — Local Delivery");
+eq("VN2 name without variant is base name", VN(transport, null), "Transportation");
+eq("VN3 null product tolerated", VN(null, null), "");
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

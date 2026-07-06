@@ -35,12 +35,31 @@
     var [cost,      setCost]      = useState(initial ? initial.cost      : 0);
     var [notes,     setNotes]     = useState(initial ? initial.notes     : "");
     var [qbAccount, setQbAccount] = useState(initial ? (initial.qbIncomeAccountId || "") : "");
+    // Pricing variants — edited as raw rows (blank labels allowed while
+    // typing); LTP_productVariants drops unlabeled rows everywhere they're
+    // consumed, and submit() saves the same normalized list.
+    var [variants, setVariants] = useState(
+      initial && Array.isArray(initial.variants)
+        ? initial.variants.map(function(v) { return Object.assign({}, v); })
+        : []
+    );
+
+    function addVariant() {
+      setVariants(function(prev) { return prev.concat([{ id: window.LTP_genId("var"), label: "", unitPrice: 0, cost: 0 }]); });
+    }
+    function patchVariant(id, patch) {
+      setVariants(function(prev) { return prev.map(function(v) { return v.id === id ? Object.assign({}, v, patch) : v; }); });
+    }
+    function removeVariant(id) {
+      setVariants(function(prev) { return prev.filter(function(v) { return v.id !== id; }); });
+    }
 
     function submit() {
       if (!name.trim()) return;
       onSave({
         name: name.trim(), category: category.trim() || "Consumables", unit: unit,
         unitPrice: Number(unitPrice) || 0, cost: Number(cost) || 0, notes: notes,
+        variants: window.LTP_productVariants({ variants: variants }),
         qbIncomeAccountId: qbAccount || null,
       });
     }
@@ -62,6 +81,33 @@
             h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "6px 8px", fontSize: "12px", color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, fontWeight: 700 } }, margin + "%")
           )
         ),
+        // Pricing variants — alternative pricing structures for this product
+        // (e.g. Transportation: Local Delivery / Per Mile / Client Goods).
+        // When any exist, the quote/invoice pickers offer one row per variant
+        // and the Sale Price above serves only as the "Base price" fallback.
+        h("div", null,
+          h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
+            h("div", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Pricing Variants"),
+            h(window.Btn, { small: true, variant: "ghost", onClick: addVariant }, "+ Add Variant")),
+          variants.length === 0 && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
+            "Optional. Add variants to offer this product at multiple pricing structures (e.g. flat rate vs. per mile) — pickers then list one line per variant."),
+          variants.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            variants.map(function(v) {
+              var vMargin = (Number(v.unitPrice) || 0) > 0 ? Math.round(((Number(v.unitPrice) - Number(v.cost)) / Number(v.unitPrice)) * 100) : 0;
+              return h("div", { key: v.id, style: { display: "grid", gridTemplateColumns: "2fr 1fr 1fr 50px 24px", gap: 8, alignItems: "center" } },
+                h("input", { value: v.label || "", placeholder: "e.g. Local Delivery, Per Mile", autoFocus: !(v.label || "").length,
+                  onChange: function(e) { patchVariant(v.id, { label: e.target.value }); },
+                  style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } }),
+                h("input", { type: "number", value: v.unitPrice, title: "Price ($)",
+                  onChange: function(e) { patchVariant(v.id, { unitPrice: Number(e.target.value) || 0 }); },
+                  style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
+                h("input", { type: "number", value: v.cost, title: "Cost ($)",
+                  onChange: function(e) { patchVariant(v.id, { cost: Number(e.target.value) || 0 }); },
+                  style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
+                h("div", { style: { fontSize: "10px", fontWeight: 700, textAlign: "right", color: vMargin >= 30 ? B.success : vMargin >= 15 ? B.warn : B.danger } }, vMargin + "%"),
+                h("button", { onClick: function() { removeVariant(v.id); }, title: "Remove variant",
+                  style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px", padding: 0 } }, "×"));
+            }))),
         // QuickBooks override — shown only when connected. Blank = follow the
         // Settings income-account mapping for products.
         qbo && qbo.connected && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" } },
@@ -169,6 +215,7 @@
               settings: settings, qbo: qbo });
           }
           var margin = p.unitPrice > 0 ? Math.round(((p.unitPrice - p.cost) / p.unitPrice) * 100) : 0;
+          var pv = window.LTP_productVariants(p);
           return h("div", { key: p.id,
             style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
             onClick: function() { setEditingId(p.id); setShowAdd(false); },
@@ -176,11 +223,13 @@
             onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, p.name),
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit + (p.notes ? " \u00b7 " + p.notes : ""))
+              h("div", { style: { fontSize: "11px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit + (p.notes ? " \u00b7 " + p.notes : "")),
+              pv.length > 0 && h("div", { style: { fontSize: "10px", color: B.info, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                pv.length + " pricing variant" + (pv.length === 1 ? "" : "s") + ": " + pv.map(function(v) { return v.label + " $" + v.unitPrice; }).join(" \u00b7 "))
             ),
-            h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 70, textAlign: "right" } }, "$" + p.unitPrice),
-            h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 60, textAlign: "right" } }, "cost $" + p.cost),
-            h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%")
+            pv.length === 0 && h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 70, textAlign: "right" } }, "$" + p.unitPrice),
+            pv.length === 0 && h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 60, textAlign: "right" } }, "cost $" + p.cost),
+            pv.length === 0 && h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%")
           );
         })
       ),
