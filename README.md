@@ -224,6 +224,24 @@ on the Playground — always use the app's button.)
   needed. Equipment lines map to one generic "Equipment Rental" item; each
   product/service maps to its own item.
 
+### Income accounts
+
+Which QuickBooks **income account** each item posts to is mapped in
+**Settings → QuickBooks Online → Income Accounts**: one account each for
+**Services (labor)**, **Products**, and **Equipment Rentals**, plus a
+**default** for anything unmapped. Individual services and products can
+override the mapping in their edit forms (Quotes → Services / Products).
+The dropdowns are fed by a cached account list — click **Update Account
+List** after adding accounts in QuickBooks; nothing refreshes in the
+background.
+
+Changing a mapping (or an override) re-points the backing QB item on the
+**next push** that references it, and the invoice's activity log records the
+change. Re-pointing only affects **future** postings — QuickBooks does not
+reclassify existing transactions — but note that re-pushing an *old* invoice
+re-posts its lines at the item's *current* account, which shifts that
+invoice's P&L to the new account as of its transaction date.
+
 ### Sales tax
 
 QuickBooks is authoritative for sales tax: it computes the tax from the
@@ -287,6 +305,7 @@ Special endpoints:
 QuickBooks Online (admin-only except `status`):
 - `GET /api/qbo/status` — connection status (booleans + masked realm; any signed-in user)
 - `GET /api/qbo/connect` · `GET /api/qbo/callback` · `POST /api/qbo/disconnect` — manage the connection
+- `POST /api/qbo/accounts/refresh` — re-fetch the income account list (cached; button-driven, no background sync)
 - `POST /api/qbo/invoices/{id}/push` — export/update an invoice in QuickBooks
 - `POST /api/qbo/invoices/{id}/delete` — delete an invoice's QuickBooks counterpart
 

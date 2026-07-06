@@ -84,10 +84,12 @@
 
       activeTab === "products" && h(window.QuotesProducts, {
         products: products, setProducts: setProducts, quotes: quotes,
+        settings: settings, qbo: qbo,
       }),
 
       activeTab === "services" && h(window.QuotesServices, {
         services: services, setServices: setServices, projects: projects, quotes: quotes,
+        settings: settings, qbo: qbo,
       })
     );
   };

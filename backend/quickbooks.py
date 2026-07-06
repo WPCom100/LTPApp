@@ -392,6 +392,19 @@ async def create_item(conn, db, payload, *, client_id, client_secret, httpx_clie
                           client_secret=client_secret, json=payload, httpx_client=httpx_client)
 
 
+async def get_item(conn, db, item_id, *, client_id, client_secret, httpx_client=None) -> dict:
+    data = await _request(conn, db, "GET", f"item/{item_id}", client_id=client_id,
+                          client_secret=client_secret, httpx_client=httpx_client)
+    return data.get("Item", {}) or {}
+
+
+async def update_item(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    """Update an item. Pass sparse=True + Id + SyncToken in the payload to patch
+    only the supplied fields (used to re-point IncomeAccountRef)."""
+    return await _request(conn, db, "POST", "item", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
 async def create_invoice(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
     return await _request(conn, db, "POST", "invoice", client_id=client_id,
                           client_secret=client_secret, json=payload, httpx_client=httpx_client)

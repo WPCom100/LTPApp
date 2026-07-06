@@ -18,6 +18,15 @@ and maps exceptions to HTTP. This module owns:
 Decisions baked in (confirmed with the owner):
   - Equipment → ONE generic "Equipment Rental" QB item; each equipment type is
     its own line referencing that item, detail carried in the description.
+  - Income accounts → mapped per TYPE in Settings (services / products /
+    equipment rentals, falling back to settings.qboIncomeAccountId), with an
+    optional per-row override on Service/Product. The engine keeps each QB
+    Item's IncomeAccountRef aligned with the mapping lazily on push: a
+    `qb_income_account_synced` cache per catalog row (settings key for the
+    equipment item) makes the check free until a mapping actually changes.
+    Re-points only move FUTURE postings — but re-pushing an old invoice
+    re-posts its lines at the item's current account, which is why re-points
+    are stamped into the invoice activity.
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
@@ -89,6 +98,42 @@ async def _settings_set(db: AsyncSession, key: str, value) -> None:
 
 
 # ── Income account resolution ────────────────────────────────────────────────
+
+_TYPE_ACCOUNT_KEYS = {
+    "service": "qboServiceIncomeAccountId",
+    "product": "qboProductIncomeAccountId",
+    "equipment": "qboEquipmentIncomeAccountId",
+}
+
+
+async def _desired_income_account_id(db, ltype, catalog_row) -> str | None:
+    """The income account this line's QB item SHOULD post to, or None when
+    nothing is configured (the item then keeps/gets the legacy default from
+    _resolve_income_account_id and is never re-pointed). Resolution order:
+    per-row override (Service/Product.qb_income_account_id) → type-level
+    Settings mapping → global default (settings.qboIncomeAccountId)."""
+    if catalog_row is not None and getattr(catalog_row, "qb_income_account_id", None):
+        return str(catalog_row.qb_income_account_id)
+    key = _TYPE_ACCOUNT_KEYS.get(ltype)
+    if key:
+        configured = await _settings_get(db, key)
+        if configured:
+            return str(configured)
+    fallback = await _settings_get(db, "qboIncomeAccountId")
+    if fallback:
+        return str(fallback)
+    return None
+
+
+def _account_name(conn, account_id) -> str:
+    """Display name for an income account id, from the connection row's cached
+    accounts list (admin-refreshed; see routes/qbo.py). Falls back to the raw
+    id when the cache doesn't know it — activity stamps stay useful either way."""
+    for account in (getattr(conn, "income_accounts", None) or []):
+        if str(account.get("id")) == str(account_id):
+            return account.get("name") or str(account_id)
+    return str(account_id)
+
 
 async def _resolve_income_account_id(conn, db, *, client_id, client_secret) -> str:
     """Return an Income account id for backing new Items' IncomeAccountRef.
@@ -266,9 +311,11 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
 
 # ── Item find-or-create ──────────────────────────────────────────────────────
 
-async def _find_or_create_named_item(conn, db, name, unit_price, *, client_id, client_secret) -> str:
-    """Find a QB Service item by Name, creating it (backed by the resolved
-    income account) if absent. Returns the item id."""
+async def _find_or_create_named_item(conn, db, name, unit_price, *, income_account_id=None, client_id, client_secret) -> str:
+    """Find a QB Service item by Name, creating it if absent. New items are
+    backed by `income_account_id` when the caller resolved one from the mapping
+    (see _desired_income_account_id), else by the legacy default resolution.
+    Returns the item id."""
     safe = _safe_name(name, 100)
     found = await quickbooks.query(
         conn, db,
@@ -277,9 +324,12 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, client_id, c
     )
     if found:
         return str(found[0].get("Id"))
-    income_account_id = await _resolve_income_account_id(
-        conn, db, client_id=client_id, client_secret=client_secret
-    )
+    if income_account_id:
+        income_account_id = str(income_account_id)
+    else:
+        income_account_id = await _resolve_income_account_id(
+            conn, db, client_id=client_id, client_secret=client_secret
+        )
     payload = {
         "Name": safe,
         "Type": "Service",
@@ -307,30 +357,84 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, client_id, c
         raise
 
 
-async def _generic_equipment_item_id(conn, db, *, client_id, client_secret) -> str:
+async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_id, client_secret) -> tuple[bool, bool]:
+    """Ensure the QB Item posts to `account_id`. Returns (ok, changed):
+    ok=True when the item is confirmed on the account (already there, or
+    successfully re-pointed via a sparse update); changed=True only when we
+    actually rewrote IncomeAccountRef. Best-effort — never raises. A hiccup
+    returns (False, False) so the caller leaves its synced cache stale and the
+    next push retries."""
+    try:
+        current = await quickbooks.get_item(
+            conn, db, item_id, client_id=client_id, client_secret=client_secret
+        )
+        if not current.get("Id"):
+            return False, False
+        have = str(((current.get("IncomeAccountRef") or {}).get("value")) or "")
+        if have == str(account_id):
+            return True, False
+        await quickbooks.update_item(
+            conn, db,
+            {
+                "Id": str(current["Id"]),
+                "SyncToken": str(current.get("SyncToken", "0")),
+                "sparse": True,
+                "IncomeAccountRef": {"value": str(account_id)},
+            },
+            client_id=client_id, client_secret=client_secret,
+        )
+        return True, True
+    except QboApiError as e:
+        print(f"[LTP] qbo: item {item_id} income-account re-point skipped ({e.safe_message})", flush=True)
+        return False, False
+
+
+async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repoints=None) -> str:
     """The single 'Equipment Rental' QB item all equipment lines reference.
-    Resolved/created once and cached in settings.qboEquipmentItemId."""
+    Resolved/created once and cached in settings.qboEquipmentItemId. Its income
+    account follows the rentals mapping (settings.qboEquipmentIncomeAccountId);
+    the last-confirmed account is cached in settings.qboEquipmentItemAccountSynced
+    so the re-point check costs nothing until the mapping changes."""
+    desired = await _desired_income_account_id(db, "equipment", None)
     cached = await _settings_get(db, "qboEquipmentItemId")
     if cached:
-        return str(cached)
-    item_id = await _find_or_create_named_item(
-        conn, db, "Equipment Rental", None, client_id=client_id, client_secret=client_secret
-    )
-    await _settings_set(db, "qboEquipmentItemId", item_id)
+        item_id = str(cached)
+    else:
+        item_id = await _find_or_create_named_item(
+            conn, db, "Equipment Rental", None,
+            income_account_id=desired, client_id=client_id, client_secret=client_secret,
+        )
+        await _settings_set(db, "qboEquipmentItemId", item_id)
+    if desired and desired != str(await _settings_get(db, "qboEquipmentItemAccountSynced") or ""):
+        ok, changed = await _repoint_item_income_account(
+            conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+        )
+        if ok:
+            await _settings_set(db, "qboEquipmentItemAccountSynced", desired)
+            if changed and repoints is not None:
+                repoints.append({"name": "Equipment Rental", "account": _account_name(conn, desired)})
     return item_id
 
 
-async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret) -> str:
+async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, repoints=None) -> str:
     """QB Item id for a sales line. Equipment → the generic rental item.
     Product/Service → their own item (matched on the catalog row's qb_item_id
-    cache, else by name). Free-typed lines fall back to the line name."""
+    cache, else by name). Free-typed lines fall back to the line name.
+
+    Also keeps the item's income account aligned with the app's mapping: when
+    the resolved desired account differs from the row's qb_income_account_synced
+    cache, the QB item is re-pointed (best-effort) and the cache updated. Each
+    actual re-point is appended to `repoints` (when given) so the caller can
+    stamp it into the entity's activity."""
     ltype = line.get("type")
     eff_price = line.get("adjustedPrice")
     if eff_price is None:
         eff_price = line.get("unitPrice")
 
     if ltype == "equipment":
-        return await _generic_equipment_item_id(conn, db, client_id=client_id, client_secret=client_secret)
+        return await _generic_equipment_item_id(
+            conn, db, client_id=client_id, client_secret=client_secret, repoints=repoints
+        )
 
     catalog_row = None
     name = line.get("name") or ""
@@ -345,14 +449,30 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret) -> 
         if catalog_row and not name:
             name = f"{catalog_row.role} — {catalog_row.description}".strip()
 
-    if catalog_row and catalog_row.qb_item_id:
-        return catalog_row.qb_item_id
+    desired = await _desired_income_account_id(db, ltype, catalog_row)
 
-    item_id = await _find_or_create_named_item(
-        conn, db, name or "Line item", eff_price, client_id=client_id, client_secret=client_secret
-    )
+    if catalog_row is not None and catalog_row.qb_item_id:
+        item_id = catalog_row.qb_item_id
+    else:
+        item_id = await _find_or_create_named_item(
+            conn, db, name or "Line item", eff_price,
+            income_account_id=desired, client_id=client_id, client_secret=client_secret,
+        )
+        if catalog_row is not None:
+            catalog_row.qb_item_id = item_id
+
     if catalog_row is not None:
-        catalog_row.qb_item_id = item_id
+        # The synced cache makes this free in the steady state; only a mapping
+        # change (or a previously failed re-point) triggers the QB round-trip.
+        # Also covers items FOUND by name whose pre-existing account differs.
+        if desired and desired != (catalog_row.qb_income_account_synced or ""):
+            ok, changed = await _repoint_item_income_account(
+                conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+            )
+            if ok:
+                catalog_row.qb_income_account_synced = desired
+                if changed and repoints is not None:
+                    repoints.append({"name": name or "Line item", "account": _account_name(conn, desired)})
         await db.flush()
     return item_id
 
@@ -373,7 +493,7 @@ def _line_taxable(line: dict, customer_taxable: bool) -> bool:
     return bool(customer_taxable)
 
 
-async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_tax_code, *, client_id, client_secret) -> tuple[list[dict], float]:
+async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_tax_code, *, client_id, client_secret, repoints=None) -> tuple[list[dict], float]:
     """Build the QB sales lines (item lines with per-line TaxCodeRef + a trailing
     global-discount line) from any entity carrying `.sections` and
     `.global_discount` — invoices AND quotes (for the temporary tax estimate).
@@ -399,7 +519,8 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
             subtotal += amount
 
             item_id = await _resolve_line_item_id(
-                conn, db, item, client_id=client_id, client_secret=client_secret
+                conn, db, item, client_id=client_id, client_secret=client_secret,
+                repoints=repoints,
             )
             description = (item.get("name") or "").strip()
             if (item.get("notes") or "").strip():
@@ -442,7 +563,7 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
     return lines, subtotal
 
 
-async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, project_name="", client_id, client_secret) -> dict:
+async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable, *, project_name="", client_id, client_secret, repoints=None) -> dict:
     """Construct the QuickBooks Invoice JSON from an LTP invoice. Resolves QB
     item ids for each billable line (find-or-create). Raises InvoiceNotSyncable
     if there are no billable lines. `project_name` is surfaced on the QB invoice
@@ -451,7 +572,7 @@ async def build_invoice_payload(conn, db, invoice, customer_id, customer_taxable
     non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
     lines, subtotal = await _build_sales_lines(
         conn, db, invoice, customer_taxable, tax_code, non_tax_code,
-        client_id=client_id, client_secret=client_secret,
+        client_id=client_id, client_secret=client_secret, repoints=repoints,
     )
 
     # Recall: a draft that was previously sent. Surface it prominently as the
@@ -525,11 +646,19 @@ async def push_invoice(db, invoice, user=None, *, client_id=None, client_secret=
         proj = pr.scalar_one_or_none()
         if proj:
             project_name = proj.name or ""
+    repoints: list[dict] = []
     payload = await build_invoice_payload(
         conn, db, invoice, customer_id, _party_taxable(party, kind),
         project_name=project_name,
-        client_id=client_id, client_secret=client_secret,
+        client_id=client_id, client_secret=client_secret, repoints=repoints,
     )
+    # Stamp income-account re-points BEFORE the push: the QB items were already
+    # rewritten while building the payload, so the audit entry must survive
+    # even when the invoice push itself fails (the route commits either way).
+    if repoints:
+        _stamp(invoice, user, "qbo_item_recategorized",
+               f"QuickBooks income account updated for {len(repoints)} item{'' if len(repoints) == 1 else 's'}",
+               [{"cat": r["name"], "detail": r["account"]} for r in repoints])
 
     created = invoice.qb_invoice_id is None
     if created:
@@ -738,10 +867,17 @@ async def get_quote_estimate_tax(db, quote, user=None, *, client_id=None, client
     )
     tax_code = str(await _settings_get(db, "qboTaxableCodeId") or _DEFAULT_TAX_CODE)
     non_tax_code = str(await _settings_get(db, "qboNonTaxableCodeId") or _DEFAULT_NON_TAX_CODE)
+    repoints: list[dict] = []
     lines, _subtotal = await _build_sales_lines(
         conn, db, quote, customer_taxable, tax_code, non_tax_code,
-        client_id=client_id, client_secret=client_secret,
+        client_id=client_id, client_secret=client_secret, repoints=repoints,
     )
+    # Item re-points are real QB writes even though the estimate is temporary —
+    # audit them on the quote just like push_invoice does on the invoice.
+    if repoints:
+        _stamp(quote, user, "qbo_item_recategorized",
+               f"QuickBooks income account updated for {len(repoints)} item{'' if len(repoints) == 1 else 's'}",
+               [{"cat": r["name"], "detail": r["account"]} for r in repoints])
     # DocNumber omitted on purpose: QB auto-assigns an estimate number, avoiding
     # duplicate-DocNumber faults across repeated calcs (the estimate is deleted
     # each time anyway). Only CustomerRef + Line are needed for QB to compute tax.

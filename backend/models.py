@@ -331,6 +331,16 @@ class Product(Base):
     cost = Column(Float, default=0)                      # our cost per unit (for margin)
     notes = Column(Text, default="")
     qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
+    # Income account override for the QB item backing this product. null = use
+    # the mapped default (settings.qboProductIncomeAccountId, falling back to
+    # settings.qboIncomeAccountId). USER-EDITABLE — flows through the normal
+    # CRUD, unlike the *_synced cache below.
+    qb_income_account_id = Column(String(32), nullable=True)
+    # Income account the QB item was last confirmed to carry. SERVER-AUTHORITATIVE
+    # (see _READONLY_COLS in backend/routes/api.py) — written by the sync engine
+    # when it creates or re-points the QB item; a mismatch with the resolved
+    # desired account triggers a re-point on the next push (backend/qbo_sync.py).
+    qb_income_account_synced = Column(String(32), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -357,6 +367,10 @@ class Service(Base):
     ot_cost = Column(Float, default=0)
     notes = Column(Text, default="")
     qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
+    # Income account override / synced cache for the QB item backing this
+    # service — same semantics as the identically-named Product columns.
+    qb_income_account_id = Column(String(32), nullable=True)      # user-editable override; null = mapped default
+    qb_income_account_synced = Column(String(32), nullable=True)  # server-authoritative last-confirmed account
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -663,5 +677,13 @@ class QboConnection(Base):
     refresh_token_expires_at = Column(DateTime(timezone=True), nullable=True)  # ~100 days; for proactive warn
     environment = Column(String(10), nullable=False, default="sandbox")        # {sandbox, production}
     connected_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Cached list of the QB company's active Income accounts, refreshed ONLY by
+    # an explicit admin action (POST /api/qbo/accounts/refresh) — the list is
+    # near-static, so no background sync. Shape: list[{id: str, name: str}].
+    # Lives on the connection row (not in settings.data) so a stale Settings-page
+    # draft save can never clobber a fresh refresh, and disconnect drops it.
+    # Surfaced via GET /api/qbo/status as incomeAccounts / incomeAccountsUpdatedAt.
+    income_accounts = Column(JSON, nullable=True)
+    income_accounts_updated_at = Column(DateTime(timezone=True), nullable=True)
     connected_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

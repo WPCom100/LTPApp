@@ -5,6 +5,9 @@
                                         company-wide connection (encrypted)
     POST /api/qbo/disconnect         → admin disconnects (revoke + delete row)
     GET  /api/qbo/status             → non-secret connection status
+    POST /api/qbo/accounts/refresh   → admin re-fetches the Income account list
+                                        (cached on the connection row; no
+                                        background sync — explicit button only)
     POST /api/qbo/invoices/{id}/push → admin pushes/updates an invoice in QB
 
 OAuth reuses the Authlib client registered in backend/main.py (app.state.oauth)
@@ -179,6 +182,7 @@ async def status(
     realm = conn.realm_id or ""
     masked_realm = ("…" + realm[-4:]) if len(realm) > 4 else realm
 
+    accounts_updated = quickbooks._aware(conn.income_accounts_updated_at)
     return {
         "connected": True,
         "configured": bool(os.environ.get("QBO_CLIENT_ID")),
@@ -192,6 +196,50 @@ async def status(
         # Auto-receipt surface for the Settings panel.
         "senderGmailConnected": sender_gmail_connected,
         "pendingReceipts": int(pending_receipts or 0),
+        # Admin-refreshed Income account list (feeds the mapping dropdowns in
+        # Settings and the per-item pickers). [] until the first refresh.
+        "incomeAccounts": conn.income_accounts or [],
+        "incomeAccountsUpdatedAt": accounts_updated.isoformat() if accounts_updated else None,
+    }
+
+
+# ── Income accounts: explicit refresh ────────────────────────────────────────
+
+@qbo_router.post("/accounts/refresh")
+async def refresh_income_accounts(
+    db: AsyncSession = Depends(get_db),
+    _admin: models.User = Depends(require_admin),
+):
+    """Admin-only. Re-fetch the QB company's active Income accounts and cache
+    them on the connection row. Deliberately button-driven (no background
+    sync): the chart of accounts is near-static, so the list refreshes only
+    when an admin asks for it."""
+    client_id, client_secret = qbo_sync.creds()
+    try:
+        conn = await quickbooks.load_connection(db)
+        raw = await quickbooks.list_income_accounts(
+            conn, db, client_id=client_id, client_secret=client_secret
+        )
+    except quickbooks.QboNotConnected:
+        return JSONResponse(status_code=409, content={"reason": "not_connected",
+                            "error": "QuickBooks is not connected. Connect it in Settings."})
+    except quickbooks.QboReconnectRequired:
+        return JSONResponse(status_code=409, content={"reason": "reconnect",
+                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+    except quickbooks.QboApiError as e:
+        return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+
+    accounts = [
+        {"id": str(a.get("Id")), "name": a.get("Name") or ""}
+        for a in raw if a.get("Id") is not None
+    ]
+    conn.income_accounts = accounts
+    conn.income_accounts_updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    return {
+        "ok": True,
+        "incomeAccounts": accounts,
+        "incomeAccountsUpdatedAt": conn.income_accounts_updated_at.isoformat(),
     }
 
 

@@ -5,19 +5,43 @@
 
   var UNITS = ["each", "roll", "jug", "tank", "bag", "pack", "sheet", "tube", "set"];
 
-  function ProductForm({ initial, onSave, onCancel, onDelete }) {
+  // Options for the per-product QuickBooks income-account override. The default
+  // choice names the account the Settings mapping resolves to (type-level →
+  // global), so "default" is never a mystery. A saved id missing from the
+  // cached list (Settings → QuickBooks → Update Account List) still shows,
+  // as its raw id, instead of silently displaying as the default.
+  function qbAccountOptions(currentVal, settings, qbo) {
+    var accounts = (qbo && qbo.incomeAccounts) || [];
+    function nameOf(id) {
+      for (var i = 0; i < accounts.length; i++) if (String(accounts[i].id) === String(id)) return accounts[i].name || ("Account #" + id);
+      return "Account #" + id;
+    }
+    var mapped = (settings && (settings.qboProductIncomeAccountId || settings.qboIncomeAccountId)) || null;
+    var opts = [{ value: "", label: mapped ? "Default — " + nameOf(mapped) : "Default income account" }];
+    var seen = false;
+    accounts.forEach(function(a) {
+      if (String(a.id) === String(currentVal || "")) seen = true;
+      opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
+    });
+    if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal });
+    return opts;
+  }
+
+  function ProductForm({ initial, onSave, onCancel, onDelete, settings, qbo }) {
     var [name,      setName]      = useState(initial ? initial.name      : "");
     var [category,  setCategory]  = useState(initial ? initial.category  : "Consumables");
     var [unit,      setUnit]      = useState(initial ? initial.unit      : "each");
     var [unitPrice, setUnitPrice] = useState(initial ? initial.unitPrice : 0);
     var [cost,      setCost]      = useState(initial ? initial.cost      : 0);
     var [notes,     setNotes]     = useState(initial ? initial.notes     : "");
+    var [qbAccount, setQbAccount] = useState(initial ? (initial.qbIncomeAccountId || "") : "");
 
     function submit() {
       if (!name.trim()) return;
       onSave({
         name: name.trim(), category: category.trim() || "Consumables", unit: unit,
         unitPrice: Number(unitPrice) || 0, cost: Number(cost) || 0, notes: notes,
+        qbIncomeAccountId: qbAccount || null,
       });
     }
 
@@ -38,6 +62,13 @@
             h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "6px 8px", fontSize: "12px", color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, fontWeight: 700 } }, margin + "%")
           )
         ),
+        // QuickBooks override — shown only when connected. Blank = follow the
+        // Settings income-account mapping for products.
+        qbo && qbo.connected && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" } },
+          h(window.LTPSelect, { label: "QuickBooks Income Account", value: qbAccount, onChange: setQbAccount,
+            options: qbAccountOptions(qbAccount, settings, qbo) }),
+          h("div", { style: { fontSize: "10px", color: B.textMut, lineHeight: 1.5, paddingBottom: 6 } },
+            "Where this product's revenue posts in QuickBooks. Applies from the next invoice push.")),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, placeholder: "Optional" }),
         h("div", { style: { display: "flex", gap: 8, justifyContent: initial ? "space-between" : "flex-end", alignItems: "center" } },
           // Edit mode only: delete lives here (in the item's details), matching
@@ -52,7 +83,7 @@
     );
   }
 
-  window.QuotesProducts = function({ products, setProducts, quotes }) {
+  window.QuotesProducts = function({ products, setProducts, quotes, settings, qbo }) {
     var [search, setSearch] = useState("");
     var [catFilter, setCatFilter] = useState("all");
     var [editingId, setEditingId] = useState(null);
@@ -124,7 +155,7 @@
       ),
 
       // Add form
-      showAdd && h(ProductForm, { initial: null, onSave: addProduct, onCancel: function() { setShowAdd(false); } }),
+      showAdd && h(ProductForm, { initial: null, onSave: addProduct, onCancel: function() { setShowAdd(false); }, settings: settings, qbo: qbo }),
 
       // List
       h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
@@ -134,7 +165,8 @@
             return h(ProductForm, { key: p.id, initial: p,
               onSave: function(d) { updateProduct(p.id, d); },
               onCancel: function() { setEditingId(null); },
-              onDelete: function() { deleteProduct(p.id); } });
+              onDelete: function() { deleteProduct(p.id); },
+              settings: settings, qbo: qbo });
           }
           var margin = p.unitPrice > 0 ? Math.round(((p.unitPrice - p.cost) / p.unitPrice) * 100) : 0;
           return h("div", { key: p.id,

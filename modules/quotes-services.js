@@ -6,19 +6,43 @@
 
   var DEPARTMENTS = ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production", "Other"];
 
-  function ServiceForm({ initial, onSave, onCancel, onDelete }) {
+  // Options for the per-service QuickBooks income-account override. The default
+  // choice names the account the Settings mapping resolves to (type-level →
+  // global), so "default" is never a mystery. A saved id missing from the
+  // cached list (Settings → QuickBooks → Update Account List) still shows,
+  // as its raw id, instead of silently displaying as the default.
+  function qbAccountOptions(currentVal, settings, qbo) {
+    var accounts = (qbo && qbo.incomeAccounts) || [];
+    function nameOf(id) {
+      for (var i = 0; i < accounts.length; i++) if (String(accounts[i].id) === String(id)) return accounts[i].name || ("Account #" + id);
+      return "Account #" + id;
+    }
+    var mapped = (settings && (settings.qboServiceIncomeAccountId || settings.qboIncomeAccountId)) || null;
+    var opts = [{ value: "", label: mapped ? "Default — " + nameOf(mapped) : "Default income account" }];
+    var seen = false;
+    accounts.forEach(function(a) {
+      if (String(a.id) === String(currentVal || "")) seen = true;
+      opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
+    });
+    if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal });
+    return opts;
+  }
+
+  function ServiceForm({ initial, onSave, onCancel, onDelete, settings, qbo }) {
     var [role,        setRole]        = useState(initial ? initial.role        : "");
     var [description, setDescription] = useState(initial ? initial.description : "");
     var [department,  setDepartment]  = useState(initial ? initial.department  : "Lighting");
     var [dayRate,     setDayRate]     = useState(initial ? initial.dayRate     : 0);
     var [dayCost,     setDayCost]     = useState(initial ? initial.dayCost     : 0);
     var [notes,       setNotes]       = useState(initial ? initial.notes       : "");
+    var [qbAccount,   setQbAccount]   = useState(initial ? (initial.qbIncomeAccountId || "") : "");
 
     function submit() {
       if (!role.trim() || !description.trim()) return;
       onSave({
         role: role.trim(), description: description.trim(), department: department,
         dayRate: Number(dayRate) || 0, dayCost: Number(dayCost) || 0, notes: notes,
+        qbIncomeAccountId: qbAccount || null,
       });
     }
 
@@ -39,6 +63,13 @@
             h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "6px 8px", fontSize: "12px", color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, fontWeight: 700 } }, margin + "%")
           )
         ),
+        // QuickBooks override — shown only when connected. Blank = follow the
+        // Settings income-account mapping for services.
+        qbo && qbo.connected && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, alignItems: "end" } },
+          h(window.LTPSelect, { label: "QuickBooks Income Account", value: qbAccount, onChange: setQbAccount,
+            options: qbAccountOptions(qbAccount, settings, qbo) }),
+          h("div", { style: { fontSize: "10px", color: B.textMut, lineHeight: 1.5, paddingBottom: 6 } },
+            "Where this service's revenue posts in QuickBooks. Applies from the next invoice push.")),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, placeholder: "Optional" }),
         h("div", { style: { display: "flex", gap: 8, justifyContent: initial ? "space-between" : "flex-end", alignItems: "center" } },
           // Edit mode only: delete lives here (in the item's details), matching
@@ -53,7 +84,7 @@
     );
   }
 
-  window.QuotesServices = function({ services, setServices, projects, quotes }) {
+  window.QuotesServices = function({ services, setServices, projects, quotes, settings, qbo }) {
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingId, setEditingId] = useState(null);
@@ -139,7 +170,7 @@
       ),
 
       // Add form
-      showAdd && h(ServiceForm, { initial: null, onSave: addService, onCancel: function() { setShowAdd(false); } }),
+      showAdd && h(ServiceForm, { initial: null, onSave: addService, onCancel: function() { setShowAdd(false); }, settings: settings, qbo: qbo }),
 
       // List
       h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
@@ -149,7 +180,8 @@
             return h(ServiceForm, { key: s.id, initial: s,
               onSave: function(d) { updateService(s.id, d); },
               onCancel: function() { setEditingId(null); },
-              onDelete: function() { deleteService(s.id); } });
+              onDelete: function() { deleteService(s.id); },
+              settings: settings, qbo: qbo });
           }
           var margin = s.dayRate > 0 ? Math.round(((s.dayRate - s.dayCost) / s.dayRate) * 100) : 0;
           return h("div", { key: s.id,

@@ -3,8 +3,11 @@
 Covers the security/correctness-critical pieces that don't need a live QB
 company: Fault parsing, query escaping, the OAuth token-refresh lifecycle
 (Basic auth + rotated-refresh persistence + invalid_grant drop), the _request
-401-refresh-retry, the read-only column guard, and the invoice → QB payload
-mapping (lines, per-line tax codes, discount conversion, the RECALLED memo).
+401-refresh-retry, the read-only column guard, the invoice → QB payload
+mapping (lines, per-line tax codes, discount conversion, the RECALLED memo),
+and the income-account mapping (override → type default → global default
+resolution, item creation against the mapped account, and the lazy re-point
+of an existing QB item when the mapping changes).
 
 Runs both as pytest and as a plain script:
     python tests/test_quickbooks_sync.py
@@ -35,6 +38,16 @@ from backend.quickbooks import (  # noqa: E402
     escape_query_value,
 )
 from backend.routes.api import _dict_to_row  # noqa: E402
+from backend.routes import qbo as qbo_routes  # noqa: E402
+
+
+# Real function objects, captured BEFORE any test monkeypatches the module
+# attributes (several tests overwrite e.g. qbo_sync._resolve_line_item_id
+# globally; the income-account tests below need the real implementations).
+_real_resolve_line_item_id = qbo_sync._resolve_line_item_id
+_real_find_or_create_named_item = qbo_sync._find_or_create_named_item
+_real_generic_equipment_item_id = qbo_sync._generic_equipment_item_id
+_real_repoint_item_income_account = qbo_sync._repoint_item_income_account
 
 
 _results: list[tuple[str, bool]] = []
@@ -420,11 +433,210 @@ async def test_estimate_tax_stale_token_delete_retry():
     _check("estimate ultimately deleted", result["estimateDeleted"] is True)
 
 
+# ── Income account mapping ──────────────────────────────────────────────────
+
+async def test_income_account_resolution():
+    print("test_income_account_resolution")
+    settings = {"qboServiceIncomeAccountId": "55", "qboIncomeAccountId": "11"}
+    qbo_sync._settings_get = AsyncMock(side_effect=lambda db, key: settings.get(key))
+    override_row = types.SimpleNamespace(qb_income_account_id="99")
+    plain_row = types.SimpleNamespace(qb_income_account_id=None)
+    _check("per-row override wins",
+           await qbo_sync._desired_income_account_id(None, "service", override_row) == "99")
+    _check("type-level mapping when no override",
+           await qbo_sync._desired_income_account_id(None, "service", plain_row) == "55")
+    _check("global default when type unmapped",
+           await qbo_sync._desired_income_account_id(None, "product", plain_row) == "11")
+    settings["qboEquipmentIncomeAccountId"] = "77"
+    _check("equipment (rentals) mapping honored",
+           await qbo_sync._desired_income_account_id(None, "equipment", None) == "77")
+    settings.clear()
+    _check("None when nothing configured",
+           await qbo_sync._desired_income_account_id(None, "product", None) is None)
+
+
+async def test_item_created_with_mapped_account():
+    print("test_item_created_with_mapped_account")
+    db = MagicMock(); db.flush = AsyncMock()
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])  # no existing item
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "I1"}})
+    qbo_sync._resolve_income_account_id = AsyncMock(return_value="LEGACY")
+
+    out = await _real_find_or_create_named_item(
+        object(), db, "L1 — Lead Tech", 500,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("returns created item id", out == "I1")
+    payload = qbo_sync.quickbooks.create_item.await_args.args[2]
+    _check("new item backed by the mapped account",
+           payload["IncomeAccountRef"]["value"] == "42")
+    _check("legacy default resolution NOT consulted",
+           qbo_sync._resolve_income_account_id.await_count == 0)
+
+    # No mapping resolved → legacy default resolution backs the item.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    await _real_find_or_create_named_item(
+        object(), db, "Gaff Tape", 20, client_id="c", client_secret="s")
+    payload = qbo_sync.quickbooks.create_item.await_args.args[2]
+    _check("falls back to legacy default account",
+           payload["IncomeAccountRef"]["value"] == "LEGACY")
+
+
+async def test_repoint_item_income_account():
+    print("test_repoint_item_income_account")
+    db = MagicMock(); db.flush = AsyncMock()
+    # Already on the desired account → confirmed, nothing written.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "I1", "SyncToken": "3", "IncomeAccountRef": {"value": "42"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "I1", "42", client_id="c", client_secret="s")
+    _check("already-correct item confirmed", ok is True and changed is False)
+    _check("no update when already correct", qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Different account → sparse update rewrites IncomeAccountRef.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "I1", "SyncToken": "3", "IncomeAccountRef": {"value": "11"}})
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "I1", "42", client_id="c", client_secret="s")
+    _check("mismatched item re-pointed", ok is True and changed is True)
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("re-point is a sparse update", payload.get("sparse") is True)
+    _check("re-point carries Id + SyncToken",
+           payload.get("Id") == "I1" and payload.get("SyncToken") == "3")
+    _check("re-point sets the new account", payload["IncomeAccountRef"]["value"] == "42")
+
+    # QB hiccup → best-effort (False, False), never raises.
+    qbo_sync.quickbooks.get_item = AsyncMock(
+        side_effect=QboApiError(500, "boom"))
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "I1", "42", client_id="c", client_secret="s")
+    _check("QB error swallowed (best-effort)", ok is False and changed is False)
+
+
+def _db_returning_row(row):
+    db = MagicMock()
+    result = MagicMock(); result.scalar_one_or_none = MagicMock(return_value=row)
+    db.execute = AsyncMock(return_value=result)
+    db.flush = AsyncMock()
+    return db
+
+
+async def test_resolve_line_repoints_on_mapping_change():
+    print("test_resolve_line_repoints_on_mapping_change")
+    settings = {"qboServiceIncomeAccountId": "42"}
+    qbo_sync._settings_get = AsyncMock(side_effect=lambda db, key: settings.get(key))
+    row = types.SimpleNamespace(id=3, role="L1", description="Lead Tech",
+                                qb_item_id="I9", qb_income_account_id=None,
+                                qb_income_account_synced="11")
+    db = _db_returning_row(row)
+    conn = types.SimpleNamespace(income_accounts=[{"id": "42", "name": "Labor Income"}])
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "I9", "SyncToken": "0", "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    repoints = []
+    line = {"type": "service", "serviceId": 3, "name": "L1 — Lead Tech", "unitPrice": 500}
+    item_id = await _real_resolve_line_item_id(
+        conn, db, line, client_id="c", client_secret="s", repoints=repoints)
+    _check("cached qb_item_id reused", item_id == "I9")
+    _check("QB item re-pointed once", qbo_sync.quickbooks.update_item.await_count == 1)
+    _check("synced cache updated on the row", row.qb_income_account_synced == "42")
+    _check("re-point recorded for the activity stamp",
+           len(repoints) == 1 and repoints[0]["account"] == "Labor Income")
+
+    # Steady state: synced cache now matches → no QB round-trip at all.
+    qbo_sync.quickbooks.get_item.reset_mock(); qbo_sync.quickbooks.update_item.reset_mock()
+    repoints = []
+    await _real_resolve_line_item_id(
+        conn, _db_returning_row(row), line, client_id="c", client_secret="s", repoints=repoints)
+    _check("steady state → no item read", qbo_sync.quickbooks.get_item.await_count == 0)
+    _check("steady state → no re-point", len(repoints) == 0)
+
+    # No mapping configured → item left alone entirely.
+    settings.clear()
+    bare = types.SimpleNamespace(id=3, role="L1", description="Lead Tech",
+                                 qb_item_id="I9", qb_income_account_id=None,
+                                 qb_income_account_synced=None)
+    await _real_resolve_line_item_id(
+        conn, _db_returning_row(bare), line, client_id="c", client_secret="s", repoints=repoints)
+    _check("unconfigured mapping → never touches the item",
+           qbo_sync.quickbooks.get_item.await_count == 0 and len(repoints) == 0)
+
+
+async def test_equipment_item_uses_rentals_mapping():
+    print("test_equipment_item_uses_rentals_mapping")
+    settings = {"qboEquipmentIncomeAccountId": "77"}
+    qbo_sync._settings_get = AsyncMock(side_effect=lambda db, key: settings.get(key))
+    stored = {}
+    qbo_sync._settings_set = AsyncMock(side_effect=lambda db, key, value: stored.__setitem__(key, value))
+    qbo_sync._find_or_create_named_item = AsyncMock(return_value="EQ1")
+    qbo_sync._repoint_item_income_account = AsyncMock(return_value=(True, True))
+    conn = types.SimpleNamespace(income_accounts=[{"id": "77", "name": "Rental Income"}])
+    db = MagicMock(); db.flush = AsyncMock()
+
+    repoints = []
+    item_id = await _real_generic_equipment_item_id(
+        conn, db, client_id="c", client_secret="s", repoints=repoints)
+    _check("equipment item id returned", item_id == "EQ1")
+    _check("created against the rentals account",
+           qbo_sync._find_or_create_named_item.await_args.kwargs.get("income_account_id") == "77")
+    _check("item id cached in settings", stored.get("qboEquipmentItemId") == "EQ1")
+    _check("synced account cached in settings", stored.get("qboEquipmentItemAccountSynced") == "77")
+    _check("re-point recorded with the account name",
+           len(repoints) == 1 and repoints[0] == {"name": "Equipment Rental", "account": "Rental Income"})
+
+    # Steady state: cached id + synced account match → no create, no re-point.
+    settings.update(stored)
+    qbo_sync._find_or_create_named_item.reset_mock()
+    qbo_sync._repoint_item_income_account.reset_mock()
+    repoints = []
+    item_id = await _real_generic_equipment_item_id(
+        conn, db, client_id="c", client_secret="s", repoints=repoints)
+    _check("steady state → cached id reused", item_id == "EQ1")
+    _check("steady state → no create / no re-point",
+           qbo_sync._find_or_create_named_item.await_count == 0
+           and qbo_sync._repoint_item_income_account.await_count == 0)
+
+
+def test_income_account_readonly_columns():
+    print("test_income_account_readonly_columns")
+    for model_cls in (models.Service, models.Product):
+        mapped = _dict_to_row({"qbIncomeAccountId": "42", "qbIncomeAccountSynced": "11"}, model_cls)
+        _check(f"{model_cls.__name__}: override is user-editable",
+               mapped.get("qb_income_account_id") == "42")
+        _check(f"{model_cls.__name__}: synced cache stripped",
+               "qb_income_account_synced" not in mapped)
+
+
+async def test_accounts_refresh_route():
+    print("test_accounts_refresh_route")
+    conn = types.SimpleNamespace(income_accounts=None, income_accounts_updated_at=None)
+    qbo_routes.quickbooks.load_connection = AsyncMock(return_value=conn)
+    qbo_routes.quickbooks.list_income_accounts = AsyncMock(return_value=[
+        {"Id": 79, "Name": "Rental Income"},
+        {"Id": "80", "Name": "Labor Income"},
+        {"Name": "no id — skipped"},
+    ])
+    db = MagicMock(); db.flush = AsyncMock()
+    out = await qbo_routes.refresh_income_accounts(db=db, _admin=None)
+    _check("normalized {id, name} list returned",
+           out["incomeAccounts"] == [{"id": "79", "name": "Rental Income"},
+                                     {"id": "80", "name": "Labor Income"}])
+    _check("list cached on the connection row", conn.income_accounts == out["incomeAccounts"])
+    _check("refresh timestamp stamped", conn.income_accounts_updated_at is not None)
+
+    # Not connected → structured 409, not an exception.
+    qbo_routes.quickbooks.load_connection = AsyncMock(
+        side_effect=quickbooks.QboNotConnected("nope"))
+    resp = await qbo_routes.refresh_income_accounts(db=db, _admin=None)
+    _check("not connected → 409 response", getattr(resp, "status_code", None) == 409)
+
+
 # ── Runner ──────────────────────────────────────────────────────────────────
 
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
-                  test_customer_billaddr_and_fields]
+                  test_customer_billaddr_and_fields, test_income_account_readonly_columns]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
@@ -433,6 +645,9 @@ def main():
         test_delete_not_synced, test_delete_synced_calls_qb,
         test_estimate_tax_creates_reads_deletes, test_estimate_tax_exempt_skips_qb,
         test_estimate_tax_stale_token_delete_retry,
+        test_income_account_resolution, test_item_created_with_mapped_account,
+        test_repoint_item_income_account, test_resolve_line_repoints_on_mapping_change,
+        test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
     ]
     for t in sync_tests:
         t()
