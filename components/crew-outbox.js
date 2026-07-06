@@ -131,7 +131,7 @@
         items.map(function(it) {
           var n = (it.shifts || []).length;
           var type = TYPE_LABEL[it.template] || "removed";
-          return h("div", { key: keyFor(it.crewId, it.projectId, it.template), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#1B262C", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
+          return h("div", { key: keyFor(it.crewId, it.projectId, it.template), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#131C21", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text || "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
                 it.crewName, h("span", { style: { color: accent, fontWeight: 600 } }, "  ·  " + type)),

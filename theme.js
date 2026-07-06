@@ -1,13 +1,16 @@
 // LTP Brand Theme — the slate + brand-orange system shared with the
 // customer-facing surfaces (modules/client-view.js, modules/crew-view.js,
-// backend/email_compose.py). The app sits on the same page field the client
-// pages use, with the masthead orange as the single accent.
+// backend/email_compose.py), with the masthead orange as the single accent.
 //
 // NOTE: accent/success/warn/danger/info (and text*) MUST stay 6-digit hexes —
 // several call sites build translucent fills by appending alpha ("18"/"44").
 window.LTP_THEME = {
-  // Slate surface ramp: page field → card/panel → control fill, hairline border
-  bg: "#1B262C", surface: "#202D35", raised: "#2A3842", border: "#34454E",
+  // Slate surface ramp: page field → card/panel → control fill, hairline
+  // border. A step DARKER than the public client pages' field — the app is
+  // lived-in all day, so surfaces recede and the content carries the light.
+  // Keep in sync with the hardcoded slate hexes in index.html (body,
+  // scrollbars, select options, .ltp-list hairlines).
+  bg: "#131C21", surface: "#19242B", raised: "#22303A", border: "#2E3E48",
   // Brand orange family (sampled from the masthead artwork)
   accent: "#EF5822", accentHover: "#FF6B35", accentMuted: "#4A2313", accentSoft: "#F9B998",
   text: "#EDF3F2", textSec: "#93A3AB", textMut: "#6E7E86",

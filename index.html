@@ -11,7 +11,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     /* Page field matches the customer-facing surfaces' slate (theme.js bg). */
-    body { background: #1B262C; overflow: hidden; }
+    body { background: #131C21; overflow: hidden; }
     /* The SPA shell fills #root. Use the DYNAMIC viewport height (dvh) so on
        iOS Safari the app matches the actually-visible area — `100vh` there is
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
@@ -30,9 +30,9 @@
     .ltp-email-editor > p, .ltp-email-editor > div { margin: 0; line-height: 1; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #34454E; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #46596A; }
-    select option { background: #202D35; color: #EDF3F2; }
+    ::-webkit-scrollbar-thumb { background: #2E3E48; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #3C4F5B; }
+    select option { background: #19242B; color: #EDF3F2; }
     [contenteditable]:empty:before { content: attr(data-placeholder); color: #6E7E86; }
     blockquote { border-left: 3px solid #EF5822; padding-left: 12px; margin: 8px 0; color: #93A3AB; }
     /* ── Brand micro-moments — shared with the customer views ──────────────
@@ -45,11 +45,11 @@
     .ltp-btn-primary:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 4px 14px rgba(239,88,34,0.30); }
     .ltp-btn-primary:active { transform: translateY(0); }
     .ltp-btn-quiet { transition: border-color .14s ease, color .14s ease, background .14s ease; }
-    .ltp-btn-quiet:hover { border-color: #4A5E6A; }
+    .ltp-btn-quiet:hover { border-color: #445866; }
     /* Ruled list rows (components/ui.js LTPList/LTPRow): hairline between
        rows, none after the last (the panel's orange bottom rule closes it),
        and a quiet brightening on hover for clickable rows. */
-    .ltp-list > .ltp-row { border-bottom: 1px solid #34454E; }
+    .ltp-list > .ltp-row { border-bottom: 1px solid #2E3E48; }
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }

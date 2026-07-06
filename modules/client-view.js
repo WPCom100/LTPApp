@@ -34,7 +34,7 @@
   var ORANGE = "#EF5822";
   var ORANGE_SOFT = "#F9B998";
   var MASTHEAD_ORANGE = "#f15927"; // sampled from the logo PNG so the rules read as the masthead's own
-  var INSET = "#1B262C";        // surfaces that recede below the field
+  var INSET = "#131C21";        // surfaces that recede below the field
   var PANEL_BG = "#202d35";     // the line-item panels — a hair off the page field
   var HAIR = "#34454E";         // structural hairlines / borders
   var GRAD_RULE = "linear-gradient(90deg,#FF921E 0%,#EF5822 50%,#64260F 100%)";
