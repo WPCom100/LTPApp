@@ -277,14 +277,12 @@
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
           style: { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })
       ),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
         filtered.map(function(c) {
           var shifts = upcomingShifts(c.id);
-          return h("div", { key: c.id, onClick: function() { setEditingCrew(Object.assign({}, c)); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { setEditingCrew(Object.assign({}, c)); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
               h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },

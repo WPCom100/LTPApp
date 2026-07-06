@@ -29,7 +29,7 @@
           linkedCompanies.length > 0 && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedCompanies.map(function(co) {
               return h("span", { key: co.id, onClick: function() { ctx.setEditContactId(null); ctx.setSelectedCompanyId(co.id); },
-                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "2px 10px", borderRadius: "4px", fontWeight: 600, cursor: "pointer", border: "1px solid #5a3010" } }, co.name);
+                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "2px 10px", borderRadius: "4px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
             })
           )
         ),

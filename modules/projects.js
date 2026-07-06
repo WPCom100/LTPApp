@@ -232,15 +232,13 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       sortBtns()),
 
     fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
-    h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+    h(window.LTPList, null,
       fp.map(function(p) {
         var comp = companies.find(function(c) { return c.id === p.companyId; });
         // Quoted total once quotes exist; preliminary budget until then.
         var tot  = Math.round(window.LTP_projectHeadlineTotal(p, quotes).total);
-        return h("div", { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
-          style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", borderLeft: "3px solid " + CAT_COLORS[p.category] },
-          onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; e.currentTarget.style.borderLeft = "3px solid " + CAT_COLORS[p.category]; },
-          onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border;          e.currentTarget.style.borderLeft = "3px solid " + CAT_COLORS[p.category]; } },
+        return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
+          style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
           h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
             h("div", null,
               h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),

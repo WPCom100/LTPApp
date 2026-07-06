@@ -46,6 +46,13 @@
     .ltp-btn-primary:active { transform: translateY(0); }
     .ltp-btn-quiet { transition: border-color .14s ease, color .14s ease, background .14s ease; }
     .ltp-btn-quiet:hover { border-color: #4A5E6A; }
+    /* Ruled list rows (components/ui.js LTPList/LTPRow): hairline between
+       rows, none after the last (the panel's orange bottom rule closes it),
+       and a quiet brightening on hover for clickable rows. */
+    .ltp-list > .ltp-row { border-bottom: 1px solid #34454E; }
+    .ltp-list > .ltp-row:last-child { border-bottom: none; }
+    .ltp-row-click { transition: background .12s ease; }
+    .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
   </style>
 </head>
 <body>

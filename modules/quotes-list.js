@@ -79,18 +79,15 @@
         )
       ),
 
-      // List
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      // List — ruled ledger panel (see components/ui.js LTPList)
+      h(window.LTPList, null,
         filtered.length === 0 && h("div", { style: { padding: "32px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, "No quotes match your search."),
         filtered.map(function(qt) {
           var proj = projects.find(function(p) { return p.id === qt.projectId; });
           var name = proj ? proj.name : (qt.customName || "Untitled Quote");
           var tot  = computeTotals(qt);
           var itemCount = (qt.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
-          return h("div", { key: qt.id, onClick: function() { nav("quotes/" + qt.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 } },
               h("div", null,
                 h("div", { style: { fontSize: "16px", fontWeight: 700, marginBottom: 3, letterSpacing: "0.01em" } },

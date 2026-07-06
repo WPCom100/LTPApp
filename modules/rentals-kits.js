@@ -320,17 +320,15 @@
 
       filtered.length === 0
         ? h(window.EmptyState, { text: "No kits match your search." })
-        : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+        : h(window.LTPList, null,
             filtered.map(function(kit) {
               var calc    = calcRates(kit.items || [], equipment);
               var rate3   = kit.autoRate ? calc.threeDay : (kit.rates && kit.rates.threeDay);
               var itemCt  = (kit.items || []).length;
               var archived = kit.status === "archived";
 
-              return h("div", { key: kit.id, onClick: function() { onOpenKit(kit.id); },
-                style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s", opacity: archived ? 0.6 : 1 },
-                onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-                onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+              return h(window.LTPRow, { key: kit.id, onClick: function() { onOpenKit(kit.id); },
+                style: { padding: "14px 16px", opacity: archived ? 0.6 : 1 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
                   h("div", { style: { flex: 1 } },
                     h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },

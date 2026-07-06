@@ -338,7 +338,7 @@
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedEquipment.map(function(eq) {
               return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onClose(); onOpenEquipment(eq.id); } : null,
-                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid #5a3010", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
+                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.accent + "44", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
             })
           )
         ),
@@ -507,7 +507,7 @@
       ),
 
       filtered.length === 0 ? h(window.EmptyState, { text: "No containers match your search." }) :
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      h(window.LTPList, null,
         filtered.map(function(c) {
           var rawQty   = c.serialized ? (c.units || []).length : (c.qty || 0);
           var maintQty = c.serialized
@@ -516,10 +516,8 @@
           var openLogs = (c.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
           var linkedEq = equipment.filter(function(eq) { return c.defaultForEquipment.includes(eq.id); });
 
-          return h("div", { key: c.id, onClick: function() { onOpenContainer(c.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { onOpenContainer(c.id); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
 
             h("div", null,
               h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 3 } },

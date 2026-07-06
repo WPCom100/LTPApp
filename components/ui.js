@@ -28,6 +28,27 @@
     }, children);
   };
 
+  // ── Ruled list — the customer views' call-sheet / ledger treatment ───────
+  // Replaces the stack-of-rounded-cards look on list screens: one flat panel
+  // a step above the page field, bounded by brand-orange rules, with rows
+  // separated by hairlines. Hairline + hover rules live in index.html
+  // (.ltp-list / .ltp-row) so the last row drops its hairline automatically
+  // and hover never needs JS handlers.
+  //
+  //   h(window.LTPList, null, items.map(function(it) {
+  //     return h(window.LTPRow, { key: it.id, onClick: ..., style: {...} }, ...);
+  //   }))
+  window.LTPList = function({ children, style: sx }) {
+    return h("div", { className: "ltp-list", style: Object.assign({ background: B.surface, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent }, sx) }, children);
+  };
+  window.LTPRow = function({ onClick, style: sx, children }) {
+    return h("div", {
+      onClick: onClick,
+      className: "ltp-row" + (onClick ? " ltp-row-click" : ""),
+      style: Object.assign({ padding: "13px 16px", cursor: onClick ? "pointer" : "default" }, sx),
+    }, children);
+  };
+
   // ── Loading — the orange shimmer bar from the customer-facing pages ──────
   // LTPLoadingBar: inline shimmer + optional quiet label underneath.
   // LTPLoadingScreen: full-height centered version for app-level gates.

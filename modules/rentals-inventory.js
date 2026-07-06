@@ -47,7 +47,7 @@
       ),
 
       filtered.length === 0 ? h(window.EmptyState, { text: "No equipment matches your search." }) :
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      h(window.LTPList, null,
         filtered.map(function(eq) {
           var totalUnitQty = R.eqQty(eq);
           var activeOut  = allocations.filter(function(a) { return a.equipmentId === eq.id && a.state !== "returned"; }).reduce(function(s, a) { return s + a.qty; }, 0);
@@ -55,10 +55,8 @@
             ? (eq.units || []).reduce(function(s, u) { return s + (u.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length; }, 0)
             : (eq.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
 
-          return h("div", { key: eq.id, onClick: function() { onOpenEquipment(eq.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: eq.id, onClick: function() { onOpenEquipment(eq.id); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
 
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginBottom: 3 } }, eq.name),
@@ -72,7 +70,7 @@
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : ""))
               ),
               activeOut > 0
-                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid #5a3010", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
                 : h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.successBg, color: B.success, border: "1px solid " + B.successBd, padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "available")
             )
           );

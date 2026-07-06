@@ -104,7 +104,7 @@
         }),
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices\u2026",
           style: { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         filtered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
         filtered.map(function(inv) {
           var ref = window.LTP_INVOICE_REF(inv);
@@ -113,10 +113,8 @@
           var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : "";
           var qRef = inv.quoteId ? (function() { var q = quotes.find(function(q2) { return q2.id === inv.quoteId; }); return q ? window.LTP_QUOTE_REF(q) : ""; })() : "";
           var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
-          return h("div", { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
             h("div", null,
               h("div", { style: { fontSize: "14px", fontWeight: 700 } },
                 h("span", { style: { color: B.accent } }, ref),
