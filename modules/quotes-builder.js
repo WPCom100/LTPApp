@@ -898,8 +898,18 @@
           changes.push({ cat: aSec.label + " — Item Added", detail: i.name + " (×" + i.qty + ")" });
         } else if (bItemMap[i.id] && i.type !== "note") {
           var bi = bItemMap[i.id];
+          // Pricing-variant switch → one explicit from → to entry carrying both
+          // labels AND both prices. Without this, only the plain Price entry
+          // fired — and it prints the NEW name on both sides, so what the line
+          // changed FROM was invisible. The Price entry is suppressed for a
+          // variant switch since this entry already carries the prices.
+          var variantChanged = i.type === "product" &&
+            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
+          if (variantChanged) {
+            changes.push({ cat: aSec.label + " — Variant", detail: bi.name + " ($" + bi.unitPrice + ") → " + i.name + " ($" + i.unitPrice + ")" });
+          }
           if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " — Qty", detail: i.name + ": " + bi.qty + " → " + i.qty });
-          if (bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
+          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
           if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
             var adjB = bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)";
             var adjA = i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)";

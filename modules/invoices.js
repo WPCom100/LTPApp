@@ -1135,8 +1135,16 @@
           if (i.type === "note") return;
           if (!bItemMap[i.id]) { changes.push({ cat: aSec.label + " \u2014 Added", detail: i.name + " \u00d7" + i.qty }); return; }
           var bi = bItemMap[i.id];
+          // Pricing-variant switch \u2192 explicit from \u2192 to entry with both labels
+          // and prices; the plain Price entry (new name on both sides) hid what
+          // the line changed FROM, so it's suppressed for variant switches.
+          var variantChanged = i.type === "product" &&
+            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
+          if (variantChanged) {
+            changes.push({ cat: aSec.label + " \u2014 Variant", detail: bi.name + " ($" + bi.unitPrice + ") \u2192 " + i.name + " ($" + i.unitPrice + ")" });
+          }
           if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " \u2014 Qty", detail: i.name + ": " + bi.qty + " \u2192 " + i.qty });
-          if (bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " \u2014 Price", detail: i.name + ": $" + bi.unitPrice + " \u2192 $" + i.unitPrice });
+          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " \u2014 Price", detail: i.name + ": $" + bi.unitPrice + " \u2192 $" + i.unitPrice });
           if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
             changes.push({ cat: aSec.label + " \u2014 Adj.", detail: i.name + ": " + (bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)") + " \u2192 " + (i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)") });
           }
