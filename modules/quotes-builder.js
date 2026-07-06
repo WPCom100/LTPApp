@@ -179,6 +179,8 @@
     var [tab, setTab]       = useState("equipment");
     var [search, setSearch] = useState("");
     var [noteText, setNoteText] = useState("");
+    // Product id whose pricing-variant chooser popup is open (null = none).
+    var [variantFor, setVariantFor] = useState(null);
     // Per-equipment qty state in the picker: { equipmentId: number }
     var [eqQtys, setEqQtys] = useState({});
 
@@ -362,20 +364,43 @@
               onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; },
             };
             var pv = window.LTP_productVariants(p);
-            // A product with pricing variants lists one row per variant (the
-            // base Sale Price applies only to variant-less products).
+            // A product with pricing variants shows ONE row; clicking it opens
+            // a small chooser popup for the variant (a single variant adds
+            // directly \u2014 nothing to choose). Base Sale Price applies only to
+            // variant-less products.
             if (pv.length > 0) {
-              return h("div", { key: p.id, style: { display: "flex", flexDirection: "column", gap: 3 } },
-                pv.map(function(v) {
-                  return h("div", Object.assign({ key: v.id, onClick: function() { addProduct(p, v); }, style: rowStyle }, hover),
-                    h("div", { style: { flex: 1, minWidth: 0 } },
-                      h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
-                        p.name, h("span", { style: { color: B.info } }, " \u2014 " + v.label)),
-                      h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit)
-                    ),
-                    h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + v.unitPrice)
-                  );
-                }));
+              var open = variantFor === p.id;
+              var lo = pv.reduce(function(m, v) { return Math.min(m, v.unitPrice); }, Infinity);
+              var hi = pv.reduce(function(m, v) { return Math.max(m, v.unitPrice); }, 0);
+              return h("div", { key: p.id, style: { position: "relative" } },
+                h("div", Object.assign({
+                  onClick: function() {
+                    if (pv.length === 1) { addProduct(p, pv[0]); setVariantFor(null); }
+                    else setVariantFor(open ? null : p.id);
+                  },
+                  style: Object.assign({}, rowStyle, open ? { border: "1px solid " + B.accent } : null),
+                }, hover),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                      p.name,
+                      pv.length > 1 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.info, background: B.info + "22", border: "1px solid " + B.info + "44", borderRadius: "3px", padding: "1px 5px", marginLeft: 6, verticalAlign: "1px" } },
+                        pv.length + " prices " + (open ? "\u25b4" : "\u25be"))),
+                    h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit)
+                  ),
+                  h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } },
+                    pv.length === 1 ? "$" + pv[0].unitPrice : (lo === hi ? "$" + lo : "$" + lo + "\u2013$" + hi))
+                ),
+                // Variant chooser popup \u2014 pick one, it adds and closes.
+                open && h("div", { style: { background: B.bg, border: "1px solid " + B.accent + "66", borderRadius: "6px", margin: "3px 0 3px 18px", padding: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", gap: 2 } },
+                  pv.map(function(v) {
+                    return h("div", { key: v.id, onClick: function(e) { e.stopPropagation(); addProduct(p, v); setVariantFor(null); },
+                      style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", borderRadius: "4px", cursor: "pointer" },
+                      onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+                      onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
+                      h("div", { style: { flex: 1, fontSize: "11px", fontWeight: 600, color: B.text } }, v.label),
+                      h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + v.unitPrice));
+                  }))
+              );
             }
             return h("div", Object.assign({ key: p.id, onClick: function() { addProduct(p); }, style: rowStyle }, hover),
               h("div", { style: { flex: 1, minWidth: 0 } },

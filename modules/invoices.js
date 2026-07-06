@@ -142,6 +142,8 @@
   function InvAddItemPicker({ onAdd, onClose, equipment, products, services }) {
     var [tab, setTab] = useState("equipment");
     var [search, setSearch] = useState("");
+    // Product id whose pricing-variant chooser popup is open (null = none).
+    var [variantFor, setVariantFor] = useState(null);
     var q = search.trim().toLowerCase();
 
     function filterList(list, fields) {
@@ -201,16 +203,41 @@
               onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; },
             };
             var pv = window.LTP_productVariants(p);
+            // A product with pricing variants shows ONE row; clicking it opens
+            // a small chooser popup (a single variant adds directly). Same UX
+            // as the quote builder's product picker.
             if (pv.length > 0) {
-              return h("div", { key: p.id, style: { display: "flex", flexDirection: "column", gap: 3 } },
-                pv.map(function(v) {
-                  return h("div", Object.assign({ key: v.id, onClick: function() { addRow(v); }, style: rowStyle }, hover),
-                    h("div", { style: { flex: 1 } },
-                      h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, p.name, h("span", { style: { color: B.info } }, " — " + v.label)),
-                      h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category || "")),
-                    h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + v.unitPrice)
-                  );
-                }));
+              var open = variantFor === p.id;
+              var lo = pv.reduce(function(m, v) { return Math.min(m, v.unitPrice); }, Infinity);
+              var hi = pv.reduce(function(m, v) { return Math.max(m, v.unitPrice); }, 0);
+              return h("div", { key: p.id, style: { position: "relative" } },
+                h("div", Object.assign({
+                  onClick: function() {
+                    if (pv.length === 1) { addRow(pv[0]); setVariantFor(null); }
+                    else setVariantFor(open ? null : p.id);
+                  },
+                  style: Object.assign({}, rowStyle, open ? { border: "1px solid " + B.accent } : null),
+                }, hover),
+                  h("div", { style: { flex: 1 } },
+                    h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } },
+                      p.name,
+                      pv.length > 1 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.info, background: B.info + "22", border: "1px solid " + B.info + "44", borderRadius: "3px", padding: "1px 5px", marginLeft: 6, verticalAlign: "1px" } },
+                        pv.length + " prices " + (open ? "▴" : "▾"))),
+                    h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category || "")),
+                  h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } },
+                    pv.length === 1 ? "$" + pv[0].unitPrice : (lo === hi ? "$" + lo : "$" + lo + "–$" + hi))
+                ),
+                // Variant chooser popup — pick one, it adds and closes.
+                open && h("div", { style: { background: B.bg, border: "1px solid " + B.accent + "66", borderRadius: "6px", margin: "3px 0 3px 18px", padding: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", gap: 2 } },
+                  pv.map(function(v) {
+                    return h("div", { key: v.id, onClick: function(e) { e.stopPropagation(); addRow(v); setVariantFor(null); },
+                      style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", borderRadius: "4px", cursor: "pointer" },
+                      onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+                      onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
+                      h("div", { style: { flex: 1, fontSize: "11px", fontWeight: 600, color: B.text } }, v.label),
+                      h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + v.unitPrice));
+                  }))
+              );
             }
             return h("div", Object.assign({ key: p.id, onClick: function() { addRow(null); }, style: rowStyle }, hover),
               h("div", { style: { flex: 1 } },
