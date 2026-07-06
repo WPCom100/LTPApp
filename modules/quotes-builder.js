@@ -630,7 +630,9 @@
     return h("div", {
       onDragOver: isLocked ? undefined : function(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
       onDrop:     isLocked ? undefined : function(e) { e.preventDefault(); onSectionDrop(section.id); },
-      style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: 12, marginBottom: 12 }
+      // Document core — the flat orange-ruled panel treatment from the
+      // customer views' line-item sections (no rounded card).
+      style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: 12, marginBottom: 12 }
     },
       // Section header
       h("div", {
@@ -712,8 +714,8 @@
       );
     };
 
-    return h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "14px 18px" } },
-      h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Totals"),
+    return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: "14px 18px" } },
+      h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.accent, textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 8px" } }, "Totals"),
       row("Subtotal", "$" + Math.round(t.subtotal).toLocaleString()),
       autoAdjustment !== 0 && row("Line adjustments",
         (autoAdjustment > 0 ? "\u2212" : "+") + "$" + Math.round(Math.abs(autoAdjustment)).toLocaleString(),
@@ -756,7 +758,10 @@
           calcTax ? "Calculating…" : (!hasTax ? "Calculate Sales Tax" : (taxFresh ? "↻ Recalculate Tax" : "⚠ Recalculate — out of date")))
       ),
 
-      row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent, topBorder: true }),
+      // Brand-gradient rule sets the grand total apart — same stroke as the
+      // client view's totals block.
+      h("div", { style: { height: 3, background: B.gradRule, marginTop: 10 } }),
+      row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent }),
 
       // Internal margin section
       h("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "2px dashed " + B.border } },
@@ -1817,7 +1822,7 @@
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header bar
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.accent, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("quotes"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
@@ -1897,8 +1902,8 @@
         h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
 
       // Metadata card
-      h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 16 } },
-        h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 12px" } }, "Quote Details"),
+      h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 16 } },
+        h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Quote Details"),
 
         // When locked — show read-only summary
         (draft.status === "accepted" || draft.status === "converted")
@@ -2019,7 +2024,7 @@
           });
         }),
         !(draft.status === "accepted" || draft.status === "converted") && h("button", { onClick: addSection,
-          style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", borderRadius: "8px", width: "100%" } }, "+ Add Section")
+          style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", width: "100%" } }, "+ Add Section")
       ),
 
       // Totals
@@ -2032,8 +2037,8 @@
         h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
 
           // QUOTE SUMMARY (top)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 10px" } }, "Quote Summary"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Quote Summary"),
 
             // Section breakdown
             draft.sections.map(function(sec) {
@@ -2079,8 +2084,8 @@
           ),
 
           // NOTES (middle)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Internal Notes"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
             h("textarea", { value: draft.notes || "", onChange: function(e) { patchDraft({ notes: e.target.value }); },
               placeholder: "Add internal notes about this quote...",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
@@ -2090,8 +2095,8 @@
           function() {
             var linked = draft.id != null ? (invoices || []).filter(function(inv) { return inv.quoteId === draft.id; }) : [];
             if (linked.length === 0) return null;
-            return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Linked Invoices (" + linked.length + ")"),
+            return h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Linked Invoices (" + linked.length + ")"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 linked.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);
@@ -2116,8 +2121,8 @@
           }(),
 
           // ACTIVITY LOG (bottom)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent, client_accepted: B.success, client_declined: B.danger,

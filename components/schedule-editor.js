@@ -341,9 +341,12 @@
           var dayHasOT = dayLabor.units.some(function(u) { return u.paidHours > 10; });
           var dayPosCount = allPositions.length;
           var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
-          var dayBorderColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
+          // Day state shows in the top rule: brand orange normally, warn/danger
+          // when the day carries OT or a meal penalty (flat ledger panel — the
+          // rounded 2px-outlined card is gone).
+          var dayRuleColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.accent;
 
-          return h("div", { key: group.date, style: { background: B.raised, borderRadius: "8px", border: "2px solid " + dayBorderColor, marginBottom: 8, overflow: "hidden" } },
+          return h("div", { key: group.date, style: { background: B.raised, borderTop: "2px solid " + dayRuleColor, borderBottom: "1px solid " + B.border, marginBottom: 10, overflow: "hidden" } },
             // Day header
             h("div", { style: { background: B.surface, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + B.border } },
               h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
