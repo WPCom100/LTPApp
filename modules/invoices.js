@@ -1363,7 +1363,7 @@
     // ── Render ───────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.accent, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("invoices"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
@@ -1538,7 +1538,7 @@
           draft.sections.map(function(sec) {
             var st = sectionTotals(sec);
             // Document core — flat orange-ruled panel (customer line-item treatment)
-            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.accent, padding: 12 } },
+            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12 } },
               // Section header
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
                 isDraft
@@ -1565,7 +1565,7 @@
             style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", width: "100%" } }, "+ Add Section"),
 
           // Totals
-          h("div", { style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: "14px 18px" } },
+          h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", color: B.textSec } },
               h("span", null, "Subtotal"), h("span", null, "$" + Math.round(t.subtotal).toLocaleString())),
             t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
@@ -1638,7 +1638,7 @@
                   h("div", { style: { fontSize: "9px", color: B.textMut } }, cnt + " items")),
                 h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + Math.round(st.subtotal).toLocaleString()));
             }),
-            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
               h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, fmtT(t.total))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0" } },

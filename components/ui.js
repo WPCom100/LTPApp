@@ -39,7 +39,7 @@
   //     return h(window.LTPRow, { key: it.id, onClick: ..., style: {...} }, ...);
   //   }))
   window.LTPList = function({ children, style: sx }) {
-    return h("div", { className: "ltp-list", style: Object.assign({ background: B.surface, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent }, sx) }, children);
+    return h("div", { className: "ltp-list", style: Object.assign({ background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border }, sx) }, children);
   };
   window.LTPRow = function({ onClick, style: sx, children }) {
     return h("div", {

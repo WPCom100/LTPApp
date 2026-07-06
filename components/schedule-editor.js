@@ -344,7 +344,7 @@
           // Day state shows in the top rule: brand orange normally, warn/danger
           // when the day carries OT or a meal penalty (flat ledger panel — the
           // rounded 2px-outlined card is gone).
-          var dayRuleColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.accent;
+          var dayRuleColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
 
           return h("div", { key: group.date, style: { background: B.raised, borderTop: "2px solid " + dayRuleColor, marginBottom: 4, overflow: "hidden" } },
             // Day header

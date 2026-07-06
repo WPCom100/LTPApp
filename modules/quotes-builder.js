@@ -632,7 +632,7 @@
       onDrop:     isLocked ? undefined : function(e) { e.preventDefault(); onSectionDrop(section.id); },
       // Document core — the flat orange-ruled panel treatment from the
       // customer views' line-item sections (no rounded card).
-      style: { background: B.raised, borderTop: "1px solid " + B.accent, padding: 12, marginBottom: 4 }
+      style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12, marginBottom: 4 }
     },
       // Section header
       h("div", {
@@ -714,7 +714,7 @@
       );
     };
 
-    return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: "14px 18px" } },
+    return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
       h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.accent, textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 8px" } }, "Totals"),
       row("Subtotal", "$" + Math.round(t.subtotal).toLocaleString()),
       autoAdjustment !== 0 && row("Line adjustments",
@@ -1822,7 +1822,7 @@
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header bar
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.accent, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("quotes"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
@@ -2071,7 +2071,7 @@
                   h("span", null, "Sales Tax"),
                   h("span", null, "$" + (Number(t.tax) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
                 ),
-                h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
                   h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + Math.round(t.total).toLocaleString())
                 ),

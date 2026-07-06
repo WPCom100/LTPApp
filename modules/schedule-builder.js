@@ -347,7 +347,7 @@
     // ── Render ───────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.accent, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("projects/" + project.id); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
@@ -399,7 +399,7 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Positions"),
               h("span", { style: { fontSize: "12px", fontWeight: 600, color: stats.filledPos === stats.totalPos && stats.totalPos > 0 ? B.success : B.text } }, stats.filledPos + " / " + stats.totalPos + " filled")),
-            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Total Rate"),
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + stats.totalRate.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "3px 0" } },
