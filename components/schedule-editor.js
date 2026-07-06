@@ -346,7 +346,7 @@
           // rounded 2px-outlined card is gone).
           var dayRuleColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.accent;
 
-          return h("div", { key: group.date, style: { background: B.raised, borderTop: "2px solid " + dayRuleColor, borderBottom: "1px solid " + B.border, marginBottom: 10, overflow: "hidden" } },
+          return h("div", { key: group.date, style: { background: B.raised, borderTop: "2px solid " + dayRuleColor, marginBottom: 4, overflow: "hidden" } },
             // Day header
             h("div", { style: { background: B.surface, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + B.border } },
               h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },

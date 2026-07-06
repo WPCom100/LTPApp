@@ -632,7 +632,7 @@
       onDrop:     isLocked ? undefined : function(e) { e.preventDefault(); onSectionDrop(section.id); },
       // Document core — the flat orange-ruled panel treatment from the
       // customer views' line-item sections (no rounded card).
-      style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: 12, marginBottom: 12 }
+      style: { background: B.raised, borderTop: "1px solid " + B.accent, padding: 12, marginBottom: 4 }
     },
       // Section header
       h("div", {
@@ -1896,13 +1896,13 @@
       ),
 
       // Body: main content (left) + side panel (right)
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
 
         // ── Main scrollable content (left) ─────────────────────────────────
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
       // Metadata card
-      h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 16 } },
+      h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
         h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Quote Details"),
 
         // When locked — show read-only summary
@@ -2034,10 +2034,10 @@
       ), // end main scrollable content
 
         // ── Side Panel (right) ─────────────────────────────────────────────
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
 
           // QUOTE SUMMARY (top)
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Quote Summary"),
 
             // Section breakdown
@@ -2084,7 +2084,7 @@
           ),
 
           // NOTES (middle)
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
             h("textarea", { value: draft.notes || "", onChange: function(e) { patchDraft({ notes: e.target.value }); },
               placeholder: "Add internal notes about this quote...",
@@ -2095,7 +2095,7 @@
           function() {
             var linked = draft.id != null ? (invoices || []).filter(function(inv) { return inv.quoteId === draft.id; }) : [];
             if (linked.length === 0) return null;
-            return h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+            return h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Linked Invoices (" + linked.length + ")"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 linked.map(function(inv) {
@@ -2121,7 +2121,7 @@
           }(),
 
           // ACTIVITY LOG (bottom)
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {

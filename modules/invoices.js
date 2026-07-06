@@ -1413,12 +1413,12 @@
       ),
 
       // Body
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
         // Main content
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
           // Invoice details card
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 16 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Invoice Details"),
 
             !isDraft
@@ -1538,7 +1538,7 @@
           draft.sections.map(function(sec) {
             var st = sectionTotals(sec);
             // Document core — flat orange-ruled panel (customer line-item treatment)
-            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.accent, borderBottom: "1px solid " + B.accent, padding: 12 } },
+            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.accent, padding: 12 } },
               // Section header
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
                 isDraft
@@ -1610,9 +1610,9 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
           // QuickBooks section — status + actions + deep link (shown once sent)
-          qbConnected && qbEligible && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          qbConnected && qbEligible && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "QuickBooks"),
               qbPill && h("span", { style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "3px 8px", borderRadius: "5px", whiteSpace: "nowrap" } }, qbPill.label)),
@@ -1627,7 +1627,7 @@
                 style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", textDecoration: "none", whiteSpace: "nowrap" } }, "View in QuickBooks ↗"))
           ),
           // Summary
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Invoice Summary"),
             draft.sections.map(function(sec) {
               var st = sectionTotals(sec);
@@ -1649,14 +1649,14 @@
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.warn } }, fmtT(t.balance)))
           ),
           // Notes
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Notes"),
             h("textarea", { value: draft.notes || "", onChange: function(e) { patchDraft({ notes: e.target.value }); },
               placeholder: "Invoice notes\u2026",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 50 } })
           ),
           // Payments — only visible after invoice is sent
-          !isDraft && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          !isDraft && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "Payments"),
               h("button", { onClick: function() { showPaymentForm ? setShowPaymentForm(false) : openPaymentForm(); },
@@ -1687,7 +1687,7 @@
                 )
           ),
           // Linked Quote
-          linkedQuote && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          linkedQuote && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Linked Quote"),
             h("div", {
               onClick: function() { nav("quotes/" + linkedQuote.id); },
@@ -1703,7 +1703,7 @@
             )
           ),
           // Activity
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 100 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 100 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.activity || []).slice().reverse().map(function(a) {

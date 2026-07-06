@@ -366,7 +366,7 @@
       ),
 
       // Body: main + side panel
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: "auto", minWidth: 0 } },
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: services,
@@ -389,9 +389,9 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
           // SUMMARY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Schedule Summary"),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Schedule Days"),
@@ -433,7 +433,7 @@
             var seen = {};
             projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
             if (projectConflicts.length === 0) return null;
-            return h("div", { style: { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", borderBottom: "1px solid " + B.danger + "44", padding: 14 } },
+            return h("div", { style: { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
@@ -447,7 +447,7 @@
           }(),
 
           // NOTES
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
             h("textarea", { value: draft.scheduleNotes || "",
               onChange: function(e) { setDraft(function(d) { return Object.assign({}, d, { scheduleNotes: e.target.value }); }); },
@@ -456,7 +456,7 @@
           ),
 
           // ACTIVITY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.scheduleActivity || []).slice().reverse().map(function(a) {
