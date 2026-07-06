@@ -5,12 +5,14 @@
   var useState = React.useState;
   var B = window.LTP_THEME;
 
+  // Soft-on-slate badge treatment (12% fill / 35% border), matching
+  // theme.js LTP_STATUS_COLORS.
   var ALLOC_COLORS = {
-    "reserved":          { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-    "allocated":         { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-    "checked-out":       { bg: "#3d2008", text: "#E8731A", bd: "#5a3010" },
-    "returned":          { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-    "under-maintenance": { bg: "#2e0f0f", text: "#E74C3C", bd: "#7a1a1a" },
+    "reserved":          window.LTP_badgeFromHex("#6FA8F5"),
+    "allocated":         window.LTP_badgeFromHex("#F5B83D"),
+    "checked-out":       window.LTP_badgeFromHex("#FF8A50"),
+    "returned":          window.LTP_badgeFromHex("#5FD08A"),
+    "under-maintenance": window.LTP_badgeFromHex("#F0857A"),
   };
 
   var ALLOC_STATES = ["reserved", "allocated", "checked-out", "returned", "under-maintenance"];
@@ -21,7 +23,7 @@
   var RATE_KEYS   = ["threeDay", "week", "month"];
 
   var INP = {
-    background: B.raised, border: "1px solid " + B.border, borderRadius: "6px",
+    background: B.bg, border: "1px solid " + B.border, borderRadius: "8px",
     padding: "8px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none",
   };
 
@@ -116,10 +118,10 @@
       return (u.barcode || "").toLowerCase().indexOf(q) !== -1 || (u.serial || "").toLowerCase().indexOf(q) !== -1;
     });
     return h("div", { style: { position: "relative" } },
-      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
-        sel && h("span", { style: { background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
+      h("div", { style: { display: "flex", alignItems: "center", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", minHeight: 37 } },
+        sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
           displayLabel(sel),
-          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
+          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
         ),
         h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : placeholder,
           onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },

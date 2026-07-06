@@ -34,14 +34,14 @@
         h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           cats.map(function(c) {
             return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? "#000" : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
+              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
           })
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
           h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search inventory...", style: Object.assign({}, R.INP, { width: 180 }) }),
           [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
             return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
           })
         )
       ),

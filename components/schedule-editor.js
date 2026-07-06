@@ -347,14 +347,14 @@
             // Day header
             h("div", { style: { background: B.surface, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + B.border } },
               h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
-                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } },
+                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } },
                   group.date !== "_unscheduled" ? fmt(group.date) : "Unscheduled"),
                 dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, window.LTP_formatTime(dayCall) + " \u2192 " + window.LTP_formatTime(dayWrap)),
                 h("span", { style: { fontSize: "10px", color: B.textMut } }, dayItems.length + " item" + (dayItems.length > 1 ? "s" : "")),
                 dayPosCount > 0 && h("span", { style: { fontSize: "10px", color: dayFilled === dayPosCount ? B.success : B.textMut } }, dayFilled + "/" + dayPosCount + " confirmed")
               ),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                dayHasOT && h("span", { style: { color: "#000", background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
+                dayHasOT && h("span", { style: { color: B.btnInk, background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
                 dayHasMealPenalty && h("span", { onClick: function() {
                     // Per-PERSON fix: give a meal break only to the people who
                     // actually incur a penalty, on their own position — so no one
@@ -396,7 +396,7 @@
                     }));
                   },
                   title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
-                  style: { color: "#000", background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
+                  style: { color: B.btnInk, background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
                   "MEAL PENALTY: " + dayMealPenaltyHours + "h \u2014 fix")
               )
             ),
@@ -441,7 +441,7 @@
                       var isPaid = brk.type === "paid";
                       return h("div", { key: brk.id, style: { display: "inline-flex", gap: 3, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "3px", padding: "2px 6px", fontSize: "9px" } },
                         h("button", { onClick: function() { updateBreak(s.id, brk.id, { type: isPaid ? "unpaid" : "paid", endTime: isPaid ? _addTime(brk.startTime, 60) : _addTime(brk.startTime, 30) }); },
-                          style: { background: isPaid ? B.accent : B.raised, color: isPaid ? "#000" : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
+                          style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
                           isPaid ? "PAID" : "UNPAID"),
                         h("input", { type: "time", value: brk.startTime, onChange: function(e) { updateBreak(s.id, brk.id, { startTime: e.target.value }); },
                           style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),

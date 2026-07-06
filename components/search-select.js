@@ -13,8 +13,8 @@
       selectedIds.length > 0 && h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 } },
         selectedIds.map(function(id) {
           var item = items.find(function(i) { return i.id === id; }); if (!item) return null;
-          return h("span", { key: id, style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600 } },
-            getName(item), h("button", { onClick: function() { onChange(selectedIds.filter(function(x) { return x !== id; })); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7"));
+          return h("span", { key: id, style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600 } },
+            getName(item), h("button", { onClick: function() { onChange(selectedIds.filter(function(x) { return x !== id; })); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7"));
         })
       ),
       h("div", { style: { position: "relative" } },
@@ -36,9 +36,9 @@
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
       h("div", { style: { position: "relative" } },
         h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 12px", minHeight: 37 } },
-          selCompany && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, flexShrink: 0 } },
+          selCompany && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, flexShrink: 0 } },
             selCompany.name,
-            h("button", { onClick: function(e) { e.stopPropagation(); setCompId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7")
+            h("button", { onClick: function(e) { e.stopPropagation(); setCompId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7")
           ),
           h("input", { type: "text", value: selCompany ? "" : query, placeholder: selCompany ? "" : "Search companies...",
             onChange: function(e) { if (!selCompany) setQuery(e.target.value); },
@@ -73,9 +73,9 @@
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
       h("div", { style: { position: "relative" } },
         h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 12px", minHeight: 37 } },
-          selContact && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, flexShrink: 0 } },
+          selContact && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, flexShrink: 0 } },
             fullName(selContact),
-            h("button", { onClick: function(e) { e.stopPropagation(); setContactId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7")
+            h("button", { onClick: function(e) { e.stopPropagation(); setContactId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "\u00d7")
           ),
           h("input", { type: "text", value: selContact ? "" : query, placeholder: selContact ? "" : (placeholder || "Search contacts..."),
             onChange: function(e) { if (!selContact) setQuery(e.target.value); },

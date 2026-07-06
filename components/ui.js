@@ -4,23 +4,41 @@
 
   window.Badge = function({ status }) {
     var c = SC[status] || SC.draft;
-    return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 9px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" } }, status);
+    return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 8px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" } }, status);
   };
 
+  // Primary buttons wear the brand gradient + hover lift from the customer
+  // views (classes ltp-btn-primary / ltp-btn-quiet live in index.html).
   window.Btn = function({ children, onClick, variant, small, disabled, style: sx }) {
     variant = variant || "primary";
-    var base = { border: "none", borderRadius: "6px", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", transition: "all 0.15s", fontSize: small ? "11px" : "12px", padding: small ? "4px 10px" : "7px 16px", letterSpacing: "0.02em" };
-    var v = { primary: { background: B.accent, color: "#000" }, ghost: { background: "transparent", color: B.textSec, border: "1px solid " + B.border }, danger: { background: B.dangerBg, color: B.danger, border: "1px solid " + B.dangerBd } };
-    var disabledStyle = disabled ? { opacity: 0.5, pointerEvents: "none" } : {};
+    var base = { border: "none", borderRadius: "8px", fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", fontSize: small ? "11px" : "12px", padding: small ? "4px 11px" : "8px 18px", letterSpacing: "0.02em", fontFamily: "inherit" };
+    var v = {
+      primary: { background: B.gradBtn, color: B.btnInk, boxShadow: "0 2px 10px rgba(239,88,34,0.22)" },
+      ghost: { background: "transparent", color: B.textSec, border: "1px solid " + B.border },
+      danger: { background: B.dangerBg, color: B.danger, border: "1px solid " + B.dangerBd },
+    };
+    var disabledStyle = disabled ? { opacity: 0.5, pointerEvents: "none", boxShadow: "none" } : {};
     return h("button", {
       onClick: disabled ? undefined : onClick,
       disabled: !!disabled,
+      // Hover micro-moments come from CSS classes so they never "light up"
+      // a disabled button.
+      className: disabled ? undefined : (variant === "primary" ? "ltp-btn-primary" : "ltp-btn-quiet"),
       style: Object.assign({}, base, v[variant], disabledStyle, sx),
-      // Skip hover effects when disabled — otherwise the button visually
-      // "lights up" while in a click-suppressed state, which is misleading.
-      onMouseOver: function(e) { if (!disabled && variant === "primary") e.target.style.background = B.accentHover; },
-      onMouseOut:  function(e) { if (!disabled && variant === "primary") e.target.style.background = B.accent; }
     }, children);
+  };
+
+  // ── Loading — the orange shimmer bar from the customer-facing pages ──────
+  // LTPLoadingBar: inline shimmer + optional quiet label underneath.
+  // LTPLoadingScreen: full-height centered version for app-level gates.
+  window.LTPLoadingBar = function({ label, width }) {
+    return h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center" } },
+      h("div", { className: "ltp-shimmer", style: { height: 4, width: width || 120, borderRadius: 2 } }),
+      label && h("div", { style: { fontSize: "13px", color: B.textSec, marginTop: 14, textAlign: "center" } }, label));
+  };
+  window.LTPLoadingScreen = function({ label }) {
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" } },
+      h(window.LTPLoadingBar, { label: label || "Loading…" }));
   };
 
   // ── Phone formatting ─────────────────────────────────────────────────────
@@ -48,8 +66,15 @@
     var [touched, setTouched] = useState(false);
     var error = touched && validate ? validate(value) : null;
     var borderColor = error ? B.danger : B.border;
-    var fs = { width: "100%", minWidth: 0, boxSizing: "border-box", background: B.raised, border: "1px solid " + borderColor, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none" };
-    function handleBlur() {
+    // Inputs recede below the card (page-field fill) and warm to the brand
+    // orange on focus — the customer views' field treatment.
+    var fs = { width: "100%", minWidth: 0, boxSizing: "border-box", background: B.bg, border: "1px solid " + borderColor, borderRadius: "8px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" };
+    function handleFocus(e) {
+      if (!error) e.target.style.borderColor = B.accent;
+    }
+    function handleBlur(e) {
+      var err = validate ? validate(value) : null;
+      e.target.style.borderColor = err ? B.danger : B.border;
       setTouched(true);
       if (onBlurProp) onBlurProp(value);
     }
@@ -62,8 +87,8 @@
     var shownPlaceholder = (isNum && (placeholder == null || placeholder === "")) ? "0" : placeholder;
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: error ? B.danger : B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
-      textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onBlur: handleBlur, placeholder: placeholder, rows: 3, style: Object.assign({}, fs, { resize: "vertical" }) })
-               : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onBlur: handleBlur, placeholder: shownPlaceholder, style: fs }),
+      textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, style: Object.assign({}, fs, { resize: "vertical" }) })
+               : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
   };
@@ -71,36 +96,41 @@
   window.LTPSelect = function({ label, value, onChange, options, style: sx }) {
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
-      h("select", { value: value, onChange: function(e) { onChange(e.target.value); }, style: { width: "100%", minWidth: 0, boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", appearance: "auto" } },
+      h("select", { value: value, onChange: function(e) { onChange(e.target.value); },
+        onFocus: function(e) { e.target.style.borderColor = B.accent; },
+        onBlur: function(e) { e.target.style.borderColor = B.border; },
+        style: { width: "100%", minWidth: 0, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", appearance: "auto", transition: "border-color 0.15s" } },
         options.map(function(o) { return h("option", { key: o.value, value: o.value }, o.label); }))
     );
   };
 
+  // Tabs read as the uppercase letter-spaced "eyebrow" overlines from the
+  // customer views, with the active one underlined in brand orange.
   window.LTPTabs = function({ tabs, active, onChange }) {
     return h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18 } },
       tabs.map(function(t) {
         return h("button", { key: t.id, onClick: function() { onChange(t.id); },
-          style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "8px 16px", fontSize: "12px", fontWeight: active === t.id ? 700 : 500, color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s" }
+          style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "9px 14px", fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit" }
         }, t.label + (t.count !== undefined ? " (" + t.count + ")" : ""));
       })
     );
   };
 
   window.LTPModal = function({ title, onClose, children, wide, disableBackdrop }) {
-    return h("div", { style: { position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+    return h("div", { style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
       onClick: disableBackdrop ? null : onClose },
-      h("div", { onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "12px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative" } },
+      h("div", { onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
-          h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', Georgia, serif" } }, title),
+          h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 700, color: B.text, letterSpacing: "-0.01em" } }, title),
           h("button", { onClick: onClose, style: { background: "none", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer" } }, "\u2715")
         ), children)
     );
   };
 
   window.StatCard = function({ label, value, sub, accent }) {
-    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: "18px 20px", flex: 1, minWidth: 140 } },
-      h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 6, fontWeight: 600 } }, label),
-      h("div", { style: { fontSize: "24px", fontWeight: 700, color: accent || B.accent, fontFamily: "'Playfair Display', Georgia, serif", lineHeight: 1.1 } }, value),
+    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "12px", padding: "18px 20px", flex: 1, minWidth: 140 } },
+      h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 700 } }, label),
+      h("div", { style: { fontSize: "24px", fontWeight: 700, color: accent || B.text, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", lineHeight: 1.1 } }, value),
       sub && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 5 } }, sub)
     );
   };
@@ -243,8 +273,8 @@
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
       h("div", { style: { display: "flex", gap: 6, marginBottom: 4 } },
-        h("button", { onClick: function() { setMode("url"); }, style: { background: mode === "url" ? B.accent : B.raised, color: mode === "url" ? "#000" : B.textMut, border: "1px solid " + (mode === "url" ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "URL"),
-        h("button", { onClick: function() { setMode("upload"); }, style: { background: mode === "upload" ? B.accent : B.raised, color: mode === "upload" ? "#000" : B.textMut, border: "1px solid " + (mode === "upload" ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "Upload")
+        h("button", { onClick: function() { setMode("url"); }, style: { background: mode === "url" ? B.accent : B.raised, color: mode === "url" ? B.btnInk : B.textMut, border: "1px solid " + (mode === "url" ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "URL"),
+        h("button", { onClick: function() { setMode("upload"); }, style: { background: mode === "upload" ? B.accent : B.raised, color: mode === "upload" ? B.btnInk : B.textMut, border: "1px solid " + (mode === "upload" ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "Upload")
       ),
       mode === "url" && h("input", { type: "text", value: (value && value.startsWith("data:")) ? "" : (value || ""), onChange: function(e) { onChange(e.target.value); }, placeholder: "https://example.com/logo.png", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none" } }),
       mode === "upload" && h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },

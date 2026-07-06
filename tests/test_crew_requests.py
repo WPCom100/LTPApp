@@ -469,7 +469,7 @@ def test_send_emails_crew_member_when_gmail_connected():
     assert "Respond" in html          # single CTA button → the crew landing page
     assert "Lead Lighting Tech" in html
     # Themed, branded shell: default accent (accentColor) + rounded card.
-    assert "#E8731A" in html
+    assert "#EF5822" in html
     assert "border-radius" in html
 
 

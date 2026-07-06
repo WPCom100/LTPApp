@@ -192,7 +192,7 @@
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
-        h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, titleMap[activeTab]),
+        h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0 } }, titleMap[activeTab]),
         activeTab === "equipment"  && h(window.Btn, { small: true, onClick: function() { nav("rentals/equipment/new"); } }, "+ Add Equipment"),
         activeTab === "containers" && h(window.Btn, { small: true, onClick: function() { nav("rentals/containers/new"); } }, "+ Add Container"),
         activeTab === "kits"       && h(window.Btn, { small: true, onClick: function() { nav("rentals/kits/new"); } }, "+ Create Kit")

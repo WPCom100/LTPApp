@@ -131,7 +131,7 @@
         items.map(function(it) {
           var n = (it.shifts || []).length;
           var type = TYPE_LABEL[it.template] || "removed";
-          return h("div", { key: keyFor(it.crewId, it.projectId, it.template), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#000", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
+          return h("div", { key: keyFor(it.crewId, it.projectId, it.template), style: { display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", background: B.bg || "#1B262C", borderRadius: "4px", border: "1px solid " + (B.border || "#333") } },
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text || "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
                 it.crewName, h("span", { style: { color: accent, fontWeight: 600 } }, "  ·  " + type)),
@@ -141,7 +141,7 @@
         })),
       h("div", { style: { padding: "8px 12px", borderTop: "1px solid " + accent + "55", display: "flex", gap: 8, alignItems: "center" } },
         h("button", { onClick: sendAll, disabled: sending,
-          style: { flex: 1, background: B.success || "#3fb950", border: "none", borderRadius: "6px", padding: "7px 12px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: sending ? "default" : "pointer", opacity: sending ? 0.6 : 1, fontFamily: "inherit" } },
+          style: { flex: 1, background: B.success || "#3fb950", border: "none", borderRadius: "6px", padding: "7px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: sending ? "default" : "pointer", opacity: sending ? 0.6 : 1, fontFamily: "inherit" } },
           sending ? "Sending…" : "Notify all"),
         h("button", { onClick: declineAll, disabled: sending,
           style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "6px", padding: "7px 12px", color: B.textMut || "#888", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },

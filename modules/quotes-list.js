@@ -55,13 +55,13 @@
           filters.map(function(f) {
             var active = filter === f;
             return h("button", { key: f, onClick: function() { setFilter(f); },
-              style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                        border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                        padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
           })
         ),
         h("button", { onClick: function() { nav("quotes/new"); },
-          style: { background: B.accent, color: "#000", border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote")
+          style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote")
       ),
 
       // Search + sort
@@ -72,7 +72,7 @@
           sorts.map(function(s) {
             var active = sortMode === s.k;
             return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
-              style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                        border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                        padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
           })
@@ -93,7 +93,7 @@
             onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 } },
               h("div", null,
-                h("div", { style: { fontSize: "16px", fontWeight: 700, marginBottom: 3, fontFamily: "'Playfair Display', Georgia, serif", letterSpacing: "0.01em" } },
+                h("div", { style: { fontSize: "16px", fontWeight: 700, marginBottom: 3, letterSpacing: "0.01em" } },
                   h("span", { style: { color: B.accent } }, displayRef(qt)),
                   h("span", { style: { color: B.textMut, margin: "0 10px" } }, "\u00b7"),
                   h("span", { style: { color: B.text } }, name)

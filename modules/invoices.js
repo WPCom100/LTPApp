@@ -90,7 +90,7 @@
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, "Invoices ",
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Invoices ",
           h("span", { style: { fontSize: "13px", color: B.textMut, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 } }, "(" + invoices.length + ")")),
         h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
@@ -100,7 +100,7 @@
       h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
         statuses.map(function(f) {
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? B.accent : B.raised, color: filter === f ? "#000" : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+            style: { background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
         }),
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices\u2026",
           style: { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
@@ -118,7 +118,7 @@
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
             onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
             h("div", null,
-              h("div", { style: { fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif" } },
+              h("div", { style: { fontSize: "14px", fontWeight: 700 } },
                 h("span", { style: { color: B.accent } }, ref),
                 proj && h("span", { style: { color: B.textMut, margin: "0 8px" } }, "\u00b7"),
                 proj && h("span", { style: { color: B.text } }, proj)),
@@ -1370,7 +1370,7 @@
           h("button", { onClick: function() { nav("invoices"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", null,
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3 } },
               h("span", { style: { fontSize: "12px", color: B.textSec } }, displayName),
               h(window.Badge, { status: window.LTP_displayStatus(draft) }),
@@ -1402,10 +1402,10 @@
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Recall to Draft"),
           // Send Receipt (paid invoices)
           draft.status === "paid" && h("button", { onClick: function() { openReceiptModal(); },
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),
           // Send / Resend button
           isDraft && draft.id != null && h("button", { onClick: openSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Invoice"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Invoice"),
           !isDraft && draft.id != null && h("button", { onClick: openSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
@@ -1451,7 +1451,7 @@
                           if (ct === "company") patchDraft({ clientType: "company", clientContactId: null });
                           else patchDraft({ clientType: "contact", companyId: null, projectId: null });
                         },
-                        style: { background: draft.clientType === ct ? B.accent : B.raised, color: draft.clientType === ct ? "#000" : B.textMut, border: "1px solid " + (draft.clientType === ct ? B.accent : B.border), borderRadius: "4px", padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } },
+                        style: { background: draft.clientType === ct ? B.accent : B.raised, color: draft.clientType === ct ? B.btnInk : B.textMut, border: "1px solid " + (draft.clientType === ct ? B.accent : B.border), borderRadius: "4px", padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } },
                         ct === "company" ? "Company" : "Individual Contact");
                     })
                   ),
@@ -1545,8 +1545,8 @@
                 isDraft
                   ? h("input", { type: "text", value: sec.label,
                       onChange: function(e) { updateSectionLabel(sec.id, e.target.value); },
-                      style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif", outline: "none", padding: "4px 0" } })
-                  : h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, sec.label),
+                      style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } })
+                  : h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.accent } }, sec.label),
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, "$" + Math.round(st.subtotal).toLocaleString()),
                 isDraft && draft.sections.length > 1 && h("button", { onClick: function() { deleteSection(sec.id); },
                   style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: "3px 8px" } }, "Delete")
@@ -1659,7 +1659,7 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 } }, "Payments"),
               h("button", { onClick: function() { showPaymentForm ? setShowPaymentForm(false) : openPaymentForm(); },
-                style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
+                style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
                 showPaymentForm ? "Cancel" : "+ Record Payment")),
             // Payment list
             (draft.payments || []).length === 0

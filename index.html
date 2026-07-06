@@ -10,7 +10,8 @@
   <link href="/assets/fonts.css" rel="stylesheet" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; }
+    /* Page field matches the customer-facing surfaces' slate (theme.js bg). */
+    body { background: #1B262C; overflow: hidden; }
     /* The SPA shell fills #root. Use the DYNAMIC viewport height (dvh) so on
        iOS Safari the app matches the actually-visible area — `100vh` there is
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
@@ -27,13 +28,24 @@
        Keep these two values in sync. Marker blocks (<section>) and any nested
        layout are untouched — only direct paragraph children. */
     .ltp-email-editor > p, .ltp-email-editor > div { margin: 0; line-height: 1; }
-    ::-webkit-scrollbar { width: 6px; }
-    ::-webkit-scrollbar-track { background: #111; }
-    ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover { background: #555; }
-    select option { background: #1a1a1a; color: #fff; }
-    [contenteditable]:empty:before { content: attr(data-placeholder); color: #666; }
-    blockquote { border-left: 3px solid #E8731A; padding-left: 12px; margin: 8px 0; color: #aaa; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #34454E; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #46596A; }
+    select option { background: #202D35; color: #EDF3F2; }
+    [contenteditable]:empty:before { content: attr(data-placeholder); color: #6E7E86; }
+    blockquote { border-left: 3px solid #EF5822; padding-left: 12px; margin: 8px 0; color: #93A3AB; }
+    /* ── Brand micro-moments — shared with the customer views ──────────────
+       .ltp-shimmer: the 4px orange loading bar from the crew call sheet.
+       .ltp-btn-primary / .ltp-btn-quiet: hover lift + border warm-up used by
+       components/ui.js Btn (values mirror crew/client-view injectStyle). */
+    @keyframes ltp-shimmer { 0% { background-position: -120px 0; } 100% { background-position: 240px 0; } }
+    .ltp-shimmer { background-image: linear-gradient(90deg,#64260F 0%,#FF921E 50%,#64260F 100%); background-size: 240px 4px; animation: ltp-shimmer 1.1s linear infinite; }
+    .ltp-btn-primary { transition: transform .14s ease, filter .14s ease, box-shadow .14s ease; }
+    .ltp-btn-primary:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 4px 14px rgba(239,88,34,0.30); }
+    .ltp-btn-primary:active { transform: translateY(0); }
+    .ltp-btn-quiet { transition: border-color .14s ease, color .14s ease, background .14s ease; }
+    .ltp-btn-quiet:hover { border-color: #4A5E6A; }
   </style>
 </head>
 <body>

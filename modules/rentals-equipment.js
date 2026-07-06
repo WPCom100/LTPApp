@@ -13,9 +13,9 @@
 
     return h("div", { style: { position: "relative" } },
       h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
-        sel && h("span", { style: { background: B.accent, color: "#000", fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
+        sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
           sel.name,
-          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "\u00d7")
+          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "\u00d7")
         ),
         h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : "Type to search vendors...",
           onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },
@@ -303,16 +303,16 @@
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total Units"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif" } }, rawQty)),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text } }, rawQty)),
           h("div", { style: { background: maintQty > 0 ? B.dangerBg : B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + (maintQty > 0 ? B.dangerBd : B.border) } },
             h("div", { style: { fontSize: "10px", color: maintQty > 0 ? B.danger : B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Under Maint."),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: maintQty > 0 ? B.danger : B.textMut, fontFamily: "'Playfair Display', serif" } }, maintQty)),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: maintQty > 0 ? B.danger : B.textMut } }, maintQty)),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Active Out"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: currentOut > 0 ? B.accent : B.textMut, fontFamily: "'Playfair Display', serif" } }, currentOut)),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: currentOut > 0 ? B.accent : B.textMut } }, currentOut)),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "3-Day Rate"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + eq.rates.threeDay))
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent } }, "$" + eq.rates.threeDay))
         ),
 
         // All rate tiers

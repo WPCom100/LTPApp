@@ -345,7 +345,7 @@
               ),
               // Add button
               h("button", { onClick: function(e) { e.stopPropagation(); addEquipment(eq); },
-                style: { background: B.accent, border: "none", borderRadius: "4px", color: "#000", cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" } }, "Add")
+                style: { background: B.accent, border: "none", borderRadius: "4px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" } }, "Add")
             );
           })
         )
@@ -424,7 +424,7 @@
               style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
               onMouseOver: function(e) { if (!inSection) e.currentTarget.style.borderColor = B.accent; },
               onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; } },
-              h("div", { style: { width: 40, fontSize: "12px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, s.role),
+              h("div", { style: { width: 40, fontSize: "12px", fontWeight: 700, color: B.accent } }, s.role),
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, s.department)
@@ -641,10 +641,10 @@
       },
         !isLocked && h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none" } }, "\u2630"),
         isLocked
-          ? h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif", padding: "4px 0" } }, section.label)
+          ? h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.text, padding: "4px 0" } }, section.label)
           : h("input", { type: "text", value: section.label,
               onChange: function(e) { onLabelChange(section.id, e.target.value); },
-              style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif", outline: "none", padding: "4px 0" } }),
+              style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
         h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right" } },
           h("div", null, "$" + Math.round(sectionSubtotal).toLocaleString()),
           h("div", { style: { fontSize: "9px" } }, "margin: $" + Math.round(sectionMargin).toLocaleString())
@@ -1822,7 +1822,7 @@
           h("button", { onClick: function() { nav("quotes"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", null,
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3 } },
               h("span", { style: { fontSize: "12px", color: B.textSec } }, displayName),
               h(window.Badge, { status: draft.status })
@@ -1850,10 +1850,10 @@
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
           // Sent: Accept / Decline / Recall / Resend
           draft.status === "sent" && h("button", { onClick: acceptQuote,
-            style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
+            style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
           draft.status === "sent" && h("button", { onClick: declineQuote,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.danger; e.currentTarget.style.color = B.danger; },
@@ -1882,7 +1882,7 @@
           ),
           // Send to Invoice — only when accepted and has uninvoiced delivered items
           hasUninvoiced && h("button", { onClick: sendToInvoice,
-            style: { background: B.success, border: "none", borderRadius: "6px", color: "#000", cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "4px 10px", letterSpacing: "0.02em" } },
+            style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "4px 10px", letterSpacing: "0.02em" } },
             "\u2192 Send to Invoice"),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteQuote }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -1926,7 +1926,7 @@
                       if (t === "company") patchDraft({ clientType: "company", clientContactId: null });
                       else                 patchDraft({ clientType: "contact", companyId: null, projectId: null });
                     },
-                    style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+                    style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                              border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                              padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
                     t === "company" ? "Company" : "Individual Contact");

@@ -215,7 +215,7 @@
           style: {
             margin: 0, fontSize: "10px", lineHeight: 1.4,
             color: B.textSec || "#aaa",
-            background: B.bg || "#000",
+            background: B.bg || "#1B262C",
             border: "1px solid " + (B.border || "#333"),
             borderRadius: "4px",
             padding: "6px 8px",

@@ -206,18 +206,18 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     var opts = [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "date-asc", l: "Date \u2191" }, { k: "date-desc", l: "Date \u2193" }];
     return h("div", { style: { display: "flex", gap: 4 } }, opts.map(function(o) {
       return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-        style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
+        style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
     }));
   }
 
   return h("div", null,
-    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px", fontFamily: "'Playfair Display', Georgia, serif" } }, "Projects"),
+    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Projects"),
 
     h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
       h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
         ["all"].concat(CATS).map(function(f) {
           return h("button", { key: f, onClick: function() { setProjectFilter(f); },
-            style: { background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? "#000" : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, f === "all" ? "All" : f);
+            style: { background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, f === "all" ? "All" : f);
         })
       ),
       h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
@@ -226,7 +226,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
         searchBar,
         h("button", { onClick: function() { setShowCompleted(!showCompleted); },
-          style: { background: showCompleted ? B.accent : B.raised, color: showCompleted ? "#000" : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+          style: { background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
           showCompleted ? "✓ Showing Completed" : "Show Completed")
       ),
       sortBtns()),

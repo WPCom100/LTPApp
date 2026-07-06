@@ -186,7 +186,7 @@
           categories.map(function(c) {
             var active = catFilter === c;
             return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                        border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                        padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c === "all" ? "All" : c);
           })
