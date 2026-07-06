@@ -179,6 +179,8 @@
     var [tab, setTab]       = useState("equipment");
     var [search, setSearch] = useState("");
     var [noteText, setNoteText] = useState("");
+    // Product id whose pricing-variant chooser popup is open (null = none).
+    var [variantFor, setVariantFor] = useState(null);
     // Per-equipment qty state in the picker: { equipmentId: number }
     var [eqQtys, setEqQtys] = useState({});
 
@@ -246,12 +248,16 @@
         cost: 0, notes: "", taxable: true,
       });
     }
-    function addProduct(p) {
+    function addProduct(p, variant) {
+      // `variant` is a normalized pricing variant (LTP_productVariants) or
+      // undefined for the base-priced product. The variant label is baked into
+      // the line name; the id lets draft lines re-price on variant switch.
       onAdd({
         id: genId("item"), type: "product",
-        productId: p.id, name: p.name, qty: 1,
-        unitPrice: p.unitPrice || 0, adjustedPrice: null,
-        cost: p.cost || 0, notes: "", taxable: true,
+        productId: p.id, productVariantId: variant ? variant.id : null,
+        name: window.LTP_productVariantName(p, variant), qty: 1,
+        unitPrice: variant ? variant.unitPrice : (p.unitPrice || 0), adjustedPrice: null,
+        cost: variant ? variant.cost : (p.cost || 0), notes: "", taxable: true,
       });
     }
     function addService(s) {
@@ -352,10 +358,51 @@
         h("div", { style: { maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
           filterList(products, ["name", "category"]).slice(0, 80).map(function(p) {
             var inSection = !!sectionProductIds[p.id];
-            return h("div", { key: p.id, onClick: function() { addProduct(p); },
-              style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
+            var rowStyle = { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 };
+            var hover = {
               onMouseOver: function(e) { if (!inSection) e.currentTarget.style.borderColor = B.accent; },
-              onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; } },
+              onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; },
+            };
+            var pv = window.LTP_productVariants(p);
+            // A product with pricing variants shows ONE row; clicking it opens
+            // a small chooser popup for the variant (a single variant adds
+            // directly \u2014 nothing to choose). Base Sale Price applies only to
+            // variant-less products.
+            if (pv.length > 0) {
+              var open = variantFor === p.id;
+              var lo = pv.reduce(function(m, v) { return Math.min(m, v.unitPrice); }, Infinity);
+              var hi = pv.reduce(function(m, v) { return Math.max(m, v.unitPrice); }, 0);
+              return h("div", { key: p.id, style: { position: "relative" } },
+                h("div", Object.assign({
+                  onClick: function() {
+                    if (pv.length === 1) { addProduct(p, pv[0]); setVariantFor(null); }
+                    else setVariantFor(open ? null : p.id);
+                  },
+                  style: Object.assign({}, rowStyle, open ? { border: "1px solid " + B.accent } : null),
+                }, hover),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+                      p.name,
+                      pv.length > 1 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.info, background: B.info + "22", border: "1px solid " + B.info + "44", borderRadius: "3px", padding: "1px 5px", marginLeft: 6, verticalAlign: "1px" } },
+                        pv.length + " prices " + (open ? "\u25b4" : "\u25be"))),
+                    h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit)
+                  ),
+                  h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } },
+                    pv.length === 1 ? "$" + pv[0].unitPrice : (lo === hi ? "$" + lo : "$" + lo + "\u2013$" + hi))
+                ),
+                // Variant chooser popup \u2014 pick one, it adds and closes.
+                open && h("div", { style: { background: B.bg, border: "1px solid " + B.accent + "66", borderRadius: "6px", margin: "3px 0 3px 18px", padding: 4, boxShadow: "0 4px 14px rgba(0,0,0,0.35)", display: "flex", flexDirection: "column", gap: 2 } },
+                  pv.map(function(v) {
+                    return h("div", { key: v.id, onClick: function(e) { e.stopPropagation(); addProduct(p, v); setVariantFor(null); },
+                      style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 10px", borderRadius: "4px", cursor: "pointer" },
+                      onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+                      onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; } },
+                      h("div", { style: { flex: 1, fontSize: "11px", fontWeight: 600, color: B.text } }, v.label),
+                      h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + v.unitPrice));
+                  }))
+              );
+            }
+            return h("div", Object.assign({ key: p.id, onClick: function() { addProduct(p); }, style: rowStyle }, hover),
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, p.name),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit)
@@ -433,6 +480,13 @@
     // Lookup service for rate type changes
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
 
+    // Lookup product for pricing-variant changes (mirrors the service rate-type
+    // switch). Only rendered when the product actually defines variants.
+    var prodData = item.type === "product" && item.productId ? (products || []).find(function(pr) { return pr.id === item.productId; }) : null;
+    var prodVariants = prodData ? window.LTP_productVariants(prodData) : [];
+    var lineVariantId = item.productVariantId != null ? String(item.productVariantId) : "";
+    var lineVariantMissing = lineVariantId !== "" && !prodVariants.some(function(v) { return v.id === lineVariantId; });
+
     // Detect when the catalog record this line was built from has since been
     // deleted. The line keeps its snapshot price/qty (totals are unaffected),
     // but we surface a note so the user knows it can no longer be re-sourced.
@@ -483,6 +537,28 @@
       // deleted (no svcData to recompute prices from — see Option B).
       item.type === "service" && (isLocked || !svcData) && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
         svcRateType === "day" ? "Day" : svcRateType === "half" ? "Half Day" : svcRateType === "hourly" ? "Hourly" : "OT"),
+      // Pricing-variant selector (products with variants only). Switching
+      // re-snapshots name/price/cost from the chosen variant, like a service
+      // rate-type change. No selector when locked or the product was deleted —
+      // the variant label already lives in the line name.
+      item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
+        value: lineVariantId, onChange: function(e) {
+          var v = window.LTP_findProductVariant(prodData, e.target.value);
+          onUpdate(sectionId, item.id, {
+            productVariantId: v ? v.id : null,
+            name: window.LTP_productVariantName(prodData, v),
+            unitPrice: v ? v.unitPrice : (prodData.unitPrice || 0),
+            cost: v ? v.cost : (prodData.cost || 0),
+            adjustedPrice: null,
+          });
+        }, style: { width: 82, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 4px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none" } },
+        h("option", { value: "" }, "Base price"),
+        prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
+        // Snapshot references a variant since removed from the product: keep it
+        // selectable (price stays locked to the line) instead of silently
+        // rendering as "Base price".
+        lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)")
+      ),
       // Qty — locked when accepted/converted
       h("div", { style: { width: 60 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "center" } }, qtyLabel),
@@ -822,8 +898,18 @@
           changes.push({ cat: aSec.label + " — Item Added", detail: i.name + " (×" + i.qty + ")" });
         } else if (bItemMap[i.id] && i.type !== "note") {
           var bi = bItemMap[i.id];
+          // Pricing-variant switch → one explicit from → to entry carrying both
+          // labels AND both prices. Without this, only the plain Price entry
+          // fired — and it prints the NEW name on both sides, so what the line
+          // changed FROM was invisible. The Price entry is suppressed for a
+          // variant switch since this entry already carries the prices.
+          var variantChanged = i.type === "product" &&
+            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
+          if (variantChanged) {
+            changes.push({ cat: aSec.label + " — Variant", detail: bi.name + " ($" + bi.unitPrice + ") → " + i.name + " ($" + i.unitPrice + ")" });
+          }
           if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " — Qty", detail: i.name + ": " + bi.qty + " → " + i.qty });
-          if (bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
+          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
           if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
             var adjB = bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)";
             var adjA = i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)";

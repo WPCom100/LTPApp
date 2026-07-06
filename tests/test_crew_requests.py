@@ -15,8 +15,9 @@ Covers the full state machine and security posture of backend/routes/crew.py:
     short/garbage tokens
 
 Each test owns a dedicated project so the tests are order-independent. Uses
-real asserts (pytest-native) so a regression actually fails the run. Runs
-file-by-file (own DATABASE_URL); also runnable as a script.
+real asserts (pytest-native) so a regression actually fails the run. Under
+pytest the module shares the session-wide DB from tests/conftest.py; run as a
+plain script it uses its own DATABASE_URL (the setdefault below).
 """
 import asyncio
 import os

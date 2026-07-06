@@ -1371,6 +1371,46 @@ window.LTP_serviceRateMaps = function(svc) {
   };
 };
 
+// Product pricing variants — alternative pricing structures for ONE product
+// (e.g. Transportation: Local Delivery flat / Per Mile / Client Goods), stored
+// as product.variants: [{id, label, unitPrice, cost}]. Every variant maps to
+// the product's single QB item (the variant label rides in the line name), so
+// QuickBooks sync is untouched. These helpers are the single source of truth
+// shared by the quote builder, invoice editor, and the Products catalog so a
+// variant prices identically everywhere. A product with no usable variants
+// prices from its base unitPrice/cost exactly as before variants existed.
+window.LTP_productVariants = function(product) {
+  var raw = (product && Array.isArray(product.variants)) ? product.variants : [];
+  var out = [];
+  raw.forEach(function(v) {
+    if (!v || !String(v.label == null ? "" : v.label).trim()) return; // unlabeled rows are editor noise
+    out.push({
+      id: v.id != null ? String(v.id) : "",
+      label: String(v.label).trim(),
+      unitPrice: Number(v.unitPrice) || 0,
+      cost: Number(v.cost) || 0,
+    });
+  });
+  return out;
+};
+
+window.LTP_findProductVariant = function(product, variantId) {
+  if (variantId == null || variantId === "") return null;
+  var list = window.LTP_productVariants(product);
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].id === String(variantId)) return list[i];
+  }
+  return null;
+};
+
+// Line-item display name for a product (+ chosen variant). The variant label
+// is baked into the name so it survives snapshots, prints on quotes/invoices,
+// and flows to the QuickBooks line description with zero sync changes.
+window.LTP_productVariantName = function(product, variant) {
+  var base = (product && product.name) || "";
+  return variant ? base + " — " + variant.label : base;
+};
+
 window.LTP_INVOICE_TOTALS = function(inv) {
   if (!inv) return { subtotal: 0, discount: 0, tax: 0, total: 0, paid: 0, balance: 0 };
   var subtotal = 0;

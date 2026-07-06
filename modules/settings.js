@@ -105,6 +105,45 @@
     useEffect(loadQbo, []);
 
     function connectQbo() { window.location.href = "/api/qbo/connect"; }
+    // Income-account list refresh — explicitly button-driven (the chart of
+    // accounts is near-static, so there's no background sync; see
+    // backend/routes/qbo.py POST /api/qbo/accounts/refresh).
+    var [refreshingAccounts, setRefreshingAccounts] = useState(false);
+    function refreshAccounts() {
+      setRefreshingAccounts(true);
+      fetch("/api/qbo/accounts/refresh", { method: "POST", credentials: "include" })
+        .then(function(r) { return r.json().then(function(body) { return { ok: r.ok, body: body }; }); })
+        .then(function(res) {
+          setRefreshingAccounts(false);
+          if (!res.ok) throw new Error((res.body && res.body.error) || "HTTP error");
+          setQbo(function(prev) { return Object.assign({}, prev, {
+            incomeAccounts: res.body.incomeAccounts,
+            incomeAccountsUpdatedAt: res.body.incomeAccountsUpdatedAt,
+          }); });
+          if (window.LTP_toast) window.LTP_toast("Account list updated", {
+            message: res.body.incomeAccounts.length + " income account" + (res.body.incomeAccounts.length === 1 ? "" : "s") + " loaded from QuickBooks.",
+            variant: "success" });
+        })
+        .catch(function(e) {
+          setRefreshingAccounts(false);
+          if (window.LTP_toast) window.LTP_toast("Account list update failed", { message: String(e.message || e), variant: "error" });
+        });
+    }
+    // Options for an income-account select: the default choice, the cached
+    // account list, and (defensively) the currently-saved id when it's missing
+    // from the cache — so an existing mapping never silently displays as the
+    // default just because the list hasn't been refreshed.
+    function incomeAccountOptions(currentVal, defaultLabel) {
+      var accounts = (qbo && qbo.incomeAccounts) || [];
+      var opts = [{ value: "", label: defaultLabel }];
+      var seen = false;
+      accounts.forEach(function(a) {
+        if (String(a.id) === String(currentVal || "")) seen = true;
+        opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
+      });
+      if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal + " (not in list — update the account list)" });
+      return opts;
+    }
     function disconnectQbo() {
       setDlg({ title: "Disconnect QuickBooks",
         message: "Disconnect QuickBooks? Invoices already pushed stay in QuickBooks, but you won't be able to push or update invoices until you reconnect.",
@@ -513,6 +552,34 @@
           qbo.pendingReceipts > 0 && h("div", { style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginTop: 10, lineHeight: 1.5 } },
             qbo.pendingReceipts + " payment receipt" + (qbo.pendingReceipts === 1 ? " is" : "s are") + " waiting to send"
             + (qbo.senderGmailConnected ? " and will go out on the next sync." : ". Reconnect " + (qbo.connectedBy || "the connector") + "'s Google sign-in (gmail.send) to release them.")),
+          // ── Income account mapping ─────────────────────────────────────────
+          // Which QuickBooks income account each kind of line item posts to.
+          // Values are settings keys (saved with the page's Save button);
+          // the selectable list is the admin-refreshed cache from /status.
+          h("div", { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid " + B.border } },
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Income Accounts"),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+              "Choose which QuickBooks income account services, products, and equipment rentals post to. Individual services and products can override this in their edit forms. Changes take effect the next time an invoice is pushed — QuickBooks history stays put unless an old invoice is re-pushed."),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" } },
+              h(window.Btn, { small: true, variant: "ghost", onClick: refreshAccounts, disabled: refreshingAccounts }, refreshingAccounts ? "Updating…" : "Update Account List"),
+              h("span", { style: { fontSize: "10px", color: B.textMut } },
+                (qbo.incomeAccounts && qbo.incomeAccounts.length > 0)
+                  ? qbo.incomeAccounts.length + " income account" + (qbo.incomeAccounts.length === 1 ? "" : "s")
+                    + (qbo.incomeAccountsUpdatedAt ? " · updated " + qbo.incomeAccountsUpdatedAt.substring(0, 10) : "")
+                  : "No account list loaded yet — update it to fill the dropdowns.")),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              h(window.LTPSelect, { label: "Services (Labor)", value: draft.qboServiceIncomeAccountId || "",
+                onChange: function(v) { set("qboServiceIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboServiceIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Products", value: draft.qboProductIncomeAccountId || "",
+                onChange: function(v) { set("qboProductIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboProductIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Equipment Rentals", value: draft.qboEquipmentIncomeAccountId || "",
+                onChange: function(v) { set("qboEquipmentIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboEquipmentIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Default Income Account", value: draft.qboIncomeAccountId || "",
+                onChange: function(v) { set("qboIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboIncomeAccountId, "Auto — first income account in QuickBooks") }))),
           h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
             qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
             h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))
