@@ -313,7 +313,7 @@
       h("div", { style: sectionStyle },
         h("div", { style: sectionTitle }, "Crew Options"),
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Manage the available roles and departments for crew members. These appear as selectable tags on the crew form."),
+          "Manage the available roles and departments for crew members. These appear as selectable tags on the crew form. Roles from the labor rate card (Quotes → Services) show up there automatically, and one-off custom roles can be typed directly on the crew form."),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
           // Roles
           h("div", null,

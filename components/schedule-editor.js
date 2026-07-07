@@ -246,7 +246,7 @@
     }
 
     // Assign crew to all days macro
-    function assignToAllDays(crewId, serviceId) {
+    function assignToAllDays(crewId, serviceId, roleCode) {
       var c = crew.find(function(cr) { return cr.id === crewId; });
       var svc = serviceId ? svcs.find(function(sv) { return sv.id === serviceId; }) : null;
       if (!c) return;
@@ -254,7 +254,7 @@
         // Check if this crew is already on this day
         var already = (s.positions || []).some(function(p) { return p.crewId === crewId; });
         if (already) return s;
-        var newPos = { id: genId("pos"), role: svc ? svc.role : (c.crewRoles || [])[0] || "", serviceId: serviceId || null, crewId: crewId, status: "open" };
+        var newPos = { id: genId("pos"), role: svc ? svc.role : roleCode || (c.crewRoles || [])[0] || "", serviceId: serviceId || null, crewId: crewId, status: "open" };
         return Object.assign({}, s, { positions: (s.positions || []).concat([newPos]) });
       }));
       setAssignCrewModal(false);
@@ -506,8 +506,16 @@
                           else { updatePosition(s.id, pos.id, { crewId: null }); }
                         }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Crew\u2026"),
-                          crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; })
-                            .map(function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); })
+                          // Role-tagged crew first; everyone else stays reachable under
+                          // "Other crew" so a role nobody is tagged with (e.g. a custom
+                          // rate-card role) never leaves the position unassignable.
+                          (function() {
+                            var opt = function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); };
+                            var matching = crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; });
+                            if (matching.length === crew.length) return crew.map(opt);
+                            var others = crew.filter(function(c) { return matching.indexOf(c) === -1; });
+                            return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
+                          })()
                         ),
                         // Status — read-only in schedule editor, manage via Labor module
                         h("span", { style: { width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "3px 6px" } }, pos.status),
@@ -601,7 +609,7 @@
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, (c.crewRoles || []).join(", "))),
               (c.crewRoles || []).map(function(roleCode) {
                 var svc = svcs.find(function(sv) { return sv.role === roleCode; });
-                return h("button", { key: roleCode, onClick: function() { assignToAllDays(c.id, svc ? svc.id : null); },
+                return h("button", { key: roleCode, onClick: function() { assignToAllDays(c.id, svc ? svc.id : null, roleCode); },
                   style: { background: B.accent + "22", border: "1px solid " + B.accent + "44", borderRadius: "4px", padding: "4px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "as " + roleCode);
               })
             );

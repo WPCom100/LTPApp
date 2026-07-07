@@ -152,6 +152,7 @@
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingCrew, setEditingCrew] = useState(null);
     var [crewDlg, setCrewDlg] = useState(null);
+    var [customRole, setCustomRole] = useState("");
     var crew = contacts.filter(function(c) { return c.isCrew; });
     var q = search.toLowerCase();
 
@@ -230,18 +231,40 @@
                   }, style: { background: active ? window.LTP_deptColor(d) + "22" : B.bg, color: active ? window.LTP_deptColor(d) : B.textMut, border: "1px solid " + (active ? window.LTP_deptColor(d) + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, d);
                 })
               )),
-            // Roles — toggle tags
-            h("div", null,
-              h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 6, fontWeight: 600 } }, "Roles"),
-              h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-                (settings.crewRoleOptions || ["L1", "L2", "L3", "A1", "A2", "V1", "RIG", "PM"]).map(function(r) {
-                  var active = (f.crewRoles || []).indexOf(r) !== -1;
-                  return h("button", { key: r, onClick: function() {
-                    var cur = f.crewRoles || [];
-                    set("crewRoles", active ? cur.filter(function(x) { return x !== r; }) : cur.concat([r]));
-                  }, style: { background: active ? B.accent + "22" : B.bg, color: active ? B.accent : B.textMut, border: "1px solid " + (active ? B.accent + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, r);
-                })
-              ))),
+            // Roles — toggle tags. Options merge the Settings list with every
+            // role on the labor rate card and any custom roles already on this
+            // person, so a rate-card role like "A1 FUMC" is assignable here
+            // without first adding it in Settings.
+            function() {
+              var roleOptions = (settings.crewRoleOptions || ["L1", "L2", "L3", "A1", "A2", "V1", "RIG", "PM"]).slice();
+              (services || []).forEach(function(s) { if (s.role && roleOptions.indexOf(s.role) === -1) roleOptions.push(s.role); });
+              (f.crewRoles || []).forEach(function(r) { if (roleOptions.indexOf(r) === -1) roleOptions.push(r); });
+              function addCustomRole() {
+                var v = customRole.trim();
+                if (!v) return;
+                if ((f.crewRoles || []).indexOf(v) === -1) set("crewRoles", (f.crewRoles || []).concat([v]));
+                setCustomRole("");
+              }
+              return h("div", null,
+                h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 6, fontWeight: 600 } }, "Roles"),
+                h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+                  roleOptions.map(function(r) {
+                    var active = (f.crewRoles || []).indexOf(r) !== -1;
+                    return h("button", { key: r, onClick: function() {
+                      var cur = f.crewRoles || [];
+                      set("crewRoles", active ? cur.filter(function(x) { return x !== r; }) : cur.concat([r]));
+                    }, style: { background: active ? B.accent + "22" : B.bg, color: active ? B.accent : B.textMut, border: "1px solid " + (active ? B.accent + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, r);
+                  })
+                ),
+                h("div", { style: { display: "flex", gap: 4, marginTop: 6 } },
+                  h("input", { type: "text", value: customRole, placeholder: "Custom role…",
+                    onChange: function(e) { setCustomRole(e.target.value); },
+                    onKeyDown: function(e) { if (e.key === "Enter") { e.preventDefault(); addCustomRole(); } },
+                    style: { flex: 1, maxWidth: 160, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none" } }),
+                  h("button", { onClick: addCustomRole,
+                    style: { background: B.accent, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+"))
+              );
+            }()),
           h("div", { style: { marginTop: 12 } },
             h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Notes"),
             h("textarea", { value: f.crewNotes || "", onChange: function(e) { set("crewNotes", e.target.value); },
@@ -268,7 +291,7 @@
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, "Crew Roster (" + crew.length + ")"),
-        h(window.Btn, { small: true, onClick: function() { setEditingCrew({ firstName: "", lastName: "", email: "", phone: "", role: "", crewDepartments: [], crewRoles: [], crewNotes: "", crewStatus: "active", minDayCost: 0, isCrew: true, companyIds: [] }); } }, "+ Add Crew")),
+        h(window.Btn, { small: true, onClick: function() { setCustomRole(""); setEditingCrew({ firstName: "", lastName: "", email: "", phone: "", role: "", crewDepartments: [], crewRoles: [], crewNotes: "", crewStatus: "active", minDayCost: 0, isCrew: true, companyIds: [] }); } }, "+ Add Crew")),
       h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
         departments.map(function(d) {
           return h("button", { key: d, onClick: function() { setDeptFilter(d); },
@@ -281,7 +304,7 @@
         filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
         filtered.map(function(c) {
           var shifts = upcomingShifts(c.id);
-          return h(window.LTPRow, { key: c.id, onClick: function() { setEditingCrew(Object.assign({}, c)); },
+          return h(window.LTPRow, { key: c.id, onClick: function() { setCustomRole(""); setEditingCrew(Object.assign({}, c)); },
             style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
@@ -770,8 +793,16 @@
                             booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
                           }, style: { width: 150, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             h("option", { value: "" }, "Assign crew\u2026"),
-                            crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; })
-                              .map(function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); })
+                            // Role-tagged crew first; everyone else stays reachable under
+                            // "Other crew" so a role nobody is tagged with (e.g. a custom
+                            // rate-card role) never leaves the position unassignable.
+                            (function() {
+                              var opt = function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); };
+                              var matching = crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; });
+                              if (matching.length === crew.length) return crew.map(opt);
+                              var others = crew.filter(function(c) { return matching.indexOf(c) === -1; });
+                              return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
+                            })()
                           ),
                           pos.status === "open" && !pos.crewId && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "Needs crew"),
                           pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
