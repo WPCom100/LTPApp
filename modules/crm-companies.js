@@ -29,9 +29,9 @@
       company.notes && h("div", { style: { fontSize: "13px", color: B.textSec, marginBottom: 16, padding: "10px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent } }, company.notes),
       h("h4", { style: { fontSize: "13px", fontWeight: 700, color: B.textSec, margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" } }, "Projects"),
       h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
-        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Active"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.warn, fontFamily: "'Playfair Display', serif" } }, activeP)),
-        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Upcoming"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.info, fontFamily: "'Playfair Display', serif" } }, upcomingP)),
-        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Completed"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.success, fontFamily: "'Playfair Display', serif" } }, completedP))
+        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Active"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.warn } }, activeP)),
+        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Upcoming"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.info } }, upcomingP)),
+        h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Completed"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.success } }, completedP))
       ),
       h("h4", { style: { fontSize: "13px", fontWeight: 700, color: B.textSec, margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" } }, "Contacts (" + compContacts.length + ")"),
       h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 } },
@@ -61,7 +61,7 @@
     var [stateRegion, setStateRegion] = useState(initial ? initial.state || "" : "");
     var [zip, setZip] = useState(initial ? initial.zip || "" : "");
     var [taxable, setTaxable] = useState(initial ? !!initial.taxable : false);
-    var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? "#000" : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
+    var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? B.btnInk : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
 
     return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },

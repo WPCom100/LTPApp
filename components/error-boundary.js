@@ -54,7 +54,7 @@
 
           h("div", { style: { display: "flex", gap: 8, marginBottom: this.state.showDetails ? 12 : 0 } },
             h("button", { onClick: function() { self.setState({ hasError: false, error: null, showDetails: false }); },
-              style: { background: B.accent || "#E8731A", border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" } }, "\u21bb Retry"),
+              style: { background: B.accent || "#EF5822", border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" } }, "\u21bb Retry"),
             h("button", { onClick: function() { self.setState({ showDetails: !self.state.showDetails }); },
               style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "4px", padding: "5px 14px", color: B.textMut || "#666", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, self.state.showDetails ? "Hide Details" : "Show Details"),
             h("button", { onClick: function() {
@@ -66,7 +66,7 @@
               }
             }, style: { background: "transparent", border: "1px solid " + (B.border || "#333"), borderRadius: "4px", padding: "5px 14px", color: B.textMut || "#666", fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "Copy Error")),
 
-          this.state.showDetails && h("div", { style: { background: (B.bg || "#000"), border: "1px solid " + (B.border || "#333"), borderRadius: "6px", padding: "10px 12px", overflow: "auto", maxHeight: 200 } },
+          this.state.showDetails && h("div", { style: { background: (B.bg || "#131C21"), border: "1px solid " + (B.border || "#333"), borderRadius: "6px", padding: "10px 12px", overflow: "auto", maxHeight: 200 } },
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger || "#e74c3c", marginBottom: 6 } }, err ? err.message : "Unknown error"),
             h("pre", { style: { fontSize: "9px", color: B.textMut || "#666", margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", lineHeight: 1.5 } },
               err && err.stack ? err.stack.split("\n").slice(1, 8).join("\n") : "No stack trace available"))

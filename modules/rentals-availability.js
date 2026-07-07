@@ -48,7 +48,7 @@
         h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           cats.map(function(c) {
             return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? "#000" : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
+              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
           })
         ),
         h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search equipment...", style: Object.assign({}, R.INP, { width: 200 }) })
@@ -77,7 +77,7 @@
                 h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginBottom: 2 } }, eq.name),
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.category + (eq.subcategory ? " \u00b7 " + eq.subcategory : "") + " \u00b7 $" + R.baseRate(eq) + "/3-day")),
               h("div", { style: { textAlign: "right" } },
-                h("div", { style: { fontSize: "16px", fontWeight: 700, color: barColor, fontFamily: "'Playfair Display', serif" } }, avail + "/" + total),
+                h("div", { style: { fontSize: "16px", fontWeight: 700, color: barColor } }, avail + "/" + total),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, "available"))
             ),
 

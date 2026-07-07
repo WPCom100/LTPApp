@@ -74,7 +74,7 @@
     }
 
     return h("div", null,
-      h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px", fontFamily: "'Playfair Display', Georgia, serif" } }, "Quotes"),
+      h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Quotes"),
       h(TabHeader, null),
 
       activeTab === "quotes"   && h(window.QuotesList, {

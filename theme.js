@@ -1,12 +1,29 @@
-// LTP Brand Theme
+// LTP Brand Theme — the slate + brand-orange system shared with the
+// customer-facing surfaces (modules/client-view.js, modules/crew-view.js,
+// backend/email_compose.py), with the masthead orange as the single accent.
+//
+// NOTE: accent/success/warn/danger/info (and text*) MUST stay 6-digit hexes —
+// several call sites build translucent fills by appending alpha ("18"/"44").
 window.LTP_THEME = {
-  bg: "#000000", surface: "#111111", raised: "#1a1a1a", border: "#2a2a2a",
-  accent: "#E8731A", accentHover: "#F28A3D", accentMuted: "#3d2008",
-  text: "#FFFFFF", textSec: "#AAAAAA", textMut: "#666666",
-  success: "#4CAF50", successBg: "#0f2a10", successBd: "#1b5e20",
-  warn: "#F5A623", warnBg: "#2e2208", warnBd: "#7a5a0a",
-  danger: "#E74C3C", dangerBg: "#2e0f0f", dangerBd: "#7a1a1a",
-  info: "#3B82F6", infoBg: "#0f1a2e", infoBd: "#1a3a6e",
+  // Slate surface ramp: page field → card/panel → control fill, hairline
+  // border. A step DARKER than the public client pages' field — the app is
+  // lived-in all day, so surfaces recede and the content carries the light.
+  // Keep in sync with the hardcoded slate hexes in index.html (body,
+  // scrollbars, select options, .ltp-list hairlines).
+  bg: "#131C21", surface: "#19242B", raised: "#22303A", border: "#2E3E48",
+  // Brand orange family (sampled from the masthead artwork)
+  accent: "#EF5822", accentHover: "#FF6B35", accentMuted: "#4A2313", accentSoft: "#F9B998",
+  text: "#EDF3F2", textSec: "#93A3AB", textMut: "#6E7E86",
+  // Feedback hues — soft-on-slate; *Bg/*Bd are the translucent badge fills
+  success: "#5FD08A", successBg: "rgba(95,208,138,0.10)", successBd: "rgba(95,208,138,0.32)",
+  warn: "#F5B83D", warnBg: "rgba(245,184,61,0.10)", warnBd: "rgba(245,184,61,0.32)",
+  danger: "#F0857A", dangerBg: "rgba(240,133,122,0.10)", dangerBd: "rgba(240,133,122,0.32)",
+  info: "#6FA8F5", infoBg: "rgba(111,168,245,0.10)", infoBd: "rgba(111,168,245,0.32)",
+  // Shared brand strokes — identical values to the client/crew views
+  gradBtn: "linear-gradient(135deg,#FF921E,#EF5822)",
+  gradRule: "linear-gradient(90deg,#FF921E 0%,#EF5822 50%,#64260F 100%)",
+  btnInk: "#1B130D",   // near-black ink on orange/colored fills
+  mono: "'SFMono-Regular',ui-monospace,'Roboto Mono','DM Mono',Menlo,monospace",
 };
 // Generate badge colors from a single hex: { bg, text, bd }
 window.LTP_badgeFromHex = function(hex) {
@@ -23,45 +40,49 @@ window.LTP_badgeFromHex = function(hex) {
 // Get department tag color (reads from settings tagColors)
 window.LTP_deptColor = function(dept) {
   var tc = (window.LTP_TAG_COLORS || {});
-  return tc[dept] || "#3B82F6";
+  return tc[dept] || "#6FA8F5";
 };
 
-window.LTP_STATUS_COLORS = {
-  active: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  inactive: { bg: "#2e0f0f", text: "#E74C3C", bd: "#7a1a1a" },
-  "one-time": { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-  prospect: { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  client: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  vendor: { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-  available: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  partial: { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  rented: { bg: "#3d2008", text: "#E8731A", bd: "#5a3010" },
-  accepted: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  pending: { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  draft: { bg: "#1a1a1a", text: "#666666", bd: "#333333" },
-  sent: { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-  paid: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  overdue: { bg: "#2e0f0f", text: "#E74C3C", bd: "#7a1a1a" },
-  declined: { bg: "#2e0f0f", text: "#E74C3C", bd: "#7a1a1a" },
-  converted: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  invoiced: { bg: "#3d2008", text: "#E8731A", bd: "#5a3010" },
-  active: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  inactive: { bg: "#1a1a1a", text: "#888", bd: "#333" },
-  requesting: { bg: "#3d2008", text: "#E8731A", bd: "#5a3010" },
-  completed: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  cancelled: { bg: "#1a1a1a", text: "#888", bd: "#333" },
-  booked: { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  rental: { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-  labor: { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  service: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  "full-production": { bg: "#3d2008", text: "#E8731A", bd: "#5a3010" },
-  "in-progress": { bg: "#2e2208", text: "#F5A623", bd: "#7a5a0a" },
-  completed: { bg: "#0f2a10", text: "#4CAF50", bd: "#1b5e20" },
-  upcoming: { bg: "#0f1a2e", text: "#3B82F6", bd: "#1a3a6e" },
-};
+// Status badges — every entry is the soft translucent treatment the customer
+// views use (12% fill / 35% border via LTP_badgeFromHex), keyed by semantic hue.
+(function() {
+  var b = window.LTP_badgeFromHex;
+  var GREEN = "#5FD08A", RED = "#F0857A", BLUE = "#6FA8F5",
+      AMBER = "#F5B83D", ORANGE = "#FF8A50", GREY = "#8A99A0";
+  window.LTP_STATUS_COLORS = {
+    active: b(GREEN),
+    inactive: b(GREY),
+    "one-time": b(BLUE),
+    prospect: b(AMBER),
+    client: b(GREEN),
+    vendor: b(BLUE),
+    available: b(GREEN),
+    partial: b(AMBER),
+    rented: b(ORANGE),
+    accepted: b(GREEN),
+    pending: b(AMBER),
+    draft: b("#6E7E86"),
+    sent: b(BLUE),
+    paid: b(GREEN),
+    overdue: b(RED),
+    declined: b(RED),
+    converted: b(GREEN),
+    invoiced: b(ORANGE),
+    requesting: b(ORANGE),
+    completed: b(GREEN),
+    cancelled: b(GREY),
+    booked: b(AMBER),
+    rental: b(BLUE),
+    labor: b(AMBER),
+    service: b(GREEN),
+    "full-production": b(ORANGE),
+    "in-progress": b(AMBER),
+    upcoming: b(BLUE),
+  };
+})();
 window.LTP_PROJECT_CATS = ["Rental", "Labor", "Service", "Full Production"];
 window.LTP_CAT_KEYS = { "Rental": "rental", "Labor": "labor", "Service": "service", "Full Production": "full-production" };
-window.LTP_CAT_COLORS = { "Rental": "#3B82F6", "Labor": "#F5A623", "Service": "#4CAF50", "Full Production": "#E8731A" };
+window.LTP_CAT_COLORS = { "Rental": "#6FA8F5", "Labor": "#F5B83D", "Service": "#5FD08A", "Full Production": "#FF8A50" };
 window.LTP_MODULES = [
   { id: "dashboard", label: "Dashboard"  },
   { id: "crm",       label: "CRM"        },

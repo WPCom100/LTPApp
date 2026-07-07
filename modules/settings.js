@@ -7,7 +7,7 @@
   var useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
 
   var sectionStyle = { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "18px 20px", marginBottom: 14 };
-  var sectionTitle = { fontSize: "13px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif", marginBottom: 14 };
+  var sectionTitle = { fontSize: "13px", fontWeight: 700, color: B.text, marginBottom: 14 };
 
   window.SettingsView = function({ settings, setSettings }) {
     var [draft, setDraft] = useState(Object.assign({}, settings));
@@ -196,7 +196,7 @@
     return h("div", { style: { maxWidth: 800, margin: "0 auto" } },
       // Header
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, "Company Settings"),
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Company Settings"),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           saved && h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -240,10 +240,10 @@
         h("div", { style: sectionTitle }, "Branding"),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h("div", null,
-            h(window.LTPInput, { label: "Accent Color", value: draft.accentColor || "#E8731A", onChange: function(v) { set("accentColor", v); } }),
+            h(window.LTPInput, { label: "Accent Color", value: draft.accentColor || "#EF5822", onChange: function(v) { set("accentColor", v); } }),
             h("div", { style: { display: "flex", gap: 8, marginTop: 6, alignItems: "center" } },
-              h("div", { style: { width: 32, height: 32, borderRadius: "6px", background: draft.accentColor || "#E8731A", border: "1px solid " + B.border } }),
-              h("input", { type: "color", value: draft.accentColor || "#E8731A", onChange: function(e) { set("accentColor", e.target.value); },
+              h("div", { style: { width: 32, height: 32, borderRadius: "6px", background: draft.accentColor || "#EF5822", border: "1px solid " + B.border } }),
+              h("input", { type: "color", value: draft.accentColor || "#EF5822", onChange: function(e) { set("accentColor", e.target.value); },
                 style: { width: 32, height: 32, border: "none", padding: 0, cursor: "pointer", background: "transparent" } })
             )
           ),
@@ -255,9 +255,9 @@
           h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
             draft.logoUrl
               ? h("img", { src: draft.logoUrl, style: { width: 48, height: 48, objectFit: "contain", borderRadius: "6px" } })
-              : h("div", { style: { width: 48, height: 48, background: draft.accentColor || B.accent, borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: "#000", fontFamily: "'Playfair Display', serif" } }, (draft.companyShort || "LTP").substring(0, 3)),
+              : h("div", { style: { width: 48, height: 48, background: draft.accentColor || B.accent, borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: B.btnInk } }, (draft.companyShort || "LTP").substring(0, 3)),
             h("div", null,
-              h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif" } }, draft.companyName || "Company Name"),
+              h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.text } }, draft.companyName || "Company Name"),
               h("div", { style: { fontSize: "11px", color: B.textMut } }, draft.tagline || ""),
               h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
                 (draft.street || "") + (draft.suite ? ", " + draft.suite : "") + " \u00b7 " +
@@ -341,7 +341,7 @@
                 var v = inp.value.trim().toUpperCase();
                 if ((draft.crewRoleOptions || []).indexOf(v) === -1) set("crewRoleOptions", (draft.crewRoleOptions || []).concat([v]));
                 inp.value = "";
-              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+"))),
+              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+"))),
           // Departments
           h("div", null,
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Departments"),
@@ -368,7 +368,7 @@
                 var v = inp.value.trim();
                 if ((draft.crewDepartmentOptions || []).indexOf(v) === -1) set("crewDepartmentOptions", (draft.crewDepartmentOptions || []).concat([v]));
                 inp.value = "";
-              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+")))
+              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+")))
         )
       ),
 
@@ -465,7 +465,8 @@
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
           "Title and Phone feed the email signature template above. Role changes take effect on the user's next request — they don't need to sign out."),
         usersErr && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 10 } }, usersErr),
-        users === null && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Loading team members…"),
+        users === null && !usersErr && h("div", { style: { padding: "12px 0", display: "flex", justifyContent: "flex-start" } },
+          h(window.LTPLoadingBar, { label: "Loading team members…" })),
         Array.isArray(users) && users.length === 0 && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No team members yet."),
         // Team Members rows use raw <input> / <select> instead of LTPInput /
         // LTPSelect deliberately: LTPInput renders an above-the-field label

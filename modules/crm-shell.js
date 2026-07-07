@@ -146,12 +146,12 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     return h("div", { style: { display: "flex", gap: 4 } },
       [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }].map(function(o) {
         return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-          style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
+          style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
       }));
   }
 
   return h("div", null,
-    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px", fontFamily: "'Playfair Display', Georgia, serif" } }, "CRM"),
+    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "CRM"),
 
     // ── Companies ─────────────────────────────────────────────────────────────
     crmTab === "companies" && h("div", null,
@@ -159,26 +159,24 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
           ["all", "active", "inactive", "one-time", "prospect"].map(function(f) {
             return h("button", { key: f, onClick: function() { setCompanyFilter(f); },
-              style: { background: companyFilter === f ? B.accent : B.raised, color: companyFilter === f ? "#000" : B.textMut, border: "1px solid " + (companyFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+              style: { background: companyFilter === f ? B.accent : B.raised, color: companyFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (companyFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
           }),
           h("span", { style: { width: 1, background: B.border, margin: "0 4px", height: 20 } }),
           ["all", "client", "vendor", "both"].map(function(f) {
             return h("button", { key: "t" + f, onClick: function() { setTypeFilter(f); },
-              style: { background: typeFilter === f ? B.accent : B.raised, color: typeFilter === f ? "#000" : B.textMut, border: "1px solid " + (typeFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+              style: { background: typeFilter === f ? B.accent : B.raised, color: typeFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
           })
         ),
         h(window.Btn, { small: true, onClick: function() { nav("crm/companies/new"); } }, "+ Add Company")
       ),
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } }, searchBar, sortBtns()),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         fc.length === 0 && h(window.EmptyState, { text: "No companies match your search." }),
         fc.map(function(c) {
           var cc = contacts.filter(function(ct) { return ct.companyIds.includes(c.id); }).length;
           var pp = projects.filter(function(p)  { return p.companyId === c.id; }).length;
-          return h("div", { key: c.id, onClick: function() { setSelectedCompanyId(c.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: 12 },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { setSelectedCompanyId(c.id); },
+            style: { display: "flex", alignItems: "center", gap: 12 } },
             h(window.CompanyLogo, { src: c.logo, size: 32 }),
             h("div", { style: { flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" } },
               h("div", null,
@@ -195,14 +193,11 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar, sortBtns()),
         h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact")
       ),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         fcon.length === 0 && h(window.EmptyState, { text: "No contacts match your search." }),
         fcon.map(function(c) {
           var lk = companies.filter(function(co) { return c.companyIds.includes(co.id); });
-          return h("div", { key: c.id, onClick: function() { setEditContactId(c.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", transition: "all 0.15s" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { setEditContactId(c.id); } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
               h("div", null,
                 h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, c.firstName + " " + c.lastName),
@@ -210,7 +205,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
               h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
                 lk.map(function(co) {
                   return h("span", { key: co.id, onClick: function(e) { e.stopPropagation(); setSelectedCompanyId(co.id); },
-                    style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid #5a3010" } }, co.name);
+                    style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
                 }))));
         })
       )

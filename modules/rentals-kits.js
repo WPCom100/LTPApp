@@ -219,7 +219,7 @@
         [["3-Day", displayRates.threeDay], ["Week", displayRates.week], ["Month", displayRates.month]].map(function(pair) {
           return h("div", { key: pair[0], style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border, textAlign: "center" } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, pair[0] + " Rate"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: pair[1] ? B.accent : B.textMut, fontFamily: "'Playfair Display', serif" } }, pair[1] ? "$" + pair[1].toLocaleString() : "—"),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: pair[1] ? B.accent : B.textMut } }, pair[1] ? "$" + pair[1].toLocaleString() : "—"),
             kit.autoRate && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 3 } }, "auto-calculated"));
         })
       ),
@@ -303,14 +303,14 @@
         h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           cats.map(function(c) {
             return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? "#000" : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, c === "all" ? "All" : c);
+              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, c === "all" ? "All" : c);
           })
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
           h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026", style: Object.assign({}, R.INP, { width: 180 }) }),
           [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
             return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
           }),
           h("button", { onClick: function() { setShowArchived(!showArchived); },
             style: { background: showArchived ? B.raised : "transparent", color: B.textMut, border: "1px solid " + (showArchived ? B.border : "transparent"), borderRadius: 4, padding: "4px 10px", fontSize: "11px", cursor: "pointer" } },
@@ -320,17 +320,15 @@
 
       filtered.length === 0
         ? h(window.EmptyState, { text: "No kits match your search." })
-        : h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+        : h(window.LTPList, null,
             filtered.map(function(kit) {
               var calc    = calcRates(kit.items || [], equipment);
               var rate3   = kit.autoRate ? calc.threeDay : (kit.rates && kit.rates.threeDay);
               var itemCt  = (kit.items || []).length;
               var archived = kit.status === "archived";
 
-              return h("div", { key: kit.id, onClick: function() { onOpenKit(kit.id); },
-                style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "14px 16px", cursor: "pointer", transition: "all 0.15s", opacity: archived ? 0.6 : 1 },
-                onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-                onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+              return h(window.LTPRow, { key: kit.id, onClick: function() { onOpenKit(kit.id); },
+                style: { padding: "14px 16px", opacity: archived ? 0.6 : 1 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
                   h("div", { style: { flex: 1 } },
                     h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 } },
@@ -341,7 +339,7 @@
                     kit.description && h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.5 } }, kit.description.length > 100 ? kit.description.slice(0, 100) + "\u2026" : kit.description)
                   ),
                   h("div", { style: { textAlign: "right", flexShrink: 0, marginLeft: 16 } },
-                    h("div", { style: { fontSize: "18px", fontWeight: 700, color: rate3 ? B.accent : B.textMut, fontFamily: "'Playfair Display', serif" } }, rate3 ? "$" + rate3.toLocaleString() : "\u2014"),
+                    h("div", { style: { fontSize: "18px", fontWeight: 700, color: rate3 ? B.accent : B.textMut } }, rate3 ? "$" + rate3.toLocaleString() : "\u2014"),
                     h("div", { style: { fontSize: "10px", color: B.textMut } }, rate3 ? "/3-day" + (kit.autoRate ? " (auto)" : "") : "rate not set")
                   )
                 )

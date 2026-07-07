@@ -24,7 +24,7 @@ from backend import models
 # Brand defaults — mirror data/settings.js (accentColor, logoUrl) so a themed
 # email still renders before any Settings save. The LTP stacked logo doubles as
 # the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
-_DEFAULT_ACCENT = "#E8731A"
+_DEFAULT_ACCENT = "#EF5822"
 # The exact brand orange, sampled from assets/logos — used for the masthead
 # rule (so it color-matches the logo and reads as one shape) and the CTA button.
 _BRAND_ORANGE = "#f15927"

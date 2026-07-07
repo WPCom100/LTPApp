@@ -19,26 +19,28 @@ window.LTP_DATA_SETTINGS = {
   zip: "",
 
   // Branding — orange is just a starter accent; admins can change in Settings
-  accentColor: "#E8731A",
+  accentColor: "#EF5822",
   logoUrl: "",
 
   // Tag & Badge Colors — single hex per tag, app auto-generates bg/border.
   // Removing these would leave every status/tag pill in the UI with no color.
+  // Hues are the soft-on-slate family from theme.js (green/red/blue/amber/
+  // orange/grey) so pills sit comfortably on the slate surfaces.
   tagColors: {
     // Departments
-    Lighting: "#F5A623", Audio: "#3B82F6", Video: "#E74C3C", Stage: "#9B59B6", Rigging: "#E8731A", Production: "#4CAF50",
+    Lighting: "#F5B83D", Audio: "#6FA8F5", Video: "#F0857A", Stage: "#B98AF0", Rigging: "#FF8A50", Production: "#5FD08A",
     // Document status
-    draft: "#666666", sent: "#3B82F6", accepted: "#4CAF50", declined: "#E74C3C", converted: "#4CAF50",
-    paid: "#4CAF50", partial: "#F5A623", overdue: "#E74C3C",
+    draft: "#6E7E86", sent: "#6FA8F5", accepted: "#5FD08A", declined: "#F0857A", converted: "#5FD08A",
+    paid: "#5FD08A", partial: "#F5B83D", overdue: "#F0857A",
     // Crew status
-    open: "#666666", requested: "#F5A623", confirmed: "#3B82F6",
+    open: "#6E7E86", requested: "#F5B83D", confirmed: "#6FA8F5",
     // CRM
-    active: "#4CAF50", inactive: "#888888", "one-time": "#3B82F6", client: "#4CAF50", vendor: "#3B82F6", prospect: "#F5A623",
+    active: "#5FD08A", inactive: "#8A99A0", "one-time": "#6FA8F5", client: "#5FD08A", vendor: "#6FA8F5", prospect: "#F5B83D",
     // Project categories
-    rental: "#3B82F6", labor: "#F5A623", service: "#4CAF50", "full-production": "#E8731A",
+    rental: "#6FA8F5", labor: "#F5B83D", service: "#5FD08A", "full-production": "#FF8A50",
     // Other
-    "in-progress": "#F5A623", completed: "#4CAF50", upcoming: "#3B82F6",
-    invoiced: "#E8731A", booked: "#F5A623", cancelled: "#888888",
+    "in-progress": "#F5B83D", completed: "#5FD08A", upcoming: "#6FA8F5",
+    invoiced: "#FF8A50", booked: "#F5B83D", cancelled: "#8A99A0",
   },
 
   // Crew Options — drive role/department dropdowns

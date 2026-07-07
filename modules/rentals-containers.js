@@ -25,10 +25,10 @@
         selectedIds.map(function(id) {
           var item = items.find(function(x) { return x.id === id; });
           if (!item) return null;
-          return h("span", { key: id, style: { display: "inline-flex", alignItems: "center", gap: 4, background: accent, color: "#000", fontSize: "11px", padding: "3px 8px", borderRadius: 4, fontWeight: 700 } },
+          return h("span", { key: id, style: { display: "inline-flex", alignItems: "center", gap: 4, background: accent, color: B.btnInk, fontSize: "11px", padding: "3px 8px", borderRadius: 4, fontWeight: 700 } },
             item.name,
             h("button", { onClick: function() { onChange(selectedIds.filter(function(x) { return x !== id; })); },
-              style: { background: "none", border: "none", color: "#000", cursor: "pointer", fontSize: "13px", fontWeight: 700, padding: "0 0 0 3px", lineHeight: 1 } }, "\u00d7"));
+              style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "13px", fontWeight: 700, padding: "0 0 0 3px", lineHeight: 1 } }, "\u00d7"));
         })
       ),
       // Search input + dropdown
@@ -299,15 +299,15 @@
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total Units"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif" } }, rawQty)),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text } }, rawQty)),
           h("div", { style: { background: maintQty > 0 ? B.dangerBg : B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + (maintQty > 0 ? B.dangerBd : B.border) } },
             h("div", { style: { fontSize: "10px", color: maintQty > 0 ? B.danger : B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Under Maint."),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: maintQty > 0 ? B.danger : B.textMut, fontFamily: "'Playfair Display', serif" } }, maintQty)),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: maintQty > 0 ? B.danger : B.textMut } }, maintQty)),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Rate"),
             (container.rates && container.rates.threeDay)
               ? h("div", null,
-                  h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, "$" + container.rates.threeDay),
+                  h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.accent } }, "$" + container.rates.threeDay),
                   h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
                     [container.rates.week ? "Wk $" + container.rates.week : null, container.rates.month ? "Mo $" + container.rates.month : null].filter(Boolean).join("  \u00b7  ")))
               : h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.textMut } }, "Bundled"))
@@ -338,7 +338,7 @@
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedEquipment.map(function(eq) {
               return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onClose(); onOpenEquipment(eq.id); } : null,
-                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid #5a3010", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
+                style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.accent + "44", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
             })
           )
         ),
@@ -494,20 +494,20 @@
         h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
           types.map(function(t) {
             return h("button", { key: t, onClick: function() { setTypeFilter(t); },
-              style: { background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? "#000" : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, t === "all" ? "All" : t);
+              style: { background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, t === "all" ? "All" : t);
           })
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
           h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, { width: 180 }) }),
           [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }].map(function(o) {
             return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? "#000" : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
           })
         )
       ),
 
       filtered.length === 0 ? h(window.EmptyState, { text: "No containers match your search." }) :
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      h(window.LTPList, null,
         filtered.map(function(c) {
           var rawQty   = c.serialized ? (c.units || []).length : (c.qty || 0);
           var maintQty = c.serialized
@@ -516,10 +516,8 @@
           var openLogs = (c.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
           var linkedEq = equipment.filter(function(eq) { return c.defaultForEquipment.includes(eq.id); });
 
-          return h("div", { key: c.id, onClick: function() { onOpenContainer(c.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "12px 16px", cursor: "pointer", transition: "all 0.15s", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { onOpenContainer(c.id); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
 
             h("div", null,
               h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 3 } },

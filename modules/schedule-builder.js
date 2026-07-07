@@ -347,18 +347,18 @@
     // ── Render ───────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("projects/" + project.id); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
           h("div", null,
-            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
+            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
             h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
               (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
           h("button", { onClick: openSendToQuote,
-            style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
+            style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
           h("button", { onClick: printSchedule,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -366,7 +366,7 @@
       ),
 
       // Body: main + side panel
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: "auto", minWidth: 0 } },
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: services,
@@ -389,17 +389,17 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
           // SUMMARY
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 10px" } }, "Schedule Summary"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Schedule Summary"),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Schedule Days"),
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, stats.days)),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Positions"),
               h("span", { style: { fontSize: "12px", fontWeight: 600, color: stats.filledPos === stats.totalPos && stats.totalPos > 0 ? B.success : B.text } }, stats.filledPos + " / " + stats.totalPos + " filled")),
-            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Total Rate"),
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + stats.totalRate.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "3px 0" } },
@@ -433,8 +433,8 @@
             var seen = {};
             projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
             if (projectConflicts.length === 0) return null;
-            return h("div", { style: { background: B.danger + "11", border: "1px solid " + B.danger + "44", borderRadius: "8px", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
+            return h("div", { style: { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
                   return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + B.danger + "33" } },
@@ -447,8 +447,8 @@
           }(),
 
           // NOTES
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Internal Notes"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
             h("textarea", { value: draft.scheduleNotes || "",
               onChange: function(e) { setDraft(function(d) { return Object.assign({}, d, { scheduleNotes: e.target.value }); }); },
               placeholder: "Schedule notes, crew preferences, special requirements\u2026",
@@ -456,8 +456,8 @@
           ),
 
           // ACTIVITY
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.scheduleActivity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success };

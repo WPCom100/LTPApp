@@ -69,7 +69,7 @@
       // Header
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexShrink: 0 } },
         h(window.Btn, { small: true, variant: "ghost", onClick: function() { ctx.setCalMonth(function(p) { return p.month === 0 ? { year: p.year - 1, month: 11 } : { year: p.year, month: p.month - 1 }; }); } }, "\u2190 Prev"),
-        h("h3", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, monthName),
+        h("h3", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, monthName),
         h(window.Btn, { small: true, variant: "ghost", onClick: function() { ctx.setCalMonth(function(p) { return p.month === 11 ? { year: p.year + 1, month: 0 } : { year: p.year, month: p.month + 1 }; }); } }, "Next \u2192")
       ),
 
@@ -78,7 +78,7 @@
         filters.map(function(f) {
           var active = calFilter === f.k;
           return h("button", { key: f.k, onClick: function() { setCalFilter(f.k); },
-            style: { background: active ? f.color : B.raised, color: active ? "#000" : f.color, border: "1px solid " + (active ? f.color : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }
+            style: { background: active ? f.color : B.raised, color: active ? B.btnInk : f.color, border: "1px solid " + (active ? f.color : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }
           }, f.l);
         })
       ),

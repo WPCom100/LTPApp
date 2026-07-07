@@ -186,7 +186,7 @@
           categories.map(function(c) {
             var active = catFilter === c;
             return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                        border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                        padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c === "all" ? "All" : c);
           })
@@ -203,8 +203,9 @@
       // Add form
       showAdd && h(ProductForm, { initial: null, onSave: addProduct, onCancel: function() { setShowAdd(false); }, settings: settings, qbo: qbo }),
 
-      // List
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      // List — ruled ledger panel; an in-place edit form replaces its row
+      // inside the panel (it renders as its own card between hairlines).
+      h(window.LTPList, null,
         filtered.length === 0 && !showAdd && h("div", { style: { padding: "24px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, "No products."),
         filtered.map(function(p) {
           if (editingId === p.id) {
@@ -216,11 +217,9 @@
           }
           var margin = p.unitPrice > 0 ? Math.round(((p.unitPrice - p.cost) / p.unitPrice) * 100) : 0;
           var pv = window.LTP_productVariants(p);
-          return h("div", { key: p.id,
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
+          return h(window.LTPRow, { key: p.id,
             onClick: function() { setEditingId(p.id); setShowAdd(false); },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+            style: { display: "flex", alignItems: "center", gap: 12 } },
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, p.name),
               h("div", { style: { fontSize: "11px", color: B.textMut } }, p.category + " \u00b7 per " + p.unit + (p.notes ? " \u00b7 " + p.notes : "")),

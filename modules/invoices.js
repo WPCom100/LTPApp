@@ -90,7 +90,7 @@
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, "Invoices ",
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Invoices ",
           h("span", { style: { fontSize: "13px", color: B.textMut, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 } }, "(" + invoices.length + ")")),
         h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
@@ -100,11 +100,11 @@
       h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
         statuses.map(function(f) {
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? B.accent : B.raised, color: filter === f ? "#000" : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+            style: { background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
         }),
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices\u2026",
           style: { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         filtered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
         filtered.map(function(inv) {
           var ref = window.LTP_INVOICE_REF(inv);
@@ -113,12 +113,10 @@
           var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : "";
           var qRef = inv.quoteId ? (function() { var q = quotes.find(function(q2) { return q2.id === inv.quoteId; }); return q ? window.LTP_QUOTE_REF(q) : ""; })() : "";
           var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
-          return h("div", { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
             h("div", null,
-              h("div", { style: { fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif" } },
+              h("div", { style: { fontSize: "14px", fontWeight: 700 } },
                 h("span", { style: { color: B.accent } }, ref),
                 proj && h("span", { style: { color: B.textMut, margin: "0 8px" } }, "\u00b7"),
                 proj && h("span", { style: { color: B.text } }, proj)),
@@ -1365,12 +1363,12 @@
     // ── Render ───────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("invoices"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", null,
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3 } },
               h("span", { style: { fontSize: "12px", color: B.textSec } }, displayName),
               h(window.Badge, { status: window.LTP_displayStatus(draft) }),
@@ -1402,10 +1400,10 @@
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Recall to Draft"),
           // Send Receipt (paid invoices)
           draft.status === "paid" && h("button", { onClick: function() { openReceiptModal(); },
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Receipt"),
           // Send / Resend button
           isDraft && draft.id != null && h("button", { onClick: openSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Invoice"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Invoice"),
           !isDraft && draft.id != null && h("button", { onClick: openSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } }, "OVERDUE"),
@@ -1415,13 +1413,13 @@
       ),
 
       // Body
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
         // Main content
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
           // Invoice details card
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 16 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 12px" } }, "Invoice Details"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Invoice Details"),
 
             !isDraft
               // LOCKED — read-only summary
@@ -1451,7 +1449,7 @@
                           if (ct === "company") patchDraft({ clientType: "company", clientContactId: null });
                           else patchDraft({ clientType: "contact", companyId: null, projectId: null });
                         },
-                        style: { background: draft.clientType === ct ? B.accent : B.raised, color: draft.clientType === ct ? "#000" : B.textMut, border: "1px solid " + (draft.clientType === ct ? B.accent : B.border), borderRadius: "4px", padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } },
+                        style: { background: draft.clientType === ct ? B.accent : B.raised, color: draft.clientType === ct ? B.btnInk : B.textMut, border: "1px solid " + (draft.clientType === ct ? B.accent : B.border), borderRadius: "4px", padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } },
                         ct === "company" ? "Company" : "Individual Contact");
                     })
                   ),
@@ -1539,14 +1537,15 @@
           // Sections
           draft.sections.map(function(sec) {
             var st = sectionTotals(sec);
-            return h("div", { key: sec.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: 12 } },
+            // Document core — flat orange-ruled panel (customer line-item treatment)
+            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12 } },
               // Section header
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
                 isDraft
                   ? h("input", { type: "text", value: sec.label,
                       onChange: function(e) { updateSectionLabel(sec.id, e.target.value); },
-                      style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif", outline: "none", padding: "4px 0" } })
-                  : h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, sec.label),
+                      style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } })
+                  : h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.accent } }, sec.label),
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, "$" + Math.round(st.subtotal).toLocaleString()),
                 isDraft && draft.sections.length > 1 && h("button", { onClick: function() { deleteSection(sec.id); },
                   style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: "3px 8px" } }, "Delete")
@@ -1563,10 +1562,10 @@
             );
           }),
           isDraft && h("button", { onClick: addSection,
-            style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", borderRadius: "8px", width: "100%" } }, "+ Add Section"),
+            style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", width: "100%" } }, "+ Add Section"),
 
           // Totals
-          h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "14px 18px" } },
+          h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", color: B.textSec } },
               h("span", null, "Subtotal"), h("span", null, "$" + Math.round(t.subtotal).toLocaleString())),
             t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
@@ -1599,7 +1598,9 @@
             // QuickBooks-computed sales tax (read-only, pulled back after push).
             draft.qbTaxTotal != null && draft.qbTaxTotal > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
               h("span", null, "Sales Tax (QuickBooks)"), h("span", null, money2(draft.qbTaxTotal))),
-            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 6, fontSize: "14px", fontWeight: 700 } },
+            // Brand-gradient rule sets the grand total apart (client-view stroke)
+            h("div", { style: { height: 3, background: B.gradRule, marginTop: 6 } }),
+            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "8px 0 4px", fontSize: "14px", fontWeight: 700 } },
               h("span", { style: { color: B.text } }, "Total"), h("span", { style: { color: B.accent } }, fmtT(t.total))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.success } },
               h("span", null, "Paid"), h("span", null, fmtT(t.paid))),
@@ -1609,11 +1610,11 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
           // QuickBooks section — status + actions + deep link (shown once sent)
-          qbConnected && qbEligible && h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
+          qbConnected && qbEligible && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 } }, "QuickBooks"),
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "QuickBooks"),
               qbPill && h("span", { style: { fontSize: "10px", fontWeight: 700, color: qbPill.color, background: qbPill.color + "18", border: "1px solid " + qbPill.color + "44", padding: "3px 8px", borderRadius: "5px", whiteSpace: "nowrap" } }, qbPill.label)),
             draft.qbSyncedAt && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: (draft.qbSyncStatus === "error" ? 6 : 10) } },
               "Last synced " + (function() { try { return new Date(draft.qbSyncedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return draft.qbSyncedAt; } })()),
@@ -1626,8 +1627,8 @@
                 style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", textDecoration: "none", whiteSpace: "nowrap" } }, "View in QuickBooks ↗"))
           ),
           // Summary
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 10px" } }, "Invoice Summary"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Invoice Summary"),
             draft.sections.map(function(sec) {
               var st = sectionTotals(sec);
               var cnt = sec.items.filter(function(i) { return i.type !== "note"; }).length;
@@ -1637,7 +1638,7 @@
                   h("div", { style: { fontSize: "9px", color: B.textMut } }, cnt + " items")),
                 h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + Math.round(st.subtotal).toLocaleString()));
             }),
-            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
               h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, fmtT(t.total))),
             t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0" } },
@@ -1648,18 +1649,18 @@
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.warn } }, fmtT(t.balance)))
           ),
           // Notes
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Notes"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Notes"),
             h("textarea", { value: draft.notes || "", onChange: function(e) { patchDraft({ notes: e.target.value }); },
               placeholder: "Invoice notes\u2026",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 50 } })
           ),
           // Payments — only visible after invoice is sent
-          !isDraft && h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
+          !isDraft && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: 0 } }, "Payments"),
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "Payments"),
               h("button", { onClick: function() { showPaymentForm ? setShowPaymentForm(false) : openPaymentForm(); },
-                style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
+                style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
                 showPaymentForm ? "Cancel" : "+ Record Payment")),
             // Payment list
             (draft.payments || []).length === 0
@@ -1686,8 +1687,8 @@
                 )
           ),
           // Linked Quote
-          linkedQuote && h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Linked Quote"),
+          linkedQuote && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Linked Quote"),
             h("div", {
               onClick: function() { nav("quotes/" + linkedQuote.id); },
               style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px", background: B.raised, borderRadius: "4px", cursor: "pointer", border: "1px solid " + B.border },
@@ -1702,8 +1703,8 @@
             )
           ),
           // Activity
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 100 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 100 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.activity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success, status: B.warn, paid: B.success, sent: B.accent, pdf_generated: B.accent,

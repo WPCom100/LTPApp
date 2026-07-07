@@ -77,7 +77,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
   return h("div", null,
     // Greeting
     h("div", { style: { marginBottom: 20 } },
-      h("h1", { style: { fontSize: "22px", fontWeight: 700, color: B.text, margin: "0 0 2px", fontFamily: "'Playfair Display', serif" } }, greeting + (userName ? ", " + userName.split(" ")[0] : "")),
+      h("h1", { style: { fontSize: "22px", fontWeight: 700, color: B.text, margin: "0 0 2px" } }, greeting + (userName ? ", " + userName.split(" ")[0] : "")),
       h("p", { style: { color: B.textMut, fontSize: "12px", margin: 0 } }, fmt(today))),
 
     // Cash flow cards

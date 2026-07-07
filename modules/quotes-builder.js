@@ -345,7 +345,7 @@
               ),
               // Add button
               h("button", { onClick: function(e) { e.stopPropagation(); addEquipment(eq); },
-                style: { background: B.accent, border: "none", borderRadius: "4px", color: "#000", cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" } }, "Add")
+                style: { background: B.accent, border: "none", borderRadius: "4px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" } }, "Add")
             );
           })
         )
@@ -424,7 +424,7 @@
               style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
               onMouseOver: function(e) { if (!inSection) e.currentTarget.style.borderColor = B.accent; },
               onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; } },
-              h("div", { style: { width: 40, fontSize: "12px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, s.role),
+              h("div", { style: { width: 40, fontSize: "12px", fontWeight: 700, color: B.accent } }, s.role),
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, s.department)
@@ -630,7 +630,9 @@
     return h("div", {
       onDragOver: isLocked ? undefined : function(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
       onDrop:     isLocked ? undefined : function(e) { e.preventDefault(); onSectionDrop(section.id); },
-      style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: 12, marginBottom: 12 }
+      // Document core — the flat orange-ruled panel treatment from the
+      // customer views' line-item sections (no rounded card).
+      style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12, marginBottom: 4 }
     },
       // Section header
       h("div", {
@@ -641,10 +643,10 @@
       },
         !isLocked && h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none" } }, "\u2630"),
         isLocked
-          ? h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.text, fontFamily: "'Playfair Display', serif", padding: "4px 0" } }, section.label)
+          ? h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.text, padding: "4px 0" } }, section.label)
           : h("input", { type: "text", value: section.label,
               onChange: function(e) { onLabelChange(section.id, e.target.value); },
-              style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, fontFamily: "'Playfair Display', serif", outline: "none", padding: "4px 0" } }),
+              style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
         h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right" } },
           h("div", null, "$" + Math.round(sectionSubtotal).toLocaleString()),
           h("div", { style: { fontSize: "9px" } }, "margin: $" + Math.round(sectionMargin).toLocaleString())
@@ -712,8 +714,8 @@
       );
     };
 
-    return h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "14px 18px" } },
-      h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Totals"),
+    return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
+      h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.accent, textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 8px" } }, "Totals"),
       row("Subtotal", "$" + Math.round(t.subtotal).toLocaleString()),
       autoAdjustment !== 0 && row("Line adjustments",
         (autoAdjustment > 0 ? "\u2212" : "+") + "$" + Math.round(Math.abs(autoAdjustment)).toLocaleString(),
@@ -756,7 +758,10 @@
           calcTax ? "Calculating…" : (!hasTax ? "Calculate Sales Tax" : (taxFresh ? "↻ Recalculate Tax" : "⚠ Recalculate — out of date")))
       ),
 
-      row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent, topBorder: true }),
+      // Brand-gradient rule sets the grand total apart — same stroke as the
+      // client view's totals block.
+      h("div", { style: { height: 3, background: B.gradRule, marginTop: 10 } }),
+      row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent }),
 
       // Internal margin section
       h("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "2px dashed " + B.border } },
@@ -1817,12 +1822,12 @@
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header bar
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("quotes"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", null,
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif", letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3 } },
               h("span", { style: { fontSize: "12px", color: B.textSec } }, displayName),
               h(window.Badge, { status: draft.status })
@@ -1850,10 +1855,10 @@
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
-            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
+            style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
           // Sent: Accept / Decline / Recall / Resend
           draft.status === "sent" && h("button", { onClick: acceptQuote,
-            style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: "#000", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
+            style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
           draft.status === "sent" && h("button", { onClick: declineQuote,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.danger; e.currentTarget.style.color = B.danger; },
@@ -1882,7 +1887,7 @@
           ),
           // Send to Invoice — only when accepted and has uninvoiced delivered items
           hasUninvoiced && h("button", { onClick: sendToInvoice,
-            style: { background: B.success, border: "none", borderRadius: "6px", color: "#000", cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "4px 10px", letterSpacing: "0.02em" } },
+            style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "4px 10px", letterSpacing: "0.02em" } },
             "\u2192 Send to Invoice"),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteQuote }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -1891,14 +1896,14 @@
       ),
 
       // Body: main content (left) + side panel (right)
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 14 } },
+      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
 
         // ── Main scrollable content (left) ─────────────────────────────────
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
       // Metadata card
-      h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 16 } },
-        h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 12px" } }, "Quote Details"),
+      h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
+        h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Quote Details"),
 
         // When locked — show read-only summary
         (draft.status === "accepted" || draft.status === "converted")
@@ -1926,7 +1931,7 @@
                       if (t === "company") patchDraft({ clientType: "company", clientContactId: null });
                       else                 patchDraft({ clientType: "contact", companyId: null, projectId: null });
                     },
-                    style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+                    style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                              border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                              padding: "5px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
                     t === "company" ? "Company" : "Individual Contact");
@@ -2019,7 +2024,7 @@
           });
         }),
         !(draft.status === "accepted" || draft.status === "converted") && h("button", { onClick: addSection,
-          style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", borderRadius: "8px", width: "100%" } }, "+ Add Section")
+          style: { background: "transparent", border: "1px dashed " + B.border, color: B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "12px", width: "100%" } }, "+ Add Section")
       ),
 
       // Totals
@@ -2029,11 +2034,11 @@
       ), // end main scrollable content
 
         // ── Side Panel (right) ─────────────────────────────────────────────
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 10, overflowY: "auto" } },
+        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
 
           // QUOTE SUMMARY (top)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 10px" } }, "Quote Summary"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Quote Summary"),
 
             // Section breakdown
             draft.sections.map(function(sec) {
@@ -2066,7 +2071,7 @@
                   h("span", null, "Sales Tax"),
                   h("span", null, "$" + (Number(t.tax) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
                 ),
-                h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "2px solid " + B.accent, marginTop: 4 } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
                   h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + Math.round(t.total).toLocaleString())
                 ),
@@ -2079,8 +2084,8 @@
           ),
 
           // NOTES (middle)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Internal Notes"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
             h("textarea", { value: draft.notes || "", onChange: function(e) { patchDraft({ notes: e.target.value }); },
               placeholder: "Add internal notes about this quote...",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
@@ -2090,8 +2095,8 @@
           function() {
             var linked = draft.id != null ? (invoices || []).filter(function(inv) { return inv.quoteId === draft.id; }) : [];
             if (linked.length === 0) return null;
-            return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Linked Invoices (" + linked.length + ")"),
+            return h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Linked Invoices (" + linked.length + ")"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 linked.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);
@@ -2116,8 +2121,8 @@
           }(),
 
           // ACTIVITY LOG (bottom)
-          h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
+            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 } },
               (draft.activity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success, status: B.warn, viewed: B.accent, adjusted: B.textSec, sent: B.accent, accepted: B.success, declined: B.danger, invoiced: B.warn, pdf_generated: B.accent, client_accepted: B.success, client_declined: B.danger,

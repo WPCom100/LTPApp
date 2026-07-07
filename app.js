@@ -39,7 +39,7 @@ window.LTPApp = function() {
   }, []);
 
   if (authUser === undefined) {
-    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…");
+    return h(window.LTPLoadingScreen, { label: "Loading…" });
   }
   if (authUser === null) {
     return h(LTPSignInScreen);
@@ -49,13 +49,23 @@ window.LTPApp = function() {
 
 
 // ── Sign-in screen for unauthenticated users ────────────────────────────────
+// Masthead lockup on its orange rule — the same hero treatment as the
+// customer-facing crew/client pages, with the LTP-chip fallback if the
+// image fails to load.
 function LTPSignInScreen() {
   var h = React.createElement;
   var B = window.LTP_THEME;
+  var pair = React.useState(false);
+  var logoFailed = pair[0], setLogoFailed = pair[1];
   return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" } },
-    h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: "40px 48px", maxWidth: 380, width: "90%", textAlign: "center", boxShadow: "0 8px 32px rgba(0,0,0,0.4)" } },
-      h("div", { style: { width: 44, height: 44, background: B.accent, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: "#000", margin: "0 auto 18px" } }, "LTP"),
-      h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.text, marginBottom: 6 } }, "LTP Business Suite"),
+    h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "16px", padding: "40px 48px", maxWidth: 400, width: "90%", textAlign: "center", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
+      h("div", { style: { marginBottom: 24 } },
+        logoFailed
+          ? h("div", { style: { width: 44, height: 44, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px", fontWeight: 700, color: B.btnInk, margin: "0 auto" } }, "LTP")
+          : h("img", { src: "/assets/logos/luminary-masthead.png", alt: "Luminary Technology & Productions", onError: function() { setLogoFailed(true); }, style: { display: "block", width: "100%", maxWidth: 260, height: "auto", margin: "0 auto" } }),
+        h("div", { style: { height: 3, background: B.gradRule, maxWidth: 260, margin: "0 auto", marginTop: -1, borderRadius: 1 } })),
+      h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: B.accentSoft, marginBottom: 10 } }, "Business Suite"),
+      h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.text, marginBottom: 6, letterSpacing: "-0.01em" } }, "Welcome back"),
       h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 28, lineHeight: 1.5 } }, "Sign in with your Google account to continue."),
       h("a", { href: "/auth/login",
         style: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#fff", color: "#1f1f1f", border: "1px solid #dadce0", borderRadius: "6px", padding: "10px 24px", fontSize: "13px", fontWeight: 600, textDecoration: "none", fontFamily: "inherit", cursor: "pointer", minWidth: 220 } },
@@ -378,7 +388,7 @@ function LTPSignedInApp(props) {
   // (e.g. wrong API key) still surface immediately.
   if (!allReady) {
     return h(React.Fragment, null,
-      h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, color: B.textMut, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", fontSize: "13px", letterSpacing: "0.05em" } }, "Loading…"),
+      h(window.LTPLoadingScreen, { label: "Loading your workspace…" }),
       h(window.LTPErrorToasts)
     );
   }
@@ -387,7 +397,7 @@ function LTPSignedInApp(props) {
    h("div", { style: { display: "flex", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
       h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
-        h("div", { style: { width: 30, height: 30, background: B.accent, borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: "#000", flexShrink: 0 } }, "LTP"),
+        h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
         sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE"))
       ),
       h("nav", { style: { flex: 1, padding: "10px 6px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" } },
@@ -493,13 +503,13 @@ function LTPSignedInApp(props) {
         h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
           h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" } },
             window.LTP_NAV_ICON(activeModule, 18, B.accent)),
-          h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.textSec } }, (MODULES.find(function(m) { return m.id === activeModule; }) || {}).label)),
+          h("span", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: B.textSec } }, (MODULES.find(function(m) { return m.id === activeModule; }) || {}).label)),
         h("div", { ref: searchRef, style: { position: "relative", flex: 1, maxWidth: 720, margin: "0 24px" } },
           h("div", { style: { position: "relative" } },
             h("input", { type: "text", value: globalSearch, placeholder: "Search companies, contacts, projects, invoices\u2026",
               onChange: function(e) { setGlobalSearch(e.target.value); setSearchOpen(true); },
               onFocus: function() { if (globalSearch) setSearchOpen(true); },
-              style: { width: "100%", background: B.raised, border: "1px solid " + (searchOpen && globalSearch ? B.accent : B.border), borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" } })
+              style: { width: "100%", background: B.bg, border: "1px solid " + (searchOpen && globalSearch ? B.accent : B.border), borderRadius: "8px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", transition: "border-color 0.15s" } })
           ),
           searchOpen && globalSearch && h("div", { style: { position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", boxShadow: "0 8px 24px rgba(0,0,0,0.4)", zIndex: 2000, overflow: "hidden", maxHeight: 400, overflowY: "auto" } },
             searchResults.length === 0
@@ -582,7 +592,7 @@ function LTPUserMenu(props) {
       style: { width: "100%", height: "100%", objectFit: "cover", display: "block" },
     });
   } else {
-    avatarInner = h("span", { style: { fontSize: "10px", fontWeight: 700, color: "#000" } }, initials);
+    avatarInner = h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.btnInk } }, initials);
   }
 
   return h("div", { ref: rootRef, style: { position: "relative" } },

@@ -203,7 +203,7 @@
       }
       return h("div", null,
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
-          h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, isNew ? "Add Crew Member" : "Edit Crew Member"),
+          h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, isNew ? "Add Crew Member" : "Edit Crew Member"),
           h("div", { style: { display: "flex", gap: 8 } },
             h(window.Btn, { small: true, variant: "ghost", onClick: function() { setEditingCrew(null); } }, "Cancel"),
             h(window.Btn, { small: true, onClick: saveCrew }, "Save"))),
@@ -272,19 +272,17 @@
       h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
         departments.map(function(d) {
           return h("button", { key: d, onClick: function() { setDeptFilter(d); },
-            style: { background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? "#000" : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, d);
+            style: { background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? B.btnInk : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, d);
         }),
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
           style: { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })
       ),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+      h(window.LTPList, null,
         filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
         filtered.map(function(c) {
           var shifts = upcomingShifts(c.id);
-          return h("div", { key: c.id, onClick: function() { setEditingCrew(Object.assign({}, c)); },
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 16px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+          return h(window.LTPRow, { key: c.id, onClick: function() { setEditingCrew(Object.assign({}, c)); },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
               h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
@@ -661,7 +659,7 @@
         ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? "#000" : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
+            style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
         }),
         h("select", { value: projFilter, onChange: function(e) { setProjFilter(e.target.value); },
@@ -671,7 +669,7 @@
         ),
         h("div", { style: { flex: 1 } }),
         pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
-          style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: "#000", fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
+          style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
       ),
 
       // Grouped by project
@@ -692,7 +690,7 @@
           // Date groups
           pg.dates.map(function(g) {
             return h("div", { key: pg.projectId + "|" + (g.date || "_") },
-              h("div", { style: { padding: "8px 14px", display: "flex", gap: 10, alignItems: "center", background: "#222", borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + B.info } },
+              h("div", { style: { padding: "8px 14px", display: "flex", gap: 10, alignItems: "center", background: B.raised, borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + B.info } },
                 h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Unscheduled"),
                 g.dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, ft(g.dayCall) + " \u2192 " + ft(g.dayWrap)),
                 h("span", { style: { fontSize: "9px", color: B.textMut } }, (g.dayBookings || []).length + " crew")),
@@ -873,7 +871,7 @@
                       border: "1px solid " + (isPreviewed ? B.accent + "55" : isSelected ? B.success + "33" : B.border), borderRadius: "4px", cursor: "pointer", userSelect: "none" } },
                       h("div", { onClick: function(e) { e.stopPropagation(); toggleSendSelection(entry.key); },
                         style: { width: 16, height: 16, borderRadius: "3px", border: "2px solid " + (isSelected ? B.success : B.border), background: isSelected ? B.success : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
-                        isSelected && h("span", { style: { color: "#000", fontSize: "10px", fontWeight: 700 } }, "\u2713")),
+                        isSelected && h("span", { style: { color: B.btnInk, fontSize: "10px", fontWeight: 700 } }, "\u2713")),
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
                         h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
@@ -945,7 +943,7 @@
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("button", { onClick: function() { setMonthOffset(monthOffset - 1); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u25c0"),
-        h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, monthName),
+        h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, monthName),
         h("button", { onClick: function() { setMonthOffset(monthOffset + 1); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u25b6")),
       h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1, marginBottom: 2 } },
         ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(function(dn) {
@@ -1006,7 +1004,7 @@
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("button", { onClick: function() { setWeekOffset(weekOffset - 1); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, cursor: "pointer" } }, "\u25c0"),
-        h("h3", { style: { fontSize: "14px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, weekLabel),
+        h("h3", { style: { fontSize: "14px", fontWeight: 700, color: B.text, margin: 0 } }, weekLabel),
         h("button", { onClick: function() { setWeekOffset(weekOffset + 1); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, cursor: "pointer" } }, "\u25b6")),
       h("div", { style: { display: "grid", gridTemplateColumns: "140px repeat(7, 1fr)", gap: 1, marginBottom: 2 } },
         h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, padding: "6px 8px" } }, "Crew"),
@@ -1243,7 +1241,7 @@
     var presetBtn = function(key, label) {
       var active = preset === key;
       return h("button", { key: key, onClick: function() { pickPreset(key); },
-        style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
 
     return h("div", null,
@@ -1286,7 +1284,7 @@
                   var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" } };
                   var sBtn = function(label, onClick, bg, title) {
                     return h("button", { onClick: onClick, title: title,
-                      style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? "#000" : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
+                      style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
                   };
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: "center" } },
                     h("div", { style: { width: 86, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
@@ -1307,7 +1305,7 @@
                       : h(React.Fragment, null,
                           !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
                           (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
-                            style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
+                            style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
                           canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
                           canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
                           canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
@@ -1589,7 +1587,7 @@
     var filterPill = function(key, label, count) {
       var isActive = filter === key;
       return h("button", { key: key, onClick: function() { setFilter(key); },
-        style: { background: isActive ? B.accent : B.raised, color: isActive ? "#000" : B.textMut, border: "1px solid " + (isActive ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
+        style: { background: isActive ? B.accent : B.raised, color: isActive ? B.btnInk : B.textMut, border: "1px solid " + (isActive ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
         label + (count != null ? " (" + count + ")" : ""));
     };
 
@@ -1631,7 +1629,7 @@
                       r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
                     h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label),
                     ds.confirm && h("button", { onClick: function() { setConfirmDlg(r); },
-                      style: { flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: "#000", fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✓ Confirm"),
+                      style: { flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✓ Confirm"),
                     ds.resend && h("button", { onClick: function() { resendRequest(r); },
                       style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
                     ds.withdraw && h("button", { onClick: function() { setWithdrawDlg(r); },
@@ -1727,7 +1725,7 @@
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, fontFamily: "'Playfair Display', serif" } }, tabTitle),
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, tabTitle),
         conflictCount > 0 && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
           conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),

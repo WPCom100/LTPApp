@@ -155,7 +155,7 @@
           departments.map(function(d) {
             var active = deptFilter === d;
             return h("button", { key: d, onClick: function() { setDeptFilter(d); },
-              style: { background: active ? B.accent : B.raised, color: active ? "#000" : B.textMut,
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                        border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                        padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, d === "all" ? "All" : d);
           })
@@ -172,8 +172,9 @@
       // Add form
       showAdd && h(ServiceForm, { initial: null, onSave: addService, onCancel: function() { setShowAdd(false); }, settings: settings, qbo: qbo }),
 
-      // List
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      // List — ruled ledger panel; an in-place edit form replaces its row
+      // inside the panel (it renders as its own card between hairlines).
+      h(window.LTPList, null,
         filtered.length === 0 && !showAdd && h("div", { style: { padding: "24px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, "No services."),
         filtered.map(function(s) {
           if (editingId === s.id) {
@@ -184,13 +185,11 @@
               settings: settings, qbo: qbo });
           }
           var margin = s.dayRate > 0 ? Math.round(((s.dayRate - s.dayCost) / s.dayRate) * 100) : 0;
-          return h("div", { key: s.id,
-            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" },
+          return h(window.LTPRow, { key: s.id,
             onClick: function() { setEditingId(s.id); setShowAdd(false); },
-            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
-            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+            style: { display: "flex", alignItems: "center", gap: 12 } },
             h("div", { style: { width: 48, textAlign: "center" } },
-              h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, fontFamily: "'Playfair Display', serif" } }, s.role)
+              h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, s.role)
             ),
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
