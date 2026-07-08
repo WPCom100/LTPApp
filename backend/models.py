@@ -77,7 +77,7 @@ class Contact(Base):
     zip = Column(String(20), default="")                 # billing postal code
     company_ids = Column(JSON, default=list)             # list[int] — company.id references
     is_crew = Column(Boolean, default=False)
-    crew_roles = Column(JSON, default=list)              # list[str] — role codes from LTP_DATA_SETTINGS.crewRoleOptions, e.g. ["L1","L3","RIG"]
+    crew_roles = Column(JSON, default=list)              # list[str] — role tags: Settings crewRoleOptions codes, labor rate-card roles, or free-text customs, e.g. ["L1","RIG","A1 FUMC"]
     crew_departments = Column(JSON, default=list)        # list[str] — dept names, e.g. ["Lighting","Rigging"]
     crew_notes = Column(Text, default="")
     crew_status = Column(String(20), default="active")   # {active, inactive}
