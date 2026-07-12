@@ -3,6 +3,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   var B = window.LTP_THEME;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var nav = window.LTPRouter.navigate;
+  var isMobile = window.LTP_useIsMobile();
 
   // URL-derived state — all shapes:
   //   crm/companies            list
@@ -156,20 +157,26 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     // ── Companies ─────────────────────────────────────────────────────────────
     crmTab === "companies" && h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", alignItems: "center", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
           ["all", "active", "inactive", "one-time", "prospect"].map(function(f) {
-            return h("button", { key: f, onClick: function() { setCompanyFilter(f); },
-              style: { background: companyFilter === f ? B.accent : B.raised, color: companyFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (companyFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+            var active = companyFilter === f;
+            return h("button", { key: f, onClick: function() { setCompanyFilter(f); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           }),
-          h("span", { style: { width: 1, background: B.border, margin: "0 4px", height: 20 } }),
+          h("span", { style: { flexShrink: 0, width: 1, background: B.border, margin: "0 4px", height: 20 } }),
           ["all", "client", "vendor", "both"].map(function(f) {
-            return h("button", { key: "t" + f, onClick: function() { setTypeFilter(f); },
-              style: { background: typeFilter === f ? B.accent : B.raised, color: typeFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+            var active = typeFilter === f;
+            return h("button", { key: "t" + f, onClick: function() { setTypeFilter(f); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           })
         ),
-        h(window.Btn, { small: true, onClick: function() { nav("crm/companies/new"); } }, "+ Add Company")
+        !isMobile && h(window.Btn, { small: true, onClick: function() { nav("crm/companies/new"); } }, "+ Add Company")
       ),
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } }, searchBar, sortBtns()),
+      isMobile && h(window.LTPFab, { label: "Add company", onClick: function() { nav("crm/companies/new"); } }),
+      h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginBottom: 10, gap: 8 } },
+        isMobile ? h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search companies...",
+          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }) : searchBar,
+        sortBtns()),
       h(window.LTPList, null,
         fc.length === 0 && h(window.EmptyState, { text: "No companies match your search." }),
         fc.map(function(c) {
@@ -189,10 +196,16 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
 
     // ── Contacts ──────────────────────────────────────────────────────────────
     crmTab === "contacts" && h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar, sortBtns()),
-        h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact")
-      ),
+      isMobile
+        ? h("div", { style: { display: "flex", flexDirection: "column", marginBottom: 10, gap: 8 } },
+            h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search contacts...",
+              style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
+            sortBtns())
+        : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar, sortBtns()),
+            h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact")
+          ),
+      isMobile && h(window.LTPFab, { label: "Add contact", onClick: function() { nav("crm/contacts/new"); } }),
       h(window.LTPList, null,
         fcon.length === 0 && h(window.EmptyState, { text: "No contacts match your search." }),
         fcon.map(function(c) {
