@@ -262,6 +262,12 @@ _IMG_SRC = (
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "
+    # Service worker (/sw.js) and the web-app manifest are same-origin. Both
+    # otherwise fall back to default-src 'self' (so the PWA already works), but
+    # we make the allowance explicit so a future default-src tightening can't
+    # silently break installability.
+    "worker-src 'self'; "
+    "manifest-src 'self'; "
     # Fonts are self-hosted (assets/fonts.css + assets/fonts/*.woff2), so style
     # and font sources are 'self' only — no fonts.googleapis.com / gstatic.com
     # (SECURITY_REVIEW.md L8). style-src keeps 'unsafe-inline' (React inline
@@ -533,6 +539,34 @@ def _resolve_static(full_path):
         if rel.startswith(prefix) and rel.endswith(exts):
             return candidate
     return None
+
+
+# ── PWA endpoints ────────────────────────────────────────────────────────────
+# The service worker and web-app manifest are root-scoped files. They are
+# intentionally NOT in the static allowlist above (and need response headers the
+# generic FileResponse path doesn't set), so they get dedicated routes here —
+# registered BEFORE the catch-all so it can't swallow them and return index.html.
+@app.get("/sw.js")
+async def service_worker():
+    # media_type is explicit because a stale mimetypes map could otherwise serve
+    # the worker as text/plain (browsers refuse to register a non-JS worker).
+    # no-cache: always revalidate so an updated worker is picked up promptly.
+    # Service-Worker-Allowed: / lets a /sw.js worker claim the whole origin.
+    resp = FileResponse(os.path.join(frontend_dir, "sw.js"), media_type="text/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+@app.get("/manifest.webmanifest")
+async def web_manifest():
+    # mimetypes doesn't reliably know .webmanifest, so set it explicitly.
+    resp = FileResponse(
+        os.path.join(frontend_dir, "manifest.webmanifest"),
+        media_type="application/manifest+json",
+    )
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
 
 
 @app.get("/{full_path:path}")

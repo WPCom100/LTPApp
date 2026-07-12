@@ -1,0 +1,185 @@
+/* LTPApp service worker — minimal app-shell precache for the iOS home-screen PWA.
+ *
+ * SCOPE: served from /sw.js (see backend/main.py service_worker route, which
+ * sets Service-Worker-Allowed: /) so this worker controls the whole origin.
+ *
+ * WHAT IT CACHES
+ *   - Precache (install): the HTML shell, boot-critical scripts, self-hosted
+ *     fonts CSS, icons, the manifest, and the pinned CDN libraries (React,
+ *     ReactDOM, DOMPurify, signature_pad — versioned URLs with SRI, safe to
+ *     cache long-term). This is what lets the app open full-screen offline.
+ *   - Runtime (stale-while-revalidate): every OTHER same-origin static asset
+ *     (the /components, /modules, /data scripts, /assets fonts+images). They
+ *     are all fetched on the first online load, so after one signed-in session
+ *     the entire shell is available offline.
+ *
+ * WHAT IT NEVER CACHES (hard bypass, network passthrough):
+ *   - /api/*, /auth/*, /pdf/*  — authenticated / per-user / tokenized data.
+ *     Caching these could serve one user's data to another or a logged-out
+ *     stale shell. They ALWAYS go to the network.
+ *   - Anything that isn't a GET.
+ *   - /sw.js itself (the browser manages worker updates natively).
+ *
+ * UPDATE STRATEGY (see components/register-sw.js):
+ *   Bump CACHE_VERSION on any shell/asset change. A new worker installs and
+ *   WAITS (we do NOT skipWaiting on install) so the running app isn't swapped
+ *   mid-session. register-sw.js detects the waiting worker and shows a
+ *   "new version — tap to refresh" banner; tapping posts SKIP_WAITING, this
+ *   worker activates + claims clients, and the page reloads once. On activate
+ *   we delete caches from older versions.
+ */
+'use strict';
+
+// ── Bump this string whenever the app shell or any precached asset changes. ──
+// It is the sole cache-busting lever (filenames are un-versioned and the server
+// serves them no-cache/ETag, so the version here is what forces a fresh shell).
+var CACHE_VERSION = 'ltp-shell-v1';
+
+var SAME_ORIGIN_PRECACHE = [
+  '/',
+  '/index.html',
+  '/manifest.webmanifest',
+  '/favicon.ico',
+  '/assets/fonts.css',
+  // Boot chain — the scripts index.html loads before the app can render.
+  '/router.js',
+  '/theme.js',
+  '/app.js',
+  '/mount.js',
+  // Icons referenced by the manifest / head.
+  '/assets/icons/icon-192.png',
+  '/assets/icons/icon-512.png',
+  '/assets/icons/apple-touch-icon.png',
+];
+
+// Cross-origin, version-pinned libraries (CORS-enabled on cdnjs). Best-effort:
+// a CDN hiccup at install time must not fail the whole install.
+var CDN_PRECACHE = [
+  'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/signature_pad/5.0.4/signature_pad.umd.min.js',
+];
+
+// Paths that must always hit the network and never be cached.
+function isBypass(url) {
+  return url.pathname.startsWith('/api/') ||
+         url.pathname.startsWith('/auth/') ||
+         url.pathname.startsWith('/pdf/') ||
+         url.pathname === '/sw.js';
+}
+
+// Same-origin static assets we runtime-cache (stale-while-revalidate).
+function isRuntimeStatic(url) {
+  if (url.pathname.startsWith('/assets/') ||
+      url.pathname.startsWith('/components/') ||
+      url.pathname.startsWith('/modules/') ||
+      url.pathname.startsWith('/data/')) {
+    return true;
+  }
+  // Root-level static files (e.g. /router.js, /theme.js, /manifest.webmanifest).
+  return /\.(js|css|png|jpe?g|svg|gif|webp|ico|woff2?|ttf|otf|webmanifest)$/.test(url.pathname);
+}
+
+self.addEventListener('install', function(event) {
+  event.waitUntil(
+    caches.open(CACHE_VERSION).then(function(cache) {
+      // Same-origin core must succeed for a usable offline shell.
+      var core = cache.addAll(SAME_ORIGIN_PRECACHE);
+      // CDN libs are best-effort so a CDN failure can't break install.
+      var cdn = Promise.all(CDN_PRECACHE.map(function(u) {
+        return cache.add(new Request(u, { mode: 'cors' })).catch(function() {});
+      }));
+      return Promise.all([core, cdn]);
+    })
+    // NOTE: intentionally NO self.skipWaiting() here — the new worker waits so
+    // register-sw.js can surface the "tap to refresh" prompt.
+  );
+});
+
+self.addEventListener('activate', function(event) {
+  event.waitUntil(
+    caches.keys().then(function(keys) {
+      return Promise.all(keys.map(function(k) {
+        if (k !== CACHE_VERSION) return caches.delete(k);
+      }));
+    }).then(function() {
+      // Control existing clients immediately once activated (after skipWaiting).
+      return self.clients.claim();
+    })
+  );
+});
+
+// Let the page trigger activation of a waiting worker (the "tap to refresh").
+self.addEventListener('message', function(event) {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
+self.addEventListener('fetch', function(event) {
+  var req = event.request;
+  if (req.method !== 'GET') return;  // never cache mutations
+
+  var url;
+  try { url = new URL(req.url); } catch (e) { return; }
+
+  // Hard bypass: authenticated / tokenized / worker script — network only.
+  if (isBypass(url)) return;
+
+  // Navigations (opening the app / any SPA URL that resolves to index.html):
+  // network-first so a fresh shell is preferred, cached shell as offline
+  // fallback. The server strips the hash, so this is effectively GET '/'.
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req).then(function(resp) {
+        // Keep the cached shell fresh for offline launches.
+        if (resp && resp.ok && url.origin === self.location.origin) {
+          var copy = resp.clone();
+          caches.open(CACHE_VERSION).then(function(c) { c.put('/', copy); });
+        }
+        return resp;
+      }).catch(function() {
+        return caches.match('/').then(function(m) {
+          return m || caches.match('/index.html');
+        });
+      })
+    );
+    return;
+  }
+
+  // Cross-origin pinned CDN libs: cache-first (immutable, version-pinned URLs).
+  if (url.origin === 'https://cdnjs.cloudflare.com') {
+    event.respondWith(
+      caches.match(req).then(function(hit) {
+        return hit || fetch(req).then(function(resp) {
+          if (resp && (resp.ok || resp.type === 'opaque')) {
+            var copy = resp.clone();
+            caches.open(CACHE_VERSION).then(function(c) { c.put(req, copy); });
+          }
+          return resp;
+        });
+      })
+    );
+    return;
+  }
+
+  // Same-origin static assets: stale-while-revalidate.
+  if (url.origin === self.location.origin && isRuntimeStatic(url)) {
+    event.respondWith(
+      caches.open(CACHE_VERSION).then(function(cache) {
+        return cache.match(req).then(function(hit) {
+          var network = fetch(req).then(function(resp) {
+            if (resp && resp.ok) cache.put(req, resp.clone());
+            return resp;
+          }).catch(function() { return hit; });
+          // Serve cache immediately when present; otherwise wait for network.
+          return hit || network;
+        });
+      })
+    );
+    return;
+  }
+
+  // Everything else: plain network (no caching).
+});

@@ -2,8 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover is REQUIRED before iOS resolves env(safe-area-inset-*)
+       to non-zero — without it the safe-area padding in the shell and the
+       public crew/client views silently collapses to 0 on notch/home-indicator
+       devices. Pinch-zoom is intentionally left enabled (no maximum-scale/
+       user-scalable=no) for accessibility. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>LTP Business Suite</title>
+
+  <!-- ── PWA / iOS home-screen app ──────────────────────────────────────────
+       Makes LTPApp installable and full-screen from the iOS Share sheet.
+       The manifest + service worker are served from the app origin; see
+       backend/main.py (dedicated /manifest.webmanifest and /sw.js routes) and
+       components/register-sw.js (registration lives in a same-origin .js file
+       because the CSP script-src has no 'unsafe-inline'). -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- Status-bar + chrome tint. #131C21 = LTP_THEME.bg (the app field). -->
+  <meta name="theme-color" content="#131C21" />
+  <!-- Launch full-screen (no Safari chrome) when opened from the home screen.
+       apple-mobile-web-app-capable is the iOS-specific flag; mobile-web-app-
+       capable is the standardized equivalent honored by other browsers. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <!-- black-translucent lets the app field extend under the status bar; the
+       shell applies env(safe-area-inset-top) so content clears the clock. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LTPApp" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/icons/icon-192.png" sizes="192x192" />
   <!-- Self-hosted fonts (Playfair Display + DM Sans). Served from our own
        origin so the CSP can drop fonts.googleapis.com / fonts.gstatic.com.
        See assets/fonts.css and docs/SECURITY_REVIEW.md L8. -->
@@ -218,5 +245,10 @@
        backend/main.py can use `script-src 'self'` without `'unsafe-inline'`.
        MUST load after app.js. -->
   <script src="mount.js"></script>
+
+  <!-- 9. PWA service-worker registration + "new version" prompt. Same-origin
+       file (CSP-safe, like mount.js). Loads last; registers on window 'load'
+       so it never blocks first paint. -->
+  <script src="components/register-sw.js"></script>
 </body>
 </html>
