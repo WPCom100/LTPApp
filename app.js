@@ -399,7 +399,10 @@ function LTPSignedInApp(props) {
   }
 
   return h(React.Fragment, null,
-   h("div", { style: { display: "flex", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
+   // Shell frame. Desktop = a row (sidebar | content). Mobile = a column
+   // (content | bottom tab bar) so the tab bar is an in-flow row at the bottom
+   // of the real 100dvh box rather than a position:fixed element (see below).
+   h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     !isMobile && h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
       h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
         h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
@@ -545,17 +548,18 @@ function LTPSignedInApp(props) {
       // the viewport edge. Padding on this wrapper (not the inner scroll
       // columns) works in every engine — WebKit ignores padding-bottom on a
       // scrolling flex container, so the inner-column approach fails in Safari.
-      // On mobile, reserve bottom space for the fixed tab bar (nav height +
-      // home-indicator inset) so the last content clears it. Padding lives on
-      // this wrapper, not inner scroll columns (WebKit ignores padding-bottom
-      // on a scrolling flex child — same reason noted for the builder above).
-      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 16px" : (isMobile ? "14px 14px calc(64px + env(safe-area-inset-bottom))" : "22px") } }, renderModule())
-    )
+      // The mobile tab bar is a sibling flex row below (not overlaying), so no
+      // extra bottom clearance is needed here for it.
+      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 16px" : (isMobile ? "14px 14px 16px" : "22px") } }, renderModule())
+    ),
+    // Mobile bottom tab bar — an in-flow row at the bottom of the shell COLUMN,
+    // deliberately NOT position:fixed. A fixed bottom:0 bar in an iOS standalone
+    // PWA anchors to the layout viewport, which can sit above the physical
+    // screen bottom and leave a large dead gap beneath the bar; as a flex child
+    // it's pinned to the real 100dvh shell box. Hidden in the full-screen
+    // builders (they own the whole screen and provide their own Back control).
+    isMobile && !isQuoteBuilder && h(LTPBottomNav, { activeModule: activeModule, isAdmin: isAdmin, nav: nav, onMore: function() { setMoreOpen(true); } })
    ),
-   // Mobile bottom tab bar — primary sections + a "More" sheet for the rest.
-   // Hidden in the full-screen builders (they own the whole screen and provide
-   // their own Back control), mirroring the topbar-hidden behavior.
-   isMobile && !isQuoteBuilder && h(LTPBottomNav, { activeModule: activeModule, isAdmin: isAdmin, nav: nav, onMore: function() { setMoreOpen(true); } }),
    isMobile && moreOpen && h(LTPMoreSheet, { route: route, isAdmin: isAdmin, nav: nav, onClose: function() { setMoreOpen(false); } }),
    h(window.LTPErrorToasts),
    h(window.LTPCrewOutbox)
@@ -630,8 +634,11 @@ function LTPBottomNav(props) {
         return h("circle", { key: cx, cx: cx, cy: 12, r: 2, fill: moreActive ? B.accent : B.textMut });
       }))));
 
+  // In-flow flex row (flexShrink:0) pinned to the bottom of the shell column by
+  // the parent's flex layout — NOT position:fixed (see the shell comment). The
+  // safe-area-bottom padding keeps the labels above the home indicator.
   return h("nav", { className: "ltp-bottom-nav",
-    style: { position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 900, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
+    style: { flexShrink: 0, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
     tabs);
 }
 
