@@ -210,16 +210,24 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         fcon.length === 0 && h(window.EmptyState, { text: "No contacts match your search." }),
         fcon.map(function(c) {
           var lk = companies.filter(function(co) { return c.companyIds.includes(co.id); });
+          var cname = c.firstName + " " + c.lastName;
           return h(window.LTPRow, { key: c.id, onClick: function() { setEditContactId(c.id); } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-              h("div", null,
-                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, c.firstName + " " + c.lastName),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, c.role + " \u00b7 " + c.email + " \u00b7 " + c.phone)),
-              h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                lk.map(function(co) {
-                  return h("span", { key: co.id, onClick: function(e) { e.stopPropagation(); setSelectedCompanyId(co.id); },
-                    style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
-                }))));
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 } },
+              h("div", { style: { minWidth: 0 } },
+                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, cname),
+                h("div", { style: { fontSize: "11px", color: B.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isMobile ? "nowrap" : "normal" } }, c.role + " \u00b7 " + c.email + " \u00b7 " + c.phone)),
+              // On mobile the right cluster is tap-to-call / tap-to-email; on
+              // desktop it stays the linked-company chips (contacts detail still
+              // lists companies either way).
+              isMobile
+                ? h("div", { style: { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" } },
+                    h(window.LTPCallBtn, { phone: c.phone, name: cname }),
+                    h(window.LTPMailBtn, { email: c.email, name: cname }))
+                : h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                    lk.map(function(co) {
+                      return h("span", { key: co.id, onClick: function(e) { e.stopPropagation(); setSelectedCompanyId(co.id); },
+                        style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
+                    }))));
         })
       )
     ),
