@@ -152,6 +152,7 @@
   //   CREW ROSTER TAB
   // ═══════════════════════════════════════════════════════════════════════════
   function CrewRoster({ contacts, setContacts, services, allPositions, settings }) {
+    var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingCrew, setEditingCrew] = useState(null);
@@ -316,10 +317,15 @@
                 (c.crewRoles || []).join(", ") + (shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
               h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } },
                 c.crewNotes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.crewNotes))),
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-              (c.crewDepartments || []).map(function(d) {
-                return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, d);
-              }),
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+              // Mobile swaps the department chips for tap-to-call / tap-to-email
+              // (the chips are visible when the row is tapped open to edit).
+              isMobile
+                ? [ h(window.LTPCallBtn, { key: "call", phone: c.phone, name: c.firstName + " " + c.lastName }),
+                    h(window.LTPMailBtn, { key: "mail", email: c.email, name: c.firstName + " " + c.lastName }) ]
+                : (c.crewDepartments || []).map(function(d) {
+                    return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, d);
+                  }),
               h(window.Badge, { status: c.crewStatus || "active" }))
           );
         }))
@@ -330,6 +336,7 @@
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
   function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests }) {
+    var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
@@ -868,7 +875,13 @@
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 600, background: B.danger + "18", border: "1px solid " + B.danger + "33", borderRadius: "3px", padding: "2px 8px" } }, "Declined"),
                             h("button", { onClick: function() {
                               booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
-                            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign"))
+                            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign")),
+                          // Mobile: tap-to-call the assigned crew member straight from
+                          // the booking row (field leads confirming a shift on-site).
+                          isMobile && pos.crewId && (function() {
+                            var acm = contacts.find(function(c) { return c.id === pos.crewId; });
+                            return acm ? h(window.LTPCallBtn, { phone: acm.phone, name: acm.firstName + " " + acm.lastName, size: 36 }) : null;
+                          })()
                         );
                       })
                     )
@@ -1149,13 +1162,14 @@
               ? h("div", { style: { fontSize: "13px", color: B.textMut, fontStyle: "italic", padding: "4px 2px 10px" } }, "No crew scheduled.")
               : rows.map(function(r, ri) {
                   var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
-                  var phone = r.crew.phone ? String(r.crew.phone).replace(/[^\d+]/g, "") : "";
+                  var cname = r.crew.firstName + " " + r.crew.lastName;
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
                     h("div", { style: { flex: 1, minWidth: 0 } },
-                      h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, r.crew.firstName + " " + r.crew.lastName),
+                      h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
                       h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.role + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
                     h(window.Badge, { status: r.pos.status }),
-                    phone && h("a", { href: "tel:" + phone, "aria-label": "Call " + r.crew.firstName, className: "ltp-tap", onClick: function(e) { e.stopPropagation(); }, style: { flexShrink: 0, width: 40, height: 40, borderRadius: "50%", background: B.accent + "18", border: "1px solid " + B.accent + "44", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", fontSize: "16px" } }, "\ud83d\udcde"));
+                    h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
+                    h(window.LTPMailBtn, { email: r.crew.email, name: cname }));
                 }));
         }));
     }

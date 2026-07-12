@@ -220,6 +220,29 @@
     }, icon || "+");
   };
 
+  // Round tap-to-call / tap-to-email links for mobile list rows. They return
+  // null when there's no number/address so callers can drop them in without a
+  // guard, and stopPropagation so tapping the action never fires the row's own
+  // onClick (which usually opens an editor/detail). Used by the crew agenda,
+  // Crew Roster, Assignments, and CRM contact rows.
+  function contactActionBtn(href, ariaLabel, glyph, size) {
+    var s = size || 40;
+    return h("a", { href: href, "aria-label": ariaLabel, className: "ltp-tap",
+      onClick: function(e) { e.stopPropagation(); },
+      style: { flexShrink: 0, width: s, height: s, borderRadius: "50%", background: B.accent + "18",
+               border: "1px solid " + B.accent + "44", display: "flex", alignItems: "center",
+               justifyContent: "center", textDecoration: "none", fontSize: "16px" } }, glyph);
+  }
+  window.LTPCallBtn = function({ phone, name, size }) {
+    var digits = phone ? String(phone).replace(/[^\d+]/g, "") : "";
+    if (!digits) return null;
+    return contactActionBtn("tel:" + digits, "Call " + (name || "").trim(), "📞", size);
+  };
+  window.LTPMailBtn = function({ email, name, size }) {
+    if (!email) return null;
+    return contactActionBtn("mailto:" + email, "Email " + (name || "").trim(), "✉️", size);
+  };
+
   window.EmptyState = function({ text }) {
     return h("div", { style: { padding: "32px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, text);
   };
