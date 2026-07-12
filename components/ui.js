@@ -199,6 +199,27 @@
     );
   };
 
+  // ── Mobile floating action button (FAB) ────────────────────────────────────
+  // Thumb-reachable create affordance, bottom-right above the tab bar + home
+  // indicator. Rendered by list views only on mobile (window.LTP_useIsMobile),
+  // replacing the small top-right "+ New" button. label is the aria-label.
+  window.LTPFab = function({ onClick, label, icon }) {
+    return h("button", {
+      onClick: onClick,
+      "aria-label": label || "Create",
+      className: "ltp-tap",
+      style: {
+        position: "fixed", right: 16, bottom: "calc(78px + env(safe-area-inset-bottom))",
+        zIndex: 800, width: 56, height: 56, borderRadius: "50%",
+        background: B.gradBtn, color: B.btnInk, border: "none",
+        boxShadow: "0 6px 20px rgba(239,88,34,0.42)",
+        fontSize: "30px", fontWeight: 400, lineHeight: 1, cursor: "pointer",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "inherit",
+      },
+    }, icon || "+");
+  };
+
   window.EmptyState = function({ text }) {
     return h("div", { style: { padding: "32px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, text);
   };

@@ -67,6 +67,7 @@
   //   INVOICE LIST
   // ═══════════════════════════════════════════════════════════════════════════
   function InvoiceList({ invoices, companies, contacts, projects, quotes }) {
+    var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [search, setSearch] = useState("");
     var statuses = ["all", "draft", "sent", "partial", "paid", "overdue"];
@@ -97,18 +98,23 @@
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Invoices ",
           h("span", { style: { fontSize: "13px", color: B.textMut, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 } }, "(" + invoices.length + ")")),
-        h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
+        // "+ New" moves to a floating action button on mobile (see LTPFab below).
+        !isMobile && h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
         h(window.StatCard, { label: "Paid", value: "$" + Math.round(totalPaid).toLocaleString(), accent: B.success }),
         h(window.StatCard, { label: "Pending", value: "$" + Math.round(totalPending).toLocaleString(), accent: B.warn }),
         h(window.StatCard, { label: "Overdue", value: "$" + Math.round(totalOverdue).toLocaleString(), accent: B.danger })),
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
-        statuses.map(function(f) {
-          return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
-        }),
+      // Filter chips: a horizontally-scrollable strip on mobile with the search
+      // on its own full-width row below; a single inline row on desktop.
+      h("div", { style: isMobile ? { marginBottom: 14 } : { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
+        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } : { display: "contents" } },
+          statuses.map(function(f) {
+            return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
+          })),
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices\u2026",
-          style: { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
+          style: isMobile ? { width: "100%", marginTop: 8, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } : { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
+      isMobile && h(window.LTPFab, { label: "New invoice", onClick: function() { nav("invoices/new"); } }),
       h(window.LTPList, null,
         filtered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
         filtered.map(function(inv) {
