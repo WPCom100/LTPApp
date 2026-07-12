@@ -533,7 +533,17 @@
           dayBookings.push({ type: "single", pos: pos, items: [pos.schedTitle], allPosIds: [pos] });
           return;
         }
-        var ck = pos.crewId;
+        // Merge a person's day-parts into ONE row PER ROLE (serviceId), not per
+        // person: two distinct roles are two bookings with their own pay and
+        // their own resolve/cancel scope, so they must stay separate rows —
+        // otherwise the second role's label is hidden and a cancel bundles both.
+        // Same role across several schedule items still collapses (same key).
+        // This used to fall out of the conflict split (different roles same day
+        // were always flagged); now that CONFIRMED double-bookings are no longer
+        // flagged, the key has to enforce it directly. Free-text roles (no
+        // serviceId) fall back to posId, so each stands alone — matching how the
+        // conflict detector already keys them.
+        var ck = pos.crewId + "|" + (pos.serviceId || pos.posId);
         if (!crewMap[ck]) {
           crewMap[ck] = { type: "day", pos: pos, items: [], allPosIds: [] };
           dayBookings.push(crewMap[ck]);

@@ -51,7 +51,7 @@
           if (!p.crewId || p.status === "declined") return;
           var key = p.crewId + "|" + s.date;
           if (!byCrewDate[key]) byCrewDate[key] = [];
-          byCrewDate[key].push({ posId: p.id, serviceId: p.serviceId, schedTitle: s.title, projectName: "this project" });
+          byCrewDate[key].push({ posId: p.id, serviceId: p.serviceId, status: p.status, schedTitle: s.title, projectName: "this project" });
         });
       });
       Object.keys(byCrewDate).forEach(function(key) {
@@ -61,6 +61,10 @@
         b.forEach(function(bk) { svcIds[bk.serviceId || bk.posId] = true; });
         if (Object.keys(svcIds).length < 2) return; // same role across items = normal
         b.forEach(function(bk) {
+          // Confirmed = settled/purposeful — never badge the confirmed side
+          // (same rule as LTP_detectCrewConflicts); it still shows up in the
+          // unsettled side's list via `others`.
+          if (bk.status === "confirmed") return;
           var others = b.filter(function(o) { return o.posId !== bk.posId; });
           if (!merged[bk.posId]) merged[bk.posId] = [];
           others.forEach(function(o) {
@@ -71,12 +75,15 @@
           });
         });
       });
-      // Also check cross-project for newly assigned (unsaved) crew
+      // Also check cross-project for newly assigned (unsaved) crew. Confirmed
+      // positions are skipped here too — a settled booking is purposeful, so
+      // it never wears the passive badge (the assign-time dialog still warns
+      // BEFORE a double-booking is created).
       if (checkCrewConflict) {
         (schedule || []).forEach(function(s) {
           if (!s.date) return;
           (s.positions || []).forEach(function(p) {
-            if (!p.crewId || p.status === "declined" || merged[p.id]) return;
+            if (!p.crewId || p.status === "declined" || p.status === "confirmed" || merged[p.id]) return;
             var otherBookings = checkCrewConflict(p.crewId, s.date);
             if (otherBookings.length > 0) {
               merged[p.id] = otherBookings.map(function(ob) { return { projectName: ob, posId: "ext" }; });
@@ -142,22 +149,34 @@
         return Object.assign({}, s, { positions: (s.positions || []).map(function(p) { return p.id === posId ? Object.assign({}, p, patch) : p; }) });
       }));
     }
+    // Status for the clicked position after a crew pick: a DIFFERENT (or
+    // cleared) person means the prior request/answer no longer applies, so it
+    // resets to "open" and re-enters the send flow — the same rule the Labor
+    // reassign path uses (modules/labor.js), and the invariant crew_integrity's
+    // stale-write guard relies on (a status downgrade always changes/clears the
+    // assignee). Without this, swapping a confirmed slot to a new person would
+    // leave them "confirmed", which the suppress-confirmed conflict rule would
+    // then hide — a double-booking for someone who never accepted. Re-picking
+    // the same person keeps the status.
+    function reassignStatus(pos, crewId) {
+      return (crewId && crewId === pos.crewId) ? pos.status : "open";
+    }
     // Auto-assign crew to matching roles on all items the same day
     function doAssignCrewToDay(schedId, pos, crewId) {
       var item = schedule.find(function(s) { return s.id === schedId; });
       if (!item || !item.date || !pos.serviceId) {
-        updatePosition(schedId, pos.id, { crewId: crewId });
+        updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
         return;
       }
       var sameDayItems = schedule.filter(function(s) { return s.date === item.date; });
       if (sameDayItems.length <= 1) {
-        updatePosition(schedId, pos.id, { crewId: crewId });
+        updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
         return;
       }
       onChange(schedule.map(function(s) {
         if (s.date !== item.date) return s;
         return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
-          if (s.id === schedId && p.id === pos.id) return Object.assign({}, p, { crewId: crewId });
+          if (s.id === schedId && p.id === pos.id) return Object.assign({}, p, { crewId: crewId, status: reassignStatus(pos, crewId) });
           if (p.serviceId === pos.serviceId && !p.crewId && p.status === "open") return Object.assign({}, p, { crewId: crewId });
           return p;
         })});
@@ -503,7 +522,11 @@
                         h("select", { value: pos.crewId || "", onChange: function(e) {
                           var cid = Number(e.target.value) || null;
                           if (cid) { assignCrewToDay(s.id, pos, cid); }
-                          else { updatePosition(s.id, pos.id, { crewId: null }); }
+                          // Clearing the crew reopens the slot — an unassigned position
+                          // can't stay requested/accepted/confirmed (same reason as
+                          // reassignStatus, and it keeps the stale-write guard's
+                          // "downgrade clears the assignee" invariant intact).
+                          else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
                         }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Crew\u2026"),
                           // Role-tagged crew first; everyone else stays reachable under
