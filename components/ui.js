@@ -2,6 +2,38 @@
 (function() {
   var B = window.LTP_THEME, SC = window.LTP_STATUS_COLORS, h = React.createElement, useState = React.useState;
 
+  // ── Shared mobile breakpoint ───────────────────────────────────────────────
+  // One source of truth for "are we on a phone-width screen", matching the
+  // 600px breakpoint the public crew/client views and the index.html mobile
+  // CSS layer use. window.LTP_useIsMobile() is a React hook that re-renders on
+  // viewport crossing the breakpoint; components branch inline styles / choose
+  // card-vs-table / agenda-vs-grid on it. Desktop ( > 600px ) → false.
+  window.LTP_MOBILE_QUERY = "(max-width: 600px)";
+  window.LTP_useIsMobile = function() {
+    var useEffect = React.useEffect;
+    function read() {
+      try { return window.matchMedia(window.LTP_MOBILE_QUERY).matches; }
+      catch (e) { return false; }
+    }
+    var pair = useState(read);
+    var isMobile = pair[0], setIsMobile = pair[1];
+    useEffect(function() {
+      var m;
+      try { m = window.matchMedia(window.LTP_MOBILE_QUERY); } catch (e) { return; }
+      function onChange() { setIsMobile(m.matches); }
+      // addEventListener is the modern API; addListener is the Safari < 14
+      // fallback (older iOS still in the field for a home-screen PWA).
+      if (m.addEventListener) m.addEventListener("change", onChange);
+      else if (m.addListener) m.addListener(onChange);
+      onChange();
+      return function() {
+        if (m.removeEventListener) m.removeEventListener("change", onChange);
+        else if (m.removeListener) m.removeListener(onChange);
+      };
+    }, []);
+    return isMobile;
+  };
+
   window.Badge = function({ status }) {
     var c = SC[status] || SC.draft;
     return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 8px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" } }, status);
@@ -58,7 +90,7 @@
       label && h("div", { style: { fontSize: "13px", color: B.textSec, marginTop: 14, textAlign: "center" } }, label));
   };
   window.LTPLoadingScreen = function({ label }) {
-    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" } },
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", height: "100dvh", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif" } },
       h(window.LTPLoadingBar, { label: label || "Loading…" }));
   };
 
@@ -83,7 +115,11 @@
     return digits.length === 7 || digits.length === 10 || digits.length === 11;
   };
 
-  window.LTPInput = function({ label, value, onChange, placeholder, type, textarea, style: sx, validate, onBlur: onBlurProp }) {
+  // inputMode/step/enterKeyHint/autoComplete pass straight through to the
+  // control so callers can request the right iOS keyboard (inputMode:"decimal"
+  // for currency, "numeric" for counts, "tel"/"email"), without every field
+  // needing a bespoke element. Unset props are simply undefined (ignored).
+  window.LTPInput = function({ label, value, onChange, placeholder, type, textarea, style: sx, validate, onBlur: onBlurProp, inputMode, step, enterKeyHint, autoComplete }) {
     var [touched, setTouched] = useState(false);
     var error = touched && validate ? validate(value) : null;
     var borderColor = error ? B.danger : B.border;
@@ -108,8 +144,8 @@
     var shownPlaceholder = (isNum && (placeholder == null || placeholder === "")) ? "0" : placeholder;
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: error ? B.danger : B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
-      textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, style: Object.assign({}, fs, { resize: "vertical" }) })
-               : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, style: fs }),
+      textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: Object.assign({}, fs, { resize: "vertical" }) })
+               : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, inputMode: inputMode, step: step, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
   };
@@ -128,19 +164,26 @@
   // Tabs read as the uppercase letter-spaced "eyebrow" overlines from the
   // customer views, with the active one underlined in brand orange.
   window.LTPTabs = function({ tabs, active, onChange }) {
-    return h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18 } },
+    // The strip scrolls horizontally instead of wrapping/overflowing so a wide
+    // tab set (e.g. the 7-tab project detail) stays fully reachable on a phone.
+    // scrollbarWidth:none + the webkit rule keep the scrollbar invisible.
+    return h("div", { className: "ltp-tabs-strip", style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" } },
       tabs.map(function(t) {
         return h("button", { key: t.id, onClick: function() { onChange(t.id); },
-          style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "9px 14px", fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit" }
+          className: "ltp-tap",
+          style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "9px 14px", fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }
         }, t.label + (t.count !== undefined ? " (" + t.count + ")" : ""));
       })
     );
   };
 
+  // On mobile (<=600px) the ltp-modal-backdrop / ltp-modal-panel classes are
+  // upgraded by the index.html CSS layer into a full-screen sheet (no floating
+  // card, safe-area insets). Desktop keeps the centered fixed-width dialog.
   window.LTPModal = function({ title, onClose, children, wide, disableBackdrop }) {
-    return h("div", { style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+    return h("div", { className: "ltp-modal-backdrop", style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
       onClick: disableBackdrop ? null : onClose },
-      h("div", { onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
+      h("div", { className: "ltp-modal-panel", onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
           h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 700, color: B.text, letterSpacing: "-0.01em" } }, title),
           h("button", { onClick: onClose, style: { background: "none", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer" } }, "\u2715")
