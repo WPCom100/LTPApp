@@ -15,6 +15,7 @@
   }
 
   window.QuotesList = function({ quotes, setQuotes, companies, contacts, projects }) {
+    var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter]     = useState("all");
     var [search, setSearch]     = useState("");
     var [sortMode, setSortMode] = useState("date-desc");
@@ -49,25 +50,26 @@
     var sorts = [{ k: "date-desc", l: "Newest" }, { k: "date-asc", l: "Oldest" }, { k: "ref", l: "Ref #" }];
 
     return h("div", null,
-      // Toolbar
+      // Toolbar — filter chips scroll horizontally on mobile; "+ New" → FAB.
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap" } },
           filters.map(function(f) {
             var active = filter === f;
-            return h("button", { key: f, onClick: function() { setFilter(f); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
-                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
-                       padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, f);
+            return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
+                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px",
+                       padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           })
         ),
-        h("button", { onClick: function() { nav("quotes/new"); },
+        !isMobile && h("button", { onClick: function() { nav("quotes/new"); },
           style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote")
       ),
+      isMobile && h(window.LTPFab, { label: "New quote", onClick: function() { nav("quotes/new"); } }),
 
       // Search + sort
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
+      h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginBottom: 10, gap: 8 } },
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
-          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } }),
+          style: isMobile ? { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } : { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } }),
         h("div", { style: { display: "flex", gap: 4 } },
           sorts.map(function(s) {
             var active = sortMode === s.k;
