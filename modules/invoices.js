@@ -555,6 +555,12 @@
     // detailed comments on the flow.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
+      // iOS standalone blocks BOTH programmatic downloads and window.open()
+      // called after an async fetch (outside the click gesture). So on mobile
+      // open a blank tab synchronously now (inside the gesture) and redirect it
+      // to the PDF once ready — it opens in the iOS PDF viewer. Desktop keeps
+      // the direct download.
+      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
       fetch("/api/invoices/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
         .then(function(r) {
@@ -566,12 +572,16 @@
           return r.json();
         })
         .then(function(resp) {
-          var a = document.createElement("a");
-          a.href = resp.downloadUrl;
-          a.download = resp.filename || ("INV-" + draft.id + ".pdf");
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          if (pdfWin) {
+            pdfWin.location = resp.downloadUrl;
+          } else {
+            var a = document.createElement("a");
+            a.href = resp.downloadUrl;
+            a.download = resp.filename || ("INV-" + draft.id + ".pdf");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
           var actEntry = {
             id: "pdf-" + Date.now(),
             date: todayISO(),
@@ -589,6 +599,7 @@
           setInvoices(function(prev) { return prev.map(function(inv) { return inv.id === draft.id ? updated : inv; }); });
         })
         .catch(function(err) {
+          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
           if (window.LTP_API_ERRORS) {
             window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST invoices/" + draft.id + "/pdf", error: String(err) });
           }
@@ -598,6 +609,22 @@
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });
+    }
+
+    // Native share of the invoice's public link via the iOS/Android share sheet
+    // (Messages, Mail, WhatsApp, AirDrop…), with clipboard then mailto fallbacks
+    // for browsers without the Web Share API.
+    function shareInvoice() {
+      if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the invoice before sharing so it has a stable link."); return; }
+      var url = window.location.origin + "/#/view/invoice/" + draft.shareToken;
+      var title = refDisplay + (displayName ? " — " + displayName : "");
+      if (navigator.share) {
+        navigator.share({ title: title, text: title, url: url }).catch(function() {});
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function() { if (window.LTP_toast) window.LTP_toast("Invoice link copied", { variant: "success" }); });
+      } else {
+        window.location.href = "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(url);
+      }
     }
     var [payMethod, setPayMethod] = useState("check");
     var [payRef, setPayRef] = useState("");
@@ -1457,6 +1484,10 @@
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
             "Preview"
           ),
+          // Share the public invoice link via the native share sheet (or copy /
+          // mailto fallback). Handy on mobile to hand an invoice to Messages/Mail.
+          draft.id != null && draft.shareToken && h("button", { onClick: shareInvoice,
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Share"),
           // Recall to draft (any non-draft invoice)
           !isDraft && h("button", { onClick: recallToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
