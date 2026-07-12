@@ -1,30 +1,56 @@
 // Reliable app viewport height for iOS.
 //
-// CSS 100vh / 100dvh are unreliable inside an installed iOS home-screen PWA:
-// on several iOS builds they report the SAFE-AREA height (screen minus the
-// status-bar / home-indicator insets) rather than the full screen, which
-// leaves a dead band of background below a bottom-anchored shell. The desktop
-// emulator has no standalone/safe-area split, so it never reproduces it.
+// CSS 100vh / 100dvh — and even window.innerHeight — are wrong inside an
+// installed iOS home-screen PWA: in standalone mode they report the height
+// MINUS the top safe-area inset (status bar / Dynamic Island), even though the
+// black-translucent webview actually spans the full screen. Measured on an
+// iPhone 17 Pro Max: innerHeight = 100dvh = 894, safe-inset-top = 62,
+// screen.height = 956, and 894 + 62 = 956. Sizing the shell to 894 leaves a
+// 62px dead band at the bottom. A desktop emulator has no standalone/safe-area
+// split, so it never reproduces this.
 //
-// window.innerHeight (and visualViewport) report the true visible height in
-// both Safari and standalone, so we publish it as the --app-h custom property
-// and size #root from it. #root keeps `height: 100dvh` as the pre-JS fallback,
-// so first paint is already close and this only corrects the iOS discrepancy.
+// Fix: publish the true drawable height as --app-h and size #root from it.
+//   - Browser / Safari: innerHeight (tracks the dynamic toolbars correctly).
+//   - Standalone: innerHeight + safe-area-inset-top, capped at screen.height,
+//     to add back the inset iOS wrongly subtracts. In landscape the top inset
+//     is 0, so this is a no-op there. #root keeps 100dvh as the pre-JS fallback.
 //
 // Loaded FIRST (before any other script) so --app-h is set before React mounts.
-// We intentionally use innerHeight, not visualViewport.height: the latter
-// shrinks when the on-screen keyboard opens, which would make the whole shell
-// (and the bottom tab bar) jump — we want a stable full-height shell with the
-// keyboard overlaying it.
+// We use innerHeight, not visualViewport.height: the latter shrinks when the
+// keyboard opens, which would make the whole shell (and the bottom tab bar)
+// jump — we want a stable full-height shell with the keyboard overlaying it.
 (function () {
   "use strict";
+
+  function isStandalone() {
+    return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) ||
+           window.navigator.standalone === true;
+  }
+
+  // Read env(safe-area-inset-top) in px via a hidden probe (0 when there's no
+  // inset, or before viewport-fit=cover resolves).
+  function safeInsetTop() {
+    if (!document.body) return 0;
+    var probe = document.createElement("div");
+    probe.style.cssText = "position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);";
+    document.body.appendChild(probe);
+    var v = parseFloat(getComputedStyle(probe).paddingTop) || 0;
+    probe.remove();
+    return v;
+  }
+
   function setAppHeight() {
     // innerHeight can be 0 very early in some engines; guard against it so we
     // never pin the shell to a zero height.
     var h = window.innerHeight;
-    if (h && h > 0) {
-      document.documentElement.style.setProperty("--app-h", h + "px");
+    if (!h || h <= 0) return;
+    if (isStandalone()) {
+      var target = h + safeInsetTop();       // add back the inset iOS subtracts
+      var sh = (window.screen && window.screen.height) || 0;
+      if (sh && target > sh) target = sh;     // never exceed the physical screen
+      h = target;
     }
+    document.documentElement.style.setProperty("--app-h", h + "px");
   }
   setAppHeight();
   window.addEventListener("resize", setAppHeight);
@@ -39,7 +65,7 @@
   // the raw viewport metrics (innerHeight vs CSS 100dvh vs screen vs safe-area
   // insets vs --app-h). Shown only on mobile-width / installed app, never on a
   // desktop browser. Also auto-opens if ?vhdebug is present (works in Safari).
-  var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+  var standalone = isStandalone();
   var forceOn = /vhdebug/.test(location.search) || /vhdebug/.test(location.hash);
   if (standalone || window.innerWidth <= 600 || forceOn) {
     var overlayVisible = forceOn;
