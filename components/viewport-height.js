@@ -33,14 +33,18 @@
   // a resize may not fire but the height can have changed (rotation while away).
   window.addEventListener("pageshow", setAppHeight);
 
-  // ── Opt-in diagnostic ──────────────────────────────────────────────────────
-  // Add ?vhdebug to the URL (e.g. https://…/?vhdebug#/dashboard) to overlay the
-  // raw viewport metrics. Off by default — never shows in normal use. Lets us
-  // see exactly what the device reports (innerHeight vs CSS 100dvh vs screen vs
-  // safe-area insets) without a Mac + Web Inspector.
-  if (/vhdebug/.test(location.search) || /vhdebug/.test(location.hash)) {
-    var draw = function () {
-      if (!document.body) { return; }
+  // ── TEMPORARY on-screen diagnostic (remove once the iOS gap is resolved) ────
+  // A standalone home-screen app has no address bar, so a URL flag can't be
+  // typed. Instead we show a small "VH" button; tapping it toggles an overlay of
+  // the raw viewport metrics (innerHeight vs CSS 100dvh vs screen vs safe-area
+  // insets vs --app-h). Shown only on mobile-width / installed app, never on a
+  // desktop browser. Also auto-opens if ?vhdebug is present (works in Safari).
+  var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+  var forceOn = /vhdebug/.test(location.search) || /vhdebug/.test(location.hash);
+  if (standalone || window.innerWidth <= 600 || forceOn) {
+    var overlayVisible = forceOn;
+
+    function overlayText() {
       var probe = document.createElement("div");
       probe.style.cssText = "position:fixed;top:0;left:0;visibility:hidden;pointer-events:none;width:0;height:100dvh;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);";
       document.body.appendChild(probe);
@@ -49,26 +53,45 @@
       var sat = cs.paddingTop, sab = cs.paddingBottom;
       probe.remove();
       var vv = window.visualViewport || {};
-      var standalone = (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
-      var box = document.getElementById("__vhdebug") || document.createElement("pre");
-      box.id = "__vhdebug";
-      box.style.cssText = "position:fixed;left:8px;top:8px;z-index:99999;margin:0;padding:8px 10px;background:rgba(0,0,0,.82);color:#5FD08A;font:11px/1.5 ui-monospace,Menlo,monospace;border:1px solid #EF5822;border-radius:8px;max-width:70vw;white-space:pre;pointer-events:none;";
-      box.textContent = [
+      return [
         "standalone: " + standalone,
         "innerHeight: " + window.innerHeight,
         "clientHeight: " + document.documentElement.clientHeight,
         "100dvh(px): " + dvh,
-        "screen.height: " + (window.screen && window.screen.height),
+        "screen.h: " + (window.screen && window.screen.height),
         "visualVP.h: " + Math.round(vv.height || 0) + " off:" + Math.round(vv.offsetTop || 0),
         "--app-h: " + document.documentElement.style.getPropertyValue("--app-h"),
-        "safe top/bot: " + sat + " / " + sab,
+        "safe t/b: " + sat + " / " + sab,
       ].join("\n");
-      if (!box.parentNode) document.body.appendChild(box);
-    };
-    draw();
-    window.addEventListener("resize", draw);
-    window.addEventListener("orientationchange", draw);
-    // body may not be parsed yet if this ever moves into <head>.
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", draw);
+    }
+
+    function render() {
+      var box = document.getElementById("__vhdebug");
+      if (!overlayVisible) { if (box) box.remove(); return; }
+      if (!box) {
+        box = document.createElement("pre");
+        box.id = "__vhdebug";
+        box.style.cssText = "position:fixed;left:8px;top:calc(env(safe-area-inset-top) + 46px);z-index:99998;margin:0;padding:8px 10px;background:rgba(0,0,0,.85);color:#5FD08A;font:11px/1.5 ui-monospace,Menlo,monospace;border:1px solid #EF5822;border-radius:8px;max-width:80vw;white-space:pre;pointer-events:none;";
+        document.body.appendChild(box);
+      }
+      box.textContent = overlayText();
+    }
+
+    function addButton() {
+      if (!document.body || document.getElementById("__vhbtn")) return;
+      var btn = document.createElement("button");
+      btn.id = "__vhbtn";
+      btn.type = "button";
+      btn.textContent = "VH";
+      btn.style.cssText = "position:fixed;top:calc(env(safe-area-inset-top) + 6px);right:8px;z-index:99999;width:38px;height:38px;border-radius:50%;background:#EF5822;color:#1B130D;border:none;font:700 12px/1 ui-monospace,Menlo,monospace;box-shadow:0 2px 10px rgba(0,0,0,.5);";
+      btn.addEventListener("click", function () { overlayVisible = !overlayVisible; render(); });
+      document.body.appendChild(btn);
+      render();
+    }
+
+    if (document.body) addButton();
+    else document.addEventListener("DOMContentLoaded", addButton);
+    window.addEventListener("resize", render);
+    window.addEventListener("orientationchange", render);
   }
 })();
