@@ -33,7 +33,7 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-var CACHE_VERSION = 'ltp-shell-v1';
+var CACHE_VERSION = 'ltp-shell-v2';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -42,6 +42,7 @@ var SAME_ORIGIN_PRECACHE = [
   '/favicon.ico',
   '/assets/fonts.css',
   // Boot chain — the scripts index.html loads before the app can render.
+  '/components/viewport-height.js',
   '/router.js',
   '/theme.js',
   '/app.js',

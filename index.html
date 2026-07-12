@@ -44,10 +44,14 @@
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
        quote builder's Totals) below the visible viewport. `100vh` first as a
        fallback for engines without dvh support. */
-    #root { height: 100vh; height: 100dvh; }
+    /* --app-h is the true visible height set by components/viewport-height.js
+       (window.innerHeight); it corrects iOS standalone where 100dvh can report
+       the safe-area height and leave a dead gap below the shell. 100vh/100dvh
+       remain as pre-JS fallbacks (cascade: last valid declaration wins). */
+    #root { height: 100vh; height: 100dvh; height: var(--app-h, 100dvh); }
     /* Calendar grid is a fixed-height, viewport-anchored container (chrome above
        it is ~134px). Same iOS dvh rationale as #root; vh first as a fallback. */
-    .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); }
+    .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); height: calc(var(--app-h, 100dvh) - 134px); }
     /* Email Send-modal editor: give every top-level paragraph the SAME spacing
        the sent mail uses (theme.js PARA_STYLE = margin:0;line-height:1) —
        single-spaced, the sender adds blank lines for gaps — regardless of
@@ -169,6 +173,11 @@
        at the END of that group, and confirm anything it reads is loaded
        above. If something errors on load, that's almost always the cause.
        ════════════════════════════════════════════════════════════════════ -->
+
+  <!-- App viewport height — runs FIRST (no deps) so --app-h is set before React
+       mounts. Fixes the iOS standalone bottom gap where CSS 100dvh underreports
+       the screen height. See components/viewport-height.js. -->
+  <script src="components/viewport-height.js"></script>
 
   <!-- 0. Auth check — fires GET /auth/me; populates window.LTP_AUTH_USER -->
   <script src="components/auth.js"></script>
