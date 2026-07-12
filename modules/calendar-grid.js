@@ -1,11 +1,20 @@
 // Calendar Grid — full page, project headers, schedule+meeting items, filters, click-to-tab
 (function() {
   var B = window.LTP_THEME, CAT_COLORS = window.LTP_CAT_COLORS, h = React.createElement, useState = React.useState;
+  var useEffect = React.useEffect, useRef = React.useRef;
   var ft = window.LTP_formatTime;
 
   window.CalendarGrid = function({ ctx }) {
     var [calFilter, setCalFilter] = useState("all");
     var isMobile = window.LTP_useIsMobile();
+    // On mobile the agenda auto-scrolls to today (or the next day with events)
+    // on mount, so the schedule opens on the current day rather than the 1st.
+    var todayRef = useRef(null);
+    useEffect(function() {
+      if (isMobile && todayRef.current) {
+        todayRef.current.scrollIntoView({ block: "start" });
+      }
+    }, [isMobile]);
     var year = ctx.calMonth.year, month = ctx.calMonth.month;
     var firstDay = new Date(year, month, 1).getDay();
     var daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -81,6 +90,15 @@
         if (agGroups.length) agendaDays.push({ day: ad, groups: agGroups });
       }
       var todayD = new Date();
+      // The day to open on: today if the shown month is the current month, else
+      // the first day-with-events on/after today (so it lands on the current or
+      // next scheduled day). null in other months → no auto-scroll.
+      var targetDay = null;
+      if (year === todayD.getFullYear() && month === todayD.getMonth()) {
+        for (var ti = 0; ti < agendaDays.length; ti++) {
+          if (agendaDays[ti].day >= todayD.getDate()) { targetDay = agendaDays[ti].day; break; }
+        }
+      }
       return h("div", { style: { display: "flex", flexDirection: "column" } },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
           h(window.Btn, { small: true, variant: "ghost", onClick: prevMonth }, "← Prev"),
@@ -98,7 +116,7 @@
               var dObj = new Date(year, month, entry.day);
               var isToday = year === todayD.getFullYear() && month === todayD.getMonth() && entry.day === todayD.getDate();
               var dateLabel = dObj.toLocaleDateString("default", { weekday: "short", month: "short", day: "numeric" });
-              return h("div", { key: entry.day, style: { marginBottom: 18 } },
+              return h("div", { key: entry.day, ref: entry.day === targetDay ? todayRef : null, style: { marginBottom: 18, scrollMarginTop: "8px" } },
                 h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, dateLabel + (isToday ? " · Today" : "")),
                 entry.groups.map(function(g, gi) {
                   var p = g.project;
