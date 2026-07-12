@@ -1005,6 +1005,11 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function LaborCalendar({ allPositions }) {
     var [monthOffset, setMonthOffset] = useState(0);
+    var isMobile = window.LTP_useIsMobile();
+    var todayRef = React.useRef(null);
+    React.useEffect(function() {
+      if (isMobile && todayRef.current) todayRef.current.scrollIntoView({ block: "start" });
+    }, [isMobile, monthOffset]);
     var now = new Date();
     var viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
     var year = viewDate.getFullYear(), month = viewDate.getMonth();
@@ -1018,6 +1023,37 @@
       var dateStr = year + "-" + String(month + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
       var dayPos = allPositions.filter(function(p) { return p.date === dateStr; });
       cells.push({ day: d, date: dateStr, positions: dayPos });
+    }
+
+    // \u2500\u2500 Mobile: day-list agenda (opens to today) instead of the month grid \u2500\u2500\u2500\u2500
+    if (isMobile) {
+      var agDays = cells.filter(function(c) { return c && c.positions.length > 0; });
+      var tISO = todayISO();
+      var tgt = null;
+      for (var gi = 0; gi < agDays.length; gi++) { if (agDays[gi].date >= tISO) { tgt = agDays[gi].date; break; } }
+      return h("div", null,
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+          h("button", { onClick: function() { setMonthOffset(monthOffset - 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25c0"),
+          h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, monthName),
+          h("button", { onClick: function() { setMonthOffset(monthOffset + 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25b6")),
+        agDays.length === 0
+          ? h(window.EmptyState, { text: "No crew positions this month." })
+          : agDays.map(function(cell) {
+              var d2 = new Date(cell.date + "T12:00:00");
+              var isToday = cell.date === tISO;
+              var confirmed = cell.positions.filter(function(p) { return p.status === "confirmed"; }).length;
+              var projGroups = {};
+              cell.positions.forEach(function(p) { if (!projGroups[p.projectId]) projGroups[p.projectId] = { name: p.projectName, count: 0 }; projGroups[p.projectId].count++; });
+              return h("div", { key: cell.date, ref: cell.date === tgt ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
+                h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } },
+                  d2.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + (isToday ? " \u00b7 Today" : "") + "  \u00b7  " + confirmed + "/" + cell.positions.length + " confirmed"),
+                Object.keys(projGroups).map(function(pid) {
+                  var pg = projGroups[pid];
+                  return h("div", { key: pid, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + B.accent, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                    h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, pg.name),
+                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, pg.count + (pg.count > 1 ? " positions" : " position")));
+                }));
+            }));
     }
 
     return h("div", null,
@@ -1056,6 +1092,11 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function WeeklySchedule({ allPositions, contacts }) {
     var [weekOffset, setWeekOffset] = useState(0);
+    var isMobile = window.LTP_useIsMobile();
+    var todayRef = React.useRef(null);
+    React.useEffect(function() {
+      if (isMobile && todayRef.current) todayRef.current.scrollIntoView({ block: "start" });
+    }, [isMobile, weekOffset]);
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
     var now = new Date();
@@ -1080,6 +1121,44 @@
 
     var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
     if (activeCrew.length === 0) activeCrew = crew.slice(0, 6);
+
+    // \u2500\u2500 Mobile: day-first agenda \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // The crew\u00d77 matrix (140px + repeat(7,1fr)) is illegible on a phone. On
+    // mobile, pivot to a day-list: one section per day of the week listing who's
+    // working (crew \u2192 role \u2192 project, tap-to-call). Auto-scrolls to today. The
+    // desktop matrix is unchanged below.
+    if (isMobile) {
+      var byDay = {};
+      weekDates.forEach(function(ds) { byDay[ds] = []; });
+      activeCrew.forEach(function(c) {
+        (scheduleMap[c.id] || []).forEach(function(s) { if (byDay[s.date]) byDay[s.date].push({ crew: c, pos: s }); });
+      });
+      return h("div", null,
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+          h("button", { onClick: function() { setWeekOffset(weekOffset - 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25c0"),
+          h("h3", { style: { fontSize: "14px", fontWeight: 700, color: B.text, margin: 0 } }, weekLabel),
+          h("button", { onClick: function() { setWeekOffset(weekOffset + 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25b6")),
+        weekDates.map(function(ds) {
+          var d2 = new Date(ds + "T12:00:00");
+          var isToday = ds === todayISO();
+          var rows = byDay[ds];
+          var label = d2.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+          return h("div", { key: ds, ref: isToday ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
+            h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, label + (isToday ? " \u00b7 Today" : "")),
+            rows.length === 0
+              ? h("div", { style: { fontSize: "13px", color: B.textMut, fontStyle: "italic", padding: "4px 2px 10px" } }, "No crew scheduled.")
+              : rows.map(function(r, ri) {
+                  var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
+                  var phone = r.crew.phone ? String(r.crew.phone).replace(/[^\d+]/g, "") : "";
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
+                    h("div", { style: { flex: 1, minWidth: 0 } },
+                      h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, r.crew.firstName + " " + r.crew.lastName),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.role + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
+                    h(window.Badge, { status: r.pos.status }),
+                    phone && h("a", { href: "tel:" + phone, "aria-label": "Call " + r.crew.firstName, className: "ltp-tap", onClick: function(e) { e.stopPropagation(); }, style: { flexShrink: 0, width: 40, height: 40, borderRadius: "50%", background: B.accent + "18", border: "1px solid " + B.accent + "44", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none", fontSize: "16px" } }, "\ud83d\udcde"));
+                }));
+        }));
+    }
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
