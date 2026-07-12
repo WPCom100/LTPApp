@@ -1507,6 +1507,12 @@ window.LTP_detectCrewConflicts = function(projects) {
     });
     if (hasCrossProject || hasSameProjectDupe) {
       b.forEach(function(bk) {
+        // A CONFIRMED position is settled — the producer locked it in knowing
+        // the day's picture, so the double-booking is purposeful and it is
+        // never flagged itself. It still appears in the OTHER side's list, so
+        // an unsettled position sharing the day with confirmed work keeps its
+        // warning until it's confirmed (or released) too.
+        if (bk.status === "confirmed") return;
         conflicts[bk.posId] = b.filter(function(o) { return o.posId !== bk.posId; });
       });
     }

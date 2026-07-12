@@ -234,6 +234,19 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         mapped = _dict_to_row(data, model_cls)
         await _validate_fks(mapped, model_cls, db)
+        # Stale-write guard (Project only): the frontend PUTs its whole
+        # in-memory row and never refetches projects after page load, so a
+        # copy captured before a crew-request send/answer would silently
+        # revert those positions' statuses (requested/accepted → open) while
+        # the crew member stays assigned. Restore any same-crew status
+        # regression from the stored row before applying the write; deliberate
+        # downgrades always clear/change the assignee and pass through
+        # (backend/crew_integrity.py::enforce_status_floor).
+        if model_cls is models.Project and isinstance(mapped.get("schedule"), list):
+            floored = crew_integrity.enforce_status_floor(row.schedule, mapped["schedule"])
+            if floored:
+                print(f"[LTP] crew-integrity: project {item_id} save carried "
+                      f"{floored} stale position-status downgrade(s) — restored", flush=True)
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)

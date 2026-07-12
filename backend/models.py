@@ -217,6 +217,7 @@ class Invoice(Base):
     invoice_date = Column(String(10), default="")       # ISO YYYY-MM-DD
     due_date = Column(String(10), default="")           # ISO YYYY-MM-DD
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
+    custom_name = Column(String(255), default="")       # names a project-less invoice; falls back to project.name on the printed doc (mirrors Quote.custom_name)
     paid_date = Column(String(10), default="")          # ISO YYYY-MM-DD, set when fully paid
     global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
     sections = Column(JSON, default=list)               # list[{id, label, items: list[InvoiceLineItem]}]

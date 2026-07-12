@@ -67,6 +67,9 @@ def invoice_dict(inv: models.Invoice) -> dict:
         "dueDate": inv.due_date,
         "sentDate": inv.sent_date,
         "paidDate": inv.paid_date,
+        # Names a project-less invoice; the PDF generator + public view fall back
+        # to this when there's no linked project (mirrors Quote.customName).
+        "customName": inv.custom_name,
         "globalDiscount": inv.global_discount or {},
         "sections": inv.sections or [],
         "notes": inv.notes,

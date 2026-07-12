@@ -646,6 +646,10 @@ async def push_invoice(db, invoice, user=None, *, client_id=None, client_secret=
         proj = pr.scalar_one_or_none()
         if proj:
             project_name = proj.name or ""
+    # A project-less invoice carries its typed customName instead, so the QB
+    # CustomerMemo still names the job (mirrors the PDF / list fallback).
+    if not project_name:
+        project_name = invoice.custom_name or ""
     repoints: list[dict] = []
     payload = await build_invoice_payload(
         conn, db, invoice, customer_id, _party_taxable(party, kind),

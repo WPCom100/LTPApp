@@ -1,13 +1,19 @@
 """Tests for crew-request referential integrity (backend/crew_integrity.py).
 
-Two layers:
+Three layers:
   - Pure reconcile_one logic (no DB): a healthy request is untouched; a partial
     removal trims position_ids to the survivors (status preserved); a full
     removal (or a deleted project) auto-withdraws; terminal requests are left
-    alone. Covers both pending and accepted.
+    alone; positions that drifted BELOW a live request's status floor (a stale
+    project save reverted requested/accepted → open) are healed back up.
+    Covers both pending and accepted.
+  - Pure enforce_status_floor logic (no DB): a project write keeping the same
+    crew member but a lower-ranked position status is a stale echo and gets the
+    stored status restored; deliberate downgrades (crew cleared/changed) and
+    upgrades pass through.
   - Real temp-DB integration: reconcile_project (save + delete), reconcile_all
-    (the producer-list sweep / backfill), and reconcile_request (the crew-link /
-    accept-decline heal).
+    (the producer-list sweep / backfill / drift heal), and reconcile_request
+    (the crew-link / accept-decline heal).
 
 Runs both as pytest and as a plain script:
     python tests/test_crew_integrity.py
@@ -229,6 +235,126 @@ def test_cleared_date_only_day_withdraws():
     _check("status withdrawn", req.status == "withdrawn")
 
 
+# ── Status-floor healing (drift from a stale project save) ───────────────────
+
+def test_accepted_request_heals_drifted_positions():
+    print("test_accepted_request_heals_drifted_positions")
+    # The reported bug: request accepted, but a stale save reverted its
+    # positions to open/requested (crew still assigned) → heal to accepted.
+    req = models.CrewRequest(id=20, token="tok-" + "h" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _assigned_project([("p1", 5, "open"), ("p2", 5, "requested")])
+    ch = ci.reconcile_one(req, proj)
+    _check("reports healed", ch and ch["action"] == "healed", str(ch))
+    _check("both positions advanced", ch and sorted(ch["healed"]) == ["p1", "p2"])
+    statuses = {p["id"]: p["status"] for p in proj.schedule[0]["positions"]}
+    _check("p1 open → accepted", statuses["p1"] == "accepted")
+    _check("p2 requested → accepted", statuses["p2"] == "accepted")
+    _check("position_ids untouched", req.position_ids == ["p1", "p2"])
+    _check("request stays accepted", req.status == "accepted")
+
+
+def test_pending_request_heals_open_to_requested():
+    print("test_pending_request_heals_open_to_requested")
+    # A pending request's positions reverted to open would count as sendable
+    # again (duplicate-request footgun) — heal them back to requested.
+    req = models.CrewRequest(id=21, token="tok-" + "i" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1"], status="pending")
+    proj = _assigned_project([("p1", 5, "open")])
+    ch = ci.reconcile_one(req, proj)
+    _check("reports healed", ch and ch["action"] == "healed", str(ch))
+    _check("p1 open → requested", proj.schedule[0]["positions"][0]["status"] == "requested")
+    _check("request stays pending", req.status == "pending")
+
+
+def test_heal_never_downgrades_or_overrides():
+    print("test_heal_never_downgrades_or_overrides")
+    # Confirmed is above every floor; declined is a settled answer; accepted
+    # under a pending request is above ITS floor. None may be touched.
+    req = models.CrewRequest(id=22, token="tok-" + "j" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _assigned_project([("p1", 5, "confirmed"), ("p2", 5, "declined")])
+    _check("confirmed/declined untouched → no change", ci.reconcile_one(req, proj) is None)
+    pend = models.CrewRequest(id=23, token="tok-" + "k" * 20, project_id=1, contact_id=5,
+                              position_ids=["p3"], status="pending")
+    proj2 = _assigned_project([("p3", 5, "accepted")])
+    _check("accepted above pending's floor → no change", ci.reconcile_one(pend, proj2) is None)
+    _check("accepted status preserved", proj2.schedule[0]["positions"][0]["status"] == "accepted")
+
+
+def test_heal_skips_undated_shift_positions():
+    print("test_heal_skips_undated_shift_positions")
+    # A drifted position on a day whose date was cleared is TRIMMED (it's no
+    # longer a live shift), never healed.
+    req = models.CrewRequest(id=24, token="tok-" + "l" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2"], status="accepted")
+    proj = _dated_project([
+        ("2026-07-01", [("p1", 5, "open")]),
+        ("", [("p2", 5, "open")]),
+    ])
+    ch = ci.reconcile_one(req, proj)
+    _check("trim + heal in one pass", ch and ch["action"] == "trimmed" and ch.get("healed") == ["p1"], str(ch))
+    _check("dated p1 healed to accepted", proj.schedule[0]["positions"][0]["status"] == "accepted")
+    _check("undated p2 left alone", proj.schedule[1]["positions"][0]["status"] == "open")
+    _check("position_ids trimmed to p1", req.position_ids == ["p1"])
+
+
+# ── enforce_status_floor (the stale project-PUT guard) ───────────────────────
+
+def _one_day_schedule(positions):
+    """[(id, crewId, status)] → a one-day schedule JSON blob."""
+    return [{"id": "day-0", "date": "2026-07-01", "title": "Day 0",
+             "positions": [{"id": i, "crewId": c, "status": s} for (i, c, s) in positions]}]
+
+
+def test_floor_blocks_same_crew_downgrades():
+    print("test_floor_blocks_same_crew_downgrades")
+    stored = _one_day_schedule([("p1", 5, "requested"), ("p2", 5, "accepted"),
+                                ("p3", 5, "confirmed"), ("p4", 5, "declined")])
+    incoming = _one_day_schedule([("p1", 5, "open"), ("p2", 5, "open"),
+                                  ("p3", 5, "accepted"), ("p4", 5, "requested")])
+    fixed = ci.enforce_status_floor(stored, incoming)
+    _check("all four regressions restored", fixed == 4, f"fixed={fixed}")
+    statuses = {p["id"]: p["status"] for p in incoming[0]["positions"]}
+    _check("requested restored", statuses["p1"] == "requested")
+    _check("accepted restored", statuses["p2"] == "accepted")
+    _check("confirmed restored", statuses["p3"] == "confirmed")
+    _check("declined restored", statuses["p4"] == "declined")
+
+
+def test_floor_allows_deliberate_changes():
+    print("test_floor_allows_deliberate_changes")
+    stored = _one_day_schedule([("p1", 5, "accepted"), ("p2", 5, "requested"),
+                                ("p3", 5, "requested"), ("p4", 5, "accepted")])
+    incoming = _one_day_schedule([
+        ("p1", None, "open"),      # Release: crew cleared → legit reopen
+        ("p2", 9, "open"),         # Reassign: different crew → legit reset
+        ("p3", 5, "accepted"),     # upgrade → always fine
+        ("p4", 5, "confirmed"),    # confirm → always fine
+    ])
+    fixed = ci.enforce_status_floor(stored, incoming)
+    _check("no deliberate change touched", fixed == 0, f"fixed={fixed}")
+    statuses = {p["id"]: p["status"] for p in incoming[0]["positions"]}
+    _check("release kept open", statuses["p1"] == "open")
+    _check("reassign kept open", statuses["p2"] == "open")
+    _check("upgrade kept", statuses["p3"] == "accepted")
+    _check("confirm kept", statuses["p4"] == "confirmed")
+
+
+def test_floor_ignores_new_unknown_and_unassigned():
+    print("test_floor_ignores_new_unknown_and_unassigned")
+    stored = _one_day_schedule([("p1", None, "open"), ("p2", 5, "whatever")])
+    incoming = _one_day_schedule([
+        ("p1", 5, "open"),         # stored crew None → fresh assignment, no floor
+        ("p2", 5, "open"),         # stored status unknown → no floor to assert
+        ("pNEW", 5, "open"),       # brand-new position → passes through
+    ])
+    fixed = ci.enforce_status_floor(stored, incoming)
+    _check("nothing floored", fixed == 0, f"fixed={fixed}")
+    _check("empty/None schedules are safe",
+           ci.enforce_status_floor(None, incoming) == 0 and ci.enforce_status_floor(stored, None) == 0)
+
+
 # ── Real-DB integration ──────────────────────────────────────────────────────
 
 async def _reset_schema():
@@ -237,12 +363,13 @@ async def _reset_schema():
         await conn.run_sync(models.Base.metadata.create_all)
 
 
-async def _seed_project_and_request(position_ids_on_schedule, request_position_ids, *, status="accepted"):
+async def _seed_project_and_request(position_ids_on_schedule, request_position_ids, *,
+                                    status="accepted", pos_status="requested"):
     async with async_session() as db:
         proj = models.Project(
             name="Gala",
             schedule=[{"id": "day-0", "date": "2026-07-01", "title": "Day 0",
-                       "positions": [{"id": p, "status": "requested"} for p in position_ids_on_schedule]}],
+                       "positions": [{"id": p, "status": pos_status} for p in position_ids_on_schedule]}],
         )
         db.add(proj)
         await db.flush()
@@ -301,8 +428,9 @@ async def test_reconcile_project_deleted_withdraws():
 async def test_reconcile_all_backfills_orphans():
     print("test_reconcile_all_backfills_orphans")
     await _reset_schema()
-    # Healthy request (p1 present) + an orphan whose project_id is null.
-    proj_id, healthy_id = await _seed_project_and_request(["p1"], ["p1"])
+    # Healthy request (p1 present AND at the accepted request's floor) + an
+    # orphan whose project_id is null.
+    proj_id, healthy_id = await _seed_project_and_request(["p1"], ["p1"], pos_status="accepted")
     async with async_session() as db:
         orphan = models.CrewRequest(token="tok-orphan-xyz123", project_id=None,  # gitleaks:allow - hand-typed fake fixture token, not a real secret
                                     position_ids=["gone1", "gone2"], status="accepted")
@@ -316,6 +444,32 @@ async def test_reconcile_all_backfills_orphans():
     _check("sweep changed exactly the orphan", changed == 1, f"changed={changed}")
     _check("orphan withdrawn", (await _get_request(orphan_id)).status == "withdrawn")
     _check("healthy request untouched", (await _get_request(healthy_id)).status == "accepted")
+
+
+async def test_reconcile_all_heals_drifted_positions():
+    print("test_reconcile_all_heals_drifted_positions")
+    await _reset_schema()
+    # The reported production state, end to end at the DB layer: a request the
+    # crew member ACCEPTED whose schedule positions were clobbered back to
+    # "open" by a stale save. The producer-list sweep must advance them back.
+    proj_id, req_id = await _seed_project_and_request(["p1", "p2"], ["p1", "p2"],
+                                                      status="accepted", pos_status="open")
+    async with async_session() as db:
+        changed = await ci.reconcile_all(db)
+        await db.commit()
+    _check("sweep healed the drifted request", changed == 1, f"changed={changed}")
+    async with async_session() as db:
+        proj = (await db.execute(select(models.Project).where(models.Project.id == proj_id))).scalar_one()
+        statuses = [p["status"] for p in proj.schedule[0]["positions"]]
+        _check("both positions persisted as accepted", statuses == ["accepted", "accepted"], str(statuses))
+    req = await _get_request(req_id)
+    _check("request untouched (still accepted)", req.status == "accepted")
+    _check("position_ids untouched", req.position_ids == ["p1", "p2"])
+    # A second sweep is a no-op — healing converges.
+    async with async_session() as db:
+        changed = await ci.reconcile_all(db)
+        await db.commit()
+    _check("second sweep is a no-op", changed == 0, f"changed={changed}")
 
 
 async def test_reconcile_request_loads_project():
@@ -339,10 +493,15 @@ def main():
         test_reassigned_position_trimmed, test_all_positions_reassigned_withdraws,
         test_cleared_position_withdraws, test_held_position_untouched,
         test_cleared_date_trims_position, test_cleared_date_only_day_withdraws,
+        test_accepted_request_heals_drifted_positions, test_pending_request_heals_open_to_requested,
+        test_heal_never_downgrades_or_overrides, test_heal_skips_undated_shift_positions,
+        test_floor_blocks_same_crew_downgrades, test_floor_allows_deliberate_changes,
+        test_floor_ignores_new_unknown_and_unassigned,
     ]
     async_tests = [
         test_reconcile_project_trims_and_withdraws, test_reconcile_project_deleted_withdraws,
-        test_reconcile_all_backfills_orphans, test_reconcile_request_loads_project,
+        test_reconcile_all_backfills_orphans, test_reconcile_all_heals_drifted_positions,
+        test_reconcile_request_loads_project,
     ]
     try:
         for t in sync_tests:

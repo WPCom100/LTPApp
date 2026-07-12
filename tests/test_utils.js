@@ -176,19 +176,36 @@ eq("DF6 non-active status ignored", g.length, 0);
 // ── detectCrewConflicts ──────────────────────────────────────────────────────
 const DCC = window.LTP_detectCrewConflicts;
 let conf = DCC([
-  { id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", title: "t", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
-  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", title: "t", positions: [{ id: "pb", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
+  { id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", title: "t", positions: [{ id: "pa", crewId: 5, status: "accepted", serviceId: 1 }] }] },
+  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", title: "t", positions: [{ id: "pb", crewId: 5, status: "requested", serviceId: 1 }] }] },
 ]);
 ok("CC1 cross-project conflict both posIds", conf.pa && conf.pb && conf.pa.length === 1 && conf.pb.length === 1);
-conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }, { id: "pb", crewId: 5, status: "confirmed", serviceId: 2 }] }] }]);
-ok("CC2 same-project two roles -> conflict", !!conf.pa && !!conf.pb);
-conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }, { id: "pb", crewId: 5, status: "confirmed", serviceId: 1 }] }] }]);
+conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "accepted", serviceId: 1 }, { id: "pb", crewId: 5, status: "requested", serviceId: 2 }] }] }]);
+ok("CC2 same-project two roles -> conflict, each lists the other", conf.pa && conf.pb && conf.pa.length === 1 && conf.pa[0].posId === "pb" && conf.pb.length === 1 && conf.pb[0].posId === "pa");
+conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "requested", serviceId: 1 }, { id: "pb", crewId: 5, status: "requested", serviceId: 1 }] }] }]);
 eq("CC3 same role twice -> no conflict", Object.keys(conf).length, 0);
 conf = DCC([
   { id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "declined", serviceId: 1 }] }] },
-  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", positions: [{ id: "pb", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
+  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", positions: [{ id: "pb", crewId: 5, status: "accepted", serviceId: 1 }] }] },
 ]);
 eq("CC4 declined ignored -> no conflict", Object.keys(conf).length, 0);
+// Confirmed = settled: the double-booking was accepted on purpose, so the
+// confirmed side never flags. An unsettled side sharing the day still does —
+// with the confirmed booking listed as its counterpart — until it settles too.
+conf = DCC([
+  { id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
+  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", positions: [{ id: "pb", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
+]);
+eq("CC5 both confirmed -> purposeful, no conflict", Object.keys(conf).length, 0);
+conf = DCC([
+  { id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }] }] },
+  { id: 2, name: "P2", schedule: [{ id: "s2", date: "2026-07-01", positions: [{ id: "pb", crewId: 5, status: "accepted", serviceId: 1 }] }] },
+]);
+ok("CC6 half-confirmed -> only the unsettled side flags", !conf.pa && conf.pb && conf.pb.length === 1 && conf.pb[0].posId === "pa");
+conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", positions: [{ id: "pa", crewId: 5, status: "confirmed", serviceId: 1 }, { id: "pb", crewId: 5, status: "requested", serviceId: 2 }] }] }]);
+// The confirmed side isn't flagged, but it must STILL be listed as the
+// counterpart on the unsettled side (empty array is truthy — assert the id).
+ok("CC7 same-project vs confirmed -> unsettled side flags, keeps confirmed counterpart", !conf.pa && conf.pb && conf.pb.length === 1 && conf.pb[0].posId === "pa");
 
 // ── product pricing variants ─────────────────────────────────────────────────
 const PV = window.LTP_productVariants, FV = window.LTP_findProductVariant, VN = window.LTP_productVariantName;
