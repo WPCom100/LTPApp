@@ -769,12 +769,12 @@
                         var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
                         var conflicts = (crewConflicts || {})[pos.posId];
                         var hasConflict = conflicts && conflicts.length > 0;
-                        return h("div", { key: pos.posId + "-" + bi, style: { padding: "6px 10px", display: "flex", gap: 8, alignItems: "center", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
+                        return h("div", { key: pos.posId + "-" + bi, style: { padding: isMobile ? "8px 10px" : "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
                           hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
                             style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
-                          h("div", { style: { flex: 1, minWidth: 0 } },
-                            h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, pos.svcName),
+                          h("div", { style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 } },
+                            h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.text } }, pos.svcName),
                             // Person # within the role for this day (same numbering
                             // as the schedule editor) — shown when a role has 2+
                             // people so the right person goes into the right slot.
@@ -847,7 +847,7 @@
                               return;
                             }
                             doAssign();
-                          }, style: { width: 150, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                          }, style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             h("option", { value: "" }, "Assign crew\u2026"),
                             // Role-tagged crew first; everyone else stays reachable under
                             // "Other crew" so a role nobody is tagged with (e.g. a custom
@@ -1219,6 +1219,7 @@
   function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   function PayoutsTab({ projects, setProjects, contacts, services }) {
+    var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
     function rangeFor(preset) {
       var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
@@ -1459,35 +1460,40 @@
                     return h("button", { onClick: onClick, title: title,
                       style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
                   };
-                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: "center" } },
-                    h("div", { style: { width: 86, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
-                    h("div", { style: { flex: 1, minWidth: 0 } },
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: isMobile ? "flex-start" : "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
+                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
+                    h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
                       h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
                       (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
                         r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
                         "Changed since lock: " + fmtMoney(r.locked.total) + " locked → " + (r.current ? fmtMoney(r.current.total) : "no timed shifts") + " now")),
-                    minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
-                    allMargin && chip(B.success, "margin"),
-                    r.signed
-                      ? h(React.Fragment, null,
-                          chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
-                            "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                          sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
-                      : h(React.Fragment, null,
-                          !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
-                          (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
-                            style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                          canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
-                          canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
-                          canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
-                          !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                    sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
-                      "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct."),
-                    h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
+                    // Pay amount: pinned to the top row's right on mobile (order 2),
+                    // trails the action buttons on desktop.
+                    h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", order: isMobile ? 2 : undefined, marginLeft: isMobile ? "auto" : undefined, fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
                       title: r.signed ? "Final signed-off pay." : "Estimate — becomes payable when the day is signed off." },
-                      (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)));
+                      (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)),
+                    // Chips + sign-off buttons: a wrapped second line on mobile,
+                    // inline on desktop (display:contents leaves the row unchanged).
+                    h("div", { style: isMobile ? { order: 3, flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 2 } : { display: "contents" } },
+                      minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
+                      allMargin && chip(B.success, "margin"),
+                      r.signed
+                        ? h(React.Fragment, null,
+                            chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
+                              "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
+                            sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
+                        : h(React.Fragment, null,
+                            !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
+                            (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
+                              style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
+                            canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
+                            canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
+                            canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
+                            !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
+                      sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
+                        "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
 

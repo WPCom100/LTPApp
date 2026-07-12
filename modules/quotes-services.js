@@ -85,6 +85,7 @@
   }
 
   window.QuotesServices = function({ services, setServices, projects, quotes, settings, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingId, setEditingId] = useState(null);
@@ -151,22 +152,23 @@
     return h("div", null,
       // Toolbar
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap" } },
           departments.map(function(d) {
             var active = deptFilter === d;
-            return h("button", { key: d, onClick: function() { setDeptFilter(d); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
-                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
-                       padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, d === "all" ? "All" : d);
+            return h("button", { key: d, onClick: function() { setDeptFilter(d); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
+                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px",
+                       padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, d === "all" ? "All" : d);
           })
         ),
-        h(window.Btn, { small: true, onClick: function() { setShowAdd(true); setEditingId(null); } }, "+ Add Service")
+        !isMobile && h(window.Btn, { small: true, onClick: function() { setShowAdd(true); setEditingId(null); } }, "+ Add Service")
       ),
+      isMobile && h(window.LTPFab, { label: "Add service", onClick: function() { setShowAdd(true); setEditingId(null); } }),
 
       // Search
       h("div", { style: { marginBottom: 10 } },
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by role or description…",
-          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 300 } })
+          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: isMobile ? "8px" : "6px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: isMobile ? "100%" : 300 } })
       ),
 
       // Add form

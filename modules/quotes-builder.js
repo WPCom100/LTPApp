@@ -680,6 +680,7 @@
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
                           sectionSubtotal, sectionMargin, services, products, equipment, customerTaxable }) {
+    var isMobile = window.LTP_useIsMobile();
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
       ? { start: section.startDate, end: section.endDate }
@@ -696,20 +697,20 @@
         draggable: !isLocked,
         onDragStart: isLocked ? undefined : function(e) { onSectionDragStart(section.id); e.dataTransfer.effectAllowed = "move"; },
         onDragOver:  isLocked ? undefined : function(e) { e.preventDefault(); },
-        style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, cursor: isLocked ? "default" : "grab" }
+        style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: isMobile ? "wrap" : "nowrap", cursor: isLocked ? "default" : "grab" }
       },
-        !isLocked && h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none" } }, "\u2630"),
+        !isLocked && h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none", flexShrink: 0 } }, "\u2630"),
         isLocked
-          ? h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.text, padding: "4px 0" } }, section.label)
+          ? h("div", { style: { flex: isMobile ? "1 1 60%" : 1, minWidth: 0, fontSize: "14px", fontWeight: 700, color: B.text, padding: "4px 0" } }, section.label)
           : h("input", { type: "text", value: section.label,
               onChange: function(e) { onLabelChange(section.id, e.target.value); },
-              style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
-        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right" } },
+              style: { flex: isMobile ? "1 1 60%" : 1, minWidth: 0, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
+        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", marginLeft: isMobile ? "auto" : undefined } },
           h("div", null, "$" + Math.round(sectionSubtotal).toLocaleString()),
           h("div", { style: { fontSize: "9px" } }, "margin: $" + Math.round(sectionMargin).toLocaleString())
         ),
         !isLocked && h("button", { onClick: function() { onDelete(section.id); },
-          style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: "3px 8px" } }, "Delete Section")
+          style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: isMobile ? "6px 12px" : "3px 8px" } }, "Delete Section")
       ),
 
       // Per-section rental period override — locked when accepted/converted
@@ -1932,7 +1933,7 @@
             )
           )
         ),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
+        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),
           (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
           draft.id != null && h("button", {
