@@ -616,7 +616,7 @@ function LTPBottomNav(props) {
 
   function tab(id, label, onClick, isActive, iconEl) {
     return h("button", { key: id, onClick: onClick,
-      style: { flex: 1, minWidth: 0, minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, background: "transparent", border: "none", cursor: "pointer", padding: "6px 2px", fontFamily: "inherit" } },
+      style: { flex: 1, minWidth: 0, minHeight: 48, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, background: "transparent", border: "none", cursor: "pointer", padding: "4px 2px", fontFamily: "inherit" } },
       h("span", { style: { width: 22, height: 22, display: "flex", alignItems: "center", justifyContent: "center" } }, iconEl),
       h("span", { style: { fontSize: "10px", fontWeight: isActive ? 700 : 500, letterSpacing: "0.02em", color: isActive ? B.accent : B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" } }, label));
   }
@@ -638,7 +638,11 @@ function LTPBottomNav(props) {
   // the parent's flex layout — NOT position:fixed (see the shell comment). The
   // safe-area-bottom padding keeps the labels above the home indicator.
   return h("nav", { className: "ltp-bottom-nav",
-    style: { flexShrink: 0, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "env(safe-area-inset-bottom)", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
+    // Trim the bottom padding: the full home-indicator inset (~34px on modern
+    // iPhones) left too much blank space under the labels. Subtract ~14px but
+    // keep an 8px floor so the labels still clear the home indicator (and stay
+    // padded on devices with no inset).
+    style: { flexShrink: 0, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "max(8px, calc(env(safe-area-inset-bottom) - 14px))", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
     tabs);
 }
 
