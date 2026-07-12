@@ -1084,6 +1084,10 @@
     // sees the new "PDF generated" entry without a full refetch.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
+      // iOS standalone blocks programmatic downloads and post-fetch window.open;
+      // open a blank tab synchronously (in the click gesture) on mobile and
+      // redirect it to the PDF once ready. Desktop keeps the direct download.
+      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
       fetch("/api/quotes/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
         .then(function(r) {
@@ -1095,13 +1099,17 @@
           return r.json();
         })
         .then(function(resp) {
-          // Trigger download. <a download> on a same-origin URL just works.
-          var a = document.createElement("a");
-          a.href = resp.downloadUrl;
-          a.download = resp.filename || ("Q-" + draft.id + ".pdf");
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
+          if (pdfWin) {
+            pdfWin.location = resp.downloadUrl;
+          } else {
+            // Trigger download. <a download> on a same-origin URL just works.
+            var a = document.createElement("a");
+            a.href = resp.downloadUrl;
+            a.download = resp.filename || ("Q-" + draft.id + ".pdf");
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          }
           // Mirror the server's activity entry into local state so the
           // activity feed updates immediately. The server is the source of
           // truth; this is just an optimistic display so the user sees the
@@ -1125,6 +1133,7 @@
           setQuotes(function(prev) { return prev.map(function(q) { return q.id === draft.id ? updated : q; }); });
         })
         .catch(function(err) {
+          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
           // The fetch wrapper in data-state.js handles 401 by redirecting;
           // here we just surface via the existing toast system.
           if (window.LTP_API_ERRORS) {
@@ -1136,6 +1145,21 @@
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });
+    }
+
+    // Native share of the quote's public link via the share sheet, with
+    // clipboard then mailto fallbacks.
+    function shareQuote() {
+      if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the quote before sharing so it has a stable link."); return; }
+      var url = window.location.origin + "/#/view/quote/" + draft.shareToken;
+      var title = refDisplay + (displayName ? " — " + displayName : "");
+      if (navigator.share) {
+        navigator.share({ title: title, text: title, url: url }).catch(function() {});
+      } else if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(function() { if (window.LTP_toast) window.LTP_toast("Quote link copied", { variant: "success" }); });
+      } else {
+        window.location.href = "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(url);
+      }
     }
 
     // Drag tracking — ref so drag events don't trigger re-renders
@@ -1926,6 +1950,9 @@
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, textDecoration: "none" } },
             "Preview"
           ),
+          // Native share of the public quote link (share sheet / copy / mailto).
+          draft.id != null && draft.shareToken && h("button", { onClick: shareQuote,
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Share"),
           // ── Status action buttons ──────────────────────────────────────
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
