@@ -75,6 +75,9 @@ P_MIXED     = 7021  # one dated + one undated position — send covers only the 
 P_ADDR      = 7022  # typed site_address flows to the public payload
 P_ADDR_CO   = 7023  # site_use_company_address derives the client company's address
 CO_ADDR     = 6001  # company with a billing address (for P_ADDR_CO)
+P_DRIFT     = 7024  # positions drifted open before the answer → accept still lands
+P_ZOMBIE    = 7025  # accepted request whose positions drifted open → list heals
+P_FLOOR     = 7026  # stale PUT downgrade blocked; deliberate release passes
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -213,6 +216,18 @@ def _setup():
                 db.add(models.Project(id=P_ADDR_CO, name="Gala CompanyAddr", company_id=CO_ADDR,
                                       site_use_company_address=True, schedule=[
                     _shift("sac", "Show", "2026-08-15", [_pos("pac_a", C1, service=S1)]),
+                ]))
+                # Status-drift scenarios (stale full-row saves vs the request
+                # pipeline) — see the "status drift" test section below.
+                db.add(models.Project(id=P_DRIFT, name="Gala Drift", schedule=[
+                    _shift("sdr", "Show", "2026-08-17",
+                           [_pos("pdr_a", C1, service=S1), _pos("pdr_b", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_ZOMBIE, name="Gala Zombie", schedule=[
+                    _shift("szo", "Show", "2026-08-19", [_pos("pzo_a", C1, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_FLOOR, name="Gala Floor", schedule=[
+                    _shift("sfl", "Show", "2026-08-21", [_pos("pfl_a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -718,6 +733,107 @@ def test_withdraw_without_notify_sends_no_email():
     assert called["n"] == 0
 
 
+# ── status drift (stale saves vs the request pipeline) ─────────────────────
+#
+# The frontend PUTs whole project rows from in-memory copies it never refetches,
+# so a stale copy can revert requested/accepted positions to "open" while the
+# crew member stays assigned. Three defenses, each covered below: the accept
+# path advances drifted-open positions anyway; the producer list heals an
+# already-zombied request; and the project PUT restores same-crew downgrades.
+
+
+def _force_position_status(pid, status):
+    """Rewrite every position status on a project DIRECTLY in the DB — the
+    drift a stale save used to inflict (and pre-fix rows still carry), planted
+    behind the API on purpose so the PUT guard can't intercept it. Crew
+    assignments are left untouched."""
+    from sqlalchemy import select
+    from sqlalchemy.orm.attributes import flag_modified
+    from backend.database import async_session
+
+    async def run():
+        async with async_session() as db:
+            proj = (await db.execute(
+                select(models.Project).where(models.Project.id == pid))).scalar_one()
+            for sh in proj.schedule or []:
+                for p in sh.get("positions", []):
+                    p["status"] = status
+            flag_modified(proj, "schedule")
+            await db.commit()
+
+    asyncio.run(run())
+
+
+def test_accept_lands_even_after_positions_drifted_open():
+    """Send → a stale save reverts the positions to open (crew kept) → the crew
+    member accepts. The answer must still reach the schedule instead of leaving
+    an accepted request over 'Ready to send' positions."""
+    client, tok = _setup()
+    token = _send(client, tok, P_DRIFT, C1).json()["token"]
+    assert _pos_status(_project(client, tok, P_DRIFT), "pdr_a") == "requested"
+
+    _force_position_status(P_DRIFT, "open")   # the drift
+
+    r = client.post(f"/api/crew/{token}/accept", json={})
+    assert r.status_code == 200 and r.json()["status"] == "accepted", r.text
+    proj = _project(client, tok, P_DRIFT)
+    assert _pos_status(proj, "pdr_a") == "accepted"
+    assert _pos_status(proj, "pdr_b") == "accepted"
+    assert _pos_crew(proj, "pdr_a") == C1
+
+
+def test_list_heals_zombie_accepted_request():
+    """An ACCEPTED request whose positions drifted back to open (the reported
+    bug, e.g. rows written before the PUT guard existed) is healed by the
+    producer-list sweep: opening the tab advances the schedule to accepted."""
+    client, tok = _setup()
+    req = _send(client, tok, P_ZOMBIE, C1).json()
+    assert client.post(f"/api/crew/{req['token']}/accept", json={}).status_code == 200
+    assert _pos_status(_project(client, tok, P_ZOMBIE), "pzo_a") == "accepted"
+
+    _force_position_status(P_ZOMBIE, "open")  # post-answer drift → zombie
+
+    listed = client.get("/api/crew-requests", cookies={"ltp_session": tok}).json()
+    assert any(r["id"] == req["id"] and r["status"] == "accepted" for r in listed)
+    proj = _project(client, tok, P_ZOMBIE)
+    assert _pos_status(proj, "pzo_a") == "accepted"   # healed, not "Ready to send"
+    assert _pos_crew(proj, "pzo_a") == C1
+
+
+def test_project_put_blocks_stale_status_downgrade():
+    """A project PUT that keeps the same crew member but writes a lower status
+    is a stale echo — the stored status must win. A deliberate release (crew
+    cleared) still passes through and withdraws the pending request."""
+    client, tok = _setup()
+    req = _send(client, tok, P_FLOOR, C1).json()
+    proj = _project(client, tok, P_FLOOR)
+    assert _pos_status(proj, "pfl_a") == "requested"
+
+    # Stale echo: same crew, status reverted to open → floored back.
+    for sh in proj["schedule"]:
+        for p in sh["positions"]:
+            p["status"] = "open"
+    r = client.put(f"/api/projects/{P_FLOOR}", json=proj, cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+    proj = _project(client, tok, P_FLOOR)
+    assert _pos_status(proj, "pfl_a") == "requested"   # regression blocked
+    assert _pos_crew(proj, "pfl_a") == C1
+
+    # Deliberate release: crew cleared → the downgrade applies, and the
+    # pending request auto-withdraws (position no longer this member's).
+    for sh in proj["schedule"]:
+        for p in sh["positions"]:
+            p["status"] = "open"
+            p["crewId"] = None
+    r = client.put(f"/api/projects/{P_FLOOR}", json=proj, cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+    proj = _project(client, tok, P_FLOOR)
+    assert _pos_status(proj, "pfl_a") == "open"
+    assert _pos_crew(proj, "pfl_a") is None
+    listed = client.get(f"/api/crew-requests?projectId={P_FLOOR}", cookies={"ltp_session": tok}).json()
+    assert [r["status"] for r in listed if r["id"] == req["id"]] == ["withdrawn"]
+
+
 def main() -> int:
     tests = [
         test_send_whole_project_requests_only_this_crews_positions,
@@ -746,6 +862,9 @@ def main() -> int:
         test_project_delete_auto_withdraws_request,
         test_withdraw_with_notify_emails_crew,
         test_withdraw_without_notify_sends_no_email,
+        test_accept_lands_even_after_positions_drifted_open,
+        test_list_heals_zombie_accepted_request,
+        test_project_put_blocks_stale_status_downgrade,
     ]
     failed = 0
     try:

@@ -110,11 +110,15 @@
   }
 
   // Reconcile crew-request answers (accepted/declined) into local position
-  // statuses, advancing only positions still at "requested" so a producer's
-  // manual changes (confirmed, released) are never disturbed. The app doesn't
-  // poll `projects` for inbound server changes, so this bridges a crew member's
-  // accept/decline (written server-side to the position status) into the grouped
-  // view without a full reload.
+  // statuses, advancing positions still at "requested" — or at "open", which
+  // under an answered request with the SAME crew member still assigned can only
+  // be drift from a stale save that reverted the send (the backend heals the
+  // same way; see crew_integrity._STATUS_FLOOR). Producer settlements are never
+  // disturbed: confirmed positions are above both statuses, and released /
+  // reassigned slots fail the crewId match. The app doesn't poll `projects` for
+  // inbound server changes, so this bridges a crew member's accept/decline
+  // (written server-side to the position status) into the grouped view without
+  // a full reload.
   function reconcileFromRequests(setProjects, reqs) {
     var byProject = {};
     (reqs || []).forEach(function(r) {
@@ -135,7 +139,7 @@
         return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
             var entry = map[pos.id];
-            if (entry && pos.status === "requested" && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
+            if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
             return pos;
           }) });
         }) });
@@ -403,6 +407,15 @@
 
     function executeStatusChange() {
       if (!statusDlg) return;
+      // A reassign dialog carries its own onConfirm (park the removal notice
+      // for the outgoing person, then run the assign flow for the incoming
+      // one); the plain status-change cascade below doesn't apply to it.
+      if (statusDlg.onConfirm) {
+        var fn = statusDlg.onConfirm;
+        setStatusDlg(null);
+        fn();
+        return;
+      }
       var pos = statusDlg.pos;
       var newStatus = statusDlg.newStatus;
       var clearCrew = statusDlg.clearCrew;
@@ -754,43 +767,69 @@
                           h("select", { value: pos.crewId || "", onChange: function(e) {
                             var cid = Number(e.target.value) || null;
                             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
-                            // Check for conflicts before assigning
-                            if (cid && pos.date) {
-                              var otherBookings = [];
-                              // Same-project duplicates
-                              (projects || []).forEach(function(pr) {
-                                if (pr.id !== pos.projectId) return;
-                                (pr.schedule || []).forEach(function(sc) {
-                                  if (sc.date !== pos.date) return;
-                                  (sc.positions || []).forEach(function(ps) {
-                                    if (ps.crewId === cid && ps.id !== pos.posId) {
-                                      var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
-                                      otherBookings.push("Already assigned as " + (svc ? svc.role + " \u2014 " + svc.description : ps.role || "?") + " on " + sc.title);
-                                    }
+                            function doAssign() {
+                              // Check for conflicts before assigning
+                              if (cid && pos.date) {
+                                var otherBookings = [];
+                                // Same-project duplicates
+                                (projects || []).forEach(function(pr) {
+                                  if (pr.id !== pos.projectId) return;
+                                  (pr.schedule || []).forEach(function(sc) {
+                                    if (sc.date !== pos.date) return;
+                                    (sc.positions || []).forEach(function(ps) {
+                                      if (ps.crewId === cid && ps.id !== pos.posId) {
+                                        var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
+                                        otherBookings.push("Already assigned as " + (svc ? svc.role + " \u2014 " + svc.description : ps.role || "?") + " on " + sc.title);
+                                      }
+                                    });
                                   });
                                 });
-                              });
-                              // Cross-project conflicts
-                              (projects || []).forEach(function(pr) {
-                                if (pr.id === pos.projectId) return;
-                                (pr.schedule || []).forEach(function(sc) {
-                                  if (sc.date !== pos.date) return;
-                                  (sc.positions || []).forEach(function(ps) {
-                                    if (ps.crewId === cid && ps.status !== "declined") {
-                                      otherBookings.push(pr.name + " (" + sc.title + ")");
-                                    }
+                                // Cross-project conflicts
+                                (projects || []).forEach(function(pr) {
+                                  if (pr.id === pos.projectId) return;
+                                  (pr.schedule || []).forEach(function(sc) {
+                                    if (sc.date !== pos.date) return;
+                                    (sc.positions || []).forEach(function(ps) {
+                                      if (ps.crewId === cid && ps.status !== "declined") {
+                                        otherBookings.push(pr.name + " (" + sc.title + ")");
+                                      }
+                                    });
                                   });
                                 });
-                              });
-                              if (otherBookings.length > 0) {
-                                var cm = contacts.find(function(c) { return c.id === cid; });
-                                var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
-                                setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
-                                  onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
-                                return;
+                                if (otherBookings.length > 0) {
+                                  var cm = contacts.find(function(c) { return c.id === cid; });
+                                  var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
+                                  setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
+                                    onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
+                                  return;
+                                }
                               }
+                              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
                             }
-                            booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
+                            // Swapping an active booking (requested/accepted/confirmed) to a
+                            // DIFFERENT person releases the current one \u2014 confirm it like
+                            // un-assigning does, instead of silently resetting the shift out
+                            // from under a live request. The outgoing person is parked in the
+                            // notify tray with the notice typed by their prior status.
+                            if (cid && pos.crewId && cid !== pos.crewId && (SEVERITY[pos.status] || 0) >= 2) {
+                              var newCm = contacts.find(function(c) { return c.id === cid; });
+                              var newName = newCm ? (newCm.firstName + " " + newCm.lastName).trim() : "another crew member";
+                              var oldName = pos.crewName || "The current crew member";
+                              var swapContext = pos.projectName + " \u2014 " + pos.schedTitle + (pos.date ? " (" + fmt(pos.date) + ")" : "");
+                              var stateVerb = { requested: "has already been requested for", accepted: "already accepted", confirmed: "is confirmed on" };
+                              setStatusDlg({
+                                title: "Reassign to " + newName + "?",
+                                message: oldName + " " + (stateVerb[pos.status] || "holds") + " " + swapContext + ". Reassigning hands the shift to " + newName + " as a fresh request (Ready to send), and " + oldName + " is added to the notify tray (bottom-left), where you can email them \u2014 or decline \u2014 when ready.",
+                                actionLabel: "Reassign",
+                                onConfirm: function() {
+                                  parkRemoval(pos.crewId, pos.projectId, window.LTP_removalTemplate(pos.status), bkPosIds);
+                                  window.LTP_toast("Crew reassigned", { message: (pos.crewName || "Crew") + " released and queued in the notify tray.", variant: "success" });
+                                  doAssign();
+                                }
+                              });
+                              return;
+                            }
+                            doAssign();
                           }, style: { width: 150, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             h("option", { value: "" }, "Assign crew\u2026"),
                             // Role-tagged crew first; everyone else stays reachable under

@@ -537,9 +537,19 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
             detail={"status": "withdrawn", "message": "This request has been withdrawn."},
         )
     if project is not None:
-        # Only move positions still sitting at `requested` — never override a
-        # slot the producer already settled out-of-band.
-        _update_positions(project, req.position_ids, to_status=decision, require_from={"requested"})
+        # Move positions sitting at `requested` — or at `open`, which for ids
+        # the reconcile guard above just vetted (still this member's, on a
+        # dated shift) can only be drift from a stale project save that
+        # reverted the send. Slots the producer already settled out-of-band
+        # (accepted / declined / confirmed) are still never overridden.
+        changed = _update_positions(project, req.position_ids, to_status=decision,
+                                    require_from={"requested", "open"})
+        expected = len(req.position_ids or [])
+        if changed != expected:
+            # An answer that doesn't fully land is the zombie this pipeline
+            # used to create silently — keep a trace either way.
+            print(f"[LTP] crew {decision}: request {req.id} advanced "
+                  f"{changed}/{expected} positions (rest already settled)", flush=True)
 
     now = datetime.now(timezone.utc)
     ip, ua = view_tracking.extract_client_meta(request)

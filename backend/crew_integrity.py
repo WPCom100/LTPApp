@@ -32,6 +32,28 @@ withdrawn" screen. Crew are NEVER auto-emailed. Only non-terminal requests
 (``pending`` / ``accepted``) are ever touched — ``declined`` / ``withdrawn`` are
 already settled, so we leave them.
 
+Status drift (the second failure mode)
+======================================
+Besides *removed* positions, a request's surviving positions can drift BELOW
+the request's own state: the frontend PUTs its entire in-memory project row
+(schedule included) and never refetches projects after page load, so a
+tab/device whose copy predates a send (or an answer) reverts those positions'
+``status`` back to ``open`` on its next save — while the crew member stays
+assigned and the request still reads pending/accepted. The producer then sees
+"Ready to send" on a shift the crew member already accepted. Two defenses:
+
+  - ``reconcile_one`` also HEALS: positions a live request still covers are
+    advanced back up to the request's status floor (pending → ``requested``,
+    accepted → ``accepted``). It never downgrades — ``confirmed`` and
+    ``declined`` positions, and anything already at/above the floor, are left
+    alone. Runs everywhere reconciliation already runs, so the first
+    producer-list load after a drift (or after this deploy) self-heals it.
+  - ``enforce_status_floor`` blocks the stale write itself at the project PUT
+    (routes/api.py): an incoming position keeping the SAME crew member but a
+    lower-ranked status than the stored row is a stale echo, never a
+    deliberate change — every deliberate downgrade in the UI (Release /
+    Withdraw / Cancel / Reassign) clears or changes the assignee.
+
 Position ids are stable (``theme.js`` ``genId`` = ``pos-<ts>-<counter>``; saves,
 edits, and reordering all preserve them), so trimming only ever fires on a
 genuine change — a removed shift OR a position reassigned to a different crew
@@ -48,6 +70,23 @@ from backend import models
 # Statuses a request can be healed FROM. Terminal-and-settled states
 # (declined, withdrawn) are left untouched.
 _ACTIVE = ("pending", "accepted")
+
+# Position-status floor a live request implies: request status → (statuses to
+# heal FROM, status to advance TO). A position a request still covers can't
+# legitimately sit below the floor while the same crew member holds it —
+# every deliberate producer-side downgrade also unassigns (which trims the
+# request instead). Healing only ever advances; confirmed/declined positions
+# and anything already at the floor are never touched.
+_STATUS_FLOOR = {
+    "pending":  ({"open"}, "requested"),
+    "accepted": ({"open", "requested"}, "accepted"),
+}
+
+# Rank for the stale-write guard (enforce_status_floor). ``declined`` ranks
+# with ``accepted``: both are settled crew answers that a stale open/requested
+# echo must not erase. Unknown statuses never trigger the guard (incoming
+# unknown ranks high, stored unknown ranks low).
+_STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confirmed": 3}
 
 
 def _assigned_position_ids(project, contact_id) -> set:
@@ -81,15 +120,49 @@ def _assigned_position_ids(project, contact_id) -> set:
     return present
 
 
+def _heal_position_statuses(req: models.CrewRequest, project) -> list:
+    """Advance positions the request still covers that sit BELOW its status
+    floor (see ``_STATUS_FLOOR``) — the schedule-side repair for drift where a
+    stale full-row project save reverted a requested/accepted position back to
+    ``open`` while the crew member stayed assigned. Only positions on a dated
+    shift, still held by the request's contact, are touched. Mutates the
+    schedule in place and flag_modifies it when anything changed. Returns the
+    list of position ids advanced."""
+    floor = _STATUS_FLOOR.get(req.status)
+    if floor is None or project is None:
+        return []
+    heal_from, target = floor
+    ids = set(req.position_ids or [])
+    if not ids:
+        return []
+    healed = []
+    for shift in (project.schedule or []):
+        if not (shift.get("date") or "").strip():
+            continue
+        for pos in (shift.get("positions") or []):
+            if (pos.get("id") in ids
+                    and pos.get("crewId") == req.contact_id
+                    and pos.get("status") in heal_from):
+                pos["status"] = target
+                healed.append(pos.get("id"))
+    if healed:
+        flag_modified(project, "schedule")
+    return healed
+
+
 def reconcile_one(req: models.CrewRequest, project) -> dict | None:
     """Heal one request against its project (``project=None`` means the project
-    is gone). Mutates ``req`` in place; the caller is responsible for the flush.
+    is gone). Mutates ``req`` (and possibly the project's schedule) in place;
+    the caller is responsible for the flush.
 
     Returns a change summary dict, or ``None`` when nothing changed:
       - ``project`` gone OR none of its positions are still the member's →
         ``status='withdrawn'``
       - some positions removed/reassigned away → ``position_ids`` trimmed to the
         ones the member still holds
+      - surviving positions sitting BELOW the request's status floor (a stale
+        project save reverted requested/accepted back to open) → advanced back
+        to the floor; ``healed`` lists the position ids touched
 
     Only acts on active (pending/accepted) requests."""
     if req.status not in _ACTIVE:
@@ -98,10 +171,8 @@ def reconcile_one(req: models.CrewRequest, project) -> dict | None:
     present = _assigned_position_ids(project, req.contact_id)
     live = [pid for pid in original if pid in present]
     removed = [pid for pid in original if pid not in present]
-    if not removed:
-        return None  # every referenced position still exists — nothing to do
 
-    if not live:
+    if original and not live:
         # Fully stale → auto-withdraw. Keep position_ids as the audit record of
         # what it used to cover; they're harmless once the status is terminal
         # (reconcileFromRequests + _update_positions both ignore withdrawn).
@@ -113,11 +184,25 @@ def reconcile_one(req: models.CrewRequest, project) -> dict | None:
             "removed": removed,
         }
 
-    # Partially stale → trim to the surviving shifts; the request stays active
-    # (a producer removed some shifts, not the whole booking).
-    req.position_ids = live
-    flag_modified(req, "position_ids")
-    return {"requestId": req.id, "action": "trimmed", "removed": removed, "remaining": live}
+    if removed:
+        # Partially stale → trim to the surviving shifts; the request stays
+        # active (a producer removed some shifts, not the whole booking).
+        req.position_ids = live
+        flag_modified(req, "position_ids")
+
+    # Status drift: re-assert the floor on the (possibly just-trimmed) live
+    # positions, so an accepted request whose schedule was clobbered back to
+    # "open"/"requested" by a stale save reads as accepted again everywhere.
+    healed = _heal_position_statuses(req, project)
+
+    if not removed and not healed:
+        return None  # every position present, none below the floor — nothing to do
+    if removed:
+        out = {"requestId": req.id, "action": "trimmed", "removed": removed, "remaining": live}
+        if healed:
+            out["healed"] = healed
+        return out
+    return {"requestId": req.id, "action": "healed", "healed": healed}
 
 
 async def reconcile_project(db: AsyncSession, project: models.Project, *, deleted: bool = False) -> list[dict]:
@@ -141,7 +226,8 @@ async def reconcile_project(db: AsyncSession, project: models.Project, *, delete
         print(f"[LTP] crew-integrity: project {project.id} "
               f"{'deleted' if deleted else 'saved'} → "
               f"{sum(c['action'] == 'withdrawn' for c in changes)} withdrawn, "
-              f"{sum(c['action'] == 'trimmed' for c in changes)} trimmed", flush=True)
+              f"{sum(c['action'] == 'trimmed' for c in changes)} trimmed, "
+              f"{sum(1 for c in changes if c.get('healed'))} status-healed", flush=True)
     return changes
 
 
@@ -157,6 +243,50 @@ async def reconcile_request(db: AsyncSession, req: models.CrewRequest) -> dict |
     if ch:
         await db.flush()
     return ch
+
+
+def enforce_status_floor(stored_schedule, incoming_schedule) -> int:
+    """Repair position-status regressions in an incoming project write.
+
+    The frontend PUTs its entire in-memory project row (schedule included) and
+    never refetches projects after page load — so a tab/device whose copy
+    predates a crew-request send (or the crew member's answer) silently reverts
+    those positions' statuses on its next save, while the request record still
+    reads pending/accepted. For every incoming position that (a) already exists
+    on the stored row, (b) keeps the SAME assigned crew member, and (c) writes a
+    strictly lower-ranked status (``_STATUS_RANK``), restore the stored status —
+    that combination is always a stale echo. Deliberate downgrades (Release /
+    Withdraw / Cancel / Reassign in the Labor UI) all clear or change the
+    assignee, so they pass through untouched, as do new positions and upgrades.
+
+    Mutates ``incoming_schedule`` in place; returns the number of positions
+    restored. Pure function of the two JSON blobs — no DB access."""
+    stored = {}
+    for shift in (stored_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        for pos in (shift.get("positions") or []):
+            if isinstance(pos, dict) and pos.get("id") is not None:
+                stored[pos["id"]] = (pos.get("crewId"), pos.get("status"))
+    if not stored:
+        return 0
+    fixed = 0
+    for shift in (incoming_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        for pos in (shift.get("positions") or []):
+            if not isinstance(pos, dict):
+                continue
+            prev = stored.get(pos.get("id"))
+            if prev is None:
+                continue
+            prev_crew, prev_status = prev
+            if prev_crew is None or pos.get("crewId") != prev_crew:
+                continue
+            if _STATUS_RANK.get(pos.get("status"), 99) < _STATUS_RANK.get(prev_status, -1):
+                pos["status"] = prev_status
+                fixed += 1
+    return fixed
 
 
 async def reconcile_all(db: AsyncSession) -> int:
