@@ -168,6 +168,7 @@ def _build_rules():
             "dueDate":     _iso_date,
             "sentDate":    _iso_date,
             "paidDate":    _iso_date,
+            "customName":  _str_max(255),
         },
         models.Equipment: {
             "name":        _str_max(255),

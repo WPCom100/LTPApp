@@ -41,7 +41,10 @@
       inv.invoiceDate || "", inv.dueDate || "", inv.notes || "",
       gd.type || "none", String(gd.value || 0),
       (inv.status === "draft" && inv.sentDate) ? "recalled" : "",
-      project ? (project.name || "") : "",
+      // The QB CustomerMemo carries the project name, or the customName when
+      // there's no project (see qbo_sync build_invoice_payload) — so a rename of
+      // either must surface the "Update QuickBooks" button.
+      project ? (project.name || "") : (inv.customName || ""),
       String(!!customerTaxable)
     ];
     (inv.sections || []).forEach(function(sec) {
@@ -78,7 +81,9 @@
         var q = search.toLowerCase();
         var ref = window.LTP_INVOICE_REF(inv).toLowerCase();
         var comp = inv.companyId ? ((companies.find(function(c) { return c.id === inv.companyId; }) || {}).name || "") : "";
-        var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : "";
+        // A project-less invoice is named by its customName — search that too,
+        // so it's findable by the same label it shows in the row.
+        var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
         if ((ref + " " + comp + " " + proj).toLowerCase().indexOf(q) === -1) return false;
       }
       return true;
@@ -110,7 +115,9 @@
           var ref = window.LTP_INVOICE_REF(inv);
           var t = window.LTP_INVOICE_TOTALS(inv);
           var comp = inv.companyId ? ((companies.find(function(c) { return c.id === inv.companyId; }) || {}).name || "") : "";
-          var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : "";
+          // Row label: the linked project's name, or the typed customName for a
+          // project-less invoice (matches the builder's displayName + the PDF).
+          var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
           var qRef = inv.quoteId ? (function() { var q = quotes.find(function(q2) { return q2.id === inv.quoteId; }); return q ? window.LTP_QUOTE_REF(q) : ""; })() : "";
           var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
           return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
