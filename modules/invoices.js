@@ -287,6 +287,7 @@
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
   function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, customerTaxable }) {
+    var isMobile = window.LTP_useIsMobile();
     if (item.type === "note") {
       return h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
         h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase" } }, "Note"),
@@ -318,6 +319,59 @@
     var adjusted = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
     var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lt = eff * (Number(item.qty) || 0);
+
+    // ── Mobile: stacked card (the desktop row packs ~9 fixed-width cells into
+    // one horizontal flex that overflows a phone). Name on top, then full-width
+    // rate/variant selects, a Qty|Adj grid with the right iOS keyboards, and a
+    // unit/tax/total footer. Desktop row is unchanged below.
+    if (isMobile) {
+      var fld = { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" };
+      var lbl = { fontSize: "10px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 };
+      var selStyle = Object.assign({}, fld, { marginTop: 8, appearance: "auto" });
+      return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } },
+        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
+          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "3px", flexShrink: 0, marginTop: 3 } }, typeBadge),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
+            item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
+          isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
+            style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 44, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
+        // Rate-type (services) / variant (products) selects — full width on mobile.
+        item.type === "service" && isDraft && svcData && h("select", { value: svcRateType, onChange: function(e) {
+          var rt = e.target.value; var maps = window.LTP_serviceRateMaps(svcData);
+          onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
+        }, style: selStyle },
+          h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
+          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
+        item.type === "product" && isDraft && prodData && prodVariants.length > 0 && h("select", {
+          value: lineVariantId, onChange: function(e) {
+            var v = window.LTP_findProductVariant(prodData, e.target.value);
+            onUpdate(sectionId, item.id, { productVariantId: v ? v.id : null, name: window.LTP_productVariantName(prodData, v), unitPrice: v ? v.unitPrice : (prodData.unitPrice || 0), cost: v ? v.cost : (prodData.cost || 0), adjustedPrice: null });
+          }, style: selStyle },
+          h("option", { value: "" }, "Base price"),
+          prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
+          lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)")),
+        // Qty + Adjusted price (draft) with the right iOS keyboards.
+        isDraft && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 } },
+          h("div", null, h("div", { style: lbl }, qtyLabel),
+            h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0,
+              onChange: function(e) { onUpdate(sectionId, item.id, { qty: Math.max(0, Number(e.target.value) || 0) }); }, style: fld })),
+          h("div", null, h("div", { style: lbl }, "adj price"),
+            h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP,
+              onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
+              style: Object.assign({}, fld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) }))),
+        // Unit · tax · total footer.
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, paddingTop: 8, borderTop: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "12px", color: B.textMut } },
+            (isDraft ? "" : (item.qty + " " + qtyLabel + " · ")) + "unit ",
+            h("span", { style: { textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+            isDraft && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "12px", color: B.textMut, cursor: "pointer", minHeight: 44 } },
+              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 20, height: 20 },
+                onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }), "tax"),
+            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lt).toLocaleString()))));
+    }
 
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
       h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "2px 5px", borderRadius: "3px" } }, typeBadge),
@@ -407,6 +461,7 @@
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
                             companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
                             equipment, products, services, settings, isAdmin, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
 
     function emptyInvoice() {
       var today = todayISO();
@@ -1369,8 +1424,10 @@
 
     // ── Render ───────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
-      // Sticky header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      // Sticky header. In the full-screen builder the app topbar is hidden, so
+      // on mobile this header is the topmost element and takes the status-bar
+      // safe-area inset; its actions wrap instead of overflowing off-screen.
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 10 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("invoices"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
@@ -1381,7 +1438,7 @@
               h(window.Badge, { status: window.LTP_displayStatus(draft) }),
               t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(draft) && h(window.Badge, { status: "overdue" }),
               linkedQuote && h("span", { style: { fontSize: "10px", color: B.textMut } }, "from " + window.LTP_QUOTE_REF(linkedQuote))))),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
+        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
           !isDraft && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
           // Generate PDF \u2014 only meaningful for saved invoices.
@@ -1420,9 +1477,11 @@
       ),
 
       // Body
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
+      // Two-pane on desktop (line items + a 280px side panel). On mobile it
+      // becomes a single scrolling column so neither pane is squeezed off-screen.
+      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
         // Main content
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
           // Invoice details card
           h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
@@ -1430,7 +1489,7 @@
 
             !isDraft
               // LOCKED — read-only summary
-              ? h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12 } },
+              ? h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 12 } },
                   h("div", null,
                     h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4 } }, "Client"),
                     h("div", { style: { fontSize: "12px", color: B.text, fontWeight: 600 } },
@@ -1462,7 +1521,7 @@
                   ),
 
                   // Company mode
-                  draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                  draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 } },
                     h(window.CompanySearchField, {
                       label: "Company *", compId: draft.companyId,
                       setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
@@ -1486,7 +1545,7 @@
                     })
                   ),
 
-                  h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+                  h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
                     // Project picker — filtered by company
                     h(window.LTPSelect, { label: "Linked Project",
                       value: draft.projectId || "",
@@ -1514,7 +1573,7 @@
                       placeholder: "e.g. Consulting \u2014 May 2026"
                     })
                   ),
-                  h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+                  h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
                     // Invoice date
                     h(window.LTPInput, { label: "Invoice Date", value: draft.invoiceDate || "", type: "date",
                       onChange: function(v) { patchDraft({ invoiceDate: v }); } }),
@@ -1617,7 +1676,7 @@
         ),
 
         // Side panel
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
+        h("div", { style: { width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: isMobile ? "visible" : "auto" } },
           // QuickBooks section — status + actions + deep link (shown once sent)
           qbConnected && qbEligible && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 } },

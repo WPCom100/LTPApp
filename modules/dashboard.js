@@ -1,6 +1,7 @@
 // Dashboard — daily overview with schedule, crew, invoices, activity, cash flow
 window.DashboardView = function({ companies, projects, quotes, equipment, invoices, contacts, services, settings }) {
   var B = window.LTP_THEME, h = React.createElement, fmt = window.LTP_formatDate, ft = window.LTP_formatTime;
+  var isMobile = window.LTP_useIsMobile();
   var nav = window.LTPRouter.navigate;
   var today = window.LTP_todayISO();
   var inv = invoices || [];
@@ -90,7 +91,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
     ),
 
     // Main grid: two columns
-    h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 } },
+    h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 } },
 
       // LEFT COLUMN
       h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },

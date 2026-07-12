@@ -5,6 +5,7 @@
 
   window.CalendarGrid = function({ ctx }) {
     var [calFilter, setCalFilter] = useState("all");
+    var isMobile = window.LTP_useIsMobile();
     var year = ctx.calMonth.year, month = ctx.calMonth.month;
     var firstDay = new Date(year, month, 1).getDay();
     var daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -64,6 +65,64 @@
       { k: "schedules", l: "Schedules", color: B.success },
       { k: "meetings", l: "\u25b2 Meetings", color: B.info },
     ];
+
+    function prevMonth() { ctx.setCalMonth(function(p) { return p.month === 0 ? { year: p.year - 1, month: 11 } : { year: p.year, month: p.month - 1 }; }); }
+    function nextMonth() { ctx.setCalMonth(function(p) { return p.month === 11 ? { year: p.year + 1, month: 0 } : { year: p.year, month: p.month + 1 }; }); }
+
+    // ── Mobile agenda / day-list ─────────────────────────────────────────────
+    // The fixed-height 7-col month grid squeezes each day to ~50px on a phone,
+    // clipping schedule text. On mobile we render a scrolling day-list instead:
+    // one section per date that has events, each row a full-width tap target.
+    // The desktop month grid below is unchanged.
+    if (isMobile) {
+      var agendaDays = [];
+      for (var ad = 1; ad <= daysInMonth; ad++) {
+        var agGroups = getEventsForDay(ad);
+        if (agGroups.length) agendaDays.push({ day: ad, groups: agGroups });
+      }
+      var todayD = new Date();
+      return h("div", { style: { display: "flex", flexDirection: "column" } },
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
+          h(window.Btn, { small: true, variant: "ghost", onClick: prevMonth }, "← Prev"),
+          h("h3", { style: { fontSize: "17px", fontWeight: 700, color: B.text, margin: 0 } }, monthName),
+          h(window.Btn, { small: true, variant: "ghost", onClick: nextMonth }, "Next →")),
+        h("div", { style: { display: "flex", gap: 8, marginBottom: 14, overflowX: "auto", flexWrap: "nowrap", scrollbarWidth: "none", WebkitOverflowScrolling: "touch" } },
+          filters.map(function(f) {
+            var active = calFilter === f.k;
+            return h("button", { key: f.k, onClick: function() { setCalFilter(f.k); }, className: "ltp-tap",
+              style: { flexShrink: 0, background: active ? f.color : B.raised, color: active ? B.btnInk : f.color, border: "1px solid " + (active ? f.color : B.border), borderRadius: "16px", padding: "8px 16px", fontSize: "13px", fontWeight: 600, cursor: "pointer", minHeight: 36, whiteSpace: "nowrap" } }, f.l);
+          })),
+        agendaDays.length === 0
+          ? h(window.EmptyState, { text: "Nothing scheduled this month." })
+          : agendaDays.map(function(entry) {
+              var dObj = new Date(year, month, entry.day);
+              var isToday = year === todayD.getFullYear() && month === todayD.getMonth() && entry.day === todayD.getDate();
+              var dateLabel = dObj.toLocaleDateString("default", { weekday: "short", month: "short", day: "numeric" });
+              return h("div", { key: entry.day, style: { marginBottom: 18 } },
+                h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, dateLabel + (isToday ? " · Today" : "")),
+                entry.groups.map(function(g, gi) {
+                  var p = g.project;
+                  return h("div", { key: p.id + "-" + gi, style: { background: g.color + "14", borderLeft: "3px solid " + g.color, borderRadius: 8, padding: "4px 12px 8px", marginBottom: 8 } },
+                    (calFilter !== "meetings") && g.isInRange && h("div", {
+                      onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "overview"); },
+                      className: "ltp-tap",
+                      style: { fontSize: "15px", fontWeight: 700, color: g.color, cursor: "pointer", minHeight: 40, display: "flex", alignItems: "center" } }, p.name),
+                    g.schedules.map(function(s) {
+                      return h("div", { key: "s" + s.id, className: "ltp-tap",
+                        onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "schedule"); },
+                        style: { fontSize: "14px", color: B.textSec, cursor: "pointer", minHeight: 38, display: "flex", alignItems: "center", paddingLeft: 4 } }, s.title + " · " + ft(s.time));
+                    }),
+                    g.meetings.map(function(m) {
+                      return h("div", { key: "m" + m.id, className: "ltp-tap",
+                        onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "meetings"); },
+                        style: { fontSize: "14px", color: B.info, cursor: "pointer", minHeight: 38, display: "flex", alignItems: "center", paddingLeft: 4 } }, "▲ " + m.title + " · " + ft(m.time));
+                    })
+                  );
+                })
+              );
+            })
+      );
+    }
 
     return h("div", { className: "ltp-calendar-grid", style: { display: "flex", flexDirection: "column", overflow: "hidden" } },
       // Header

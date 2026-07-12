@@ -2,8 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover is REQUIRED before iOS resolves env(safe-area-inset-*)
+       to non-zero — without it the safe-area padding in the shell and the
+       public crew/client views silently collapses to 0 on notch/home-indicator
+       devices. Pinch-zoom is intentionally left enabled (no maximum-scale/
+       user-scalable=no) for accessibility. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>LTP Business Suite</title>
+
+  <!-- ── PWA / iOS home-screen app ──────────────────────────────────────────
+       Makes LTPApp installable and full-screen from the iOS Share sheet.
+       The manifest + service worker are served from the app origin; see
+       backend/main.py (dedicated /manifest.webmanifest and /sw.js routes) and
+       components/register-sw.js (registration lives in a same-origin .js file
+       because the CSP script-src has no 'unsafe-inline'). -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- Status-bar + chrome tint. #131C21 = LTP_THEME.bg (the app field). -->
+  <meta name="theme-color" content="#131C21" />
+  <!-- Launch full-screen (no Safari chrome) when opened from the home screen.
+       apple-mobile-web-app-capable is the iOS-specific flag; mobile-web-app-
+       capable is the standardized equivalent honored by other browsers. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <!-- black-translucent lets the app field extend under the status bar; the
+       shell applies env(safe-area-inset-top) so content clears the clock. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LTPApp" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/icons/icon-192.png" sizes="192x192" />
   <!-- Self-hosted fonts (Playfair Display + DM Sans). Served from our own
        origin so the CSP can drop fonts.googleapis.com / fonts.gstatic.com.
        See assets/fonts.css and docs/SECURITY_REVIEW.md L8. -->
@@ -53,6 +80,55 @@
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
+
+    /* ── Mobile / iOS PWA responsive layer ──────────────────────────────────
+       The app styles almost everything with inline React style objects, so
+       this class + element layer is where breakpoint and safe-area behavior
+       live. The 600px breakpoint matches the public crew/client views
+       (modules/crew-view.js) and the shared window.LTP_useIsMobile() hook.
+       Desktop ( > 600px ) is completely unaffected by everything below. */
+
+    /* Kill the grey iOS tap-flash on our interactive chrome (rows/buttons);
+       we provide our own :active feedback. Pinch-zoom stays enabled. */
+    .ltp-row-click, .ltp-btn-primary, .ltp-btn-quiet, .ltp-tap,
+    .ltp-bottom-nav button { -webkit-tap-highlight-color: transparent; }
+
+    /* Horizontally-scrollable tab strips (components/ui.js LTPTabs) hide their
+       scrollbar — the overflow is discoverable by swiping. */
+    .ltp-tabs-strip::-webkit-scrollbar { display: none; }
+
+    /* On touch devices, replace hover affordances with an :active press state
+       (hover never fires on touch, so rows/buttons looked dead). */
+    @media (hover: none) {
+      .ltp-row-click:active { background: rgba(237,243,242,0.06); }
+      .ltp-btn-primary:active, .ltp-btn-quiet:active { filter: brightness(1.08); }
+    }
+
+    @media (max-width: 600px) {
+      /* iOS zooms the page whenever a focused form control is < 16px. Force
+         16px on mobile so focusing any field never zooms. !important is needed
+         to beat the inline font sizes the components set (13px on shared
+         inputs, 9–11px in the dense builder rows). */
+      input, select, textarea { font-size: 16px !important; }
+
+      /* LTPModal (components/ui.js) → full-screen sheet: fill the viewport with
+         no floating card, and inset content from the notch + home indicator.
+         classNames are applied in ui.js; dynamic bits stay inline. */
+      .ltp-modal-backdrop {
+        align-items: stretch !important;
+        justify-content: stretch !important;
+        padding: 0 !important;
+      }
+      .ltp-modal-panel {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: 100dvh !important;
+        max-height: 100dvh !important;
+        border-radius: 0 !important;
+        padding-top: calc(20px + env(safe-area-inset-top)) !important;
+        padding-bottom: calc(24px + env(safe-area-inset-bottom)) !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -218,5 +294,10 @@
        backend/main.py can use `script-src 'self'` without `'unsafe-inline'`.
        MUST load after app.js. -->
   <script src="mount.js"></script>
+
+  <!-- 9. PWA service-worker registration + "new version" prompt. Same-origin
+       file (CSP-safe, like mount.js). Loads last; registers on window 'load'
+       so it never blocks first paint. -->
+  <script src="components/register-sw.js"></script>
 </body>
 </html>
