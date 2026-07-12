@@ -473,6 +473,7 @@
   // ── Containers List View ────────────────────────────────────────────────────
   window.RentalsContainersView = function({ containers, equipment, onOpenContainer }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
     var [typeFilter, setTypeFilter] = useState("all");
     var [search,     setSearch]     = useState("");
     var [sortMode,   setSortMode]   = useState("az");
@@ -491,14 +492,14 @@
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap" } },
           types.map(function(t) {
-            return h("button", { key: t, onClick: function() { setTypeFilter(t); },
-              style: { background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, t === "all" ? "All" : t);
+            return h("button", { key: t, onClick: function() { setTypeFilter(t); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, t === "all" ? "All" : t);
           })
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, { width: 180 }) }),
+          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 180 }, isMobile ? { borderRadius: "8px", padding: "9px 12px" } : {}) }),
           [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }].map(function(o) {
             return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
               style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
