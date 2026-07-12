@@ -23,6 +23,7 @@
   }
 
   window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict }) {
+    var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [deletionDlg, setDeletionDlg] = useState(null);
     var [conflictWarn, setConflictWarn] = useState(null);
@@ -433,11 +434,12 @@
                 var itemSlots = window.LTP_effectiveSlots(itemPositions);
 
                 return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
-                  // Item header: title + times + delete
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
+                  // Item header: title + times + delete. On mobile the title
+                  // takes a full row and the date/time controls wrap below.
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", marginBottom: 4 } },
                     h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
-                      style: Object.assign({}, inp, { flex: 1 }) }),
-                    h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+                      style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : 1 }) }),
+                    h("div", { style: { display: "flex", gap: 4, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
                       // One updateItem only — it syncs endDate itself. A second
                       // call here recomputed from the stale `schedule` prop and
                       // clobbered the date update entirely (freezing half-typed
@@ -491,7 +493,7 @@
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
-                      return h("div", { key: pos.id, style: { background: hasConflict ? B.danger + "08" : B.surface, border: "1px solid " + (hasConflict ? B.danger + "66" : B.border), borderRadius: "3px", padding: "4px 8px", display: "flex", gap: 6, alignItems: "center" } },
+                      return h("div", { key: pos.id, style: { background: hasConflict ? B.danger + "08" : B.surface, border: "1px solid " + (hasConflict ? B.danger + "66" : B.border), borderRadius: "3px", padding: isMobile ? "8px" : "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
                         hasConflict && h("div", { title: "Double-booked: also on " + posConflicts.map(function(c) { return c.projectName; }).join(", "),
                           style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
                           h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
@@ -499,7 +501,7 @@
                           var sid = Number(e.target.value) || null;
                           var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
                           updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
-                        }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                        }, style: { flex: isMobile ? "1 1 100%" : 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Role\u2026"),
                           svcs.map(function(sv) { return h("option", { key: sv.id, value: sv.id }, sv.role + " \u2014 " + sv.description); })
                         ),
@@ -527,7 +529,7 @@
                           // reassignStatus, and it keeps the stale-write guard's
                           // "downgrade clears the assignee" invariant intact).
                           else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
-                        }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                        }, style: { flex: isMobile ? "1 1 100%" : 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Crew\u2026"),
                           // Role-tagged crew first; everyone else stays reachable under
                           // "Other crew" so a role nobody is tagged with (e.g. a custom
@@ -573,9 +575,10 @@
                           style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u00d7"),
                         i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
                           title: "Copy role to next item",
-                          style: { background: "transparent", border: "none", color: B.border, cursor: "pointer", fontSize: "10px", padding: "1px 3px" },
+                          // Hover reveal doesn't fire on touch, so keep it visible on mobile.
+                          style: { background: "transparent", border: "none", color: isMobile ? B.accent : B.border, cursor: "pointer", fontSize: isMobile ? "16px" : "10px", padding: isMobile ? "4px 8px" : "1px 3px", minHeight: isMobile ? 40 : undefined },
                           onMouseOver: function(e) { e.currentTarget.style.color = B.accent; },
-                          onMouseOut:  function(e) { e.currentTarget.style.color = B.border; } }, "\u21e9")
+                          onMouseOut:  function(e) { e.currentTarget.style.color = isMobile ? B.accent : B.border; } }, "\u21e9")
                       );
                     })
                   ),
