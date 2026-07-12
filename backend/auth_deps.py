@@ -17,11 +17,13 @@ from backend import models
 
 SESSION_COOKIE_NAME = "ltp_session"
 
-# Idle timeout: a session unused for this long stops authenticating, even
-# though its 30-day absolute lifetime hasn't elapsed (SECURITY_REVIEW.md L2).
-# last_used_at is refreshed at most once per throttle window to avoid a DB
-# write on every request.
-_IDLE_TIMEOUT = timedelta(days=7)
+# Idle timeout: a session unused for this long stops authenticating
+# (SECURITY_REVIEW.md L2). Set to match the 30-day absolute lifetime + cookie
+# Max-Age so an installed home-screen PWA used sporadically (less than weekly)
+# stays signed in for the full 30 days rather than being bounced to Google
+# re-auth after 7 days of inactivity. last_used_at is still refreshed at most
+# once per throttle window to avoid a DB write on every request.
+_IDLE_TIMEOUT = timedelta(days=30)
 _LAST_USED_THROTTLE = timedelta(minutes=15)
 
 

@@ -565,10 +565,17 @@ function LTPSignedInApp(props) {
 
 // ── Mobile bottom tab bar ────────────────────────────────────────────────────
 // Reuses window.LTP_MODULES + window.LTP_NAV_ICON (the same source as the
-// desktop sidebar) so nav stays in one place. Four primary tabs matched to the
-// definition-of-done (Dashboard, Projects, Calendar, Invoicing) plus "More",
+// desktop sidebar) so nav stays in one place. Four primary tabs plus "More",
 // which opens LTPMoreSheet for every other module and all sub-navigation.
-var LTP_PRIMARY_TABS = ["dashboard", "projects", "calendar", "invoices"];
+// Each entry is { id, label? } — label overrides the module's own label for
+// the tab (e.g. Calendar shows as "Schedule"; Rentals opens its Availability
+// Checker default sub). Anything not here lives behind "More".
+var LTP_PRIMARY_TABS = [
+  { id: "projects" },
+  { id: "calendar", label: "Schedule" },
+  { id: "quotes" },
+  { id: "rentals" },
+];
 // Sub-navigation per module (mirrors the sidebar's inline lists), centralized
 // here so the More sheet can reach every sub-view the sidebar exposes.
 var LTP_MODULE_SUBS = {
@@ -601,7 +608,7 @@ function LTPBottomNav(props) {
   var h = React.createElement;
   var B = window.LTP_THEME, MODULES = window.LTP_MODULES;
   var active = props.activeModule;
-  var moreActive = LTP_PRIMARY_TABS.indexOf(active) === -1;  // in an overflow module
+  var moreActive = !LTP_PRIMARY_TABS.some(function(t) { return t.id === active; });  // in an overflow module
 
   function tab(id, label, onClick, isActive, iconEl) {
     return h("button", { key: id, onClick: onClick,
@@ -610,11 +617,11 @@ function LTPBottomNav(props) {
       h("span", { style: { fontSize: "10px", fontWeight: isActive ? 700 : 500, letterSpacing: "0.02em", color: isActive ? B.accent : B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "100%" } }, label));
   }
 
-  var tabs = LTP_PRIMARY_TABS.map(function(id) {
-    var m = MODULES.find(function(x) { return x.id === id; }) || { id: id, label: id };
-    var isActive = active === id;
-    return tab(id, m.label, function() { props.nav(id); },
-      isActive, window.LTP_NAV_ICON(id, 20, isActive ? B.accent : B.textMut));
+  var tabs = LTP_PRIMARY_TABS.map(function(t) {
+    var m = MODULES.find(function(x) { return x.id === t.id; }) || { id: t.id, label: t.id };
+    var isActive = active === t.id;
+    return tab(t.id, t.label || m.label, function() { props.nav(t.id); },
+      isActive, window.LTP_NAV_ICON(t.id, 20, isActive ? B.accent : B.textMut));
   });
   // "More" — a hamburger-style trio, tinted active when in an overflow module.
   tabs.push(tab("more", "More", props.onMore, moreActive,
