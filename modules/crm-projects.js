@@ -45,6 +45,7 @@
   }
 
   window.CRMProjectDetail = function({ ctx }) {
+    var isMobile = window.LTP_useIsMobile();
     var project = ctx.selectedProject; if (!project) return null;
     var company = ctx.companies.find(function(c) { return c.id === project.companyId; });
     var projContacts = ctx.contacts.filter(function(c) { return project.contactIds.includes(c.id); });
@@ -82,7 +83,7 @@
 
       // OVERVIEW
       projTab === "overview" && h("div", null,
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
             h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, headline.quoted ? "Total Quoted" : "Total Budget"),
             h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent } }, "$" + Math.round(headline.total).toLocaleString()),
@@ -339,7 +340,7 @@
         })(),
         h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Preliminary Budget"),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10 } },
           h(window.LTPInput, { label: "Lighting", value: budL, onChange: function(v) { setBudL(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Labor", value: budLb, onChange: function(v) { setBudLb(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Rentals", value: budR, onChange: function(v) { setBudR(Number(v) || 0); }, type: "number" }),
