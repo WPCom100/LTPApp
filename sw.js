@@ -33,7 +33,7 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-var CACHE_VERSION = 'ltp-shell-v13';
+var CACHE_VERSION = 'ltp-shell-v14';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
