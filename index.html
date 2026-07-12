@@ -117,17 +117,24 @@
 
       /* LTPModal (components/ui.js) → full-screen sheet: fill the viewport with
          no floating card, and inset content from the notch + home indicator.
-         classNames are applied in ui.js; dynamic bits stay inline. */
+         classNames are applied in ui.js; dynamic bits stay inline.
+         Height uses --app-h (the true screen height from
+         components/viewport-height.js), NOT 100dvh — on an installed iOS PWA
+         100dvh under-reports the screen, which left the sheet stopping short
+         with a dark band below it (same bug that was fixed for the app shell).
+         The backdrop drops inset:0's bottom so its own --app-h height wins. */
       .ltp-modal-backdrop {
         align-items: stretch !important;
         justify-content: stretch !important;
         padding: 0 !important;
+        bottom: auto !important;
+        height: var(--app-h, 100dvh) !important;
       }
       .ltp-modal-panel {
         width: 100% !important;
         max-width: 100% !important;
-        height: 100dvh !important;
-        max-height: 100dvh !important;
+        height: var(--app-h, 100dvh) !important;
+        max-height: var(--app-h, 100dvh) !important;
         border-radius: 0 !important;
         padding-top: calc(20px + env(safe-area-inset-top)) !important;
         padding-bottom: calc(24px + env(safe-area-inset-bottom)) !important;
