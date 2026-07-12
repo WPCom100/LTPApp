@@ -451,7 +451,8 @@
   //   LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, services, products, equipment, customerTaxable }) {
+  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, onMove, services, products, equipment, customerTaxable }) {
+    var isMobile = window.LTP_useIsMobile();
     if (item.type === "note") {
       return h("div", {
         draggable: true,
@@ -506,6 +507,62 @@
     var invQty = Number(item.invoicedQty) || 0;
     var qty = Number(item.qty) || 0;
     var uninvoiced = delivQty - invQty;
+
+    // ── Mobile: stacked card. The desktop row packs ~9 fixed-width cells into a
+    // horizontal flex that overflows a phone (qty/delivered/adj/total run off
+    // screen). Name on top, full-width rate/variant selects, a labelled field
+    // grid with the right iOS keyboards, and a unit/tax/total footer. Touch
+    // reorder is ▲▼ buttons (HTML5 drag doesn't fire on iOS). Desktop unchanged.
+    if (isMobile) {
+      var qfld = { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" };
+      var qlbl = { fontSize: "10px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 };
+      var qsel = Object.assign({}, qfld, { marginTop: 8, appearance: "auto" });
+      return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } },
+        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
+          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "3px", flexShrink: 0, marginTop: 3 } }, typeBadge),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
+            item.type === "equipment" && h("div", { style: { fontSize: "12px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
+            item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
+          !isLocked && onMove && h("button", { onClick: function() { onMove(sectionId, item.id, -1); }, "aria-label": "Move up", className: "ltp-tap", style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "16px", minWidth: 40, minHeight: 44, flexShrink: 0 } }, "▲"),
+          !isLocked && onMove && h("button", { onClick: function() { onMove(sectionId, item.id, 1); }, "aria-label": "Move down", className: "ltp-tap", style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "16px", minWidth: 40, minHeight: 44, flexShrink: 0 } }, "▼"),
+          !isLocked && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap", style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 40, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
+        // Rate-type (services) / variant (products) selects — full width.
+        item.type === "service" && !isLocked && svcData && h("select", { value: svcRateType, onChange: function(e) {
+          var rt = e.target.value; var maps = window.LTP_serviceRateMaps(svcData);
+          onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
+        }, style: qsel },
+          h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
+          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
+        item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
+          value: lineVariantId, onChange: function(e) {
+            var v = window.LTP_findProductVariant(prodData, e.target.value);
+            onUpdate(sectionId, item.id, { productVariantId: v ? v.id : null, name: window.LTP_productVariantName(prodData, v), unitPrice: v ? v.unitPrice : (prodData.unitPrice || 0), cost: v ? v.cost : (prodData.cost || 0), adjustedPrice: null });
+          }, style: qsel },
+          h("option", { value: "" }, "Base price"),
+          prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
+          lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)")),
+        // Qty / (delivered when accepted) / adjusted price.
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 } },
+          h("div", null, h("div", { style: qlbl }, qtyLabel),
+            isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, item.qty)
+                     : h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0, onChange: function(e) { onUpdate(sectionId, item.id, { qty: Number(e.target.value) || 0 }); }, style: qfld })),
+          h("div", null, h("div", { style: qlbl }, "adj price"),
+            isLocked ? h("div", { style: { fontSize: "15px", color: adjusted ? B.accent : B.textMut, padding: "6px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—")
+                     : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, qfld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) })),
+          isAccepted && h("div", null, h("div", { style: Object.assign({}, qlbl, { color: delivQty >= qty && qty > 0 ? B.success : B.textMut }) }, "delivered"),
+            h("input", { type: "number", inputMode: "numeric", value: delivQty, min: 0, max: qty, onChange: function(e) { var v = Math.min(qty, Math.max(0, Number(e.target.value) || 0)); onUpdate(sectionId, item.id, { deliveredQty: v }); }, style: Object.assign({}, qfld, { borderColor: delivQty >= qty && qty > 0 ? B.success : B.border }) })),
+          isAccepted && invQty > 0 && h("div", null, h("div", { style: qlbl }, "invoiced"),
+            h("div", { style: { fontSize: "15px", color: invQty >= qty ? B.success : B.info, fontWeight: 600, padding: "6px 0" } }, invQty + "/" + qty))),
+        // Unit · tax · total footer.
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, paddingTop: 8, borderTop: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "12px", color: B.textMut } }, "unit ", h("span", { style: { textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)),
+          h("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
+            !isLocked && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "12px", color: B.textMut, cursor: "pointer", minHeight: 44 } },
+              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 20, height: 20 }, onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }), "tax"),
+            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lineTotal).toLocaleString()))));
+    }
 
     return h("div", {
       draggable: !isLocked,
@@ -620,7 +677,7 @@
   //   SECTION BLOCK
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete,
+  function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
                           sectionSubtotal, sectionMargin, services, products, equipment, customerTaxable }) {
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
@@ -681,7 +738,7 @@
         section.items.map(function(it) {
           return h(LineItemRow, { key: it.id, item: it, sectionId: section.id, quoteStatus: quoteStatus,
             onUpdate: function(sid, iid, patch) { onItemUpdate(sid, iid, patch); },
-            onDelete: onItemDelete,
+            onDelete: onItemDelete, onMove: onItemMove,
             onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment, customerTaxable: customerTaxable });
         })
       ),
@@ -938,6 +995,7 @@
 
 
   window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
       if (isNew) {
@@ -1135,6 +1193,22 @@
         return Object.assign({}, d, { sections: d.sections.map(function(s) {
           if (s.id !== secId) return s;
           return Object.assign({}, s, { items: s.items.filter(function(i) { return i.id !== itemId; }) });
+        }) });
+      });
+    }
+    // Touch-friendly reorder within a section (dir = -1 up, +1 down). Powers the
+    // mobile ▲▼ buttons, since HTML5 drag-and-drop doesn't fire on iOS.
+    function moveItem(secId, itemId, dir) {
+      setDraft(function(d) {
+        return Object.assign({}, d, { sections: d.sections.map(function(s) {
+          if (s.id !== secId) return s;
+          var items = s.items.slice();
+          var idx = items.findIndex(function(i) { return i.id === itemId; });
+          var to = idx + dir;
+          if (idx === -1 || to < 0 || to >= items.length) return s;
+          var moved = items.splice(idx, 1)[0];
+          items.splice(to, 0, moved);
+          return Object.assign({}, s, { items: items });
         }) });
       });
     }
@@ -1822,7 +1896,7 @@
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header bar
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 10 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
           h("button", { onClick: function() { nav("quotes"); },
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
@@ -1896,10 +1970,12 @@
       ),
 
       // Body: main content (left) + side panel (right)
-      h("div", { style: { flex: 1, display: "flex", gap: 14, overflow: "hidden", paddingTop: 10 } },
+      // Two-pane on desktop; single scrolling column on mobile so neither the
+      // items nor the side panel is squeezed off-screen.
+      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
 
         // ── Main scrollable content (left) ─────────────────────────────────
-        h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+        h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
 
       // Metadata card
       h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
@@ -1907,7 +1983,7 @@
 
         // When locked — show read-only summary
         (draft.status === "accepted" || draft.status === "converted")
-          ? h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
+          ? h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr", gap: 12 } },
               h("div", null,
                 h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4 } }, "Client"),
                 h("div", { style: { fontSize: "12px", color: B.text, fontWeight: 600 } },
@@ -1939,7 +2015,7 @@
               ),
 
               // Company mode
-              draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 } },
                 h(window.CompanySearchField, {
                   label: "Company *", compId: draft.companyId,
                   setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
@@ -1961,7 +2037,7 @@
                 })
               ),
 
-              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+              h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
                 h(window.LTPSelect, { label: "Linked Project",
                   value: draft.projectId || "",
                   onChange: function(v) {
@@ -1988,7 +2064,7 @@
                   placeholder: "e.g. Fall Gala Equipment Package"
                 })
               ),
-              !draft.projectId && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+              !draft.projectId && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
                 h(window.LTPInput, { label: "Start Date", value: draft.customStartDate, onChange: function(v) { patchDraft({ customStartDate: v }); }, type: "date" }),
                 h(window.LTPInput, { label: "End Date",   value: draft.customEndDate,   onChange: function(v) { patchDraft({ customEndDate: v   }); }, type: "date" })
               ),
@@ -2016,6 +2092,7 @@
             onAddItem: function(sid) { setPickerForSection(sid); },
             onItemUpdate: updateItem,
             onItemDelete: deleteItem,
+            onItemMove: moveItem,
             onItemDragStart: onItemDragStart,
             onItemDrop: onItemDrop,
             onSectionDragStart: onSectionDragStart,
@@ -2034,7 +2111,7 @@
       ), // end main scrollable content
 
         // ── Side Panel (right) ─────────────────────────────────────────────
-        h("div", { style: { width: 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: "auto" } },
+        h("div", { style: { width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: isMobile ? "visible" : "auto" } },
 
           // QUOTE SUMMARY (top)
           h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
