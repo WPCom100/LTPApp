@@ -152,7 +152,7 @@
     return h("div", null,
       // Toolbar
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           departments.map(function(d) {
             var active = deptFilter === d;
             return h("button", { key: d, onClick: function() { setDeptFilter(d); }, className: "ltp-tap",

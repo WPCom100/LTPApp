@@ -157,7 +157,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     // ── Companies ─────────────────────────────────────────────────────────────
     crmTab === "companies" && h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
-        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", alignItems: "center", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", alignItems: "center", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
           ["all", "active", "inactive", "one-time", "prospect"].map(function(f) {
             var active = companyFilter === f;
             return h("button", { key: f, onClick: function() { setCompanyFilter(f); }, className: "ltp-tap",

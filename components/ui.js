@@ -196,6 +196,30 @@
       h("span", { style: { color: B.accent, fontSize: "15px", fontWeight: 700 } }, "›"));
   };
 
+  // Reusable horizontal filter/chip strip with the swipe-for-more chevron.
+  // Drops in for the hand-rolled `<div className="ltp-tabs-strip">` used by
+  // every list toolbar. On desktop it renders the plain strip with the
+  // caller's desktopStyle (often display:contents or flexWrap:wrap) and no
+  // hint; on mobile it wraps the scrolling strip in a relative box and shows
+  // the LTPScrollHint when content runs off the right edge. Children are the
+  // chip buttons.
+  window.LTPScrollStrip = function(props) {
+    var isMobile = props.isMobile, mobileStyle = props.mobileStyle, desktopStyle = props.desktopStyle;
+    var ref = React.useRef(null);
+    var more = window.LTP_useScrollHint(ref);   // always called (stable hook order); no-op until ref attaches
+    if (!isMobile) {
+      return h("div", { className: "ltp-tabs-strip", style: desktopStyle }, props.children);
+    }
+    var wrapStyle = Object.assign(
+      { position: "relative", minWidth: 0 },
+      mobileStyle && mobileStyle.width ? { width: mobileStyle.width } : null,
+      props.wrapStyle
+    );
+    return h("div", { style: wrapStyle },
+      h("div", { ref: ref, className: "ltp-tabs-strip", style: mobileStyle }, props.children),
+      h(window.LTPScrollHint, { show: more, fade: props.fade }));
+  };
+
   window.LTPTabs = function({ tabs, active, onChange }) {
     // The strip scrolls horizontally instead of wrapping/overflowing so a wide
     // tab set (e.g. the 7-tab project detail) stays fully reachable on a phone.

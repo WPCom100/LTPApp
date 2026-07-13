@@ -107,7 +107,7 @@
       // Filter chips: a horizontally-scrollable strip on mobile with the search
       // on its own full-width row below; a single inline row on desktop.
       h("div", { style: isMobile ? { marginBottom: 14 } : { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
-        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } : { display: "contents" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, desktopStyle: { display: "contents" } },
           statuses.map(function(f) {
             return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
               style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);

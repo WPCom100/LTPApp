@@ -52,7 +52,7 @@
     return h("div", null,
       // Toolbar — filter chips scroll horizontally on mobile; "+ New" → FAB.
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { className: "ltp-tabs-strip", style: isMobile ? { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 } : { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           filters.map(function(f) {
             var active = filter === f;
             return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
