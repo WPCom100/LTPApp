@@ -163,18 +163,56 @@
 
   // Tabs read as the uppercase letter-spaced "eyebrow" overlines from the
   // customer views, with the active one underlined in brand orange.
+  // Scroll-hint hook: given a ref to a horizontally-scrollable element, returns
+  // true while there is more content off the right edge. Drives the little
+  // "›" affordance on tab/filter strips so a phone user knows they can swipe
+  // for more (drag isn't otherwise discoverable on touch).
+  window.LTP_useScrollHint = function(ref) {
+    var pair = React.useState(false); var more = pair[0], setMore = pair[1];
+    React.useEffect(function() {
+      var el = ref.current; if (!el) return undefined;
+      function check() { setMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 2); }
+      check();
+      // Re-check after layout/fonts settle so a first-paint measurement that
+      // read 0 widths doesn't leave the hint stuck off.
+      var t = setTimeout(check, 250);
+      el.addEventListener("scroll", check, { passive: true });
+      window.addEventListener("resize", check);
+      return function() { clearTimeout(t); el.removeEventListener("scroll", check); window.removeEventListener("resize", check); };
+    }, []);
+    return more;
+  };
+
+  // Right-edge "more →" affordance overlay for a scroll strip. Absolutely
+  // positioned inside a position:relative wrapper; pointer-events:none so it
+  // never blocks taps/swipes on the strip beneath. `fade` is the background it
+  // blends into (defaults to the page bg).
+  window.LTPScrollHint = function({ show, fade, bottom }) {
+    if (!show) return null;
+    return h("div", { "aria-hidden": "true",
+      style: { position: "absolute", right: 0, top: 0, bottom: bottom || 0, width: 34, pointerEvents: "none",
+               display: "flex", alignItems: "center", justifyContent: "flex-end",
+               background: "linear-gradient(to right, transparent, " + (fade || B.bg) + " 70%)" } },
+      h("span", { style: { color: B.accent, fontSize: "15px", fontWeight: 700 } }, "›"));
+  };
+
   window.LTPTabs = function({ tabs, active, onChange }) {
     // The strip scrolls horizontally instead of wrapping/overflowing so a wide
     // tab set (e.g. the 7-tab project detail) stays fully reachable on a phone.
-    // scrollbarWidth:none + the webkit rule keep the scrollbar invisible.
-    return h("div", { className: "ltp-tabs-strip", style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" } },
-      tabs.map(function(t) {
-        return h("button", { key: t.id, onClick: function() { onChange(t.id); },
-          className: "ltp-tap",
-          style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "9px 14px", fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }
-        }, t.label + (t.count !== undefined ? " (" + t.count + ")" : ""));
-      })
-    );
+    // scrollbarWidth:none + the webkit rule keep the scrollbar invisible; the
+    // LTPScrollHint chevron signals there's more to swipe to.
+    var stripRef = React.useRef(null);
+    var more = window.LTP_useScrollHint(stripRef);
+    return h("div", { style: { position: "relative", marginBottom: 18 } },
+      h("div", { ref: stripRef, className: "ltp-tabs-strip", style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" } },
+        tabs.map(function(t) {
+          return h("button", { key: t.id, onClick: function() { onChange(t.id); },
+            className: "ltp-tap",
+            style: { background: "transparent", border: "none", borderBottom: active === t.id ? "2px solid " + B.accent : "2px solid transparent", padding: "9px 14px", fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: active === t.id ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap", flexShrink: 0 }
+          }, t.label + (t.count !== undefined ? " (" + t.count + ")" : ""));
+        })
+      ),
+      h(window.LTPScrollHint, { show: more, bottom: 1 }));
   };
 
   // On mobile (<=600px) the ltp-modal-backdrop / ltp-modal-panel classes are

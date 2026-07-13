@@ -98,6 +98,7 @@ function LTPSignedInApp(props) {
   // drives the "More" sheet that reaches the overflow modules + every sub-nav.
   var isMobile = window.LTP_useIsMobile();
   var [moreOpen, setMoreOpen] = useState(false);
+  var [createOpen, setCreateOpen] = useState(false);
   var [globalSearch, setGlobalSearch] = useState("");
   var [searchOpen, setSearchOpen] = useState(false);
   var [searchResults, setSearchResults] = useState([]);
@@ -510,7 +511,7 @@ function LTPSignedInApp(props) {
       // On mobile the topbar extends under the translucent status bar via
       // env(safe-area-inset-top) (height auto so the inset adds to the 52px bar
       // rather than eating into it), with tighter horizontal padding.
-      h("div", { style: { height: isMobile ? "auto" : 52, minHeight: 52, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 0" : "0 22px", background: B.surface, flexShrink: 0 } },
+      h("div", { style: { height: isMobile ? "auto" : 52, minHeight: 52, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 4px" : "0 22px", background: B.surface, flexShrink: 0 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
           h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" } },
             window.LTP_NAV_ICON(activeModule, 18, B.accent)),
@@ -558,9 +559,10 @@ function LTPSignedInApp(props) {
     // screen bottom and leave a large dead gap beneath the bar; as a flex child
     // it's pinned to the real 100dvh shell box. Hidden in the full-screen
     // builders (they own the whole screen and provide their own Back control).
-    isMobile && !isQuoteBuilder && h(LTPBottomNav, { activeModule: activeModule, isAdmin: isAdmin, nav: nav, onMore: function() { setMoreOpen(true); } })
+    isMobile && !isQuoteBuilder && h(LTPBottomNav, { activeModule: activeModule, isAdmin: isAdmin, nav: nav, onMore: function() { setMoreOpen(true); }, onCreate: function() { setCreateOpen(true); } })
    ),
    isMobile && moreOpen && h(LTPMoreSheet, { route: route, isAdmin: isAdmin, nav: nav, onClose: function() { setMoreOpen(false); } }),
+   isMobile && createOpen && h(LTPCreateSheet, { nav: nav, onClose: function() { setCreateOpen(false); } }),
    h(window.LTPErrorToasts),
    h(window.LTPCrewOutbox)
   );
@@ -634,6 +636,16 @@ function LTPBottomNav(props) {
         return h("circle", { key: cx, cx: cx, cy: 12, r: 2, fill: moreActive ? B.accent : B.textMut });
       }))));
 
+  // Center create button — a raised orange "+" (same look as the list FABs)
+  // that opens the create sheet (new Project / Quote / Invoice). Spliced into
+  // the middle of the row so it reads as the primary "add" affordance; the
+  // negative margin lifts the circle above the bar's top edge.
+  var createBtn = h("button", { key: "create", onClick: props.onCreate, "aria-label": "Create new", className: "ltp-tap",
+    style: { flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", background: "transparent", border: "none", cursor: "pointer", padding: "0 8px", fontFamily: "inherit" } },
+    h("span", { style: { width: 46, height: 46, borderRadius: "50%", background: B.gradBtn || B.accent, color: B.btnInk, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: 400, lineHeight: 1, marginTop: -16, boxShadow: "0 4px 14px rgba(239,88,34,0.45)" } }, "+"),
+    h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, marginTop: 3 } }, "New"));
+  tabs.splice(3, 0, createBtn);
+
   // In-flow flex row (flexShrink:0) pinned to the bottom of the shell column by
   // the parent's flex layout — NOT position:fixed (see the shell comment). The
   // safe-area-bottom padding keeps the labels above the home indicator.
@@ -686,6 +698,43 @@ function LTPMoreSheet(props) {
         h("button", { onClick: props.onClose, "aria-label": "Close", className: "ltp-tap",
           style: { minWidth: 44, minHeight: 44, background: "transparent", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer", fontFamily: "inherit" } }, "✕")),
       items));
+}
+
+
+// ── Mobile "Create" sheet ────────────────────────────────────────────────────
+// Opened by the raised center "+" in the bottom nav. A short bottom sheet with
+// the three things a field user most often creates. Tapping navigates to that
+// builder's "new" route and closes.
+function LTPCreateSheet(props) {
+  var h = React.createElement;
+  var B = window.LTP_THEME;
+  function go(path) { props.nav(path); props.onClose(); }
+
+  var options = [
+    { path: "projects/new", module: "projects", label: "New Project",  sub: "Start a project and its schedule" },
+    { path: "quotes/new",   module: "quotes",   label: "New Quote",    sub: "Build a quote from scratch" },
+    { path: "invoices/new", module: "invoices", label: "New Invoice",  sub: "Bill a client directly" },
+  ];
+
+  return h("div", { className: "ltp-modal-backdrop",
+    onClick: props.onClose,
+    style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 1500 } },
+    h("div", { onClick: function(e) { e.stopPropagation(); },
+      style: { background: B.surface, borderTop: "1px solid " + B.border, borderTopLeftRadius: 16, borderTopRightRadius: 16, width: "100%", maxHeight: "80dvh", overflowY: "auto", padding: "8px 14px calc(16px + env(safe-area-inset-bottom))", boxShadow: "0 -12px 40px rgba(0,0,0,0.5)" } },
+      h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 4px 12px" } },
+        h("div", { style: { fontSize: "12px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: B.textMut } }, "Create"),
+        h("button", { onClick: props.onClose, "aria-label": "Close", className: "ltp-tap",
+          style: { minWidth: 44, minHeight: 44, background: "transparent", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer", fontFamily: "inherit" } }, "✕")),
+      options.map(function(o) {
+        return h("button", { key: o.path, onClick: function() { go(o.path); }, className: "ltp-tap",
+          style: { display: "flex", alignItems: "center", gap: 14, width: "100%", minHeight: 56, padding: "10px 8px", background: "transparent", border: "none", borderRadius: "8px", cursor: "pointer", textAlign: "left" } },
+          h("span", { style: { width: 40, height: 40, borderRadius: "10px", background: B.accent + "18", border: "1px solid " + B.accent + "44", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
+            window.LTP_NAV_ICON(o.module, 20, B.accent)),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.text } }, o.label),
+            h("div", { style: { fontSize: "12px", color: B.textMut } }, o.sub)),
+          h("span", { style: { fontSize: "18px", color: B.textMut } }, "›"));
+      })));
 }
 
 
