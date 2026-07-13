@@ -57,6 +57,16 @@
     return "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  // Quantity display: whole numbers stay clean ("2"), genuine decimals keep
+  // their fractional part ("2.5"). Rounds to 5 dp first so float noise from a
+  // computed qty (e.g. delivered−invoiced) never reaches the client. Mirrors
+  // the PDF's _fmt_qty so the web preview and PDF read identically.
+  function fmtQty(n) {
+    var v = Number(n);
+    if (!isFinite(v)) return "0";
+    return String(Math.round(v * 1e5) / 1e5);
+  }
+
   // Deterministic date formatting (no toLocaleString) — "July 3rd, 2026".
   var _MONTHS = ["January", "February", "March", "April", "May", "June",
                  "July", "August", "September", "October", "November", "December"];
@@ -236,17 +246,17 @@
   // ── Section rendering — the ruled line-item table ──────────────────────────
 
   function renderSection(sec, idx, entity, project, compact) {
-    var items = (sec.items || []).filter(function(it) { return it.type !== "note"; });
-    var notes = (sec.items || []).filter(function(it) { return it.type === "note"; });
+    var allItems = sec.items || [];
+    var lineItems = allItems.filter(function(it) { return it.type !== "note"; });
     var secTotal = 0;
-    items.forEach(function(it) {
+    lineItems.forEach(function(it) {
       var qty = Number(it.qty) || 0;
       var eff = it.adjustedPrice != null ? Number(it.adjustedPrice) : Number(it.unitPrice) || 0;
       secTotal += eff * qty;
     });
 
     // Rental period line (only on equipment-containing sections)
-    var hasEquip = items.some(function(it) { return it.type === "equipment"; });
+    var hasEquip = lineItems.some(function(it) { return it.type === "equipment"; });
     var secStart = sec.customDates ? sec.startDate : (entity.customStartDate || (project && project.startDate));
     var secEnd   = sec.customDates ? sec.endDate   : (entity.customEndDate   || (project && project.endDate));
 
@@ -259,18 +269,26 @@
       h("div", { style: { textAlign: "right" } }, compact ? "Unit" : "Unit Price"),
       h("div", { style: { textAlign: "right" } }, "Total"));
 
-    var rows = items.map(function(it, i) {
+    // Render line items and notes in their authored order (the order set in the
+    // builder), so the client view matches the editor. A note is a full-width
+    // caption row; a priced line is the 4-column grid row. Whichever element is
+    // last in the section drops its bottom border.
+    function noteRow(n, key, isLast) {
+      return h("div", { key: key, style: { padding: "10px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, fontSize: "12px", color: MUTE, fontStyle: "italic", lineHeight: 1.5 } },
+        "Note: " + (n.text || n.name || ""));
+    }
+    function lineRow(it, key, isLast) {
       var qty = Number(it.qty) || 0;
       var up  = Number(it.unitPrice) || 0;
       var ap  = it.adjustedPrice;
       var eff = ap != null ? Number(ap) : up;
       var lineTotal = eff * qty;
       var hasAdj = ap != null && Number(ap) !== up;
-      return h("div", { key: it.id || i, style: { display: "grid", gridTemplateColumns: cols, columnGap: compact ? 8 : 12, padding: "12px 0", borderBottom: (i < items.length - 1 || notes.length) ? "1px solid " + HAIR : "none", alignItems: "baseline" } },
+      return h("div", { key: key, style: { display: "grid", gridTemplateColumns: cols, columnGap: compact ? 8 : 12, padding: "12px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, alignItems: "baseline" } },
         h("div", { style: { fontSize: compact ? "13px" : "14px", fontWeight: 600, color: TEXT, lineHeight: 1.4, overflowWrap: "break-word" } },
           it.name || "",
           (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")")),
-        h("div", { style: { textAlign: "center", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, qty),
+        h("div", { style: { textAlign: "center", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtQty(qty)),
         h("div", { style: { textAlign: "right", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } },
           hasAdj
             ? h("div", null,
@@ -278,16 +296,21 @@
                 h("div", { style: { color: ORANGE, fontWeight: 600 } }, fmtMoney(eff)))
             : fmtMoney(eff)),
         h("div", { style: { textAlign: "right", fontSize: moneySize, color: ORANGE_SOFT, fontWeight: 600, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtMoney(lineTotal)));
-    });
-
-    if (items.length === 0) {
-      rows = h("div", { style: { padding: "14px 0", fontSize: "13px", fontStyle: "italic", color: MUTE, borderBottom: notes.length ? "1px solid " + HAIR : "none" } }, "No line items in this section.");
     }
 
-    var noteRows = notes.map(function(n, i) {
-      return h("div", { key: n.id || ("n" + i), style: { padding: "10px 0", borderBottom: i < notes.length - 1 ? "1px solid " + HAIR : "none", fontSize: "12px", color: MUTE, fontStyle: "italic", lineHeight: 1.5 } },
-        "Note: " + (n.text || n.name || ""));
-    });
+    var rows;
+    if (lineItems.length === 0) {
+      // No priced lines — show the placeholder, then any notes in order.
+      var noteOnly = allItems.filter(function(it) { return it.type === "note"; });
+      rows = [h("div", { key: "empty", style: { padding: "14px 0", fontSize: "13px", fontStyle: "italic", color: MUTE, borderBottom: noteOnly.length ? "1px solid " + HAIR : "none" } }, "No line items in this section.")]
+        .concat(noteOnly.map(function(n, i) { return noteRow(n, n.id || ("n" + i), i === noteOnly.length - 1); }));
+    } else {
+      var last = allItems.length - 1;
+      rows = allItems.map(function(it, i) {
+        var key = it.id || i;
+        return it.type === "note" ? noteRow(it, key, i === last) : lineRow(it, key, i === last);
+      });
+    }
 
     return h("div", { key: sec.id || idx, style: { marginTop: 36 } },
       // Section eyebrow: mono index gutter + label (call-sheet numbering)
@@ -301,7 +324,7 @@
       // margins so the rows keep their exact width — the slightly-lighter
       // background just bleeds 10px past the content edges (call-sheet panel).
       h("div", { style: { marginTop: 14, marginLeft: -10, marginRight: -10, padding: "0 10px", background: PANEL_BG, borderTop: "1px solid " + ORANGE, borderBottom: "1px solid " + ORANGE } },
-        headerRow, rows, noteRows),
+        headerRow, rows),
       // Section subtotal — quiet receipt line under the panel
       h("div", { style: { display: "flex", justifyContent: "flex-end", alignItems: "baseline", gap: 12, marginTop: 10 } },
         h("span", { style: { fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: MUTE } }, (sec.label || "Section") + " subtotal"),

@@ -510,7 +510,11 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
                 if text:
                     lines.append({"DetailType": "DescriptionOnly", "Description": text[:4000]})
                 continue
-            qty = float(item.get("qty") or 0)
+            # QuickBooks caps line Qty at 5 decimal places. Round to stay within
+            # that limit so a high-precision or float-noisy quantity (e.g. from a
+            # delivered−invoiced subtraction, now that decimals are allowed) is
+            # not rejected or silently re-rounded out of sync with Amount below.
+            qty = round(float(item.get("qty") or 0), 5)
             eff_price = item.get("adjustedPrice")
             if eff_price is None:
                 eff_price = item.get("unitPrice") or 0

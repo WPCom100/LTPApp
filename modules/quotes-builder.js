@@ -564,14 +564,14 @@
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "center" } }, qtyLabel),
         isLocked
           ? h("div", { style: { fontSize: "11px", color: B.text, textAlign: "center", padding: "3px 0" } }, item.qty)
-          : h("input", { type: "number", value: item.qty, min: 0,
+          : h("input", { type: "number", value: item.qty, min: 0, step: "any",
               onChange: function(e) { onUpdate(sectionId, item.id, { qty: Number(e.target.value) || 0 }); },
               style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" } })
       ),
       // Delivered (only in accepted status)
       isAccepted && h("div", { style: { width: 55 } },
         h("div", { style: { fontSize: "9px", color: delivQty >= qty && qty > 0 ? B.success : B.textMut, textAlign: "center", fontWeight: delivQty >= qty && qty > 0 ? 700 : 400 } }, "dlvd"),
-        h("input", { type: "number", value: delivQty, min: 0, max: qty,
+        h("input", { type: "number", value: delivQty, min: 0, max: qty, step: "any",
           onChange: function(e) { var v = Math.min(qty, Math.max(0, Number(e.target.value) || 0)); onUpdate(sectionId, item.id, { deliveredQty: v }); },
           style: { width: "100%", background: B.bg, border: "1px solid " + (delivQty >= qty && qty > 0 ? B.success : B.border), borderRadius: "3px", padding: "3px 6px", color: delivQty >= qty && qty > 0 ? B.success : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" } })
       ),
@@ -1598,7 +1598,11 @@
           if (it.type === "note") return it;
           var d = Number(it.deliveredQty) || 0;
           var inv = Number(it.invoicedQty) || 0;
-          var toInvoice = d - inv;
+          // Round the subtraction to 5 dp: with decimal quantities allowed, a
+          // bare d − inv can carry float noise (e.g. 5.1 − 2.2 = 2.8999999999),
+          // which would otherwise flow onto the invoice line, its display, and
+          // the QuickBooks Qty. 5 dp matches QuickBooks' quantity precision.
+          var toInvoice = Math.round((d - inv) * 1e5) / 1e5;
           if (toInvoice <= 0) return it;
           // linkedQty caps how much of this invoice line counts against the
           // source quote's invoicedQty. Starts equal to qty; only ever shrinks
