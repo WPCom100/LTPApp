@@ -174,6 +174,7 @@
   }
 
   function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, allocations, quoteDates }) {
+    var isMobile = window.LTP_useIsMobile();
     // Rate is always auto-calculated from dates — never manually selected
     var autoRate = quoteDates ? calcRateType(quoteDates.start, quoteDates.end) : "threeDay";
     var [tab, setTab]       = useState("equipment");
@@ -302,7 +303,7 @@
           h("span", { style: { fontSize: "11px", color: B.accent, fontWeight: 600 } }, rateLabel(autoRate) + " Rate"),
           !quoteDates && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "(set dates for pricing)")
         ),
-        h("div", { style: { maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+        h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
           filterList(equipment, ["name", "category", "subcategory", "manufacturer", "model"]).slice(0, 80).map(function(eq) {
             var rp = calcRentalPrice(quoteDates ? quoteDates.start : null, quoteDates ? quoteDates.end : null, eq.rates);
             var av = getAvailability(eq);
@@ -355,7 +356,7 @@
       tab === "product" && h("div", null,
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search products…",
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
-        h("div", { style: { maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+        h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
           filterList(products, ["name", "category"]).slice(0, 80).map(function(p) {
             var inSection = !!sectionProductIds[p.id];
             var rowStyle = { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 };
@@ -417,7 +418,7 @@
       tab === "service" && h("div", null,
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search services…",
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
-        h("div", { style: { maxHeight: 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+        h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
           filterList(services, ["role", "description", "department"]).slice(0, 80).map(function(s) {
             var inSection = !!sectionServiceIds[s.id];
             return h("div", { key: s.id, onClick: function() { addService(s); },
@@ -679,6 +680,7 @@
 
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
+                          sectionIndex, sectionCount, onSectionMove,
                           sectionSubtotal, sectionMargin, services, products, equipment, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
@@ -699,7 +701,15 @@
         onDragOver:  isLocked ? undefined : function(e) { e.preventDefault(); },
         style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: isMobile ? "wrap" : "nowrap", cursor: isLocked ? "default" : "grab" }
       },
-        !isLocked && h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none", flexShrink: 0 } }, "\u2630"),
+        // Reorder handle: drag glyph on desktop, \u25b2\u25bc buttons on mobile (drag
+        // doesn't work on touch).
+        !isLocked && (isMobile
+          ? h("div", { style: { display: "flex", flexShrink: 0, gap: 3 } },
+              h("button", { onClick: function() { onSectionMove && onSectionMove(section.id, -1); }, disabled: sectionIndex === 0, "aria-label": "Move section up", className: "ltp-tap",
+                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, cursor: sectionIndex === 0 ? "default" : "pointer", fontSize: "11px", width: 32, height: 32, padding: 0, opacity: sectionIndex === 0 ? 0.3 : 1 } }, "\u25b2"),
+              h("button", { onClick: function() { onSectionMove && onSectionMove(section.id, 1); }, disabled: sectionIndex === sectionCount - 1, "aria-label": "Move section down", className: "ltp-tap",
+                style: { background: "transparent", border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, cursor: sectionIndex === sectionCount - 1 ? "default" : "pointer", fontSize: "11px", width: 32, height: 32, padding: 0, opacity: sectionIndex === sectionCount - 1 ? 0.3 : 1 } }, "\u25bc"))
+          : h("span", { style: { fontSize: "14px", color: B.textMut, userSelect: "none", flexShrink: 0 } }, "\u2630")),
         isLocked
           ? h("div", { style: { flex: isMobile ? "1 1 60%" : 1, minWidth: 0, fontSize: "14px", fontWeight: 700, color: B.text, padding: "4px 0" } }, section.label)
           : h("input", { type: "text", value: section.label,
@@ -714,19 +724,21 @@
       ),
 
       // Per-section rental period override — locked when accepted/converted
-      h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, paddingLeft: isLocked ? 0 : 24 } },
+      h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 8 : 10, marginBottom: 10, paddingLeft: (isLocked || isMobile) ? 0 : 24 } },
         !isLocked && h("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: B.textMut, cursor: "pointer" } },
           h("input", { type: "checkbox", checked: section.customDates,
             onChange: function(e) { onUpdate(section.id, { customDates: e.target.checked }); },
             style: { accentColor: B.accent } }),
           "Custom rental period"
         ),
-        !isLocked && section.customDates && h("div", { style: { display: "inline-flex", gap: 8, alignItems: "center" } },
-          h(window.LTPInput, { label: "Start", value: section.startDate || "",
-            onChange: function(v) { onUpdate(section.id, { startDate: v }); }, type: "date" }),
-          h("span", { style: { fontSize: "11px", color: B.textMut, marginTop: 14 } }, "\u2192"),
-          h(window.LTPInput, { label: "End", value: section.endDate || "",
-            onChange: function(v) { onUpdate(section.id, { endDate: v }); }, type: "date" })
+        !isLocked && section.customDates && h("div", { style: isMobile ? { display: "flex", gap: 8, alignItems: "flex-end", width: "100%" } : { display: "inline-flex", gap: 8, alignItems: "center" } },
+          h("div", { style: { flex: isMobile ? 1 : undefined, minWidth: 0 } },
+            h(window.LTPInput, { label: "Start", value: section.startDate || "",
+              onChange: function(v) { onUpdate(section.id, { startDate: v }); }, type: "date" })),
+          h("span", { style: { fontSize: "11px", color: B.textMut, marginTop: 14, flexShrink: 0 } }, "\u2192"),
+          h("div", { style: { flex: isMobile ? 1 : undefined, minWidth: 0 } },
+            h(window.LTPInput, { label: "End", value: section.endDate || "",
+              onChange: function(v) { onUpdate(section.id, { endDate: v }); }, type: "date" }))
         ),
         // Always show the effective dates as info text when locked or when using quote dates
         (isLocked || !section.customDates) && effectiveDates && effectiveDates.start && h("span", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
@@ -1301,6 +1313,20 @@
     }
 
     function onSectionDragStart(sectionId) { dragRef.current = { type: "section", sectionId: sectionId }; }
+
+    // Touch-friendly section reorder (drag doesn't work on touch) — swap the
+    // section with its neighbour. Drives the ▲▼ buttons in the section header.
+    function moveSection(sectionId, dir) {
+      setDraft(function(d) {
+        var secs = d.sections.slice();
+        var idx = secs.findIndex(function(s) { return s.id === sectionId; });
+        if (idx === -1) return d;
+        var target = idx + dir;
+        if (target < 0 || target >= secs.length) return d;
+        var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
+        return Object.assign({}, d, { sections: secs });
+      });
+    }
 
     // ── Save / discard ─────────────────────────────────────────────────────────
     // Non-blocking informational / validation notice, rendered as a toast
@@ -1933,7 +1959,32 @@
             )
           )
         ),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
+        isMobile
+        ? h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
+            justSaved && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 8px", borderRadius: "6px" } }, "\u2713"),
+            draft.status === "converted" && h("div", { style: { fontSize: "9px", color: B.success, padding: "4px 8px", border: "1px solid " + B.success, borderRadius: "6px", fontWeight: 600 } }, "CONV"),
+            isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
+            isDirty && h(window.Btn, { small: true, onClick: save }, "Save"),
+            draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 14px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Send"),
+            draft.status === "sent" && h("button", { onClick: acceptQuote, style: { background: B.info, border: "none", borderRadius: "6px", padding: "8px 12px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "\u2713 Accept"),
+            draft.status === "declined" && h("button", { onClick: function() {
+                var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5), type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"), changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
+                var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
+                setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+                setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+              }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
+            hasUninvoiced && h("button", { onClick: sendToInvoice, style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "8px 12px", whiteSpace: "nowrap" } }, "\u2192 Invoice"),
+            h(window.LTPOverflowMenu, { align: "left", items: [
+              draft.id != null && { label: generatingPdf ? "Generating\u2026" : "Generate PDF", onClick: generatePdf, disabled: generatingPdf },
+              (draft.id != null && draft.shareToken) && { label: "Preview", href: "#/view/quote/" + draft.shareToken + "?preview=1" },
+              (draft.id != null && draft.shareToken) && { label: "Share", onClick: shareQuote },
+              draft.status === "sent" && { label: "\u2715 Decline", onClick: declineQuote, variant: "danger" },
+              (draft.status === "sent" || draft.status === "accepted") && { label: "Recall to Draft", onClick: recallQuoteToDraft },
+              (draft.status === "sent" || draft.status === "accepted") && { label: "Resend", onClick: openQuoteSendModal },
+              hasUndelivered && { label: "\u2713 Mark All Delivered", onClick: markAllDelivered },
+              draft.id != null && { label: "Delete Quote", onClick: deleteQuote, variant: "danger" }
+            ] }))
+        : h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),
           (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
           draft.id != null && h("button", {
@@ -2104,13 +2155,14 @@
 
       // Sections
       h("div", null,
-        draft.sections.map(function(sec) {
+        draft.sections.map(function(sec, secIdx) {
           var t = sectionTotals(sec);
           // Per-section effective dates (for availability checks in the picker)
           var secDates = sec.customDates && sec.startDate && sec.endDate
             ? { start: sec.startDate, end: sec.endDate }
             : quoteDates;
           return h(SectionBlock, { key: sec.id, section: sec,
+            sectionIndex: secIdx, sectionCount: draft.sections.length, onSectionMove: moveSection,
             quoteDates: quoteDates, quoteStatus: draft.status,
             sectionSubtotal: t.subtotal, sectionMargin: t.margin,
             services: services, products: products, equipment: equipment, customerTaxable: customerTaxable,
@@ -2141,8 +2193,10 @@
         // ── Side Panel (right) ─────────────────────────────────────────────
         h("div", { style: { width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: isMobile ? "visible" : "auto" } },
 
-          // QUOTE SUMMARY (top)
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+          // QUOTE SUMMARY (top) — redundant on mobile (each section header
+          // already shows its subtotal and the Totals panel sits right above),
+          // so it's hidden there to reclaim vertical space.
+          !isMobile && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Quote Summary"),
 
             // Section breakdown
