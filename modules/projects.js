@@ -14,19 +14,6 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var urlId     = route.id     || null;
   var urlAction = route.action || null;
 
-  // Full-screen schedule builder
-  if (urlId && urlAction === "schedule") {
-    var schedProject = projects.find(function(p) { return p.id === urlId; });
-    if (schedProject) {
-      return h(window.ScheduleBuilder, {
-        project: schedProject, projects: projects, setProjects: setProjects,
-        contacts: contacts, setContacts: setContacts, services: services,
-        companies: companies,
-        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
-      });
-    }
-  }
-
   var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1 };
   var urlTab = (urlId && PROJECT_TABS[urlAction]) ? urlAction : null;
 
@@ -50,6 +37,23 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var [editNote,        setEditNote]        = useState(null);
   var [deleteConfirm,   setDeleteConfirm]   = useState(null);
   var [deleteWizard,    setDeleteWizard]    = useState(null); // { projectId, name, steps completed tracking }
+
+  // Full-screen schedule builder. This conditional return MUST stay below every
+  // hook above: an early return placed before the useState calls changes the
+  // hook count between the list route and the schedule route (which keep the
+  // same ProjectsView instance mounted), tripping React error #310 — "rendered
+  // fewer hooks than during the previous render."
+  if (urlId && urlAction === "schedule") {
+    var schedProject = projects.find(function(p) { return p.id === urlId; });
+    if (schedProject) {
+      return h(window.ScheduleBuilder, {
+        project: schedProject, projects: projects, setProjects: setProjects,
+        contacts: contacts, setContacts: setContacts, services: services,
+        companies: companies,
+        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
+      });
+    }
+  }
 
   var selectedProject = selectedProjectId ? projects.find(function(p) { return p.id === selectedProjectId; }) : null;
 
