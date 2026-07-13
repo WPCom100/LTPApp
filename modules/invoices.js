@@ -101,7 +101,9 @@
         // "+ New" moves to a floating action button on mobile (see LTPFab below).
         !isMobile && h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
-        h(window.StatCard, { label: "Paid", value: "$" + Math.round(totalPaid).toLocaleString(), accent: B.success }),
+        // Mobile drops the Paid tile so Pending + Overdue sit on one row and
+        // reclaim the vertical space; desktop keeps all three.
+        !isMobile && h(window.StatCard, { label: "Paid", value: "$" + Math.round(totalPaid).toLocaleString(), accent: B.success }),
         h(window.StatCard, { label: "Pending", value: "$" + Math.round(totalPending).toLocaleString(), accent: B.warn }),
         h(window.StatCard, { label: "Overdue", value: "$" + Math.round(totalOverdue).toLocaleString(), accent: B.danger })),
       // Filter chips: a horizontally-scrollable strip on mobile with the search
@@ -128,14 +130,13 @@
           var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
           return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
             style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-            h("div", null,
-              h("div", { style: { fontSize: "14px", fontWeight: 700 } },
-                h("span", { style: { color: B.accent } }, ref),
-                proj && h("span", { style: { color: B.textMut, margin: "0 8px" } }, "\u00b7"),
-                proj && h("span", { style: { color: B.text } }, proj)),
-              h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-                comp + " \u00b7 " + itemCount + " items" + (qRef ? " \u00b7 from " + qRef : "") + (inv.dueDate ? " \u00b7 Due: " + fmt(inv.dueDate) : ""))),
-            h("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
+            h("div", { style: { flex: 1, minWidth: 0 } },
+              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, ref),
+              proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 1 } }, proj),
+              comp && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, comp),
+              (qRef || inv.dueDate) && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } },
+                (qRef ? "from " + qRef : "") + (qRef && inv.dueDate ? " \u00b7 " : "") + (inv.dueDate ? "Due: " + fmt(inv.dueDate) : ""))),
+            h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 } },
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + Math.round(t.total).toLocaleString()),
                 t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + Math.round(t.balance).toLocaleString())),
