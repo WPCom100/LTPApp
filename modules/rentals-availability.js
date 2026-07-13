@@ -28,8 +28,9 @@
 
     // Mobile gets a fuller set of quick presets (short rental durations are
     // common); desktop keeps its original three so its row stays unchanged.
+    // The five mobile presets are sized to fit on a single row (see below).
     var datePresets = isMobile
-      ? [{ l: "1 Day", d: 1 }, { l: "3 Days", d: 3 }, { l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "3 Weeks", d: 21 }, { l: "1 Month", d: 30 }]
+      ? [{ l: "3 Days", d: 3 }, { l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "3 Weeks", d: 21 }, { l: "1 Month", d: 30 }]
       : [{ l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "1 Month", d: 30 }];
     var dateColStyle = { display: "flex", flexDirection: "column", gap: 4, flex: isMobile ? 1 : undefined, minWidth: isMobile ? 0 : undefined };
     var dateInpStyle = isMobile ? Object.assign({}, R.INP, { width: "100%", boxSizing: "border-box" }) : R.INP;
@@ -44,10 +45,13 @@
         h("div", { style: dateColStyle },
           h("label", { style: R.LBL }, "To"),
           h("input", { type: "date", value: endDate, onChange: function(e) { setEndDate(e.target.value); }, style: dateInpStyle })),
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end", flexBasis: isMobile ? "100%" : undefined } },
+        h("div", { style: { display: "flex", gap: 6, flexWrap: isMobile ? "nowrap" : "wrap", alignItems: "flex-end", flexBasis: isMobile ? "100%" : undefined } },
           datePresets.map(function(p) {
             return h("button", { key: p.l, onClick: function() { var s = R.today(); setStartDate(s); setEndDate(R.addDays(s, p.d)); },
-              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, padding: "7px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, p.l);
+              style: Object.assign(
+                { background: B.raised, border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, padding: isMobile ? "7px 4px" : "7px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" },
+                isMobile ? { flex: 1, minWidth: 0, textAlign: "center", whiteSpace: "nowrap" } : null
+              ) }, p.l);
           })
         )
       ),
