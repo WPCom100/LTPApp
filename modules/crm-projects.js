@@ -147,13 +147,19 @@
       // MEETINGS TAB (with linked notes shown)
       projTab === "meetings" && h("div", null, h(window.Btn, { small: true, onClick: function() { ctx.setShowAddMeeting(project.id); }, style: { marginBottom: 14 } }, "+ Schedule Meeting"), project.meetings.length === 0 ? h(window.EmptyState, { text: "No meetings scheduled." }) : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, project.meetings.map(function(m) {
         var linkedNotes = (m.linkedNoteIds || []).map(function(nid) { return project.notes.find(function(n) { return n.id === nid; }); }).filter(Boolean);
+        var titleBlock = h("div", { style: { minWidth: 0 } }, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees"));
+        var joinLink = m.meetLink && h("a", { key: "join", href: window.LTP_safeUrl(m.meetLink), target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600, whiteSpace: "nowrap" } }, "Join Meet \u2197");
+        var gcalBtn = h(window.Btn, { key: "gcal", small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var u = window.LTP_gcalUrl({ title: m.title + " \u2014 " + project.name, date: m.date, time: m.time, attendees: ae, details: "LTP Project: " + project.name }); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal");
         return h("div", { key: m.id, style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
-            h("div", null, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees")),
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-              m.meetLink && h("a", { href: window.LTP_safeUrl(m.meetLink), target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600 } }, "Join Meet \u2197"),
-              h(window.Btn, { small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var u = window.LTP_gcalUrl({ title: m.title + " \u2014 " + project.name, date: m.date, time: m.time, attendees: ae, details: "LTP Project: " + project.name }); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal"))
-          ),
+          // On mobile the title stacks above its actions so a long title +
+          // "Join Meet" + "Export to GCal" no longer overflow the card width.
+          isMobile
+          ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
+              titleBlock,
+              h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } }, joinLink, gcalBtn))
+          : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
+              titleBlock,
+              h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, joinLink, gcalBtn)),
           linkedNotes.length > 0 && h("div", { style: { marginTop: 6, padding: "6px 10px", background: B.bg, borderRadius: "4px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, marginBottom: 4 } }, "Linked Notes:"),
             linkedNotes.map(function(n) { return h("div", { key: n.id, onClick: function() { onNoteClick(n.id); }, style: { fontSize: "11px", color: B.accent, cursor: "pointer", marginBottom: 2 } }, n.author + " \u2014 " + fmt(n.date) + ": " + (n.text.substring(0, 60).replace(/<[^>]*>/g, "")) + "..."); })
