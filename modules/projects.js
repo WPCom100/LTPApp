@@ -207,6 +207,12 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var searchBar = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search...",
     style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 180 } });
 
+  // Show/Hide completed toggle — a chip on mobile (rides the filter row at the
+  // right), the small inline button on desktop (rides the sort row).
+  var showCompletedBtn = h("button", { onClick: function() { setShowCompleted(!showCompleted); }, className: "ltp-tap",
+    style: { flexShrink: 0, background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
+    showCompleted ? "✓ Completed" : "Show Completed");
+
   function sortBtns() {
     var opts = [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "date-asc", l: "Date \u2191" }, { k: "date-desc", l: "Date \u2193" }];
     return h("div", { style: { display: "flex", gap: 4 } }, opts.map(function(o) {
@@ -218,24 +224,30 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   return h("div", null,
     h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Projects"),
 
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
-      h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+    // Mobile: full-width search sits above the category filters.
+    isMobile && h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
+      style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
+
+    // Category filters. On mobile the Show Completed toggle rides at the right
+    // of this row (chip height); on desktop the + Create button lives here.
+    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+      h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
         ["all"].concat(CATS).map(function(f) {
           return h("button", { key: f, onClick: function() { setProjectFilter(f); }, className: "ltp-tap",
             style: { flexShrink: 0, whiteSpace: "nowrap", background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, f === "all" ? "All" : f);
         })
       ),
-      !isMobile && h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
+      isMobile ? showCompletedBtn : h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
     ),
     isMobile && h(window.LTPFab, { label: "Create project", onClick: function() { nav("projects/new"); } }),
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" } },
-      h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-        searchBar,
-        h("button", { onClick: function() { setShowCompleted(!showCompleted); },
-          style: { background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
-          showCompleted ? "✓ Showing Completed" : "Show Completed")
-      ),
-      sortBtns()),
+
+    // Sort row. Desktop keeps search + Show Completed here; on mobile those
+    // moved above so it's just the sort buttons.
+    isMobile
+      ? h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns())
+      : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" } },
+          h("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, searchBar, showCompletedBtn),
+          sortBtns()),
 
     fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
     h(window.LTPList, null,
@@ -245,18 +257,32 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         var tot  = Math.round(window.LTP_projectHeadlineTotal(p, quotes).total);
         return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
           style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-            h("div", null,
-              h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name : "") + " \u00b7 " + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
-            h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-              h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
-              h(window.Badge, { status: CAT_KEYS[p.category] }),
-              h(window.Badge, { status: p.status }))),
-          h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
-            h("span", null, p.notes.length + " notes"),
-            h("span", null, p.schedule.length + " schedule"),
-            h("span", null, p.meetings.length + " meetings")));
+          isMobile
+            ? h("div", null,
+                h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, marginBottom: 2 } }, p.name),
+                comp && h("div", { style: { fontSize: "12px", color: B.textMut } }, comp.name),
+                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate)),
+                h("div", { style: { display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" } },
+                  h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
+                  h(window.Badge, { status: CAT_KEYS[p.category] }),
+                  h(window.Badge, { status: p.status })),
+                h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
+                  h("span", null, p.notes.length + " notes"),
+                  h("span", null, p.schedule.length + " schedule"),
+                  h("span", null, p.meetings.length + " meetings")))
+            : h(React.Fragment, null,
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
+                  h("div", null,
+                    h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
+                    h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name + " \u00b7 " : "") + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                    h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
+                    h(window.Badge, { status: CAT_KEYS[p.category] }),
+                    h(window.Badge, { status: p.status }))),
+                h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
+                  h("span", null, p.notes.length + " notes"),
+                  h("span", null, p.schedule.length + " schedule"),
+                  h("span", null, p.meetings.length + " meetings"))));
       })
     ),
 

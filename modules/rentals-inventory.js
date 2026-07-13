@@ -72,7 +72,9 @@
               ),
               activeOut > 0
                 ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
-                : h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.successBg, color: B.success, border: "1px solid " + B.successBd, padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "available")
+                // The green "available" chip is the default state — redundant on
+                // a phone, so it's dropped there (kept on desktop).
+                : (!isMobile && h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.successBg, color: B.success, border: "1px solid " + B.successBd, padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "available"))
             )
           );
         })

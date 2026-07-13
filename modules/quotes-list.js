@@ -19,6 +19,7 @@
     var [filter, setFilter]     = useState("all");
     var [search, setSearch]     = useState("");
     var [sortMode, setSortMode] = useState("date-desc");
+    var [showConverted, setShowConverted] = useState(false);
 
     // Resolve the client label — either a company or a contact's full name.
     function clientLabel(qt) {
@@ -32,6 +33,9 @@
 
     var q = search.trim().toLowerCase();
     var filtered = quotes.filter(function(qt) {
+      // Converted quotes are hidden by default (they've become invoices) — the
+      // "Show Converted" toggle brings them back into the list.
+      if (!showConverted && qt.status === "converted") return false;
       if (filter !== "all" && qt.status !== filter) return false;
       if (q) {
         var proj = projects.find(function(p) { return p.id === qt.projectId; });
@@ -46,13 +50,35 @@
       return displayRef(a).localeCompare(displayRef(b));
     });
 
-    var filters = ["all", "draft", "sent", "accepted", "declined", "converted"];
+    var filters = ["all", "draft", "sent", "accepted", "declined"];
     var sorts = [{ k: "date-desc", l: "Newest" }, { k: "date-asc", l: "Oldest" }, { k: "ref", l: "Ref #" }];
 
+    // Show/Hide converted toggle — rides the filter row at the right (chip
+    // height on mobile), mirroring the Projects "Show Completed" control.
+    var showConvertedBtn = h("button", { onClick: function() { setShowConverted(!showConverted); }, className: "ltp-tap",
+      style: { flexShrink: 0, background: showConverted ? B.accent : B.raised, color: showConverted ? B.btnInk : B.textMut, border: "1px solid " + (showConverted ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
+      showConverted ? "✓ Converted" : "Show Converted");
+
+    var sortBtnsEl = h("div", { style: { display: "flex", gap: 4 } },
+      sorts.map(function(s) {
+        var active = sortMode === s.k;
+        return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
+                   border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
+                   padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
+      }));
+
     return h("div", null,
-      // Toolbar — filter chips scroll horizontally on mobile; "+ New" → FAB.
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      // Mobile: page title + search share the top row (the shell hides its own
+      // title/tabs on mobile; the top bar already reads "QUOTES").
+      isMobile && h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12 } },
+        h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Quotes"),
+        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search…",
+          style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } })),
+
+      // Filter chips; Show Converted rides the right (+ New Quote on desktop).
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           filters.map(function(f) {
             var active = filter === f;
             return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
@@ -61,25 +87,20 @@
                        padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           })
         ),
-        !isMobile && h("button", { onClick: function() { nav("quotes/new"); },
-          style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote")
+        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+          showConvertedBtn,
+          !isMobile && h("button", { onClick: function() { nav("quotes/new"); },
+            style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote"))
       ),
       isMobile && h(window.LTPFab, { label: "New quote", onClick: function() { nav("quotes/new"); } }),
 
-      // Search + sort
-      h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginBottom: 10, gap: 8 } },
-        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
-          style: isMobile ? { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } : { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } }),
-        h("div", { style: { display: "flex", gap: 4 } },
-          sorts.map(function(s) {
-            var active = sortMode === s.k;
-            return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
-                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
-                       padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
-          })
-        )
-      ),
+      // Sort row. Desktop pairs it with the search; on mobile search moved up top.
+      isMobile
+        ? h("div", { style: { display: "flex", marginBottom: 10 } }, sortBtnsEl)
+        : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
+            h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
+              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } }),
+            sortBtnsEl),
 
       // List — ruled ledger panel (see components/ui.js LTPList)
       h(window.LTPList, null,
@@ -90,16 +111,13 @@
           var tot  = computeTotals(qt);
           var itemCount = (qt.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
           return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 } },
-              h("div", null,
-                h("div", { style: { fontSize: "16px", fontWeight: 700, marginBottom: 3, letterSpacing: "0.01em" } },
-                  h("span", { style: { color: B.accent } }, displayRef(qt)),
-                  h("span", { style: { color: B.textMut, margin: "0 10px" } }, "\u00b7"),
-                  h("span", { style: { color: B.text } }, name)
-                ),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, clientLabel(qt) + " \u00b7 " + fmt(qt.createdDate))
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 } },
+              h("div", { style: { flex: 1, minWidth: 0 } },
+                h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em" } }, displayRef(qt)),
+                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 1 } }, name),
+                h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + " \u00b7 " + fmt(qt.createdDate))
               ),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
                 h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + Math.round(tot.total).toLocaleString()),
                 h(window.Badge, { status: qt.status })
               )

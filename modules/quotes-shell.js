@@ -15,6 +15,7 @@
   window.QuotesView = function({ companies, contacts, projects, setProjects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
                                   equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
 
     // ── Route-derived state ────────────────────────────────────────────────────
     var sub    = route.sub;
@@ -74,8 +75,11 @@
     }
 
     return h("div", null,
-      h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Quotes"),
-      h(TabHeader, null),
+      // On mobile the page title + Products/Services tabs are dropped — the top
+      // bar already reads "QUOTES", Products/Services are reached via the More
+      // nav, and each list renders its own title + search row.
+      !isMobile && h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Quotes"),
+      !isMobile && h(TabHeader, null),
 
       activeTab === "quotes"   && h(window.QuotesList, {
         quotes: quotes, setQuotes: setQuotes,

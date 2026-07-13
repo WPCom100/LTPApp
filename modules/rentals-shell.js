@@ -192,7 +192,10 @@
     var titleMap = { equipment: "Equipment List", containers: "Containers List", kits: "Kits & Packages", availability: "Availability Checker" };
 
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
+      // Kits renders its own title + search row on mobile, so suppress the shell
+      // header there; every other tab keeps the shell title (its only label
+      // once the sub-tabs are gone on a phone).
+      !(isMobile && activeTab === "kits") && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 } },
         h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0 } }, titleMap[activeTab]),
         activeTab === "equipment"  && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/equipment/new"); } }, "+ Add Equipment"),
         activeTab === "containers" && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/containers/new"); } }, "+ Add Container"),
