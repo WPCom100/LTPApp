@@ -314,7 +314,7 @@
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
               h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-                (c.crewRoles || []).join(", ") + (shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
+                (c.crewRoles || []).join(", ") + (!isMobile && shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
               h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } },
                 c.crewNotes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.crewNotes))),
             h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
@@ -1418,16 +1418,27 @@
         style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
 
+    var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
+    var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
+
     return h("div", null,
-      // Range controls + export
-      h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
-        presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
-        h("div", { style: { width: 130 } },
-          h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" })),
-        h("div", { style: { width: 130 } },
-          h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" })),
-        h("div", { style: { flex: 1 } }),
-        h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+      // Range controls + export. On mobile the custom From/To inputs drop to
+      // their own row so the presets + export don't crush against them.
+      isMobile
+      ? h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
+            h("div", { style: { flex: 1 } }),
+            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h("div", { style: { flex: 1 } }, fromInput),
+            h("div", { style: { flex: 1 } }, toInput)))
+      : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+          presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
+          h("div", { style: { width: 130 } }, fromInput),
+          h("div", { style: { width: 130 } }, toInput),
+          h("div", { style: { flex: 1 } }),
+          h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
       h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
@@ -1598,6 +1609,7 @@
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
   function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services, companies }) {
+    var isMobile = window.LTP_useIsMobile();
     // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
     var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
@@ -1794,8 +1806,7 @@
                 reqs.map(function(r) {
                   var info = reqInfo(r);
                   var ds = displayState(r, info);
-                  return h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
-                    h("div", { style: { flex: 1, minWidth: 0 } },
+                  var contentEl = h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
                       info.positions.length > 0
                         ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
@@ -1805,15 +1816,22 @@
                             }))
                         : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
                       // Note the crew member left when they accepted/declined.
-                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
-                    h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label),
-                    ds.confirm && h("button", { onClick: function() { setConfirmDlg(r); },
-                      style: { flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✓ Confirm"),
-                    ds.resend && h("button", { onClick: function() { resendRequest(r); },
-                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
-                    ds.withdraw && h("button", { onClick: function() { setWithdrawDlg(r); },
-                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
-                  );
+                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”"));
+                  var badgeEl = h("span", { key: "badge", style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label);
+                  var actionEls = [
+                    ds.confirm && h("button", { key: "confirm", onClick: function() { setConfirmDlg(r); },
+                      style: Object.assign({ flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "✓ Confirm"),
+                    ds.resend && h("button", { key: "resend", onClick: function() { resendRequest(r); },
+                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Resend"),
+                    ds.withdraw && h("button", { key: "withdraw", onClick: function() { setWithdrawDlg(r); },
+                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Withdraw")
+                  ].filter(Boolean);
+                  return isMobile
+                    ? h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 } },
+                        h("div", { style: { display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between" } }, contentEl, badgeEl),
+                        actionEls.length > 0 && h("div", { style: { display: "flex", gap: 6 } }, actionEls))
+                    : h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
+                        contentEl, badgeEl, actionEls);
                 })
               )
             );
