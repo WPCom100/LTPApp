@@ -1485,7 +1485,7 @@
             h("div", { style: { fontSize: isMobile ? "17px" : "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, refDisplay),
             h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3, minWidth: 0 } },
               h("span", { style: { fontSize: "12px", color: B.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 } }, displayName),
-              h("div", { style: { flexShrink: 0 } }, h(window.Badge, { status: window.LTP_displayStatus(draft) })),
+              !isMobile && h("div", { style: { flexShrink: 0 } }, h(window.Badge, { status: window.LTP_displayStatus(draft) })),
               t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(draft) && h("div", { style: { flexShrink: 0 } }, h(window.Badge, { status: "overdue" })),
               !isMobile && linkedQuote && h("span", { style: { fontSize: "10px", color: B.textMut } }, "from " + window.LTP_QUOTE_REF(linkedQuote))))),
         isMobile
@@ -1556,7 +1556,11 @@
 
           // Invoice details card
           h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 16 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 12px" } }, "Invoice Details"),
+            // On mobile the status chip rides here (top-right of Invoice Details)
+            // instead of crowding the header title row.
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, margin: "0 0 12px" } },
+              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "Invoice Details"),
+              isMobile && h(window.Badge, { status: window.LTP_displayStatus(draft) })),
 
             !isDraft
               // LOCKED — read-only summary
