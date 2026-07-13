@@ -254,6 +254,7 @@
   };
 
   window.CRMProjectForm = function({ ctx, initial, onSave, onClose }) {
+    var isMobile = window.LTP_useIsMobile();
     var [name, setName] = useState(initial ? initial.name : "");
     var [compId, setCompId] = useState(initial ? initial.companyId : null);
     var [cat, setCat] = useState(initial ? initial.category : "Rental");
