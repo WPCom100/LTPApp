@@ -58,7 +58,7 @@
       id: null,
       clientType: "company",        // "company" | "contact"
       projectId: null, companyId: null, clientContactId: null,
-      customName: "", customStartDate: "", customEndDate: "",
+      customName: "", customStartDate: todayISO(), customEndDate: todayISO(),
       rentalStartDate: null, rentalEndDate: null,
       status: "draft", createdDate: todayISO(), sentDate: null,
       globalDiscount: { type: "none", value: 0 },
@@ -727,7 +727,15 @@
       h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: isMobile ? 8 : 10, marginBottom: 10, paddingLeft: (isLocked || isMobile) ? 0 : 24 } },
         !isLocked && h("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: B.textMut, cursor: "pointer" } },
           h("input", { type: "checkbox", checked: section.customDates,
-            onChange: function(e) { onUpdate(section.id, { customDates: e.target.checked }); },
+            onChange: function(e) {
+              var on = e.target.checked;
+              var patch = { customDates: on };
+              // Prefill today so the freshly-revealed date inputs are never
+              // blank (a blank date field renders as a tiny box on iOS).
+              if (on && !section.startDate) patch.startDate = todayISO();
+              if (on && !section.endDate)   patch.endDate   = todayISO();
+              onUpdate(section.id, patch);
+            },
             style: { accentColor: B.accent } }),
           "Custom rental period"
         ),
