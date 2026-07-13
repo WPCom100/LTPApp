@@ -259,8 +259,8 @@
     var [compId, setCompId] = useState(initial ? initial.companyId : null);
     var [cat, setCat] = useState(initial ? initial.category : "Rental");
     var [projStatus, setProjStatus] = useState(initial ? initial.status : "upcoming");
-    var [start, setStart] = useState(initial ? initial.startDate : "");
-    var [end, setEnd] = useState(initial ? initial.endDate : "");
+    var [start, setStart] = useState(initial ? initial.startDate : window.LTP_todayISO());
+    var [end, setEnd] = useState(initial ? initial.endDate : window.LTP_todayISO());
     var [venue, setVenue] = useState(initial ? (initial.venue || "") : "");
     var [siteAddr, setSiteAddr] = useState(initial ? (initial.siteAddress || "") : "");
     var [siteUseComp, setSiteUseComp] = useState(initial ? !!initial.siteUseCompanyAddress : false);

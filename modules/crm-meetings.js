@@ -6,7 +6,7 @@
     var projectId = ctx.showAddMeeting;
     var project = ctx.projects.find(function(p) { return p.id === projectId; });
     var [title, setTitle] = useState("");
-    var [date, setDate] = useState("");
+    var [date, setDate] = useState(window.LTP_todayISO());
     var [time, setTime] = useState("10:00");
     var [attIds, setAttIds] = useState(project ? project.contactIds : []);
     var [linkedNoteIds, setLinkedNoteIds] = useState([]);
