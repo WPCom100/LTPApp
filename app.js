@@ -576,9 +576,10 @@ function LTPSignedInApp(props) {
 // Each entry is { id, label? } — label overrides the module's own label for
 // the tab (e.g. Calendar shows as "Schedule"; Rentals opens its Availability
 // Checker default sub). Anything not here lives behind "More".
+// Schedule/Calendar lives in the More sheet (window.LTP_MODULES has it) so the
+// bottom nav can stay four tabs — two either side of the centre create button.
 var LTP_PRIMARY_TABS = [
   { id: "projects" },
-  { id: "calendar", label: "Schedule" },
   { id: "quotes" },
   { id: "rentals" },
 ];
@@ -641,10 +642,9 @@ function LTPBottomNav(props) {
   // the middle of the row so it reads as the primary "add" affordance; the
   // negative margin lifts the circle above the bar's top edge.
   var createBtn = h("button", { key: "create", onClick: props.onCreate, "aria-label": "Create new", className: "ltp-tap",
-    style: { flex: "0 0 auto", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", background: "transparent", border: "none", cursor: "pointer", padding: "0 8px", fontFamily: "inherit" } },
-    h("span", { style: { width: 46, height: 46, borderRadius: "50%", background: B.gradBtn || B.accent, color: B.btnInk, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "28px", fontWeight: 400, lineHeight: 1, marginTop: -16, boxShadow: "0 4px 14px rgba(239,88,34,0.45)" } }, "+"),
-    h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, marginTop: 3 } }, "New"));
-  tabs.splice(3, 0, createBtn);
+    style: { flex: "0 0 auto", position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", cursor: "pointer", padding: "0 10px", fontFamily: "inherit" } },
+    h("span", { style: { width: 48, height: 48, borderRadius: "50%", background: B.gradBtn || B.accent, color: B.btnInk, display: "flex", alignItems: "center", justifyContent: "center", fontSize: "29px", fontWeight: 400, lineHeight: 1, marginTop: -14, boxShadow: "0 4px 14px rgba(239,88,34,0.45)" } }, "+"));
+  tabs.splice(2, 0, createBtn);
 
   // In-flow flex row (flexShrink:0) pinned to the bottom of the shell column by
   // the parent's flex layout — NOT position:fixed (see the shell comment). The
@@ -654,7 +654,10 @@ function LTPBottomNav(props) {
     // iPhones) left too much blank space under the labels. Subtract ~14px but
     // keep an 8px floor so the labels still clear the home indicator (and stay
     // padded on devices with no inset).
-    style: { flexShrink: 0, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "max(8px, calc(env(safe-area-inset-bottom) - 14px))", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
+    // position:relative + a stacking context above page content (but below
+    // modals/sheets at 1000+) so the raised "+" circle, which overflows above
+    // the bar via negative margin, never paints behind a positioned card/FAB.
+    style: { flexShrink: 0, position: "relative", zIndex: 900, display: "flex", background: B.surface, borderTop: "1px solid " + B.border, paddingBottom: "max(8px, calc(env(safe-area-inset-bottom) - 14px))", boxShadow: "0 -2px 12px rgba(0,0,0,0.25)" } },
     tabs);
 }
 
@@ -711,9 +714,11 @@ function LTPCreateSheet(props) {
   function go(path) { props.nav(path); props.onClose(); }
 
   var options = [
-    { path: "projects/new", module: "projects", label: "New Project",  sub: "Start a project and its schedule" },
-    { path: "quotes/new",   module: "quotes",   label: "New Quote",    sub: "Build a quote from scratch" },
-    { path: "invoices/new", module: "invoices", label: "New Invoice",  sub: "Bill a client directly" },
+    { path: "projects/new",      module: "projects", label: "New Project",  sub: "Start a project and its schedule" },
+    { path: "quotes/new",        module: "quotes",   label: "New Quote",    sub: "Build a quote from scratch" },
+    { path: "invoices/new",      module: "invoices", label: "New Invoice",  sub: "Bill a client directly" },
+    { path: "crm/companies/new", module: "crm",      label: "New Company",  sub: "Add a client or vendor" },
+    { path: "crm/contacts/new",  module: "crm",      label: "New Contact",  sub: "Add a person or crew member" },
   ];
 
   return h("div", { className: "ltp-modal-backdrop",
