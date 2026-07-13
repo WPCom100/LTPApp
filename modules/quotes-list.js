@@ -98,7 +98,7 @@
                 h("div", { style: { fontSize: "11px", color: B.textMut } }, clientLabel(qt) + " \u00b7 " + fmt(qt.createdDate))
               ),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + Math.round(tot.total).toLocaleString()),
+                h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(tot.total)),
                 h(window.Badge, { status: qt.status })
               )
             ),

@@ -99,9 +99,9 @@
           h("span", { style: { fontSize: "13px", color: B.textMut, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 } }, "(" + invoices.length + ")")),
         h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
-        h(window.StatCard, { label: "Paid", value: "$" + Math.round(totalPaid).toLocaleString(), accent: B.success }),
-        h(window.StatCard, { label: "Pending", value: "$" + Math.round(totalPending).toLocaleString(), accent: B.warn }),
-        h(window.StatCard, { label: "Overdue", value: "$" + Math.round(totalOverdue).toLocaleString(), accent: B.danger })),
+        h(window.StatCard, { label: "Paid", value: "$" + window.LTP_money(totalPaid), accent: B.success }),
+        h(window.StatCard, { label: "Pending", value: "$" + window.LTP_money(totalPending), accent: B.warn }),
+        h(window.StatCard, { label: "Overdue", value: "$" + window.LTP_money(totalOverdue), accent: B.danger })),
       h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
         statuses.map(function(f) {
           return h("button", { key: f, onClick: function() { setFilter(f); },
@@ -131,8 +131,8 @@
                 comp + " \u00b7 " + itemCount + " items" + (qRef ? " \u00b7 from " + qRef : "") + (inv.dueDate ? " \u00b7 Due: " + fmt(inv.dueDate) : ""))),
             h("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
               h("div", { style: { textAlign: "right" } },
-                h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + Math.round(t.total).toLocaleString()),
-                t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + Math.round(t.balance).toLocaleString())),
+                h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + window.LTP_money(t.total)),
+                t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + window.LTP_money(t.balance))),
               h("div", { style: { display: "flex", gap: 4 } },
                 h(window.Badge, { status: window.LTP_displayStatus(inv) }),
                 t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(inv) && h(window.Badge, { status: "overdue" })))
@@ -384,7 +384,7 @@
       // Total
       h("div", { style: { width: 85, textAlign: "right" } },
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
-        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lt).toLocaleString())
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lt))
       ),
       // Per-line tax override — only shown for taxable customers (the common
       // case is exempt, so we keep the row clean). Checked = taxable; unchecked
@@ -568,10 +568,10 @@
       if (newTotal >= invoiceTotal) { newStatus = "paid"; }
       else if (newTotal > 0 && draft.status !== "draft") { newStatus = "partial"; }
       var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-        type: "paid", user: (window.LTP_CURRENT_USER || "User"), message: "Payment recorded: $" + Number(payment.amount).toLocaleString() + (newTotal >= invoiceTotal ? " \u2014 Paid in full" : ""),
+        type: "paid", user: (window.LTP_CURRENT_USER || "User"), message: "Payment recorded: $" + window.LTP_money(payment.amount) + (newTotal >= invoiceTotal ? " \u2014 Paid in full" : ""),
 
         changes: [
-          { cat: "Amount", detail: "$" + Number(payment.amount).toLocaleString() },
+          { cat: "Amount", detail: "$" + window.LTP_money(payment.amount) },
           { cat: "Method", detail: payment.method || "\u2014" },
           payment.reference ? { cat: "Reference", detail: payment.reference } : null,
           newStatus !== draft.status ? { cat: "Status", detail: draft.status + " \u2192 " + newStatus } : null
@@ -613,7 +613,7 @@
       var projName = selectedProject ? selectedProject.name : (draft.customName || "");
       var paymentLines = (payments || draft.payments || []).map(function(p) {
         var methodLabels = { check: "Check", ach: "ACH", credit_card: "Credit Card", cash: "Cash", wire: "Wire", other: "Other" };
-        return "  " + fmt(p.date) + " \u2014 $" + Number(p.amount).toLocaleString() + " via " + (methodLabels[p.method] || p.method) + (p.reference ? " (" + p.reference + ")" : "");
+        return "  " + fmt(p.date) + " \u2014 $" + window.LTP_money(p.amount) + " via " + (methodLabels[p.method] || p.method) + (p.reference ? " (" + p.reference + ")" : "");
       }).join("\n");
       var resolve = window.LTP_resolveTemplate;
       var s = settings || {};
@@ -626,7 +626,7 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        total: "$" + window.LTP_money(t.total),
         lineItems: "Payments Received:\n" + paymentLines,
       };
       setSendRecipients(initSendRecipients());
@@ -706,9 +706,9 @@
       if (draft.status === "paid" && newTotal < invoiceTotal) { newStatus = newTotal > 0 ? "partial" : "sent"; }
       else if (draft.status === "partial" && newTotal === 0) { newStatus = "sent"; }
       var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-        type: "saved", user: (window.LTP_CURRENT_USER || "User"), message: "Payment removed: $" + (deletedPay ? Number(deletedPay.amount).toLocaleString() : "?"),
+        type: "saved", user: (window.LTP_CURRENT_USER || "User"), message: "Payment removed: $" + (deletedPay ? window.LTP_money(deletedPay.amount) : "?"),
 
-        changes: [{ cat: "Payment Removed", detail: "$" + (deletedPay ? Number(deletedPay.amount).toLocaleString() : "?") + " via " + (deletedPay ? deletedPay.method : "?") }]
+        changes: [{ cat: "Payment Removed", detail: "$" + (deletedPay ? window.LTP_money(deletedPay.amount) : "?") + " via " + (deletedPay ? deletedPay.method : "?") }]
       };
       patchDraft({ payments: updatedPayments, status: newStatus, paidDate: newStatus === "paid" ? draft.paidDate : null, activity: (draft.activity || []).concat([actEntry]) });
       // Auto-save immediately (bypasses locked state)
@@ -747,7 +747,7 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(t.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        total: "$" + window.LTP_money(t.total),
         dueDate: draft.dueDate ? fmt(draft.dueDate) : "Upon receipt",
       };
       setSendRecipients(initSendRecipients());
@@ -1002,11 +1002,9 @@
     var qbInvoiceUrl = (draft.qbInvoiceId && qbo)
       ? ((qbo.environment === "production" ? "https://app.qbo.intuit.com" : "https://app.sandbox.qbo.intuit.com") + "/app/invoice?txnId=" + draft.qbInvoiceId)
       : null;
-    // Money formatter for invoice totals: show exact cents once QuickBooks tax
-    // applies (so the tax-inclusive total/balance are precise), whole dollars
-    // otherwise (the app's convention).
-    var hasQbTax = draft.qbTaxTotal != null && draft.qbTaxTotal > 0;
-    var fmtT = function(v) { return hasQbTax ? money2(v) : ("$" + Math.round(v).toLocaleString()); };
+    // Invoice totals always show exact cents — line items can carry fractional
+    // quantities, and QuickBooks tax is itself cent-precise.
+    var fmtT = money2;
 
     // Section helpers
     function updateItem(secId, itemId, patch) {
@@ -1099,7 +1097,7 @@
       if (!before || !after) return null;
       var changes = [];
       var tB = window.LTP_INVOICE_TOTALS(before), tA = window.LTP_INVOICE_TOTALS(after);
-      if (Math.round(tB.total) !== Math.round(tA.total)) changes.push({ cat: "Invoice Total", detail: "$" + Math.round(tB.total).toLocaleString() + " \u2192 $" + Math.round(tA.total).toLocaleString() });
+      if (Math.round(tB.total * 100) !== Math.round(tA.total * 100)) changes.push({ cat: "Invoice Total", detail: "$" + window.LTP_money(tB.total) + " \u2192 $" + window.LTP_money(tA.total) });
       if (before.status !== after.status) changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
       if (before.dueDate !== after.dueDate) {
         var dbf = before.dueDate ? fmt(before.dueDate) : "Not set";
@@ -1279,7 +1277,7 @@
       if (draft.id == null) return;
       var hasPayments = (draft.payments || []).length > 0;
       var paymentWarning = hasPayments
-        ? "\n\nThis invoice has " + draft.payments.length + " recorded payment" + (draft.payments.length > 1 ? "s" : "") + " totaling $" + Math.round((draft.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0)).toLocaleString() + ". Deleting will erase the payment records."
+        ? "\n\nThis invoice has " + draft.payments.length + " recorded payment" + (draft.payments.length > 1 ? "s" : "") + " totaling $" + window.LTP_money((draft.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0)) + ". Deleting will erase the payment records."
         : "";
       var qbWarning = draft.qbInvoiceId ? "\n\nThis invoice will also be deleted from QuickBooks." : "";
       setDlg({ title: "Delete Invoice", message: "Permanently delete " + refDisplay + "?" + (draft.quoteId ? " This will reduce invoiced quantities on the source quote." : "") + qbWarning + paymentWarning, variant: "danger", confirmLabel: hasPayments ? "Delete with Payments" : "Delete",
@@ -1553,7 +1551,7 @@
                       onChange: function(e) { updateSectionLabel(sec.id, e.target.value); },
                       style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } })
                   : h("div", { style: { flex: 1, fontSize: "14px", fontWeight: 700, color: B.accent } }, sec.label),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, "$" + Math.round(st.subtotal).toLocaleString()),
+                h("div", { style: { fontSize: "11px", color: B.textMut } }, "$" + window.LTP_money(st.subtotal)),
                 isDraft && draft.sections.length > 1 && h("button", { onClick: function() { deleteSection(sec.id); },
                   style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: "3px 8px" } }, "Delete")
               ),
@@ -1574,9 +1572,9 @@
           // Totals
           h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", color: B.textSec } },
-              h("span", null, "Subtotal"), h("span", null, "$" + Math.round(t.subtotal).toLocaleString())),
+              h("span", null, "Subtotal"), h("span", null, "$" + window.LTP_money(t.subtotal))),
             t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
-              h("span", null, "Adjustments"), h("span", null, "-$" + Math.round(t.subtotal - t.adjusted).toLocaleString())),
+              h("span", null, "Adjustments"), h("span", null, "-$" + window.LTP_money(t.subtotal - t.adjusted))),
             // Global discount (editable in draft)
             isDraft && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "11px", color: B.textMut } }, "Discount:"),
@@ -1643,7 +1641,7 @@
                 h("div", null,
                   h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, sec.label),
                   h("div", { style: { fontSize: "9px", color: B.textMut } }, cnt + " items")),
-                h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + Math.round(st.subtotal).toLocaleString()));
+                h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(st.subtotal)));
             }),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
@@ -1677,7 +1675,7 @@
                     var methodLabels = { check: "Check", ach: "ACH", credit_card: "CC", cash: "Cash", wire: "Wire", other: "Other" };
                     return h("div", { key: pay.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 8px", background: B.raised, borderRadius: "4px", border: "1px solid " + B.border } },
                       h("div", null,
-                        h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.success } }, "$" + Number(pay.amount).toLocaleString()),
+                        h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.success } }, "$" + window.LTP_money(pay.amount)),
                         h("div", { style: { fontSize: "9px", color: B.textMut } },
                           (methodLabels[pay.method] || pay.method || "") +
                           (pay.reference ? " \u00b7 " + pay.reference : "") +
@@ -1690,7 +1688,7 @@
                   }),
                   h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 8px 0", borderTop: "1px dashed " + B.border, marginTop: 2, fontSize: "10px" } },
                     h("span", { style: { color: B.textMut } }, "Total Paid"),
-                    h("span", { style: { color: B.success, fontWeight: 700 } }, "$" + Math.round(t.paid).toLocaleString()))
+                    h("span", { style: { color: B.success, fontWeight: 700 } }, "$" + window.LTP_money(t.paid)))
                 )
           ),
           // Linked Quote
@@ -1705,7 +1703,7 @@
                 h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent } }, window.LTP_QUOTE_REF(linkedQuote)),
                 h("div", { style: { fontSize: "9px", color: B.textMut } }, fmt(linkedQuote.createdDate || ""))),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, "$" + Math.round((window.LTP_QUOTE_TOTALS(linkedQuote) || {}).total || 0).toLocaleString()),
+                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, "$" + window.LTP_money((window.LTP_QUOTE_TOTALS(linkedQuote) || {}).total || 0)),
                 h(window.Badge, { status: linkedQuote.status }))
             )
           ),
@@ -1776,13 +1774,13 @@
           h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: B.raised, borderRadius: "6px", border: "1px solid " + B.border } },
             h("div", null,
               h("div", { style: { fontSize: "10px", color: B.textMut } }, "Invoice Total"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + Math.round(t.total).toLocaleString())),
+              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))),
             h("div", { style: { textAlign: "center" } },
               h("div", { style: { fontSize: "10px", color: B.textMut } }, "Already Paid"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.paid > 0 ? B.success : B.textMut } }, "$" + Math.round(t.paid).toLocaleString())),
+              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.paid > 0 ? B.success : B.textMut } }, "$" + window.LTP_money(t.paid))),
             h("div", { style: { textAlign: "right" } },
               h("div", { style: { fontSize: "10px", color: B.textMut } }, "Balance Due"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } }, "$" + Math.round(t.balance).toLocaleString())))
+              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } }, "$" + window.LTP_money(t.balance))))
         ),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPInput, { label: "Payment Date", value: payDate, onChange: setPayDate, type: "date" }),
@@ -1800,7 +1798,7 @@
             if (!payAmount || amt <= 0) { showAlert("Invalid Amount", "Enter a valid payment amount."); return; }
             if (!payDate) { showAlert("Missing Date", "Enter a payment date."); return; }
             if (amt > t.balance && t.balance > 0) {
-              if (!window.confirm("This payment ($" + amt.toLocaleString() + ") exceeds the balance due ($" + Math.round(t.balance).toLocaleString() + "). Record anyway?")) return;
+              if (!window.confirm("This payment ($" + window.LTP_money(amt) + ") exceeds the balance due ($" + window.LTP_money(t.balance) + "). Record anyway?")) return;
             }
             addPayment({ date: payDate, amount: amt, method: payMethod, reference: payRef, notes: payNotes });
           } }, "Record Payment"))
@@ -1892,17 +1890,17 @@
             h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 8, flex: 1 } },
               h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 6 } },
                 h("span", { style: { color: B.textMut } }, "Invoice Total"),
-                h("span", { style: { color: B.text } }, "$" + Math.round(t.total).toLocaleString())),
+                h("span", { style: { color: B.text } }, "$" + window.LTP_money(t.total))),
               h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Payments"),
               (draft.payments || []).map(function(p) {
                 var ml = { check: "Check", ach: "ACH", credit_card: "CC", cash: "Cash", wire: "Wire", other: "Other" };
                 return h("div", { key: p.id, style: { display: "flex", justifyContent: "space-between", fontSize: "10px", padding: "2px 0" } },
                   h("span", { style: { color: B.textMut } }, fmt(p.date) + " \u00b7 " + (ml[p.method] || p.method)),
-                  h("span", { style: { color: B.success } }, "$" + Number(p.amount).toLocaleString()));
+                  h("span", { style: { color: B.success } }, "$" + window.LTP_money(p.amount)));
               }),
               h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 6 } },
                 h("span", { style: { color: B.success } }, "Paid in Full"),
-                h("span", { style: { color: B.success } }, "$" + Math.round(t.paid).toLocaleString()))
+                h("span", { style: { color: B.success } }, "$" + window.LTP_money(t.paid)))
             )
           ),
           // Right: Email preview

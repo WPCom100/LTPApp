@@ -601,7 +601,7 @@
       // Line total
       h("div", { style: { width: 90, textAlign: "right" } },
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
-        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + Math.round(lineTotal).toLocaleString())
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lineTotal))
       ),
       // Per-line tax override — shown only for taxable customers (most are
       // exempt, so the row stays clean). Checked = taxable; unchecked = exempt
@@ -648,8 +648,8 @@
               onChange: function(e) { onLabelChange(section.id, e.target.value); },
               style: { flex: 1, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
         h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right" } },
-          h("div", null, "$" + Math.round(sectionSubtotal).toLocaleString()),
-          h("div", { style: { fontSize: "9px" } }, "margin: $" + Math.round(sectionMargin).toLocaleString())
+          h("div", null, "$" + window.LTP_money(sectionSubtotal)),
+          h("div", { style: { fontSize: "9px" } }, "margin: $" + window.LTP_money(sectionMargin))
         ),
         !isLocked && h("button", { onClick: function() { onDelete(section.id); },
           style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: "3px 8px" } }, "Delete Section")
@@ -716,9 +716,9 @@
 
     return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
       h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.accent, textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 8px" } }, "Totals"),
-      row("Subtotal", "$" + Math.round(t.subtotal).toLocaleString()),
+      row("Subtotal", "$" + window.LTP_money(t.subtotal)),
       autoAdjustment !== 0 && row("Line adjustments",
-        (autoAdjustment > 0 ? "\u2212" : "+") + "$" + Math.round(Math.abs(autoAdjustment)).toLocaleString(),
+        (autoAdjustment > 0 ? "\u2212" : "+") + "$" + window.LTP_money(Math.abs(autoAdjustment)),
         { color: autoAdjustment > 0 ? B.success : B.danger }),
 
       // Global discount row
@@ -743,7 +743,7 @@
             ),
         globalDiscountAmount !== 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut } },
           h("span", null, gd.type === "percent" ? "(\u2212" + gd.value + "%)" : gd.type === "target" ? "(target)" : "(\u2212$" + gd.value + ")"),
-          h("span", null, "\u2212$" + Math.round(globalDiscountAmount).toLocaleString())
+          h("span", null, "\u2212$" + window.LTP_money(globalDiscountAmount))
         )
       ),
 
@@ -761,17 +761,17 @@
       // Brand-gradient rule sets the grand total apart — same stroke as the
       // client view's totals block.
       h("div", { style: { height: 3, background: B.gradRule, marginTop: 10 } }),
-      row("TOTAL", "$" + Math.round(t.total).toLocaleString(), { big: true, bold: true, color: B.accent }),
+      row("TOTAL", "$" + window.LTP_money(t.total), { big: true, bold: true, color: B.accent }),
 
       // Internal margin section
       h("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "2px dashed " + B.border } },
         h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
           h("span", null, "Total Cost"),
-          h("span", null, "$" + Math.round(t.cost).toLocaleString())
+          h("span", null, "$" + window.LTP_money(t.cost))
         ),
         h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
           h("span", null, "Margin"),
-          h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + Math.round(marginTotal).toLocaleString() + " (" + marginPct + "%)")
+          h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
         )
       )
     );
@@ -799,8 +799,8 @@
     // Totals
     var tBefore = window.LTP_QUOTE_TOTALS(before);
     var tAfter  = window.LTP_QUOTE_TOTALS(after);
-    if (Math.round(tBefore.total) !== Math.round(tAfter.total)) {
-      changes.push({ cat: "Quote Total", detail: "$" + Math.round(tBefore.total).toLocaleString() + " → $" + Math.round(tAfter.total).toLocaleString() });
+    if (Math.round(tBefore.total * 100) !== Math.round(tAfter.total * 100)) {
+      changes.push({ cat: "Quote Total", detail: "$" + window.LTP_money(tBefore.total) + " → $" + window.LTP_money(tAfter.total) });
     }
 
     // Status
@@ -890,8 +890,8 @@
       var stB = 0, stA = 0;
       (bSec.items || []).forEach(function(i) { if (i.type !== "note") stB += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
       (aSec.items || []).forEach(function(i) { if (i.type !== "note") stA += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
-      if (Math.round(stB) !== Math.round(stA)) {
-        changes.push({ cat: aSec.label + " Subtotal", detail: "$" + Math.round(stB).toLocaleString() + " → $" + Math.round(stA).toLocaleString() });
+      if (Math.round(stB * 100) !== Math.round(stA * 100)) {
+        changes.push({ cat: aSec.label + " Subtotal", detail: "$" + window.LTP_money(stB) + " → $" + window.LTP_money(stA) });
       }
 
       // Item-level diffs
@@ -1355,7 +1355,7 @@
         refNumber: ref,
         projectName: projName,
         clientName: clientName || "there",
-        total: "$" + Math.round(totals.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        total: "$" + window.LTP_money(totals.total),
         quoteValidity: String(s.defaultQuoteValidity || 30),
       };
       setSendRecipients(initSendRecipients());
@@ -1400,7 +1400,7 @@
       var hv = sendHeaderVars || {};
       if (sendHeaderVars) {
         var nt = window.LTP_QUOTE_TOTALS(baseDraft);
-        hv = Object.assign({}, sendHeaderVars, { total: "$" + Math.round(nt.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) });
+        hv = Object.assign({}, sendHeaderVars, { total: "$" + window.LTP_money(nt.total) });
       }
       var headerHtml = window.LTP_renderHeader("quote", hv);
       var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
@@ -2053,7 +2053,7 @@
                   h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, sec.label),
                   h("div", { style: { fontSize: "9px", color: B.textMut } }, itemCount + " items")
                 ),
-                h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent, textAlign: "right" } }, "$" + Math.round(st.subtotal).toLocaleString())
+                h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.accent, textAlign: "right" } }, "$" + window.LTP_money(st.subtotal))
               );
             }),
 
@@ -2065,11 +2065,11 @@
               return h("div", { style: { marginTop: 8 } },
                 t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
                   h("span", null, "Adjustments"),
-                  h("span", null, "-$" + Math.round(t.subtotal - t.adjusted).toLocaleString())
+                  h("span", null, "-$" + window.LTP_money(t.subtotal - t.adjusted))
                 ),
                 draft.globalDiscount && draft.globalDiscount.type !== "none" && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
                   h("span", null, "Discount"),
-                  h("span", null, "-$" + Math.round(t.adjusted - (t.preTax || t.total)).toLocaleString())
+                  h("span", null, "-$" + window.LTP_money(t.adjusted - (t.preTax || t.total)))
                 ),
                 t.tax > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
                   h("span", null, "Sales Tax"),
@@ -2077,11 +2077,11 @@
                 ),
                 h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
-                  h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + Math.round(t.total).toLocaleString())
+                  h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))
                 ),
                 h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
                   h("span", null, "Margin"),
-                  h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + Math.round(marginTotal).toLocaleString() + " (" + marginPct + "%)")
+                  h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
                 )
               );
             }()
@@ -2115,7 +2115,7 @@
                       h("div", { style: { fontSize: "9px", color: B.textMut } }, inv.dueDate ? "Due: " + fmt(inv.dueDate) : "No due date")
                     ),
                     h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                      h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, "$" + Math.round(it.total).toLocaleString()),
+                      h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, "$" + window.LTP_money(it.total)),
                       h(window.Badge, { status: inv.status })
                     )
                   );
@@ -2264,7 +2264,7 @@
                     h("div", null,
                       h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, ref),
                       h("div", { style: { fontSize: "10px", color: B.textMut } }, itemCount + " item" + (itemCount !== 1 ? "s" : "") + " \u00b7 " + window.LTP_formatDate(inv.invoiceDate))),
-                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + (total.total || 0).toLocaleString())
+                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(total.total || 0))
                   );
                 })
               : [h("div", { key: "_empty", style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } }, "No existing draft invoices for this project.")];
@@ -2287,11 +2287,11 @@
                 var cnt = sec.items.filter(function(i) { return i.type !== "note"; }).length;
                 return h("div", { key: sec.id, style: { display: "flex", justifyContent: "space-between", fontSize: "10px", padding: "3px 0" } },
                   h("span", { style: { color: B.textMut } }, sec.label + " (" + cnt + ")"),
-                  h("span", { style: { color: B.text } }, "$" + Math.round(sec.items.reduce(function(s, i) { return s + ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * ((Number(i.qty) || 0)); }, 0)).toLocaleString()));
+                  h("span", { style: { color: B.text } }, "$" + window.LTP_money(sec.items.reduce(function(s, i) { return s + ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * ((Number(i.qty) || 0)); }, 0))));
               }),
               h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 6 } },
                 h("span", { style: { color: B.text } }, "Total"),
-                h("span", { style: { color: B.accent } }, "$" + Math.round((window.LTP_QUOTE_TOTALS(draft) || {}).total || 0).toLocaleString()))
+                h("span", { style: { color: B.accent } }, "$" + window.LTP_money((window.LTP_QUOTE_TOTALS(draft) || {}).total || 0)))
             )
           ),
           // Right: Email preview
