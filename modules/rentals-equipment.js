@@ -49,6 +49,7 @@
   // ── Equipment Form Modal ────────────────────────────────────────────────────
   window.RentalsEquipmentForm = function({ initial, onClose, onSave, vendors }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
 
     var blankRates = { threeDay: 0, week: 0, month: 0 };
     var blank = {
@@ -136,8 +137,8 @@
       }));
     }
 
-    var g2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 };
-    var g3 = { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 };
+    var g2 = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
+    var g3 = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 10 };
 
     return h(window.LTPModal, { title: initial ? "Edit Equipment" : "Add Equipment", onClose: onClose, wide: true, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
@@ -159,7 +160,7 @@
         ),
 
         // Manufacturer + Model + Location + Weight
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 80px", gap: 12 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 80px", gap: 12 } },
           R.Field("Manufacturer", h("input", { value: f.manufacturer || "", onChange: function(e) { set("manufacturer", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Model",        h("input", { value: f.model        || "", onChange: function(e) { set("model",        e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Location",     h("input", { value: f.location     || "", onChange: function(e) { set("location",     e.target.value); }, placeholder: "Warehouse A", style: Object.assign({}, R.INP, { width: "100%" }) })),
@@ -207,7 +208,7 @@
                   R.Field("Serial #", h("input", { value: u.serial || "", onChange: function(e) { setUnit(i, "serial", e.target.value); }, placeholder: "SFR3K-001", style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Barcode / Asset #", h("input", { value: u.barcode || "", onChange: function(e) { setUnit(i, "barcode", e.target.value); }, placeholder: "LTP-SF3-001", style: Object.assign({}, R.INP, { width: "100%" }) }))
                 ),
-                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr auto", gap: 8, alignItems: "end" } },
+                h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr auto", gap: 8, alignItems: "end" } },
                   R.Field("Purchase Date", h("input", { type: "date", value: u.purchaseDate || "", onChange: function(e) { setUnit(i, "purchaseDate", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Purchase Vendor (CRM)", h(VendorSearch, { vendors: vendors, value: u.purchaseVendorId || null, onChange: function(id) { setUnit(i, "purchaseVendorId", id); } })),
                   R.Field("Cost ($)", h("input", { type: "number", min: 0, step: "0.01", value: u.purchaseCost || "", onChange: function(e) { setUnit(i, "purchaseCost", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
@@ -237,6 +238,7 @@
   window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, onClose, onEdit, onDelete, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var fmt = window.LTP_formatDate;
+    var isMobile = window.LTP_useIsMobile();
 
     var [tab,           setTab]           = useState("overview");
     var [showMaint,     setShowMaint]     = useState(false);
@@ -300,7 +302,7 @@
       // ── OVERVIEW ────────────────────────────────────────────────────────────
       tab === "overview" && h("div", null,
         // Stat row
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total Units"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text } }, rawQty)),
