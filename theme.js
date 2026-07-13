@@ -1432,6 +1432,16 @@ window.LTP_productVariantName = function(product, variant) {
   return variant ? base + " — " + variant.label : base;
 };
 
+// Currency display — always to the cent. Line items can carry fractional
+// quantities, so totals and subtotals have real cents; rounding them to whole
+// dollars (the app's former display convention) silently dropped that money.
+// Returns a thousands-separated two-decimal string WITHOUT a currency symbol,
+// so callers keep their own "$" / "−$" prefix. Mirrors the PDF's _fmt_money
+// and the client view's fmtMoney so every surface reads to the same cent.
+window.LTP_money = function(n) {
+  return (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+
 window.LTP_INVOICE_TOTALS = function(inv) {
   if (!inv) return { subtotal: 0, discount: 0, tax: 0, total: 0, paid: 0, balance: 0 };
   var subtotal = 0;

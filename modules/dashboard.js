@@ -82,11 +82,11 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
 
     // Cash flow cards
     h("div", { style: { display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" } },
-      h(window.StatCard, { label: "Collected", value: "$" + Math.round(cashPaid).toLocaleString(), accent: B.success }),
-      h(window.StatCard, { label: "Outstanding", value: "$" + Math.round(cashOutstanding).toLocaleString(), accent: cashOutstanding > 0 ? B.warn : B.textMut }),
-      h(window.StatCard, { label: "Overdue", value: "$" + Math.round(cashOverdue).toLocaleString(), accent: cashOverdue > 0 ? B.danger : B.textMut }),
-      h(window.StatCard, { label: "Draft", value: "$" + Math.round(cashDraft).toLocaleString() }),
-      h(window.StatCard, { label: "Quote Pipeline", value: "$" + Math.round(quotePipeline).toLocaleString(), accent: B.info })
+      h(window.StatCard, { label: "Collected", value: "$" + window.LTP_money(cashPaid), accent: B.success }),
+      h(window.StatCard, { label: "Outstanding", value: "$" + window.LTP_money(cashOutstanding), accent: cashOutstanding > 0 ? B.warn : B.textMut }),
+      h(window.StatCard, { label: "Overdue", value: "$" + window.LTP_money(cashOverdue), accent: cashOverdue > 0 ? B.danger : B.textMut }),
+      h(window.StatCard, { label: "Draft", value: "$" + window.LTP_money(cashDraft) }),
+      h(window.StatCard, { label: "Quote Pipeline", value: "$" + window.LTP_money(quotePipeline), accent: B.info })
     ),
 
     // Main grid: two columns
@@ -157,7 +157,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
                 h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.danger } }, o.ref),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, o.company)),
               h("div", { style: { textAlign: "right" } },
-                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.danger } }, "$" + Math.round(o.balance).toLocaleString()),
+                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.danger } }, "$" + window.LTP_money(o.balance)),
                 h("div", { style: { fontSize: "9px", color: B.danger } }, o.daysPast + " day" + (o.daysPast !== 1 ? "s" : "") + " past due"))
             );
           })
