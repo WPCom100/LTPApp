@@ -115,6 +115,32 @@
          inputs, 9–11px in the dense builder rows). */
       input, select, textarea { font-size: 16px !important; }
 
+      /* iOS Safari renders date / time inputs with their OWN intrinsic control
+         height — taller than our text inputs — plus an internal value element
+         that carries default margins, so a date field looks oversized next to
+         the fields around it (and the 16px rule above makes it worse). This is
+         invisible in Chromium/desktop, which is why it only shows on iPhone.
+         Stripping the native appearance makes these inputs obey the same box
+         model (padding + font-size, with the global `box-sizing: border-box`)
+         as every other field; zeroing the inner value's margin removes the
+         last of the extra height. The whole field stays tappable and still
+         opens the native picker. Mobile-only so desktop keeps its calendar
+         glyph and native control. */
+      input[type="date"],
+      input[type="time"],
+      input[type="datetime-local"],
+      input[type="month"] {
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      input[type="date"]::-webkit-date-and-time-value,
+      input[type="time"]::-webkit-date-and-time-value,
+      input[type="datetime-local"]::-webkit-date-and-time-value,
+      input[type="month"]::-webkit-date-and-time-value {
+        margin: 0;
+        text-align: left;
+      }
+
       /* LTPModal (components/ui.js) → full-screen sheet: fill the viewport with
          no floating card, and inset content from the notch + home indicator.
          classNames are applied in ui.js; dynamic bits stay inline.
