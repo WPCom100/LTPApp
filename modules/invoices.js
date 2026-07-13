@@ -1477,17 +1477,17 @@
       // Sticky header. In the full-screen builder the app topbar is hidden, so
       // on mobile this header is the topmost element and takes the status-bar
       // safe-area inset; its actions wrap instead of overflowing off-screen.
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 10 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: isMobile ? 8 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, flex: 1, minWidth: 0 } },
           h("button", { onClick: function() { nav("invoices"); },
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
-          h("div", null,
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1 } }, refDisplay),
-            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3 } },
-              h("span", { style: { fontSize: "12px", color: B.textSec } }, displayName),
-              h(window.Badge, { status: window.LTP_displayStatus(draft) }),
-              t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(draft) && h(window.Badge, { status: "overdue" }),
-              linkedQuote && h("span", { style: { fontSize: "10px", color: B.textMut } }, "from " + window.LTP_QUOTE_REF(linkedQuote))))),
+            style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
+          h("div", { style: { minWidth: 0 } },
+            h("div", { style: { fontSize: isMobile ? "17px" : "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, refDisplay),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 3, minWidth: 0 } },
+              h("span", { style: { fontSize: "12px", color: B.textSec, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 } }, displayName),
+              h("div", { style: { flexShrink: 0 } }, h(window.Badge, { status: window.LTP_displayStatus(draft) })),
+              t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(draft) && h("div", { style: { flexShrink: 0 } }, h(window.Badge, { status: "overdue" })),
+              !isMobile && linkedQuote && h("span", { style: { fontSize: "10px", color: B.textMut } }, "from " + window.LTP_QUOTE_REF(linkedQuote))))),
         isMobile
         ? h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
             justSaved && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 8px", borderRadius: "6px" } }, "\u2713"),
