@@ -84,21 +84,14 @@
     // one section per date that has events, each row a full-width tap target.
     // The desktop month grid below is unchanged.
     if (isMobile) {
-      var agendaDays = [];
-      for (var ad = 1; ad <= daysInMonth; ad++) {
-        var agGroups = getEventsForDay(ad);
-        if (agGroups.length) agendaDays.push({ day: ad, groups: agGroups });
-      }
+      // Mobile calendar = compact month grid (a familiar phone-calendar view).
+      // The fixed-height desktop grid squeezes each day too small to read text,
+      // so on a phone each cell shows the day number + a dot per project with
+      // something on it (colored by category). Tapping a day opens the Weekly
+      // Schedule to that day's week. The desktop month grid below is unchanged.
       var todayD = new Date();
-      // The day to open on: today if the shown month is the current month, else
-      // the first day-with-events on/after today (so it lands on the current or
-      // next scheduled day). null in other months → no auto-scroll.
-      var targetDay = null;
-      if (year === todayD.getFullYear() && month === todayD.getMonth()) {
-        for (var ti = 0; ti < agendaDays.length; ti++) {
-          if (agendaDays[ti].day >= todayD.getDate()) { targetDay = agendaDays[ti].day; break; }
-        }
-      }
+      var pad2 = function(n) { return String(n).padStart(2, "0"); };
+      var openWeek = function(ds) { window.LTP_weeklyFocusDate = ds; window.LTPRouter.navigate("labor/schedule"); };
       return h("div", { style: { display: "flex", flexDirection: "column" } },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 } },
           h(window.Btn, { small: true, variant: "ghost", onClick: prevMonth }, "← Prev"),
@@ -110,35 +103,27 @@
             return h("button", { key: f.k, onClick: function() { setCalFilter(f.k); }, className: "ltp-tap",
               style: { flexShrink: 0, background: active ? f.color : B.raised, color: active ? B.btnInk : f.color, border: "1px solid " + (active ? f.color : B.border), borderRadius: "16px", padding: "8px 16px", fontSize: "13px", fontWeight: 600, cursor: "pointer", minHeight: 36, whiteSpace: "nowrap" } }, f.l);
           })),
-        agendaDays.length === 0
-          ? h(window.EmptyState, { text: "Nothing scheduled this month." })
-          : agendaDays.map(function(entry) {
-              var dObj = new Date(year, month, entry.day);
-              var isToday = year === todayD.getFullYear() && month === todayD.getMonth() && entry.day === todayD.getDate();
-              var dateLabel = dObj.toLocaleDateString("default", { weekday: "short", month: "short", day: "numeric" });
-              return h("div", { key: entry.day, ref: entry.day === targetDay ? todayRef : null, style: { marginBottom: 18, scrollMarginTop: "8px" } },
-                h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, dateLabel + (isToday ? " · Today" : "")),
-                entry.groups.map(function(g, gi) {
-                  var p = g.project;
-                  return h("div", { key: p.id + "-" + gi, style: { background: g.color + "14", borderLeft: "3px solid " + g.color, borderRadius: 8, padding: "4px 12px 8px", marginBottom: 8 } },
-                    (calFilter !== "meetings") && g.isInRange && h("div", {
-                      onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "overview"); },
-                      className: "ltp-tap",
-                      style: { fontSize: "15px", fontWeight: 700, color: g.color, cursor: "pointer", minHeight: 40, display: "flex", alignItems: "center" } }, p.name),
-                    g.schedules.map(function(s) {
-                      return h("div", { key: "s" + s.id, className: "ltp-tap",
-                        onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "schedule"); },
-                        style: { fontSize: "14px", color: B.textSec, cursor: "pointer", minHeight: 38, display: "flex", alignItems: "center", paddingLeft: 4 } }, s.title + " · " + ft(s.time));
-                    }),
-                    g.meetings.map(function(m) {
-                      return h("div", { key: "m" + m.id, className: "ltp-tap",
-                        onClick: function(e) { e.stopPropagation(); ctx.setSelectedProjectId(p.id, "meetings"); },
-                        style: { fontSize: "14px", color: B.info, cursor: "pointer", minHeight: 38, display: "flex", alignItems: "center", paddingLeft: 4 } }, "▲ " + m.title + " · " + ft(m.time));
-                    })
-                  );
-                })
-              );
-            })
+        // Weekday headers (single-letter to fit seven narrow columns)
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, marginBottom: 6 } },
+          ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(function(d, di) {
+            return h("div", { key: di, style: { textAlign: "center", fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase" } }, d[0]);
+          })),
+        // Month grid — each real day is a tap target that opens the Weekly Schedule
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 } },
+          days.map(function(day, i) {
+            if (!day) return h("div", { key: i });
+            var groups = getEventsForDay(day);
+            var ds = year + "-" + pad2(month + 1) + "-" + pad2(day);
+            var isToday = year === todayD.getFullYear() && month === todayD.getMonth() && day === todayD.getDate();
+            return h("button", { key: i, className: "ltp-tap", onClick: function() { openWeek(ds); },
+              style: { aspectRatio: "1 / 1", background: isToday ? B.accent + "22" : B.surface, border: "1px solid " + (isToday ? B.accent : B.border), borderRadius: 8, padding: 4, cursor: "pointer", fontFamily: "inherit", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", gap: 3, overflow: "hidden" } },
+              h("div", { style: { fontSize: "13px", fontWeight: isToday ? 700 : 500, color: isToday ? B.accent : B.text } }, day),
+              groups.length > 0 && h("div", { style: { display: "flex", gap: 3, flexWrap: "wrap", justifyContent: "center" } },
+                groups.slice(0, 4).map(function(g, gi) {
+                  return h("span", { key: gi, style: { width: 5, height: 5, borderRadius: "50%", background: g.color } });
+                })));
+          })),
+        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center", marginTop: 14 } }, "Tap a day to open its weekly schedule")
       );
     }
 

@@ -1104,8 +1104,26 @@
   //   WEEKLY SCHEDULE TAB
   // ═══════════════════════════════════════════════════════════════════════════
   function WeeklySchedule({ allPositions, contacts }) {
-    var [weekOffset, setWeekOffset] = useState(0);
     var isMobile = window.LTP_useIsMobile();
+    // A tap on a Calendar day parks that date in window.LTP_weeklyFocusDate
+    // before navigating here. Consume it once (lazy init) to open on that day's
+    // week and scroll to it; clear it so a later revisit opens on the current week.
+    function weekOffsetForDate(iso) {
+      var n = new Date();
+      var nmo = n.getDay() === 0 ? -6 : 1 - n.getDay();
+      var thisMon = new Date(n.getFullYear(), n.getMonth(), n.getDate() + nmo);
+      var t = new Date(iso + "T12:00:00");
+      var tmo = t.getDay() === 0 ? -6 : 1 - t.getDay();
+      var tMon = new Date(t.getFullYear(), t.getMonth(), t.getDate() + tmo);
+      return Math.round((tMon - thisMon) / (7 * 86400000));
+    }
+    var [focusDate] = useState(function() {
+      var f = window.LTP_weeklyFocusDate || null;
+      window.LTP_weeklyFocusDate = null;
+      return f;
+    });
+    var [weekOffset, setWeekOffset] = useState(function() { return focusDate ? weekOffsetForDate(focusDate) : 0; });
+    var scrollDate = focusDate || todayISO();
     var todayRef = React.useRef(null);
     React.useEffect(function() {
       if (isMobile && todayRef.current) todayRef.current.scrollIntoView({ block: "start" });
@@ -1156,7 +1174,7 @@
           var isToday = ds === todayISO();
           var rows = byDay[ds];
           var label = d2.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
-          return h("div", { key: ds, ref: isToday ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
+          return h("div", { key: ds, ref: ds === scrollDate ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
             h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, label + (isToday ? " \u00b7 Today" : "")),
             rows.length === 0
               ? h("div", { style: { fontSize: "13px", color: B.textMut, fontStyle: "italic", padding: "4px 2px 10px" } }, "No crew scheduled.")
