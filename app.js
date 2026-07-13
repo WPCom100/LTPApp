@@ -551,7 +551,7 @@ function LTPSignedInApp(props) {
       // scrolling flex container, so the inner-column approach fails in Safari.
       // The mobile tab bar is a sibling flex row below (not overlaying), so no
       // extra bottom clearance is needed here for it.
-      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? "10px 16px 16px" : (isMobile ? "14px 14px 16px" : "22px") } }, renderModule())
+      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? (isMobile ? "10px 4px 12px" : "10px 16px 16px") : (isMobile ? "14px 14px 16px" : "22px") } }, renderModule())
     ),
     // Mobile bottom tab bar — an in-flow row at the bottom of the shell COLUMN,
     // deliberately NOT position:fixed. A fixed bottom:0 bar in an iOS standalone

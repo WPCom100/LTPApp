@@ -253,6 +253,41 @@
     );
   };
 
+  // Overflow "⋯" menu — collapses a pile of secondary actions behind one
+  // kebab button so a cramped header (e.g. the quote/invoice builders) stays a
+  // single tidy row on mobile. items: [{ label, onClick, href, variant, icon,
+  // disabled }] — falsy entries are ignored so callers can inline conditionals.
+  window.LTPOverflowMenu = function({ items, align }) {
+    var op = React.useState(false); var open = op[0], setOpen = op[1];
+    var ref = React.useRef(null);
+    React.useEffect(function() {
+      if (!open) return undefined;
+      function onDoc(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+      document.addEventListener("mousedown", onDoc);
+      return function() { document.removeEventListener("mousedown", onDoc); };
+    }, [open]);
+    var list = (items || []).filter(Boolean);
+    if (!list.length) return null;
+    function rowStyle(it) {
+      return { display: "flex", alignItems: "center", gap: 8, width: "100%", textAlign: "left", background: "transparent",
+               border: "none", borderRadius: "6px", padding: "10px 10px", color: it.disabled ? B.textMut : (it.variant === "danger" ? B.danger : B.text),
+               fontSize: "13px", fontWeight: 500, cursor: it.disabled ? "default" : "pointer", fontFamily: "inherit", textDecoration: "none", opacity: it.disabled ? 0.5 : 1, whiteSpace: "nowrap" };
+    }
+    return h("div", { ref: ref, style: { position: "relative", display: "inline-block" } },
+      h("button", { onClick: function() { setOpen(!open); }, "aria-label": "More actions", className: "ltp-tap",
+        style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.textSec, fontSize: "18px", lineHeight: 1, cursor: "pointer", fontFamily: "inherit" } }, "⋯"),
+      open && h("div", { style: { position: "absolute", top: "calc(100% + 6px)", right: align === "left" ? undefined : 0, left: align === "left" ? 0 : undefined, minWidth: 190, background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", boxShadow: "0 12px 32px rgba(0,0,0,0.45)", zIndex: 60, overflow: "hidden", padding: "5px" } },
+        list.map(function(it, i) {
+          if (it.href) {
+            return h("a", { key: i, href: it.href, target: it.target || "_blank", rel: "noopener", className: "ltp-tap",
+              onClick: function() { setOpen(false); }, style: rowStyle(it) }, it.icon && h("span", null, it.icon), it.label);
+          }
+          return h("button", { key: i, disabled: it.disabled, className: "ltp-tap",
+            onClick: function() { setOpen(false); it.onClick && it.onClick(); }, style: rowStyle(it) },
+            it.icon && h("span", null, it.icon), it.label);
+        })));
+  };
+
   window.StatCard = function({ label, value, sub, accent }) {
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "12px", padding: "18px 20px", flex: 1, minWidth: 140 } },
       h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 6, fontWeight: 700 } }, label),
