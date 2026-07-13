@@ -164,7 +164,7 @@
           R.Field("Manufacturer", h("input", { value: f.manufacturer || "", onChange: function(e) { set("manufacturer", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Model",        h("input", { value: f.model        || "", onChange: function(e) { set("model",        e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Location",     h("input", { value: f.location     || "", onChange: function(e) { set("location",     e.target.value); }, placeholder: "Warehouse A", style: Object.assign({}, R.INP, { width: "100%" }) })),
-          R.Field("Weight (lbs)", h("input", { type: "number", min: 0, step: "0.1", value: f.weight || "", onChange: function(e) { set("weight", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) }))
+          R.Field("Weight", h("input", { type: "number", min: 0, step: "0.1", value: f.weight || "", onChange: function(e) { set("weight", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) }))
         ),
 
         // Vendor from CRM — only for non-serialized (serialized items have per-unit vendor)
@@ -260,6 +260,8 @@
     var activeAllocs = eqAllocs.filter(function(a) { return a.state !== "returned"; });
     var currentAllocs = eqAllocs.filter(function(a) { return a.startDate <= td && a.endDate >= td && a.state !== "returned"; });
     var currentOut  = currentAllocs.reduce(function(s, a) { return s + a.qty; }, 0);
+    // Available right now = everything not out for maintenance and not on rental.
+    var remainingQty = Math.max(0, rawQty - maintQty - currentOut);
     var vendor      = eq.vendorCompanyId ? (vendors || []).find(function(v) { return v.id === eq.vendorCompanyId; }) : null;
 
     // For non-serialized: line-level maintenance logs
@@ -304,17 +306,17 @@
         // Stat row
         h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
-            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total Units"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text } }, rawQty)),
           h("div", { style: { background: maintQty > 0 ? B.dangerBg : B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + (maintQty > 0 ? B.dangerBd : B.border) } },
-            h("div", { style: { fontSize: "10px", color: maintQty > 0 ? B.danger : B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Under Maint."),
+            h("div", { style: { fontSize: "10px", color: maintQty > 0 ? B.danger : B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Out for Maint."),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: maintQty > 0 ? B.danger : B.textMut } }, maintQty)),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
-            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Active Out"),
+            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "On Rental"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: currentOut > 0 ? B.accent : B.textMut } }, currentOut)),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
-            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "3-Day Rate"),
-            h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.accent } }, "$" + eq.rates.threeDay))
+            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Remaining"),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: remainingQty > 0 ? B.success : B.textMut } }, remainingQty))
         ),
 
         // All rate tiers
