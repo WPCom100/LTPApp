@@ -28,7 +28,11 @@
   //                     (full decommission -> flip eq.status).
   window.RentalsMaintenanceForm = function({ onClose, onSave, serialized, selectedUnit, availableQty }) {
     var R = window.LTP_RENTALS;
+    var isMobile = window.LTP_useIsMobile();
     var maxQty = Math.max(1, Number(availableQty) || 1);
+    // On mobile bump the form inputs to a 16px font + taller padding: a bigger
+    // tap target, and 16px stops iOS Safari from zooming in on focus.
+    var mobileInp = isMobile ? { fontSize: "16px", padding: "11px 12px" } : {};
     var hasQtyInput = !serialized && availableQty != null && availableQty > 0;
 
     var [issue,          setIssue]          = useState("");
@@ -94,8 +98,8 @@
 
     return h(window.LTPModal, { title: "Log Issue" + (unitLabel ? " — " + unitLabel : ""), onClose: onClose, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
-        R.Field("Date", h("input", { type: "date", value: date, onChange: function(e) { setDate(e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
-        R.Field("Issue Description", h("textarea", { value: issue, onChange: function(e) { setIssue(e.target.value); }, rows: 3, placeholder: "Describe the issue...", style: Object.assign({}, R.INP, { width: "100%", resize: "vertical" }) })),
+        R.Field("Date", h("input", { type: "date", value: date, onChange: function(e) { setDate(e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }, mobileInp) })),
+        R.Field("Issue Description", h("textarea", { value: issue, onChange: function(e) { setIssue(e.target.value); }, rows: 3, placeholder: "Describe the issue...", style: Object.assign({}, R.INP, { width: "100%", resize: "vertical" }, mobileInp) })),
 
         // Qty input - non-serialized only. Hidden when no availableQty
         // is provided (legacy fallback to all-or-nothing toggle).

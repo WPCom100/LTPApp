@@ -5,6 +5,7 @@
 
   window.RentalsAvailabilityView = function({ equipment, allocations, projects, onOpenEquipment }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
 
     var [startDate, setStartDate] = useState(R.today());
     var [endDate,   setEndDate]   = useState(R.addDays(R.today(), 7));
@@ -25,18 +26,26 @@
       return true;
     });
 
+    // Mobile gets a fuller set of quick presets (short rental durations are
+    // common); desktop keeps its original three so its row stays unchanged.
+    var datePresets = isMobile
+      ? [{ l: "1 Day", d: 1 }, { l: "3 Days", d: 3 }, { l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "3 Weeks", d: 21 }, { l: "1 Month", d: 30 }]
+      : [{ l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "1 Month", d: 30 }];
+    var dateColStyle = { display: "flex", flexDirection: "column", gap: 4, flex: isMobile ? 1 : undefined, minWidth: isMobile ? 0 : undefined };
+    var dateInpStyle = isMobile ? Object.assign({}, R.INP, { width: "100%", boxSizing: "border-box" }) : R.INP;
+
     return h("div", null,
 
       // Date range picker + quick presets
-      h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "14px 18px", marginBottom: 16, display: "flex", gap: 16, alignItems: "flex-end", flexWrap: "wrap" } },
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+      h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "14px 18px", marginBottom: 16, display: "flex", gap: isMobile ? 10 : 16, alignItems: "flex-end", flexWrap: "wrap" } },
+        h("div", { style: dateColStyle },
           h("label", { style: R.LBL }, "From"),
-          h("input", { type: "date", value: startDate, onChange: function(e) { setStartDate(e.target.value); }, style: R.INP })),
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+          h("input", { type: "date", value: startDate, onChange: function(e) { setStartDate(e.target.value); }, style: dateInpStyle })),
+        h("div", { style: dateColStyle },
           h("label", { style: R.LBL }, "To"),
-          h("input", { type: "date", value: endDate, onChange: function(e) { setEndDate(e.target.value); }, style: R.INP })),
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end" } },
-          [{ l: "1 Week", d: 7 }, { l: "2 Weeks", d: 14 }, { l: "1 Month", d: 30 }].map(function(p) {
+          h("input", { type: "date", value: endDate, onChange: function(e) { setEndDate(e.target.value); }, style: dateInpStyle })),
+        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "flex-end", flexBasis: isMobile ? "100%" : undefined } },
+          datePresets.map(function(p) {
             return h("button", { key: p.l, onClick: function() { var s = R.today(); setStartDate(s); setEndDate(R.addDays(s, p.d)); },
               style: { background: B.raised, border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, padding: "7px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, p.l);
           })
@@ -44,15 +53,25 @@
       ),
 
       // Category filter + search
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          cats.map(function(c) {
-            return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
-          })
+      isMobile
+      ? h("div", { style: { marginBottom: 14 } },
+          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search equipment...", style: Object.assign({}, R.INP, { width: "100%", boxSizing: "border-box", marginBottom: 10 }) }),
+          h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+            cats.map(function(c) {
+              return h("button", { key: c, onClick: function() { setCatFilter(c); },
+                style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "6px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
+            })
+          )
+        )
+      : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
+          h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+            cats.map(function(c) {
+              return h("button", { key: c, onClick: function() { setCatFilter(c); },
+                style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
+            })
+          ),
+          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search equipment...", style: Object.assign({}, R.INP, { width: 200 }) })
         ),
-        h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search equipment...", style: Object.assign({}, R.INP, { width: 200 }) })
-      ),
 
       // Availability grid
       h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },

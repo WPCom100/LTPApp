@@ -55,6 +55,7 @@
   // ── Container Form Modal ────────────────────────────────────────────────────
   window.RentalsContainerForm = function({ initial, onClose, onSave, equipment, containers }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
 
     var blank = {
       name: "", type: "Road Case", manufacturer: "", model: "",
@@ -118,7 +119,7 @@
     var equipmentItems = equipment.filter(function(e) { return e.category !== "Accessories"; }).map(function(e) { return { id: e.id, name: e.name }; });
     var containerItems = (containers || []).filter(function(c) { return !initial || c.id !== initial.id; }).map(function(c) { return { id: c.id, name: c.name }; });
 
-    var g2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 };
+    var g2 = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
 
     return h(window.LTPModal, { title: initial ? "Edit Container" : "Add Container", onClose: onClose, wide: true, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
@@ -130,7 +131,7 @@
             CONTAINER_TYPES.map(function(t) { return h("option", { key: t, value: t }, t); })))
         ),
 
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 80px", gap: 12 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 80px", gap: 12 } },
           R.Field("Manufacturer", h("input", { value: f.manufacturer || "", onChange: function(e) { set("manufacturer", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Model",        h("input", { value: f.model        || "", onChange: function(e) { set("model",        e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
           R.Field("Color",        h("input", { value: f.color        || "", onChange: function(e) { set("color",        e.target.value); }, placeholder: "Black", style: Object.assign({}, R.INP, { width: "100%" }) }))
@@ -139,7 +140,7 @@
         // Dimensions + weight
         h("div", { style: { background: B.raised, borderRadius: 8, padding: "14px", border: "1px solid " + B.border } },
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 } }, "Physical"),
-          h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },
+          h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10 } },
             R.Field("Length (in)", h("input", { type: "number", min: 0, value: f.dimensions.l || "", onChange: function(e) { setDim("l", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
             R.Field("Width (in)",  h("input", { type: "number", min: 0, value: f.dimensions.w || "", onChange: function(e) { setDim("w", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
             R.Field("Height (in)", h("input", { type: "number", min: 0, value: f.dimensions.h || "", onChange: function(e) { setDim("h", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
@@ -151,7 +152,7 @@
         h("div", { style: { background: B.raised, borderRadius: 8, padding: "14px", border: "1px solid " + B.border } },
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Rental Rates"),
           h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 12 } }, "Leave all blank if this container is bundled into the equipment rate."),
-          h("div", { style: { display: "grid", gridTemplateColumns: f.serialized ? "1fr 1fr 1fr auto" : "1fr 1fr 1fr 100px auto", gap: 10, alignItems: "end" } },
+          h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : (f.serialized ? "1fr 1fr 1fr auto" : "1fr 1fr 1fr 100px auto"), gap: 10, alignItems: "end" } },
             R.Field("3-Day ($)",  h("input", { type: "number", min: 0, step: "0.01", value: f.rates.threeDay, onChange: function(e) { setRate("threeDay", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
             R.Field("Week ($)",   h("input", { type: "number", min: 0, step: "0.01", value: f.rates.week,     onChange: function(e) { setRate("week",     e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
             R.Field("Month ($)",  h("input", { type: "number", min: 0, step: "0.01", value: f.rates.month,    onChange: function(e) { setRate("month",    e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
@@ -185,7 +186,7 @@
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
                   h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut } }, "Unit " + (i + 1)),
                   h("button", { onClick: function() { removeUnit(i); }, style: { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "16px" } }, "\u00d7")),
-                h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 110px", gap: 8 } },
+                h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr 110px", gap: 8 } },
                   R.Field("Barcode / Asset #", h("input", { value: u.barcode || "", onChange: function(e) { setUnit(i, "barcode", e.target.value); }, placeholder: "LTP-CASE-001", style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Serial #",          h("input", { value: u.serial  || "", onChange: function(e) { setUnit(i, "serial",  e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Purchase Date",     h("input", { type: "date", value: u.purchaseDate || "", onChange: function(e) { setUnit(i, "purchaseDate", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
