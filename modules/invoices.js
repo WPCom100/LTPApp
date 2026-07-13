@@ -362,7 +362,7 @@
       h("div", { style: { width: 55 } },
         h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "center" } }, qtyLabel),
         isDraft
-          ? h("input", { type: "number", value: item.qty, min: 0,
+          ? h("input", { type: "number", value: item.qty, min: 0, step: "any",
               onChange: function(e) { onUpdate(sectionId, item.id, { qty: Math.max(0, Number(e.target.value) || 0) }); },
               style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" } })
           : h("div", { style: { fontSize: "11px", color: B.text, textAlign: "center", padding: "3px 0" } }, item.qty)
