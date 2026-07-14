@@ -70,9 +70,21 @@
     var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [search, setSearch] = useState("");
+    var [sortMode, setSortMode] = useState("date-desc");
+    var [hidePaid, setHidePaid] = useState(false);
     var statuses = ["all", "draft", "sent", "partial", "paid", "overdue"];
+    var sorts = [{ k: "date-desc", l: "Newest" }, { k: "date-asc", l: "Oldest" }, { k: "ref", l: "Ref #" }];
+
+    // The primary contact on the invoice, shown next to the company name.
+    function contactName(inv) {
+      var c = (contacts || []).find(function(x) { return x.id === inv.clientContactId; });
+      return c ? (c.firstName + " " + c.lastName).trim() : null;
+    }
+    function invDate(inv) { return inv.invoiceDate || inv.createdDate || ""; }
 
     var filtered = invoices.filter(function(inv) {
+      // "Hide Paid" (off by default) drops fully-paid invoices from the list.
+      if (hidePaid && window.LTP_displayStatus(inv) === "paid") return false;
       if (filter !== "all") {
         var ds = window.LTP_displayStatus(inv);
         if (filter === "overdue") { if (ds !== "overdue") return false; }
@@ -88,17 +100,36 @@
         if ((ref + " " + comp + " " + proj).toLowerCase().indexOf(q) === -1) return false;
       }
       return true;
+    }).sort(function(a, b) {
+      if (sortMode === "date-asc")  return invDate(a) > invDate(b) ? 1 : -1;
+      if (sortMode === "date-desc") return invDate(b) > invDate(a) ? 1 : -1;
+      return window.LTP_INVOICE_REF(a).localeCompare(window.LTP_INVOICE_REF(b));
     });
 
     var totalPaid = invoices.filter(function(i) { return i.status === "paid"; }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).total || 0); }, 0);
     var totalPending = invoices.filter(function(i) { return i.status === "sent" || i.status === "partial"; }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).balance || 0); }, 0);
     var totalOverdue = invoices.filter(function(i) { return window.LTP_isOverdue(i); }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).balance || 0); }, 0);
 
+    // "Hide Paid" toggle — rides the right of the filter row, mirroring the
+    // Projects "Show Completed" / Quotes "Show Converted" controls.
+    var hidePaidBtn = h("button", { onClick: function() { setHidePaid(!hidePaid); }, className: "ltp-tap",
+      style: { flexShrink: 0, background: hidePaid ? B.accent : B.raised, color: hidePaid ? B.btnInk : B.textMut, border: "1px solid " + (hidePaid ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
+      hidePaid ? "✓ Hiding Paid" : "Hide Paid");
+
+    var sortBtnsEl = h("div", { style: { display: "flex", gap: 4 } },
+      sorts.map(function(s) {
+        var active = sortMode === s.k;
+        return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
+      }));
+
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
-        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Invoices ",
-          h("span", { style: { fontSize: "13px", color: B.textMut, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 } }, "(" + invoices.length + ")")),
-        // "+ New" moves to a floating action button on mobile (see LTPFab below).
+      // Title + search share the top row (search to the right of the title);
+      // desktop keeps the + New button at the far right.
+      h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } },
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Invoices"),
+        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices…",
+          style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: isMobile ? undefined : "12px", fontFamily: "inherit", outline: "none" } }),
         !isMobile && h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
         // Mobile drops the Paid tile so Pending + Overdue sit on one row and
@@ -106,17 +137,16 @@
         !isMobile && h(window.StatCard, { label: "Paid", value: "$" + Math.round(totalPaid).toLocaleString(), accent: B.success }),
         h(window.StatCard, { label: "Pending", value: "$" + Math.round(totalPending).toLocaleString(), accent: B.warn }),
         h(window.StatCard, { label: "Overdue", value: "$" + Math.round(totalOverdue).toLocaleString(), accent: B.danger })),
-      // Filter chips: a horizontally-scrollable strip on mobile with the search
-      // on its own full-width row below; a single inline row on desktop.
-      h("div", { style: isMobile ? { marginBottom: 14 } : { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, desktopStyle: { display: "contents" } },
+      // Filter chips (scroll strip with a swipe indicator) + Hide Paid on the right.
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           statuses.map(function(f) {
             return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
               style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           })),
-        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices\u2026",
-          style: isMobile ? { width: "100%", marginTop: 8, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } : { flex: 1, maxWidth: 300, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })),
-      isMobile && h(window.LTPFab, { label: "New invoice", onClick: function() { nav("invoices/new"); } }),
+        hidePaidBtn),
+      // Sort row (Newest / Oldest / Ref #), matching the Quotes list.
+      h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtnsEl),
       h(window.LTPList, null,
         filtered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
         filtered.map(function(inv) {
@@ -127,13 +157,15 @@
           // project-less invoice (matches the builder's displayName + the PDF).
           var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
           var qRef = inv.quoteId ? (function() { var q = quotes.find(function(q2) { return q2.id === inv.quoteId; }); return q ? window.LTP_QUOTE_REF(q) : ""; })() : "";
-          var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
+          var contact = contactName(inv);
+          var clientLine = [comp, contact].filter(Boolean).join(" \u00b7 ");
+          // Row top-aligned so the price + status chip sit in line with the ref.
           return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
-            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+            style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, ref),
               proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 1 } }, proj),
-              comp && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, comp),
+              clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
               (qRef || inv.dueDate) && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } },
                 (qRef ? "from " + qRef : "") + (qRef && inv.dueDate ? " \u00b7 " : "") + (inv.dueDate ? "Due: " + fmt(inv.dueDate) : ""))),
             h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 } },
