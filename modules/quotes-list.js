@@ -31,6 +31,12 @@
       return co ? co.name : "(no company)";
     }
 
+    // The primary contact on the quote, shown next to the company name.
+    function contactName(qt) {
+      var c = (contacts || []).find(function(x) { return x.id === qt.clientContactId; });
+      return c ? (c.firstName + " " + c.lastName).trim() : null;
+    }
+
     var q = search.trim().toLowerCase();
     var filtered = quotes.filter(function(qt) {
       // Converted quotes are hidden by default (they've become invoices) — the
@@ -77,7 +83,7 @@
           style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } })),
 
       // Filter chips; Show Converted rides the right (+ New Quote on desktop).
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 14, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
         h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           filters.map(function(f) {
             var active = filter === f;
@@ -92,7 +98,6 @@
           !isMobile && h("button", { onClick: function() { nav("quotes/new"); },
             style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote"))
       ),
-      isMobile && h(window.LTPFab, { label: "New quote", onClick: function() { nav("quotes/new"); } }),
 
       // Sort row. Desktop pairs it with the search; on mobile search moved up top.
       isMobile
@@ -109,20 +114,19 @@
           var proj = projects.find(function(p) { return p.id === qt.projectId; });
           var name = proj ? proj.name : (qt.customName || "Untitled Quote");
           var tot  = computeTotals(qt);
-          var itemCount = (qt.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
+          var contact = (qt.clientType !== "contact" && qt.companyId) ? contactName(qt) : null;
           return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 4 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em" } }, displayRef(qt)),
-                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 1 } }, name),
-                h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + " \u00b7 " + fmt(qt.createdDate))
+                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, name),
+                h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate))
               ),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
                 h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + Math.round(tot.total).toLocaleString()),
                 h(window.Badge, { status: qt.status })
               )
-            ),
-            h("div", { style: { fontSize: "11px", color: B.textMut } }, itemCount + " line items \u00b7 " + (qt.sections || []).length + " sections")
+            )
           );
         })
       )

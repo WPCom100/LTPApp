@@ -230,7 +230,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
 
     // Category filters. On mobile the Show Completed toggle rides at the right
     // of this row (chip height); on desktop the + Create button lives here.
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
       h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
         ["all"].concat(CATS).map(function(f) {
           return h("button", { key: f, onClick: function() { setProjectFilter(f); }, className: "ltp-tap",
@@ -239,7 +239,6 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       ),
       isMobile ? showCompletedBtn : h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
     ),
-    isMobile && h(window.LTPFab, { label: "Create project", onClick: function() { nav("projects/new"); } }),
 
     // Sort row. Desktop keeps search + Show Completed here; on mobile those
     // moved above so it's just the sort buttons.
@@ -253,36 +252,24 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     h(window.LTPList, null,
       fp.map(function(p) {
         var comp = companies.find(function(c) { return c.id === p.companyId; });
-        // Quoted total once quotes exist; preliminary budget until then.
-        var tot  = Math.round(window.LTP_projectHeadlineTotal(p, quotes).total);
         return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
           style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
           isMobile
             ? h("div", null,
-                h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, marginBottom: 2 } }, p.name),
-                comp && h("div", { style: { fontSize: "12px", color: B.textMut } }, comp.name),
-                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate)),
-                h("div", { style: { display: "flex", gap: 8, marginTop: 6, alignItems: "center", flexWrap: "wrap" } },
-                  h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
-                  h(window.Badge, { status: CAT_KEYS[p.category] }),
-                  p.status !== "upcoming" && h(window.Badge, { status: p.status })),
-                h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
-                  h("span", null, p.notes.length + " notes"),
-                  h("span", null, p.schedule.length + " schedule"),
-                  h("span", null, p.meetings.length + " meetings")))
-            : h(React.Fragment, null,
-                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-                  h("div", null,
-                    h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
-                    h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name + " \u00b7 " : "") + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                    h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
+                  h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0 } }, p.name),
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
                     h(window.Badge, { status: CAT_KEYS[p.category] }),
                     p.status !== "upcoming" && h(window.Badge, { status: p.status }))),
-                h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
-                  h("span", null, p.notes.length + " notes"),
-                  h("span", null, p.schedule.length + " schedule"),
-                  h("span", null, p.meetings.length + " meetings"))));
+                comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp.name),
+                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate)))
+            : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
+                  h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name + " \u00b7 " : "") + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
+                h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                  h(window.Badge, { status: CAT_KEYS[p.category] }),
+                  p.status !== "upcoming" && h(window.Badge, { status: p.status }))));
       })
     ),
 
