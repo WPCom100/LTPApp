@@ -204,9 +204,6 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     return a.name.localeCompare(b.name);
   });
 
-  var searchBar = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search...",
-    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 180 } });
-
   // Show/Hide completed toggle — a chip on mobile (rides the filter row at the
   // right), the small inline button on desktop (rides the sort row).
   var showCompletedBtn = h("button", { onClick: function() { setShowCompleted(!showCompleted); }, className: "ltp-tap",
@@ -222,14 +219,15 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   }
 
   return h("div", null,
-    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Projects"),
+    // Title + search share the top row (search to the right of the title);
+    // desktop keeps the + Create button at the far right — matching Invoices.
+    h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } },
+      h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Projects"),
+      h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
+        style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: isMobile ? undefined : "12px", fontFamily: "inherit", outline: "none" } }),
+      !isMobile && h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")),
 
-    // Mobile: full-width search sits above the category filters.
-    isMobile && h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
-      style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
-
-    // Category filters. On mobile the Show Completed toggle rides at the right
-    // of this row (chip height); on desktop the + Create button lives here.
+    // Category filters + Show Completed on the right (both viewports).
     h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
       h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
         ["all"].concat(CATS).map(function(f) {
@@ -237,16 +235,11 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
             style: { flexShrink: 0, whiteSpace: "nowrap", background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, f === "all" ? "All" : f);
         })
       ),
-      isMobile ? showCompletedBtn : h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
+      showCompletedBtn
     ),
 
-    // Sort row. Desktop keeps search + Show Completed here; on mobile those
-    // moved above so it's just the sort buttons.
-    isMobile
-      ? h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns())
-      : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" } },
-          h("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, searchBar, showCompletedBtn),
-          sortBtns()),
+    // Sort row (both viewports).
+    h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns()),
 
     fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
     h(window.LTPList, null,

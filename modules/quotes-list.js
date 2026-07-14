@@ -116,17 +116,17 @@
           var tot  = computeTotals(qt);
           var contact = (qt.clientType !== "contact" && qt.companyId) ? contactName(qt) : null;
           return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
-              h("div", { style: { flex: 1, minWidth: 0 } },
-                h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em" } }, displayRef(qt)),
-                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, name),
-                h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate))
-              ),
+            // Ref (left) + price/status (right) stay on the top row.
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } },
+              h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em", minWidth: 0 } }, displayRef(qt)),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
                 h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + Math.round(tot.total).toLocaleString()),
                 h(window.Badge, { status: qt.status })
               )
-            )
+            ),
+            // Full-width project name below \u2014 shows in full (wraps if very long).
+            h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 2 } }, name),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate))
           );
         })
       )
