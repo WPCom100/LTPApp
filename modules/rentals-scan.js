@@ -142,6 +142,10 @@
     var torchSupported = torchPair[0], setTorchSupported = torchPair[1];
     var torchOnPair = useState(false);
     var torchOn = torchOnPair[0], setTorchOn = torchOnPair[1];
+    var zoomCapsPair = useState(null);         // {min,max,step} when the camera supports zoom, else null
+    var zoomCaps = zoomCapsPair[0], setZoomCaps = zoomCapsPair[1];
+    var zoomValPair = useState(1);
+    var zoomVal = zoomValPair[0], setZoomVal = zoomValPair[1];
     var flashPair = useState(null);            // { kind:"ok"|"dup", code, at } — last-scan banner
     var flash = flashPair[0], setFlash = flashPair[1];
     var typedPair = useState("");
@@ -193,12 +197,34 @@
     }
 
     // ── Camera lifecycle ─────────────────────────────────────────────────────
-    function checkTorch(stream) {
+    // Inspect the live track for optional camera controls and turn on continuous
+    // autofocus — the combination that makes a small/close barcode (e.g. a short
+    // Code-128 asset tag) decode reliably. All best-effort: Android Chrome
+    // exposes these; iOS Safari mostly doesn't, and scanning still works without.
+    function tuneTrack(stream) {
+      var track;
+      try { track = stream && stream.getVideoTracks && stream.getVideoTracks()[0]; } catch (e) { track = null; }
+      if (!track) { setTorchSupported(false); setZoomCaps(null); return; }
+      var caps = {};
+      try { caps = track.getCapabilities ? track.getCapabilities() : {}; } catch (e) { caps = {}; }
+      setTorchSupported(!!(caps && caps.torch));
+      // Zoom: a slider lets the user fill the frame with a small label without
+      // pushing the phone past its minimum focus distance (which just blurs it).
+      if (caps && caps.zoom && typeof caps.zoom.max === "number" && caps.zoom.max > (caps.zoom.min || 1)) {
+        setZoomCaps({ min: caps.zoom.min || 1, max: caps.zoom.max, step: caps.zoom.step || 0.1 });
+        var cur = 1;
+        try { var st = track.getSettings ? track.getSettings() : {}; if (typeof st.zoom === "number") cur = st.zoom; } catch (e) {}
+        setZoomVal(cur);
+      } else {
+        setZoomCaps(null);
+      }
+      // Continuous autofocus so a close label snaps sharp on its own.
       try {
-        var track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
-        var caps = track && track.getCapabilities ? track.getCapabilities() : {};
-        setTorchSupported(!!(caps && caps.torch));
-      } catch (e) { setTorchSupported(false); }
+        var fm = caps && caps.focusMode;
+        if (fm && fm.indexOf && fm.indexOf("continuous") !== -1) {
+          track.applyConstraints({ advanced: [{ focusMode: "continuous" }] }).catch(function() {});
+        }
+      } catch (e) {}
     }
 
     function startCamera() {
@@ -206,9 +232,30 @@
       setCameraLoading(true);
       ensureScanner().then(function(ZX) {
         if (cancelledRef.current || !videoRef.current) return;
-        var reader = new ZX.BrowserMultiFormatReader();
+        // TRY_HARDER makes ZXing scan each frame more thoroughly (rotations,
+        // finer sampling) — the biggest decode-rate win for small/blurry codes.
+        // Restricting to the formats an asset tag realistically uses keeps that
+        // affordable so the frame rate stays high.
+        var hints = new Map();
+        hints.set(ZX.DecodeHintType.TRY_HARDER, true);
+        var BF = ZX.BarcodeFormat || {};
+        var formats = ["CODE_128", "CODE_39", "CODE_93", "ITF", "CODABAR",
+                       "EAN_13", "EAN_8", "UPC_A", "UPC_E",
+                       "QR_CODE", "DATA_MATRIX", "AZTEC", "PDF_417"]
+          .map(function(n) { return BF[n]; })
+          .filter(function(v) { return v !== undefined && v !== null; });
+        if (formats.length) hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, formats);
+        // 200ms between decode attempts (default 500) → ~5 tries/sec.
+        var reader = new ZX.BrowserMultiFormatReader(hints, 200);
         readerRef.current = reader;
-        var constraints = { video: { facingMode: { ideal: "environment" } } };
+        // Ask for the highest practical resolution: a small barcode covers far
+        // more pixels at 1080p than at the default ~480p, so it actually decodes.
+        // Ideal (not exact) so devices that can't hit it degrade gracefully.
+        var constraints = { video: {
+          facingMode: { ideal: "environment" },
+          width:  { ideal: 1920 },
+          height: { ideal: 1080 },
+        } };
         reader.decodeFromConstraints(constraints, videoRef.current, function(result /*, err */) {
           // `err` fires on every frame with no barcode — expected, ignored.
           if (result && handleRef.current) handleRef.current(result.getText(), "camera");
@@ -216,7 +263,7 @@
           if (cancelledRef.current) { stopCamera(); return; }
           var stream = videoRef.current && videoRef.current.srcObject;
           streamRef.current = stream || null;
-          checkTorch(stream);
+          tuneTrack(stream);
           setCameraOn(true);
           setCameraLoading(false);
         }).catch(function(e) {
@@ -243,6 +290,8 @@
       streamRef.current = null;
       setTorchOn(false);
       setTorchSupported(false);
+      setZoomCaps(null);
+      setZoomVal(1);
       setCameraOn(false);
     }
 
@@ -252,6 +301,15 @@
         if (!track) return;
         var next = !torchOn;
         track.applyConstraints({ advanced: [{ torch: next }] }).then(function() { setTorchOn(next); }).catch(function() {});
+      } catch (e) {}
+    }
+
+    function applyZoom(v) {
+      v = Number(v);
+      setZoomVal(v);
+      try {
+        var track = streamRef.current && streamRef.current.getVideoTracks()[0];
+        if (track) track.applyConstraints({ advanced: [{ zoom: v }] }).catch(function() {});
       } catch (e) {}
     }
 
@@ -306,6 +364,20 @@
         h("div", { style: { position: "absolute", inset: "18% 12%", border: "2px solid " + B.accent, borderRadius: 8, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)", pointerEvents: "none" } }),
         torchSupported && h("button", { onClick: toggleTorch, style: { position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: torchOn ? B.warn : "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, torchOn ? "🔦" : "🔦")
       ),
+      // Zoom slider — lets the user fill the frame with a small label instead of
+      // pushing the phone closer than it can focus. Shown only where the camera
+      // reports a zoom range (Android Chrome); hidden on iOS Safari etc.
+      cameraOn && zoomCaps && h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+        h("span", { style: { fontSize: "15px" } }, "🔍"),
+        h("input", { type: "range", min: zoomCaps.min, max: zoomCaps.max, step: zoomCaps.step, value: zoomVal,
+          onChange: function(e) { applyZoom(e.target.value); },
+          style: { flex: 1, accentColor: B.accent } }),
+        h("span", { style: { fontSize: "11px", color: B.textMut, minWidth: 36, textAlign: "right", fontVariantNumeric: "tabular-nums" } }, (Math.round(zoomVal * 10) / 10) + "×")
+      ),
+      cameraOn && h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center" } },
+        "Fill the box with the barcode and hold steady. Small label? " +
+        (zoomCaps ? "Zoom in" : "Move closer (then back off if it blurs)") +
+        (torchSupported ? " or tap the flash." : ".")),
       !cameraOn && h("button", { onClick: startCamera, disabled: cameraLoading,
         style: { background: B.raised, border: "1px dashed " + B.border, borderRadius: 10, color: B.accent, cursor: cameraLoading ? "default" : "pointer", padding: "20px", fontSize: "13px", fontWeight: 700, width: "100%", textAlign: "center" } },
         cameraLoading ? "Starting camera…" : "📷  Start camera"),
@@ -317,12 +389,22 @@
     // Diagnostics — a live readout of the environment prerequisites, so an
     // on-device failure (camera blocked, insecure origin, scanner not served)
     // is self-explaining instead of a generic error. Collapsed by default.
+    // Active video resolution — confirms the high-res request actually took
+    // effect on the device (the key lever for small-barcode decoding).
+    var camRes = "";
+    try {
+      var _t = streamRef.current && streamRef.current.getVideoTracks && streamRef.current.getVideoTracks()[0];
+      var _s = _t && _t.getSettings ? _t.getSettings() : null;
+      if (_s && _s.width && _s.height) camRes = _s.width + "×" + _s.height;
+    } catch (e) {}
     var diagRows = [
       ["Secure context (HTTPS)", window.isSecureContext ? "yes" : "NO — camera needs HTTPS", !window.isSecureContext],
       ["Camera API (getUserMedia)", (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? "available" : "MISSING", !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)],
       ["Scanner library (ZXing)", window.ZXing ? "loaded" : "not loaded yet", false],
       ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "yes" : "no (ZXing used)", false],
       ["Camera state", cameraOn ? "on" : (cameraError ? "error" : "off"), !!cameraError],
+      ["Video resolution", camRes || "—", false],
+      ["Zoom", zoomCaps ? ((Math.round(zoomVal * 10) / 10) + "× (max " + zoomCaps.max + "×)") : "unsupported", false],
     ];
     var diagnostics = h("div", null,
       h("button", { onClick: function() { setShowDiag(!showDiag); },
