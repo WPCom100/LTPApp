@@ -57,7 +57,7 @@ from backend.email_compose import (
     _render_signature, email_shell,
 )
 from backend.email_validate import RecipientError, parse_recipients
-from backend.routes._shared import load_settings
+from backend.routes._shared import doc_display_name, load_settings
 from backend.sanitize import email_html
 
 
@@ -339,7 +339,9 @@ async def _process_invoice(db, conn, invoice, sender, settings_data, *,
         if not was_paid:
             try:
                 amt = _num(total_amt)
-                body = "Paid in full" + (f" · ${amt:,.2f}" if amt else "")
+                name = await doc_display_name(db, invoice)
+                lead = (name + " · ") if name else ""
+                body = lead + "Paid in full" + (f" · ${amt:,.2f}" if amt else "")
                 await webpush.notify_entity(db, "invoice", invoice.id,
                                             f"Invoice {ref} paid", body,
                                             f"/#/invoices/{invoice.id}")

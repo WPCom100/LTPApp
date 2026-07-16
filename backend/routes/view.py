@@ -37,7 +37,7 @@ from backend.auth_deps import get_optional_user
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
 from backend.routes._shared import (
-    quote_dict, invoice_dict,
+    quote_dict, invoice_dict, doc_display_name,
     load_related, load_settings,
     public_section_items, public_activity, public_settings,
     safe_pdf_filename as _safe_filename,
@@ -242,10 +242,11 @@ async def _notify_doc_viewed(db, kind: str, row, recipient) -> None:
                 "sentDate": getattr(row, "sent_date", "") or "",
             })
             url = f"/#/quotes/{row.id}"
+        name = await doc_display_name(db, row)
         who = recipient.recipient_email if recipient is not None else "Someone"
         tail = "" if recipient is not None else " (via the share link)"
         title = f"{kind.title()} {ref} opened"
-        body = f"{who} opened the {kind}{tail}"
+        body = f"{who} opened {name or ('the ' + kind)}{tail}"
         await webpush.notify_entity(db, kind, row.id, title, body, url, fallback_admins=False)
     except Exception as e:
         print(f"[LTP] webpush: {kind} viewed notify failed for "
@@ -352,9 +353,10 @@ async def _notify_quote_response(db, row, decision: str, client_name: str, comme
             "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
             "sentDate": row.sent_date or "",
         })
+        name = await doc_display_name(db, row)
         who = client_name or "The client"
         title = f"Quote {ref} {decision}"
-        body = f"{who} {decision} the quote"
+        body = f"{who} {decision} {name or 'the quote'}"
         if comment:
             body += " · “" + comment + "”"
         await webpush.notify_entity(db, "quote", row.id, title, body, f"/#/quotes/{row.id}")
