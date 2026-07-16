@@ -300,9 +300,16 @@ that otherwise require re-opening the app to notice:
 - a **crew member accepts or declines** a request → the producer who sent it
 - a **client accepts or declines a quote** → whoever sent the quote
 - an **invoice is marked paid** in QuickBooks → whoever sent the invoice
+- a **client opens a quote or invoice** → whoever sent it
 
-When an entity has no recorded sender (e.g. a quote shared via an anonymous
-link), the notification broadcasts to **all admins** instead.
+For the three terminal events (crew response, quote accept/decline, invoice
+paid), if the entity has no recorded sender — e.g. a quote shared via an
+anonymous link — the notification broadcasts to **all admins** instead.
+
+**Opened** notifications are the exception: they go to the sender only (never
+broadcast to admins), and they're **debounced to ~once per 24h per viewer** and
+suppressed for internal previews and link-scanner bots — so opening a doc
+several times, or an LTP user previewing it, won't ping you.
 
 Push is **optional**: with the VAPID vars unset the app boots normally and
 sends become no-ops — the Settings toggle just reports "not set up". Same
