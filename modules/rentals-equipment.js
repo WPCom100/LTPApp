@@ -3,39 +3,9 @@
 (function() {
   var h = React.createElement, useState = React.useState;
 
-  // ── Private: Vendor typeahead (type-to-filter CRM vendors) ─────────────────
-  function VendorSearch({ vendors, value, onChange }) {
-    var B = window.LTP_THEME, R = window.LTP_RENTALS;
-    var sel = value ? (vendors || []).find(function(v) { return v.id === value; }) : null;
-    var [query,   setQuery]   = useState(sel ? sel.name : "");
-    var [focused, setFocused] = useState(false);
-    var filtered = (vendors || []).filter(function(v) { return v.name.toLowerCase().indexOf(query.toLowerCase()) !== -1; });
-
-    return h("div", { style: { position: "relative" } },
-      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
-        sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
-          sel.name,
-          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "\u00d7")
-        ),
-        h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : "Type to search vendors...",
-          onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },
-          onFocus: function() { if (!sel) setFocused(true); },
-          onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
-          onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
-          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" }
-        })
-      ),
-      focused && !sel && query.length > 0 && filtered.length > 0 && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 140, overflowY: "auto", zIndex: 20 } },
-        filtered.map(function(v) {
-          return h("div", { key: v.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { onChange(v.id); setQuery(""); setFocused(false); },
-            style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border },
-            onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
-            onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; }
-          }, v.name);
-        })
-      )
-    );
-  }
+  // Vendor typeahead now lives in rentals-utils.js (window.LTP_RENTALS.VendorSearch)
+  // so the scan-import session can share the same picker. Referenced below as
+  // R.VendorSearch (R = window.LTP_RENTALS inside each component).
 
   // ── Private: Serial typeahead — thin wrapper over the shared LTP_RENTALS
   // component with this surface's placeholder text.
@@ -73,6 +43,12 @@
         : []
     );
     var [err, setErr] = useState("");
+    var [showScan, setShowScan] = useState(false);
+
+    // Append one scanned unit to the form's local units (staged — persisted when
+    // the form is saved). Shared shape with buildScannedUnit / the manual rows.
+    function addScannedUnit(unit) { setUnits(function(prev) { return prev.concat([unit]); }); }
+    function removeScannedUnit(id) { setUnits(function(prev) { return prev.filter(function(u) { return u.id !== id; }); }); }
 
     function set(k, v) { setF(function(p) { var o = {}; o[k] = v; return Object.assign({}, p, o); }); }
     function setRate(k, v) { setF(function(p) { var o = {}; o[k] = v; return Object.assign({}, p, { rates: Object.assign({}, p.rates, o) }); }); }
@@ -210,7 +186,7 @@
                 ),
                 h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr auto", gap: 8, alignItems: "end" } },
                   R.Field("Purchase Date", h("input", { type: "date", value: u.purchaseDate || "", onChange: function(e) { setUnit(i, "purchaseDate", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
-                  R.Field("Purchase Vendor (CRM)", h(VendorSearch, { vendors: vendors, value: u.purchaseVendorId || null, onChange: function(id) { setUnit(i, "purchaseVendorId", id); } })),
+                  R.Field("Purchase Vendor (CRM)", h(R.VendorSearch, { vendors: vendors, value: u.purchaseVendorId || null, onChange: function(id) { setUnit(i, "purchaseVendorId", id); } })),
                   R.Field("Cost ($)", h("input", { type: "number", min: 0, step: "0.01", value: u.purchaseCost || "", onChange: function(e) { setUnit(i, "purchaseCost", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Status", h("select", { value: u.status || "available", onChange: function(e) { setUnit(i, "status", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) },
                     [["available", "Available"], ["under-maintenance", "Under Maint."], ["retired", "Retired"]].map(function(s) {
@@ -220,7 +196,10 @@
                 )
               );
             }),
-            h("button", { onClick: addUnit, style: { background: "none", border: "1px dashed " + B.border, borderRadius: 6, color: B.accent, cursor: "pointer", padding: "8px", fontSize: "12px", fontWeight: 600, width: "100%", textAlign: "center" } }, "+ Add Unit")
+            h("div", { style: { display: "flex", gap: 8 } },
+              h("button", { onClick: addUnit, style: { background: "none", border: "1px dashed " + B.border, borderRadius: 6, color: B.accent, cursor: "pointer", padding: "8px", fontSize: "12px", fontWeight: 600, flex: 1, textAlign: "center" } }, "+ Add Unit"),
+              h("button", { onClick: function() { setShowScan(true); }, style: { background: "none", border: "1px dashed " + B.accent, borderRadius: 6, color: B.accent, cursor: "pointer", padding: "8px", fontSize: "12px", fontWeight: 700, flex: 1, textAlign: "center" } }, "📷 Scan Units")
+            )
           )
         ),
 
@@ -229,13 +208,24 @@
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
           h(window.Btn, { variant: "ghost", onClick: onClose }, "Cancel"),
           h(window.Btn, { onClick: save }, initial ? "Save Changes" : "Add Equipment")
-        )
+        ),
+
+        // Inline scan-import overlay (create flow: units stage into the form and
+        // save with it). Rendered last so its full-screen sheet paints on top.
+        showScan && h(window.RentalsScanSession, {
+          eq: { name: f.name || "New Equipment" },
+          existingUnits: units,
+          vendors: vendors,
+          onAddUnit:    addScannedUnit,
+          onRemoveUnit: removeScannedUnit,
+          onClose:      function() { setShowScan(false); },
+        })
       )
     );
   };
 
   // ── Equipment Detail Modal ──────────────────────────────────────────────────
-  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, onClose, onEdit, onDelete, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer }) {
+  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, onClose, onEdit, onDelete, onScan, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var fmt = window.LTP_formatDate;
     var isMobile = window.LTP_useIsMobile();
@@ -294,6 +284,7 @@
           !eq.serialized && vendor && h("div", { style: { fontSize: "11px", color: B.accent, marginTop: 4 } }, "Vendor: " + vendor.name)
         ),
         h("div", { style: { display: "flex", gap: 6 } },
+          eq.serialized && onScan && h(window.Btn, { small: true, onClick: onScan }, "📷 Scan Units"),
           h(window.Btn, { small: true, variant: "ghost",  onClick: onEdit   }, "Edit"),
           h(window.Btn, { small: true, variant: "danger", onClick: function() { setDeleteConfirm(true); } }, "Delete")
         )

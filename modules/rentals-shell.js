@@ -37,6 +37,7 @@
     var openKitId        = activeTab === "kits"       && id && !action ? id : null;
     var showAddEq        = activeTab === "equipment"  && action === "new";
     var editEqId         = activeTab === "equipment"  && id && action === "edit" ? id : null;
+    var scanEqId         = activeTab === "equipment"  && id && action === "scan" ? id : null;
     var showAddContainer = activeTab === "containers" && action === "new";
     var editContainerId  = activeTab === "containers" && id && action === "edit" ? id : null;
     var showAddKit       = activeTab === "kits"       && action === "new";
@@ -46,6 +47,7 @@
     var openContainer = openContainerId? containers.find(function(c) { return c.id === openContainerId; }) : null;
     var openKit       = openKitId      ? kits.find(function(k) { return k.id === openKitId; })             : null;
     var editEq        = editEqId       ? equipment.find(function(e) { return e.id === editEqId; })        : null;
+    var scanEq        = scanEqId       ? equipment.find(function(e) { return e.id === scanEqId; })        : null;
     var editContainer = editContainerId? containers.find(function(c) { return c.id === editContainerId; }) : null;
     var editKit       = editKitId      ? kits.find(function(k) { return k.id === editKitId; })             : null;
 
@@ -77,6 +79,26 @@
         return Object.assign({}, c, { defaultForEquipment: (c.defaultForEquipment || []).filter(function(x) { return x !== eid; }) });
       }); });
       nav("rentals/equipment");
+    }
+
+    // ── Scan-import: append/remove one serialized unit, persisting immediately ─
+    // Each scanned unit lands in the DB as it's captured (the persistence hook
+    // diff-syncs equipment.units), so a dropped phone or closed tab mid-session
+    // never loses work. qty is kept == units.length (serialized items treat qty
+    // as the unit count — see backend/models.py Equipment docstring).
+    function addScannedUnit(eqId, unit) {
+      setEquipment(function(prev) { return prev.map(function(e) {
+        if (e.id !== eqId) return e;
+        var units = (e.units || []).concat([unit]);
+        return Object.assign({}, e, { units: units, qty: units.length });
+      }); });
+    }
+    function removeScannedUnit(eqId, unitId) {
+      setEquipment(function(prev) { return prev.map(function(e) {
+        if (e.id !== eqId) return e;
+        var units = (e.units || []).filter(function(u) { return u.id !== unitId; });
+        return Object.assign({}, e, { units: units, qty: units.length });
+      }); });
     }
 
     // ── Container CRUD ──────────────────────────────────────────────────────
@@ -216,10 +238,20 @@
         onClose:              function() { nav("rentals/equipment"); },
         onEdit:               function() { editEquip(openEq.id); },
         onDelete:             function() { deleteEquipment(openEq.id); },
+        onScan:               function() { nav("rentals/equipment/" + openEq.id + "/scan"); },
         onOpenContainer:      function(cid) { openCont(cid); },
         onMainLog:            function(log, uid) { logMaintenance(openEq.id, log, uid); },
         onMainResolve:        function(lid, uid) { resolveMaintenance(openEq.id, lid, uid); },
         onSetUnderMaintenance:function(uid)      { setUnderMaintenance(openEq.id, uid); },
+      }),
+
+      // Barcode scan-import session (serialized equipment only). Each scan
+      // persists immediately into equipment.units via addScannedUnit.
+      scanEq && scanEq.serialized && h(window.RentalsScanSession, {
+        eq: scanEq, existingUnits: scanEq.units || [], vendors: vendors,
+        onAddUnit:    function(unit) { addScannedUnit(scanEq.id, unit); },
+        onRemoveUnit: function(uid)  { removeScannedUnit(scanEq.id, uid); },
+        onClose:      function() { nav("rentals/equipment/" + scanEq.id); },
       }),
 
       // Container detail popup
