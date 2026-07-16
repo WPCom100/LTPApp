@@ -120,7 +120,7 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } },
               h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em", minWidth: 0 } }, displayRef(qt)),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
-                h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + Math.round(tot.total).toLocaleString()),
+                h("span", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(tot.total)),
                 h(window.Badge, { status: qt.status })
               )
             ),

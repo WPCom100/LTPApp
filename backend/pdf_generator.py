@@ -122,6 +122,22 @@ def _fmt_money(val):
         return "$0.00"
 
 
+def _fmt_qty(val):
+    """Render a quantity for display: whole numbers stay clean ('2'), genuine
+    decimals keep their fractional part with trailing zeros trimmed ('2.5',
+    '1.25'). Services can be billed in fractional units (e.g. 2.5 hours)."""
+    try:
+        f = float(val)
+        if f == int(f):
+            return str(int(f))
+        # Up to 5 dp (QuickBooks' quantity precision), trailing zeros trimmed.
+        return f"{f:.5f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError, OverflowError):
+        # Non-finite or non-numeric (NaN/Infinity/None) — fall back to str so a
+        # pathological value never aborts PDF generation.
+        return str(val)
+
+
 def _fmt_date(iso_str):
     """ISO YYYY-MM-DD → 'May 30th, 2026'. Returns the original string on
     parse failure so we don't drop info."""
@@ -420,8 +436,7 @@ class _DocPDF:
     def _draw_section(self, sec):
         c = self.c
         label = sec.get("label", "Section")
-        items = [it for it in sec.get("items", []) or [] if it.get("type") != "note"]
-        notes = [it for it in sec.get("items", []) or [] if it.get("type") == "note"]
+        all_items = sec.get("items", []) or []
 
         col = {
             "item": self.M + 10,
@@ -430,18 +445,16 @@ class _DocPDF:
             "total": self.W - self.M - 10,
         }
 
-        row_data = []
+        # Section subtotal comes from priced lines only (notes carry no amount).
         sec_total = 0
-        for it in items:
+        for it in all_items:
+            if it.get("type") == "note":
+                continue
             qty = it.get("qty", 0) or 0
             up = it.get("unitPrice", 0) or 0
             ap = it.get("adjustedPrice")
             eff = ap if ap is not None else up
-            lt = eff * qty
-            sec_total += lt
-            has_adj = ap is not None and ap != up
-            row_data.append({"it": it, "qty": qty, "up": up, "eff": eff, "lt": lt,
-                             "has_adj": has_adj, "h": 23 if has_adj else 19})
+            sec_total += eff * qty
 
         self._need(60)
 
@@ -450,7 +463,7 @@ class _DocPDF:
         c.drawString(self.M, self.y - 12, label.upper())
 
         # Rental period for equipment sections
-        has_equipment = any(it.get("type") == "equipment" for it in sec.get("items", []) or [])
+        has_equipment = any(it.get("type") == "equipment" for it in all_items)
         if has_equipment:
             sec_start = (sec.get("startDate") if sec.get("customDates") else None) \
                         or self.entity.get("customStartDate") or self.project.get("startDate", "")
@@ -483,17 +496,38 @@ class _DocPDF:
         c.line(self.M + 4, self.y, self.W - self.M - 4, self.y)
         self.y -= 3
 
-        # Item rows
-        for i, rd in enumerate(row_data):
-            it = rd["it"]
-            row_h = rd["h"]
+        # Item + note rows, drawn in authored order so notes stay exactly where
+        # they were placed in the builder (instead of collapsing to the bottom).
+        # A separate stripe index keeps the zebra striping consistent across
+        # priced rows; notes are full-width captions and don't take a stripe.
+        stripe_i = 0
+        for it in all_items:
+            if it.get("type") == "note":
+                self._need(16)
+                c.setFont("Roboto-Light", 9)
+                c.setFillColor(MUTED)
+                txt = it.get("text", "") or it.get("name", "") or ""
+                if len(txt) > 110:
+                    txt = txt[:107] + "..."
+                c.drawString(col["item"], self.y - 10, f"Note: {txt}")
+                self.y -= 14
+                continue
+
+            qty = it.get("qty", 0) or 0
+            up = it.get("unitPrice", 0) or 0
+            ap = it.get("adjustedPrice")
+            eff = ap if ap is not None else up
+            lt = eff * qty
+            has_adj = ap is not None and ap != up
+            row_h = 23 if has_adj else 19
+
             self._need(row_h + 4)
-            row_top = self.y
             row_bot = self.y - row_h
 
-            if i % 2 == 0:
+            if stripe_i % 2 == 0:
                 c.setFillColor(ROW_STRIPE)
                 c.rect(self.M + 1, row_bot, self.content_w - 2, row_h, fill=1, stroke=0)
+            stripe_i += 1
 
             fs = 9
             vc = row_bot + (row_h - fs) / 2 + 1
@@ -512,13 +546,13 @@ class _DocPDF:
 
             c.setFont("Roboto", fs)
             c.setFillColor(INK)
-            c.drawCentredString(qty_center, vc, str(rd["qty"]))
+            c.drawCentredString(qty_center, vc, _fmt_qty(qty))
 
-            if rd["has_adj"]:
+            if has_adj:
                 # Original price — muted strikethrough, upper part of row
                 c.setFillColor(MUTED)
                 c.setFont("Roboto-Light", 8)
-                orig_str = _fmt_money(rd["up"])
+                orig_str = _fmt_money(up)
                 ow = c.stringWidth(orig_str, "Roboto-Light", 8)
                 ox = col["unit"] + 55 - ow
                 orig_y = row_bot + row_h * 0.62
@@ -530,27 +564,16 @@ class _DocPDF:
                 c.setFont("Roboto-Bold", fs)
                 c.setFillColor(DEEP_ORANGE)
                 adj_y = row_bot + row_h * 0.22
-                c.drawRightString(col["unit"] + 55, adj_y, _fmt_money(rd["eff"]))
+                c.drawRightString(col["unit"] + 55, adj_y, _fmt_money(eff))
             else:
                 c.setFillColor(INK)
                 c.setFont("Roboto", fs)
-                c.drawRightString(col["unit"] + 55, vc, _fmt_money(rd["eff"]))
+                c.drawRightString(col["unit"] + 55, vc, _fmt_money(eff))
 
             c.setFont("Roboto-Bold", fs)
             c.setFillColor(INK)
-            c.drawRightString(col["total"], vc, _fmt_money(rd["lt"]))
+            c.drawRightString(col["total"], vc, _fmt_money(lt))
             self.y -= row_h
-
-        # Notes inside box
-        for n in notes:
-            self._need(16)
-            c.setFont("Roboto-Light", 9)
-            c.setFillColor(MUTED)
-            txt = n.get("text", "") or n.get("name", "") or ""
-            if len(txt) > 110:
-                txt = txt[:107] + "..."
-            c.drawString(col["item"], self.y - 10, f"Note: {txt}")
-            self.y -= 14
 
         box_bottom = self.y
 
