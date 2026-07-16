@@ -141,6 +141,7 @@ shell exports.
 | `LTP_VAPID_PUBLIC_KEY` | **Required for push** | — | VAPID public key (base64url uncompressed P-256 point, ~87 chars) handed to browsers as the `applicationServerKey`. Generate with the command in [Push notifications](#push-notifications). |
 | `LTP_VAPID_PRIVATE_KEY` | **Required for push** | — | VAPID private key (base64url 32-byte scalar) that signs each push. **Secret — never sent to the browser.** Generated alongside the public key. |
 | `LTP_VAPID_SUBJECT` | **Required for push** | — | `mailto:you@yourdomain.com` — a contact the push services can reach about delivery problems. All three VAPID vars must be present for push to send; missing any one makes push a no-op. |
+| `LTP_APP_VARIANT` | Optional | (none) | Set to `dev` on a non-production deployment to give its installed PWA a distinct home-screen icon (violet field + "DEV" tag) and name ("LTP Dev"), so it's unmistakable next to production. Unset = normal production identity. See [Dev app identity](#dev-app-identity). |
 
 ## Email feature deploy notes
 
@@ -290,6 +291,33 @@ table and never exposed to the browser; the client secret stays in env vars;
 every Intuit call is server-side; **connect / disconnect / push / delete are
 admin-only**; and `GET /api/qbo/status` returns booleans + a masked realm id
 only.
+
+## Dev app identity
+
+When you install both the production and a dev/staging deployment to the same
+home screen, they otherwise look identical. Setting `LTP_APP_VARIANT=dev` on the
+**dev deployment's Variables** gives it a distinct look so you never confuse
+them:
+
+- a **violet icon** with a bold "DEV" tag (vs. the slate production icon), and
+- the app name **"LTP Dev"** in the manifest, with a violet splash/theme color.
+
+The switch is **environment-driven, not branch-driven**: the dev icons
+(`assets/icons/dev/`) and the serving code live on every branch, but only
+activate where the variable is set. Production, with the variable unset, serves
+its normal icons byte-for-byte — so the dev identity can never leak into prod
+through a merge. To turn it on, add `LTP_APP_VARIANT=dev` to the dev
+deployment's Railway Variables and redeploy; reinstall the PWA (remove from the
+home screen and re-add) to pick up the new icon.
+
+Regenerate the dev icon set from the brand mark with
+`python assets/icons/generate_dev_icons.py` (edit `DEV_FIELD` in that script to
+change the color).
+
+> Note: on **iOS**, the home-screen *label* comes from the
+> `apple-mobile-web-app-title` meta tag in `index.html` (static, shows "LTPApp"
+> on both). The **icon** is what differs — which is the reliable at-a-glance
+> signal. Android/desktop installs also pick up the "LTP Dev" name.
 
 ## Push notifications
 

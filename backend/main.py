@@ -1,9 +1,10 @@
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -545,6 +546,35 @@ def _resolve_static(full_path):
     return None
 
 
+# ── App variant (dev vs prod home-screen identity) ───────────────────────────
+# When a deployment sets LTP_APP_VARIANT=dev, the PWA gets a distinct icon set
+# and name ("LTP Dev") so an installed dev app is unmistakable next to
+# production on the home screen. The switch is env-driven, NOT branch-driven:
+# the code + dev icons live on every branch, but only activate where the var is
+# set (e.g. the dev Railway deployment). Production, with the var unset, is
+# byte-for-byte unaffected — nothing can leak the dev identity into prod.
+_APP_VARIANT = os.environ.get("LTP_APP_VARIANT", "").strip().lower()
+_IS_DEV_VARIANT = _APP_VARIANT == "dev"
+_DEV_ICON_DIR = os.path.realpath(os.path.join(frontend_dir, "assets", "icons", "dev"))
+
+
+def _dev_icon_path(icon_name: str):
+    """Absolute path to the dev-variant icon of this basename, or None when not
+    running the dev variant / no such dev file. basename-only (rejects any
+    separators or dotfiles) and confined to the dev icon dir — no traversal."""
+    if not _IS_DEV_VARIANT or not icon_name:
+        return None
+    if "/" in icon_name or "\\" in icon_name or icon_name.startswith("."):
+        return None
+    cand = os.path.realpath(os.path.join(_DEV_ICON_DIR, icon_name))
+    try:
+        if os.path.commonpath([_DEV_ICON_DIR, cand]) != _DEV_ICON_DIR:
+            return None
+    except ValueError:
+        return None
+    return cand if os.path.isfile(cand) else None
+
+
 # ── PWA endpoints ────────────────────────────────────────────────────────────
 # The service worker and web-app manifest are root-scoped files. They are
 # intentionally NOT in the static allowlist above (and need response headers the
@@ -565,12 +595,50 @@ async def service_worker():
 @app.get("/manifest.webmanifest")
 async def web_manifest():
     # mimetypes doesn't reliably know .webmanifest, so set it explicitly.
-    resp = FileResponse(
-        os.path.join(frontend_dir, "manifest.webmanifest"),
-        media_type="application/manifest+json",
-    )
+    path = os.path.join(frontend_dir, "manifest.webmanifest")
+    if _IS_DEV_VARIANT:
+        # Dev deployment: rename to "LTP Dev" and tint the splash/theme violet
+        # to match the dev icons. The icon `src`s stay the same paths — the
+        # /assets/icons route below serves the dev bytes for them. Built from
+        # the base file so every other field stays a single source of truth.
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["name"] = "LTP Dev"
+            data["short_name"] = "LTP Dev"
+            data["theme_color"] = "#5B21B6"
+            data["background_color"] = "#5B21B6"
+            resp = JSONResponse(data, media_type="application/manifest+json")
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        except Exception as e:
+            print(f"[LTP] dev manifest build failed, serving base: {e}", flush=True)
+    resp = FileResponse(path, media_type="application/manifest+json")
     resp.headers["Cache-Control"] = "no-cache"
     return resp
+
+
+@app.get("/assets/icons/{icon_name}")
+async def app_icon(icon_name: str):
+    """PWA / home-screen icons. On the dev deployment (LTP_APP_VARIANT=dev) the
+    dev-variant file of the same basename is served in place of the prod icon,
+    so an installed dev PWA is visibly distinct (violet field + "DEV" tag).
+    Registered before the catch-all so it wins for these paths; falls back to
+    the normal allowlisted static file when there's no dev override."""
+    dev = _dev_icon_path(icon_name)
+    if dev:
+        return FileResponse(dev)
+    static = _resolve_static(f"assets/icons/{icon_name}")
+    if static:
+        return FileResponse(static)
+    return Response(status_code=404)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Browser-tab icon — dev variant swapped in on the dev deployment."""
+    dev = _dev_icon_path("favicon.ico")
+    return FileResponse(dev or os.path.join(frontend_dir, "favicon.ico"))
 
 
 @app.get("/{full_path:path}")
