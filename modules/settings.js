@@ -29,6 +29,97 @@
       open && h("div", { style: { padding: "0 18px 18px" } }, kids));
   }
 
+  // ── Notifications panel ────────────────────────────────────────────────────
+  // Per-DEVICE push toggle (this browser's subscription), rendered inside the
+  // Settings "Notifications" accordion. Push on iOS only works from a
+  // home-screen install, so this walks the user through the gate:
+  //   • no API / not standalone  → explain what's needed (add to Home Screen)
+  //   • server not configured    → "not set up yet" (admin sets VAPID vars)
+  //   • otherwise                → an Enable / Disable toggle
+  // All work goes through window.LTP_Push (components/push.js); enable() is
+  // called straight from the button's onClick so it counts as a user gesture.
+  function NotificationsPanel() {
+    var stateHook = useState(null);       // null = loading
+    var st = stateHook[0], setSt = stateHook[1];
+    var busyHook = useState(false);
+    var busy = busyHook[0], setBusy = busyHook[1];
+
+    function refresh() {
+      if (!window.LTP_Push) { setSt({ unsupported: true }); return; }
+      window.LTP_Push.getState().then(setSt).catch(function() { setSt({ unsupported: true }); });
+    }
+    useEffect(function() { refresh(); }, []);
+
+    function toast(title, opts) { if (window.LTP_toast) window.LTP_toast(title, opts); }
+
+    function onEnable() {
+      setBusy(true);
+      window.LTP_Push.enable().then(function(res) {
+        setBusy(false);
+        if (res.ok) {
+          toast("Notifications on", { message: "This device will receive alerts.", variant: "success" });
+        } else {
+          var reasons = {
+            "not-standalone": "Add LTPApp to your Home Screen first, then open it from there.",
+            "not-configured": "Push isn't set up on the server yet.",
+            "denied": "Notification permission was blocked. Enable it in your device settings for LTPApp.",
+            "unsupported": "This browser doesn't support notifications.",
+            "network": "Subscribed, but couldn't reach the server — try again.",
+            "server-error": "The server rejected the subscription — try again.",
+          };
+          toast("Couldn't enable notifications", { message: reasons[res.reason] || ("Error: " + res.reason), variant: "error" });
+        }
+        refresh();
+      });
+    }
+
+    function onDisable() {
+      setBusy(true);
+      window.LTP_Push.disable().then(function() {
+        setBusy(false);
+        toast("Notifications off", { message: "This device won't receive alerts.", variant: "info" });
+        refresh();
+      });
+    }
+
+    var note = { fontSize: "11px", color: B.textMut, lineHeight: 1.5 };
+
+    if (st === null) {
+      return h("div", { style: note }, "Checking notification status…");
+    }
+    // Browser genuinely can't do Web Push.
+    if (st.unsupported || !st.apisPresent) {
+      return h("div", { style: note }, "This browser doesn't support push notifications.");
+    }
+    // APIs exist but the app isn't installed to the Home Screen (the iOS gate).
+    if (!st.standalone) {
+      return h("div", null,
+        h("div", { style: Object.assign({}, note, { marginBottom: 8 }) },
+          "To get notifications on iPhone or iPad, add LTPApp to your Home Screen and open it from there:"),
+        h("ol", { style: { margin: 0, paddingLeft: 18, fontSize: "11px", color: B.textSec, lineHeight: 1.7 } },
+          h("li", null, "Tap the Share button in Safari."),
+          h("li", null, "Choose “Add to Home Screen”."),
+          h("li", null, "Open LTPApp from the new icon, then come back here.")));
+    }
+    // Server hasn't been given VAPID keys.
+    if (!st.configured) {
+      return h("div", { style: note },
+        "Push notifications aren’t set up on the server yet. Once the VAPID keys are configured, this device can subscribe.");
+    }
+
+    var on = !!st.subscribed;
+    return h("div", null,
+      h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+        h("span", { style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: "12px", fontWeight: 700, color: on ? B.success : B.textMut } },
+          h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: on ? B.success : B.textMut, display: "inline-block" } }),
+          on ? "On for this device" : "Off for this device"),
+        on
+          ? h(window.Btn, { small: true, variant: "ghost", onClick: onDisable, disabled: busy }, busy ? "Working…" : "Turn Off")
+          : h(window.Btn, { small: true, onClick: onEnable, disabled: busy }, busy ? "Working…" : "Turn On")),
+      h("div", { style: Object.assign({}, note, { marginTop: 10 }) },
+        "Notifications are per-device — turn them on for each phone or tablet you want alerted. You’ll get a push when a crew member responds to a request."));
+  }
+
   window.SettingsView = function({ settings, setSettings }) {
     var isMobile = window.LTP_useIsMobile();
     var [draft, setDraft] = useState(Object.assign({}, settings));
@@ -239,6 +330,13 @@
             onBlur: function() { if (draft.phone) set("phone", window.LTP_formatPhone(draft.phone)); } }),
           h(window.LTPInput, { label: "Website", value: draft.website || "", onChange: function(v) { set("website", v); } })
         )
+      ),
+
+      // ── Notifications ──────────────────────────────────────────────────────
+      // Per-device Web Push toggle (this browser's subscription). Panel manages
+      // its own state via window.LTP_Push; see NotificationsPanel above.
+      h(AccordionSection, { title: "Notifications" },
+        h(NotificationsPanel, null)
       ),
 
       // ── Address ────────────────────────────────────────────────────────────

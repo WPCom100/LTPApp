@@ -33,7 +33,7 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-var CACHE_VERSION = 'ltp-shell-v38';
+var CACHE_VERSION = 'ltp-shell-v39';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -116,6 +116,52 @@ self.addEventListener('message', function(event) {
   if (event.data && event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
   }
+});
+
+// ── Web Push (iOS 16.4+ home-screen PWA) ────────────────────────────────────
+// The push service wakes this worker and hands us the encrypted payload the
+// backend sent (backend/webpush.py). iOS is strict: EVERY push event MUST end
+// in a shown notification or the subscription is revoked — so the catch below
+// always falls back to a generic notification rather than showing nothing.
+self.addEventListener('push', function(event) {
+  var data = {};
+  try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
+  var title = data.title || 'LTPApp';
+  var options = {
+    body: data.body || '',
+    icon: '/assets/icons/icon-192.png',
+    badge: '/assets/icons/icon-192.png',
+    // Where notificationclick should take us (SPA hash route). Kept in data so
+    // it survives the notification → click round-trip.
+    data: { url: data.url || '/#/dashboard' },
+    // Collapse repeats of the same subject instead of stacking duplicates.
+    tag: data.tag || undefined,
+  };
+  event.waitUntil(
+    self.registration.showNotification(title, options).catch(function() {
+      // Never leave a push un-shown — iOS penalizes silent pushes.
+      return self.registration.showNotification('LTPApp', { body: '' });
+    })
+  );
+});
+
+// Tapping a notification focuses an open app window (navigating it to the
+// target route) or opens a new one if none is around.
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  var target = (event.notification.data && event.notification.data.url) || '/#/dashboard';
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
+      for (var i = 0; i < list.length; i++) {
+        var c = list[i];
+        if ('focus' in c) {
+          if ('navigate' in c) { try { c.navigate(target); } catch (e) {} }
+          return c.focus();
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
 });
 
 self.addEventListener('fetch', function(event) {
