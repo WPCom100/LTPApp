@@ -505,6 +505,80 @@ window.LTP_crewMinMap = function(contacts) {
   return m;
 };
 
+// ── Manual / one-off shift (warehouse labor not tied to a client job) ────────
+//
+// Build a lightweight "internal" project row from the Labor > Manual Shift
+// adder. A manual shift deliberately reuses the Project + schedule shape so it
+// flows through the crew-request and payout pipelines with NO special-casing:
+// both iterate every project's `schedule[].positions[]`. The row is marked
+// `internal: true` (companyId null, no schedule editor) so client-facing
+// surfaces hide it while every Labor surface still shows it.
+//
+// opts = {
+//   id,                       // caller-minted integer project id (required)
+//   title,                    // shift name, e.g. "Warehouse Load-out"
+//   date,                     // ISO YYYY-MM-DD — the single shift day
+//   startTime, endTime,       // "HH:MM" (default 08:00 → 18:00)
+//   location,                 // free-text job-site address (crew-facing)
+//   notes,                    // free-text, stored as scheduleNotes
+//   positions: [{ serviceId, role, crewId }]   // role = rate-card Service; crew optional
+// }
+// Positions start `status:"open"` — the same state the schedule editor mints —
+// so an assigned crew member is immediately sendable as a crew request, and a
+// confirmed one flows into payouts once it carries a serviceId with rates.
+window.LTP_manualShiftProject = function(opts) {
+  opts = opts || {};
+  var genId = window.LTP_genId;
+  var date = opts.date || "";
+  var title = (opts.title || "").trim() || "Manual Shift";
+  // A manual-shift role is always a rate-card Service (serviceId); positions
+  // without one carry no rate and can't be paid, so they're dropped here — the
+  // builder stays the single source of truth for what a valid position is,
+  // independent of the caller.
+  var positions = (opts.positions || []).filter(function(p) {
+    return p && p.serviceId != null && p.serviceId !== "";
+  }).map(function(p) {
+    return {
+      id: genId("pos"),
+      role: p.role || "",
+      serviceId: p.serviceId,
+      crewId: (p.crewId != null && p.crewId !== "") ? p.crewId : null,
+      status: "open",
+      fullMargin: false,
+    };
+  });
+  var shift = {
+    id: genId("sch"),
+    title: title,
+    date: date,
+    time: opts.startTime || "08:00",
+    endDate: date,
+    endTime: opts.endTime || "18:00",
+    showOnCalendar: true,
+    breaks: [],
+    positions: positions,
+  };
+  return {
+    id: opts.id,
+    name: title,
+    companyId: null,
+    internal: true,
+    category: "Labor",          // a real category so badge/color lookups resolve
+    status: "in-progress",
+    startDate: date,
+    endDate: date,
+    venue: "",
+    siteAddress: opts.location || "",
+    siteUseCompanyAddress: false,
+    contactIds: [],
+    budget: { lighting: 0, labor: 0, rentals: 0, misc: 0 },
+    notes: [],
+    meetings: [],
+    scheduleNotes: (opts.notes || ""),
+    schedule: [shift],
+  };
+};
+
 // ── Crew payout (locked pay + payouts aggregation) ───────────────────────────
 //
 // Pay is agreed at HIRE. When a producer confirms a crew member, their pay for

@@ -296,6 +296,47 @@ eq("GEN1 filters email type", GEN(_inv, _qts, "email_failed").length, 3);
 eq("GEN2 filters qbo type", GEN(_qinv, [], "qbo_sync_failed").length, 1);
 eq("GEN3 unknown type -> none", GEN(_inv, _qts, "nope").length, 0);
 
+// ── manual shift builder (one-off warehouse labor → internal project) ────────
+const MS = window.LTP_manualShiftProject;
+const _ms = MS({ id: 42, title: "  Warehouse Load-out  ", date: "2026-08-01", startTime: "07:00", endTime: "15:00",
+  location: "500 Dock Rd", notes: "bring forklift cert",
+  positions: [{ serviceId: 1, role: "L1", crewId: 5 }, { serviceId: 2, role: "GRIP", crewId: "" }, { serviceId: "", role: "" }] });
+eq("MS1 id passthrough", _ms.id, 42);
+eq("MS2 marked internal", _ms.internal, true);
+eq("MS3 no company", _ms.companyId, null);
+eq("MS4 category Labor (valid badge key)", _ms.category, "Labor");
+eq("MS5 title trimmed -> name", _ms.name, "Warehouse Load-out");
+eq("MS6 single dated schedule day", _ms.schedule.length, 1);
+eq("MS7 day date == start/end date", _ms.schedule[0].date + "|" + _ms.schedule[0].endDate, "2026-08-01|2026-08-01");
+eq("MS8 times carried", _ms.schedule[0].time + "-" + _ms.schedule[0].endTime, "07:00-15:00");
+eq("MS9 shift title mirrors name", _ms.schedule[0].title, "Warehouse Load-out");
+eq("MS10 location -> siteAddress", _ms.siteAddress, "500 Dock Rd");
+eq("MS11 notes -> scheduleNotes", _ms.scheduleNotes, "bring forklift cert");
+eq("MS12 roleless rows dropped (no serviceId)", _ms.schedule[0].positions.length, 2);
+ok("MS13 positions start open + not-full-margin", _ms.schedule[0].positions.every((p) => p.status === "open" && p.fullMargin === false));
+eq("MS14 assigned crew carried", _ms.schedule[0].positions[0].crewId, 5);
+eq("MS15 unassigned crew -> null", _ms.schedule[0].positions[1].crewId, null);
+ok("MS16 unique position ids", _ms.schedule[0].positions[0].id !== _ms.schedule[0].positions[1].id);
+ok("MS17 showOnCalendar + no breaks", _ms.schedule[0].showOnCalendar === true && Array.isArray(_ms.schedule[0].breaks) && _ms.schedule[0].breaks.length === 0);
+eq("MS18 empty title fallback", MS({ id: 1 }).name, "Manual Shift");
+eq("MS19 no positions -> empty array", MS({ id: 1, positions: [] }).schedule[0].positions.length, 0);
+ok("MS20 default times when omitted", (function () { var m = MS({ id: 2, date: "2026-08-01", positions: [{ serviceId: 1 }] }); return m.schedule[0].time === "08:00" && m.schedule[0].endTime === "18:00"; })());
+
+// End-to-end: a confirmed position on a manual shift is payable — it flows into
+// the pay pipeline exactly like a client-project shift (LTP_payoutRows sees it).
+const _msPay = MS({ id: 99, title: "Prep Day", date: "2026-08-02", startTime: "08:00", endTime: "18:00",
+  positions: [{ serviceId: 1, role: "L1", crewId: 5 }] });
+_msPay.schedule[0].positions[0].status = "confirmed";   // producer confirmed the hire
+const _payServices = [{ id: 1, role: "L1", dayRate: 1000, dayCost: 600, halfDay: 500, halfDayCost: 300 }];
+const _payContacts = [{ id: 5, isCrew: true, firstName: "Alex", lastName: "Crew" }];
+const _pr = window.LTP_payoutRows([_msPay], _payContacts, _payServices, "2026-08-01", "2026-08-31");
+eq("MSP1 one payout group for the manual shift", _pr.groups.length, 1);
+eq("MSP2 group is the assigned crew member", _pr.groups[0].crewId, 5);
+eq("MSP3 one payable row", _pr.groups[0].rows.length, 1);
+eq("MSP4 row names the manual shift", _pr.groups[0].rows[0].projectName, "Prep Day");
+ok("MSP5 confirmed-but-unsigned day is a positive pending estimate", _pr.pendingCount === 1 && _pr.pendingTotal > 0);
+ok("MSP6 open (unassigned/unconfirmed) shift yields no payout", window.LTP_payoutRows([_ms], _payContacts, _payServices, "2026-08-01", "2026-08-31").groups.length === 0);
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

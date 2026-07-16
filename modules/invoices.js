@@ -1668,7 +1668,7 @@
                       },
                       options: [{ value: "", label: "(no project \u2014 use custom name)" }].concat(
                         (draft.clientType === "company" && draft.companyId ? projects.filter(function(p) { return p.companyId === draft.companyId; }) : projects)
-                          .filter(function(p) { return p.status !== "completed" || p.id === draft.projectId; })
+                          .filter(function(p) { return !p.internal && (p.status !== "completed" || p.id === draft.projectId); })  // internal = manual shift, not invoiceable
                           .map(function(p) { return { value: p.id, label: p.name + " \u00b7 " + fmt(p.startDate) }; }))
                     }),
                     // Custom name when no project

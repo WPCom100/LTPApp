@@ -33,6 +33,7 @@
       var groups = []; // { project, color, schedules[], meetings[], isInRange }
 
       ctx.projects.forEach(function(p) {
+        if (p.internal) return;  // manual/one-off shifts show on the Labor calendar, not the client calendar
         var color = CAT_COLORS[p.category] || B.accent;
         var isInRange = p.startDate <= ds && p.endDate >= ds;
         var daySchedules = p.schedule.filter(function(s) {

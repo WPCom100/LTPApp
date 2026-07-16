@@ -108,6 +108,17 @@ class Project(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     category = Column(String(100), default="")           # {rental, labor, service, full-production}
     status = Column(String(50), default="upcoming")      # {upcoming, in-progress, completed, cancelled}
+    # Manual/one-off shift marker. An "internal" project is a lightweight
+    # container for labor that doesn't belong to a client job — warehouse
+    # load-outs, prep days, etc. It carries no company and is created through the
+    # Labor module's one-off "Manual Shift" adder (a single dated schedule day
+    # with positions), NOT the schedule editor. It deliberately reuses the
+    # Project+schedule shape so a manual shift flows through the crew-request and
+    # payout pipelines unchanged (both iterate every project's schedule). The
+    # flag exists purely so client-facing surfaces (Projects list, dashboard,
+    # calendar, quote/invoice pickers, global search) can hide it while every
+    # Labor surface keeps showing it. USER-WRITABLE (flows through normal CRUD).
+    internal = Column(Boolean, default=False)
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     venue = Column(String(255), default="")

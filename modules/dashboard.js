@@ -13,7 +13,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
   var endDate = new Date(); endDate.setDate(endDate.getDate() + 7);
   var endISO = endDate.toISOString().substring(0, 10);
   (projects || []).forEach(function(p) {
-    if (p.status === "completed") return;
+    if (p.internal || p.status === "completed") return;  // manual/one-off shifts are a Labor concern, not the client overview
     (p.schedule || []).forEach(function(s) {
       if (s.date && s.date >= today && s.date <= endISO) {
         var crewCount = (s.positions || []).filter(function(pos) { return pos.crewId; }).length;
@@ -27,6 +27,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
   // ── Pending crew requests ──────────────────────────────────────────────
   var pendingCrew = [];
   (projects || []).forEach(function(p) {
+    if (p.internal) return;  // manual-shift crew activity is tracked in Labor
     (p.schedule || []).forEach(function(s) {
       (s.positions || []).forEach(function(pos) {
         if (pos.status === "requested" && pos.crewId) {
@@ -62,7 +63,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
   var recentActivity = [];
   qt.forEach(function(q) { (q.activity || []).forEach(function(a) { recentActivity.push(Object.assign({}, a, { context: window.LTP_QUOTE_REF(q), module: "quotes", navTo: "quotes/" + q.id })); }); });
   inv.forEach(function(i) { (i.activity || []).forEach(function(a) { recentActivity.push(Object.assign({}, a, { context: window.LTP_INVOICE_REF(i), module: "invoices", navTo: "invoices/" + i.id })); }); });
-  (projects || []).forEach(function(p) { (p.scheduleActivity || []).forEach(function(a) { recentActivity.push(Object.assign({}, a, { context: p.name, module: "schedule", navTo: "projects/" + p.id + "/schedule" })); }); });
+  (projects || []).forEach(function(p) { if (p.internal) return; (p.scheduleActivity || []).forEach(function(a) { recentActivity.push(Object.assign({}, a, { context: p.name, module: "schedule", navTo: "projects/" + p.id + "/schedule" })); }); });
   recentActivity.sort(function(a, b) { return (b.date + (b.time || "")) > (a.date + (a.time || "")) ? 1 : -1; });
   recentActivity = recentActivity.slice(0, 15);
 
