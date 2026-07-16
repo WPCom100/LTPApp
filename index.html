@@ -341,5 +341,10 @@
        file (CSP-safe, like mount.js). Loads last; registers on window 'load'
        so it never blocks first paint. -->
   <script src="components/register-sw.js"></script>
+
+  <!-- 10. Web Push helper (window.LTP_Push). Same-origin/CSP-safe. Defines the
+       subscribe/unsubscribe API used by the Settings "Notifications" toggle;
+       loads after register-sw.js so window.LTP_isStandalone is available. -->
+  <script src="components/push.js"></script>
 </body>
 </html>

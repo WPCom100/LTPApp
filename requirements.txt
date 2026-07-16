@@ -16,6 +16,10 @@ reportlab==4.4.0        # PDF rendering for quotes/invoices (backend/pdf_generat
 cryptography==49.0.0    # Fernet symmetric encryption for gmail/QBO tokens (backend/crypto.py). Bumped from 42.0.5 for bundled-OpenSSL advisories GHSA-h4gh-qq45-vh27 + GHSA-79v4-65xg-pq4g — see docs/SECURITY_REVIEW.md L10
 bleach[css]==6.1.0      # HTML allowlist sanitizer for email bodies — server-authoritative layer (backend/sanitize.py). [css] extra pulls in tinycss2 for inline-style sanitization.
 html2text==2024.2.26    # HTML → plain text for the text/plain alternative part of multipart/alternative emails (backend/gmail.py)
+# Web Push (iOS 16.4+ home-screen PWA notifications) — VAPID-signed, aes128gcm
+# encrypted pushes to the browser push service (backend/webpush.py). Pulls in
+# py-vapid + http-ece; both lean on the cryptography pin above.
+pywebpush==2.0.0
 # Removed (re-add when needed):
 #   python-dotenv        — Railway provides env vars directly; only needed for local .env files
 #   pydantic-settings    — no settings classes in use

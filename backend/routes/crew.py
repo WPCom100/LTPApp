@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import crew_integrity, gmail, models, view_tracking
+from backend import crew_integrity, gmail, models, view_tracking, webpush
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_compose import (
@@ -559,6 +559,35 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
     req.respondent_ip = ip or None
     req.respondent_ua = (ua or "")[:300] or None
     await db.flush()
+
+    # Push-notify the producer who sent this request. Crew accept/decline had no
+    # in-app channel before — the producer only found out by re-opening Labor —
+    # so this is the first event wired to Web Push (backend/webpush.py). Fully
+    # best-effort: send_to_user swallows push-service errors and a missing/failed
+    # subscription must never turn a crew member's valid response into a 500.
+    try:
+        if req.sent_by_user_id:
+            contact = None
+            if req.contact_id is not None:
+                r = await db.execute(
+                    select(models.Contact).where(models.Contact.id == req.contact_id)
+                )
+                contact = r.scalar_one_or_none()
+            crew_name = (
+                ((contact.first_name or "") + " " + (contact.last_name or "")).strip()
+                if contact else ""
+            ) or "A crew member"
+            project_name = (project.name if project else "") or "a project"
+            n = len(req.position_ids or [])
+            title = f"{crew_name} {decision} a crew request"
+            body = project_name + " · " + str(n) + (" shift" if n == 1 else " shifts")
+            if comment:
+                body += " · “" + comment + "”"
+            url = f"/#/projects/{req.project_id}" if req.project_id else "/#/dashboard"
+            await webpush.send_to_user(db, req.sent_by_user_id, title, body, url)
+    except Exception as e:  # never let notification wiring break the response
+        print(f"[LTP] crew {decision}: push notify failed for request {req.id}: {e}", flush=True)
+
     return {"status": decision}
 
 
