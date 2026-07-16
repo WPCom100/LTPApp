@@ -217,6 +217,41 @@ def _bump_recipient_pdf(recipient: models.EmailRecipient, now: datetime) -> None
         recipient.pdf_downloaded_at = now
 
 
+async def _notify_doc_viewed(db, kind: str, row, recipient) -> None:
+    """Push-notify a quote/invoice's sender(s) that the client OPENED it. Called
+    only from the view gate above, so it inherits that gate's protections — no
+    bots, no internal previews, and ~once/24h per viewer — which is what keeps
+    "opened" from becoming spam.
+
+    Senders only (fallback_admins=False): an anonymously-shared doc with no
+    recorded sender produces no view ping. A view is lower-signal than an
+    accept/decline/paid, so we don't broadcast it to every admin the way those
+    terminal events do. Fully best-effort — never raises."""
+    try:
+        if kind == "invoice":
+            ref = doc_ref("invoice", {
+                "id": row.id,
+                "invoiceDate": getattr(row, "invoice_date", "") or "",
+                "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+            })
+            url = f"/#/invoices/{row.id}"
+        else:
+            ref = doc_ref("quote", {
+                "id": row.id,
+                "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+                "sentDate": getattr(row, "sent_date", "") or "",
+            })
+            url = f"/#/quotes/{row.id}"
+        who = recipient.recipient_email if recipient is not None else "Someone"
+        tail = "" if recipient is not None else " (via the share link)"
+        title = f"{kind.title()} {ref} opened"
+        body = f"{who} opened the {kind}{tail}"
+        await webpush.notify_entity(db, kind, row.id, title, body, url, fallback_admins=False)
+    except Exception as e:
+        print(f"[LTP] webpush: {kind} viewed notify failed for "
+              f"{getattr(row, 'id', '?')}: {e}", flush=True)
+
+
 async def _record_open(
     *, db: AsyncSession, entity: _TrackedEntity, kind: str, request: Request,
     optional_user: models.User | None, action: _TrackAction,
@@ -268,6 +303,12 @@ async def _record_open(
             else:
                 _bump_recipient_pdf(recipient, now)
         await db.flush()
+        # A stamped entry means: not a bot, not an internal preview, and past
+        # the ~24h debounce — exactly when a "client opened your doc" push is
+        # worth sending. Only for opens (not PDF downloads). Best-effort; the
+        # helper never raises.
+        if action == "view" and kind in ("quote", "invoice"):
+            await _notify_doc_viewed(db, kind, entity, recipient)
     except Exception as e:
         # Never let tracking break the render. Log loudly so ops can
         # diagnose if the activity feed goes mysteriously quiet.
