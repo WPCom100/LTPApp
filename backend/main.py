@@ -263,7 +263,12 @@ _IMG_SRC = (
 )
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://cdnjs.cloudflare.com; "
+    # 'wasm-unsafe-eval' permits compiling/instantiating WebAssembly (and ONLY
+    # that — it does NOT re-enable eval()/new Function like 'unsafe-eval' would).
+    # Needed by the barcode scan-import decoder: assets/vendor/zxing-wasm-reader.js
+    # instantiates the self-hosted ZXing-C++ WASM (assets/vendor/zxing_reader.wasm),
+    # which reads small/rotated/glossy labels far better than the pure-JS decoder.
+    "script-src 'self' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; "
     # Service worker (/sw.js) and the web-app manifest are same-origin. Both
     # otherwise fall back to default-src 'self' (so the PWA already works), but
     # we make the allowance explicit so a future default-src tightening can't
@@ -524,11 +529,12 @@ _ALLOWED_TREES = {
     # Vendored third-party frontend libraries, self-hosted because the CSP is
     # `script-src 'self' + cdnjs` and some libs (e.g. the ZXing barcode decoder
     # used by modules/rentals-scan.js) aren't on cdnjs. Scoped to assets/vendor/
-    # so ONLY this subtree serves .js — the broad assets/ tree above deliberately
-    # still won't. Without this the request falls through to the SPA index.html
-    # fallback and the browser (X-Content-Type-Options: nosniff) refuses to
-    # execute HTML as a script.
-    "assets/vendor/": (".js",),
+    # so ONLY this subtree serves .js/.wasm — the broad assets/ tree above
+    # deliberately still won't. Without this the request falls through to the SPA
+    # index.html fallback and the browser (X-Content-Type-Options: nosniff)
+    # refuses to execute HTML as a script. `.wasm` is here for the ZXing-C++
+    # barcode decoder binary (served as application/wasm below).
+    "assets/vendor/": (".js", ".wasm"),
 }
 
 
@@ -696,7 +702,14 @@ async def serve_frontend(full_path: str):
         # straight from disk.
         if os.path.realpath(static) == _INDEX_PATH:
             return _index_response()
-        resp = FileResponse(static)
+        # WebAssembly must be served as application/wasm — the browser's
+        # WebAssembly.instantiateStreaming validates the MIME and refuses
+        # anything else (Python's mimetypes doesn't reliably know .wasm, so set
+        # it explicitly). Used by the vendored ZXing-C++ barcode decoder.
+        if static.endswith(".wasm"):
+            resp = FileResponse(static, media_type="application/wasm")
+        else:
+            resp = FileResponse(static)
         # App code (HTML/JS/CSS) is served from un-versioned filenames
         # (e.g. /theme.js), so without this a browser's heuristic cache could
         # keep serving a stale copy AFTER a deploy — masking frontend fixes

@@ -21,12 +21,17 @@
   var h = React.createElement;
   var useState = React.useState, useRef = React.useRef, useEffect = React.useEffect;
 
-  // ── Lazy ZXing loader ──────────────────────────────────────────────────────
-  // The decoder is ~330 KB; loading it on app startup would tax every user, but
-  // only a fraction ever scan. So we inject the vendored, same-origin script the
-  // first time a session opens (script-src 'self' permits it) and memoize the
-  // promise. window.ZXing is the UMD global exposed by the bundle.
-  var SCANNER_URL = "/assets/vendor/zxing.min.js";
+  // ── Lazy ZXing-C++ (WASM) loader ────────────────────────────────────────────
+  // The strong decoder: ZXing-C++ compiled to WebAssembly (zxing-wasm). It reads
+  // small / rotated / glossy labels far better than the pure-JS decoder — proven
+  // to decode real asset tags the JS build couldn't. It's ~1 MB (glue + .wasm),
+  // so we load it lazily on the first scan (never at app startup) and memoize the
+  // promise. The IIFE build exposes window.ZXingWASM; we point its loader at the
+  // self-hosted binary. Preferred only when the browser has no native
+  // BarcodeDetector (see setupNativeDetector) — on Android the OS decoder is used
+  // instead and this 1 MB is never fetched.
+  var SCANNER_URL = "/assets/vendor/zxing-wasm-reader.js";
+  var WASM_URL = "/assets/vendor/zxing_reader.wasm";
   var _scannerPromise = null;
 
   // A <script> onerror carries no detail, so on failure we probe the URL to say
@@ -47,16 +52,28 @@
     });
   }
 
+  function _configureWasm() {
+    // Point the module at the self-hosted .wasm (default would be a CDN URL the
+    // strict connect-src blocks). Must be set before the first readBarcodes().
+    try {
+      window.ZXingWASM.setZXingModuleOverrides({
+        locateFile: function(path, prefix) {
+          return path.slice(-5) === ".wasm" ? WASM_URL : (prefix + path);
+        },
+      });
+    } catch (e) { /* older/newer API shapes — locateFile default may still work */ }
+  }
+
   function ensureScanner() {
-    if (window.ZXing) return Promise.resolve(window.ZXing);
+    if (window.ZXingWASM) { _configureWasm(); return Promise.resolve(window.ZXingWASM); }
     if (_scannerPromise) return _scannerPromise;
     _scannerPromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
       s.src = SCANNER_URL;
       s.async = true;
       s.onload = function() {
-        if (window.ZXing) resolve(window.ZXing);
-        else reject(new Error("scanner script loaded but window.ZXing is undefined"));
+        if (window.ZXingWASM) { _configureWasm(); resolve(window.ZXingWASM); }
+        else reject(new Error("scanner script loaded but window.ZXingWASM is undefined"));
       };
       s.onerror = function() {
         _diagnoseScannerFailure().then(function(why) {
@@ -156,7 +173,7 @@
     var decoderName = decoderPair[0], setDecoderName = decoderPair[1];
 
     var videoRef = useRef(null);
-    var readerRef = useRef(null);              // ZXing BrowserMultiFormatReader (fallback path)
+    var readerRef = useRef(null);              // ZXing-C++ WASM reader (fallback path; has readBarcodes)
     var detectorRef = useRef(null);            // native BarcodeDetector (preferred path)
     var streamRef = useRef(null);
     var loopRef = useRef(null);                // decode-loop interval id
@@ -233,34 +250,30 @@
       } catch (e) {}
     }
 
-    // Draw the reticle-sized centre of the current frame to an offscreen canvas
-    // at native resolution — cropping to the box keeps full pixel density on the
-    // barcode (and drops the surrounding clutter) so it decodes from farther
-    // away. `maxSide` optionally caps the canvas so a 4K crop still decodes fast.
-    function grabCrop(maxSide) {
+    // Grab the current frame as ImageData, downscaled so the long side is at most
+    // `maxSide` — keeps WASM decode fast while leaving plenty of resolution (the
+    // decoder reads a small tag even when it's a modest fraction of the frame).
+    function grabFrame(maxSide) {
       var v = videoRef.current;
       if (!v || !v.videoWidth || !v.videoHeight) return null;
       var vw = v.videoWidth, vh = v.videoHeight;
-      // Matches the on-screen reticle (inset 20% vertical, 10% horizontal).
-      var sx = Math.floor(vw * 0.10), sy = Math.floor(vh * 0.20);
-      var sw = vw - sx * 2, sh = vh - sy * 2;
-      var dw = sw, dh = sh;
-      if (maxSide && Math.max(sw, sh) > maxSide) {
-        var k = maxSide / Math.max(sw, sh);
-        dw = Math.max(1, Math.round(sw * k)); dh = Math.max(1, Math.round(sh * k));
-      }
+      var scale = (maxSide && Math.max(vw, vh) > maxSide) ? maxSide / Math.max(vw, vh) : 1;
+      var dw = Math.max(1, Math.round(vw * scale)), dh = Math.max(1, Math.round(vh * scale));
       var canvas = cropCanvasRef.current || (cropCanvasRef.current = document.createElement("canvas"));
       canvas.width = dw; canvas.height = dh;
       var ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, dw, dh);
-      return canvas;
+      ctx.drawImage(v, 0, 0, dw, dh);
+      return ctx.getImageData(0, 0, dw, dh);
     }
 
     function onHit(text) { if (text && handleRef.current) handleRef.current(text, "camera"); }
 
+    // WASM readerOptions — try hard, and try rotations/inversions so a 90°-rotated
+    // or dark-on-light label still reads. Empty formats = every supported symbology.
+    var WASM_OPTS = { tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, formats: [], maxNumberOfSymbols: 1 };
+
     // Native path: the platform BarcodeDetector reads the FULL frame — it's
-    // rotation-invariant and strong on small/angled/glare codes, so we don't
-    // crop (which could clip an off-center label); the whole 4K frame is fair game.
+    // rotation-invariant and strong on small/angled/glare codes.
     function tickNative() {
       if (busyRef.current || !detectorRef.current) return;
       var v = videoRef.current;
@@ -272,18 +285,16 @@
       }).catch(function() { busyRef.current = false; });
     }
 
-    // Fallback path: ZXing decodes the crop (capped so a 4K crop stays quick).
-    function tickZxing() {
-      var ZX = window.ZXing;
-      if (!ZX || !readerRef.current) return;
-      var canvas = grabCrop(2200);
-      if (!canvas) return;
-      try {
-        var src = new ZX.HTMLCanvasElementLuminanceSource(canvas);
-        var bmp = new ZX.BinaryBitmap(new ZX.HybridBinarizer(src));
-        var res = readerRef.current.decodeBitmap(bmp);
-        if (res) onHit(res.getText());
-      } catch (e) { /* NotFoundException on empty frames — expected */ }
+    // Fallback path: ZXing-C++ (WASM) decodes the frame ImageData.
+    function tickWasm() {
+      if (busyRef.current || !readerRef.current) return;
+      var imgData = grabFrame(2000);
+      if (!imgData) return;
+      busyRef.current = true;
+      readerRef.current.readBarcodes(imgData, WASM_OPTS).then(function(results) {
+        busyRef.current = false;
+        if (results && results.length && results[0].text) onHit(results[0].text);
+      }).catch(function() { busyRef.current = false; });
     }
 
     function startLoop(tick, ms) { stopLoop(); loopRef.current = setInterval(tick, ms || 140); }
@@ -303,21 +314,6 @@
         if (!use.length) return null;
         try { return new window.BarcodeDetector({ formats: use }); } catch (e) { return null; }
       }).catch(function() { return null; });
-    }
-
-    // Fallback: load ZXing and build a hint-tuned reader.
-    function setupZxing() {
-      return ensureScanner().then(function(ZX) {
-        var hints = new Map();
-        hints.set(ZX.DecodeHintType.TRY_HARDER, true);
-        var BF = ZX.BarcodeFormat || {};
-        var fmts = ["CODE_128", "CODE_39", "CODE_93", "ITF", "CODABAR",
-                    "EAN_13", "EAN_8", "UPC_A", "UPC_E",
-                    "QR_CODE", "DATA_MATRIX", "AZTEC", "PDF_417"]
-          .map(function(n) { return BF[n]; }).filter(function(v) { return v != null; });
-        if (fmts.length) hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, fmts);
-        return new ZX.BrowserMultiFormatReader(hints, 100);
-      });
     }
 
     function startCamera() {
@@ -357,11 +353,12 @@
             setCameraOn(true); setCameraLoading(false);
             return;
           }
-          setupZxing().then(function(reader) {
+          // No native decoder → load the ZXing-C++ WASM decoder.
+          ensureScanner().then(function(zxw) {
             if (cancelledRef.current) { stopCamera(); return; }
-            readerRef.current = reader;
-            setDecoderName("zxing");
-            startLoop(tickZxing, 250);           // JS decode is heavier — pace it slower
+            readerRef.current = zxw;             // exposes readBarcodes()
+            setDecoderName("wasm");
+            startLoop(tickWasm, 250);            // WASM decode is heavier — pace it slower
             setCameraOn(true); setCameraLoading(false);
           }).catch(function(e) {
             setCameraError(e.message || "Could not load the scanner.");
@@ -459,8 +456,8 @@
     var camera = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
       h("div", { style: { position: "relative", background: "#000", borderRadius: 10, overflow: "hidden", border: "1px solid " + B.border, aspectRatio: "4 / 3", display: cameraOn ? "block" : "none" } },
         h("video", { ref: videoRef, playsInline: true, muted: true, autoPlay: true, style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }),
-        // Aiming reticle — only this region is decoded (see grabCrop), so keep
-        // the inset in sync with it (20% vertical, 10% horizontal).
+        // Aiming reticle — a guide to center the label. The whole frame is
+        // decoded, so a slightly off-center code still reads.
         h("div", { style: { position: "absolute", inset: "20% 10%", border: "2px solid " + B.accent, borderRadius: 8, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)", pointerEvents: "none" } }),
         torchSupported && h("button", { onClick: toggleTorch, style: { position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: torchOn ? B.warn : "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, torchOn ? "🔦" : "🔦")
       ),
@@ -500,8 +497,8 @@
     var diagRows = [
       ["Secure context (HTTPS)", window.isSecureContext ? "yes" : "NO — camera needs HTTPS", !window.isSecureContext],
       ["Camera API (getUserMedia)", (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? "available" : "MISSING", !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)],
-      ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "available" : "no (ZXing used)", false],
-      ["Active decoder", decoderName === "native" ? "BarcodeDetector (native)" : decoderName === "zxing" ? "ZXing (JS)" : "—", false],
+      ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "available" : "no (WASM used)", false],
+      ["Active decoder", decoderName === "native" ? "BarcodeDetector (native)" : decoderName === "wasm" ? "ZXing-C++ (WASM)" : "—", false],
       ["Camera state", cameraOn ? "on" : (cameraError ? "error" : "off"), !!cameraError],
       ["Video resolution", camRes || "—", false],
       ["Zoom", zoomCaps ? ((Math.round(zoomVal * 10) / 10) + "× (max " + zoomCaps.max + "×)") : "unsupported", false],

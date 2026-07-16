@@ -89,12 +89,13 @@ const scan = src("modules/rentals-scan.js");
 ok("S1 scan module uses buildScannedUnit", scan.indexOf("buildScannedUnit") !== -1);
 ok("S2 scan module uses isDuplicateCode", scan.indexOf("isDuplicateCode") !== -1);
 ok("S3 scan module carries all persistent fields", ["purchaseDate", "purchaseVendorId", "purchaseCost", "status", "location"].every(function (k) { return scan.indexOf(k) !== -1; }));
-ok("S4 scan module drives a camera decoder (native BarcodeDetector or ZXing)",
-   scan.indexOf("getUserMedia") !== -1 && (scan.indexOf("BarcodeDetector") !== -1 && scan.indexOf("decodeBitmap") !== -1));
-ok("S4b scan module requests high resolution + centre crop for small barcodes",
-   scan.indexOf("ideal: 3840") !== -1 && scan.indexOf("grabCrop") !== -1);
-ok("S5 scan module stops the camera on cleanup", scan.indexOf(".reset()") !== -1 && scan.indexOf("stopLoop") !== -1);
-ok("S6 scan module lazy-loads the vendored decoder", scan.indexOf("/assets/vendor/zxing.min.js") !== -1);
+ok("S4 scan module drives a camera decoder (native BarcodeDetector + WASM fallback)",
+   scan.indexOf("getUserMedia") !== -1 && scan.indexOf("BarcodeDetector") !== -1 && scan.indexOf("readBarcodes") !== -1);
+ok("S4b scan module requests high resolution + downscaled frame grab",
+   scan.indexOf("ideal: 3840") !== -1 && scan.indexOf("grabFrame") !== -1);
+ok("S5 scan module stops the camera on cleanup", scan.indexOf("stopLoop") !== -1 && scan.indexOf("t.stop()") !== -1);
+ok("S6 scan module lazy-loads the vendored WASM decoder",
+   scan.indexOf("/assets/vendor/zxing-wasm-reader.js") !== -1 && scan.indexOf("/assets/vendor/zxing_reader.wasm") !== -1);
 
 const shell = src("modules/rentals-shell.js");
 ok("S7 shell routes the scan action", shell.indexOf('action === "scan"') !== -1);
@@ -106,8 +107,10 @@ ok("S10 equipment form uses the shared VendorSearch", equip.indexOf("R.VendorSea
 ok("S11 duplicate VendorSearch definition removed", equip.indexOf("function VendorSearch") === -1);
 ok("S12 detail modal exposes a Scan Units entry point", equip.indexOf("onScan") !== -1);
 
-// The decoder is present and same-origin (CSP script-src 'self').
-ok("S13 vendored decoder file exists", fs.existsSync(path.join(root, "assets", "vendor", "zxing.min.js")));
+// The vendored WASM decoder (glue + binary) is present and same-origin.
+ok("S13 vendored WASM decoder glue exists", fs.existsSync(path.join(root, "assets", "vendor", "zxing-wasm-reader.js")));
+ok("S13b vendored WASM binary exists", fs.existsSync(path.join(root, "assets", "vendor", "zxing_reader.wasm")));
+ok("S13c old pure-JS decoder removed", !fs.existsSync(path.join(root, "assets", "vendor", "zxing.min.js")));
 
 console.log("rentals-scan suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach(function (f) { console.log("  x " + f); }); process.exit(1); }

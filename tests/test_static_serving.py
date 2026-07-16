@@ -31,22 +31,25 @@ from backend.main import _resolve_static  # noqa: E402
 
 # ── Allowlist resolution (pure function; no app boot needed) ────────────────
 
-def test_vendored_scanner_js_resolves():
-    """assets/vendor/*.js must be reachable (the scan-import fix)."""
-    resolved = _resolve_static("assets/vendor/zxing.min.js")
-    assert resolved is not None, "assets/vendor/zxing.min.js should be allow-listed"
-    assert resolved.replace(os.sep, "/").endswith("assets/vendor/zxing.min.js")
+def test_vendored_scanner_resolves():
+    """assets/vendor/*.js and *.wasm must be reachable (the scan-import decoder)."""
+    for rel in ("assets/vendor/zxing-wasm-reader.js", "assets/vendor/zxing_reader.wasm"):
+        resolved = _resolve_static(rel)
+        assert resolved is not None, f"{rel} should be allow-listed"
+        assert resolved.replace(os.sep, "/").endswith(rel)
 
 
-def test_vendored_file_exists_on_disk():
-    """The decoder is committed (not just allow-listed) so the lazy-load works."""
-    assert os.path.isfile(os.path.join(_root, "assets", "vendor", "zxing.min.js"))
+def test_vendored_files_exist_on_disk():
+    """The decoder glue + binary are committed (not just allow-listed)."""
+    assert os.path.isfile(os.path.join(_root, "assets", "vendor", "zxing-wasm-reader.js"))
+    assert os.path.isfile(os.path.join(_root, "assets", "vendor", "zxing_reader.wasm"))
 
 
 def test_deny_by_default_preserved():
-    """Non-frontend files at the repo root stay unreachable — the fix must not
-    have widened the allowlist beyond assets/vendor/*.js."""
-    for denied in ("requirements.txt", "backend/main.py", "alembic.ini", "pytest.ini"):
+    """Non-frontend files at the repo root stay unreachable — the allowlist must
+    not have widened beyond assets/vendor/*.{js,wasm}."""
+    for denied in ("requirements.txt", "backend/main.py", "alembic.ini", "pytest.ini",
+                   "assets/foo.wasm", "assets/bar.js"):  # .wasm/.js only under vendor/
         assert _resolve_static(denied) is None, f"{denied} must not be servable"
 
 
@@ -58,27 +61,52 @@ def test_control_module_js_resolves():
 
 # ── End-to-end content-type (the actual browser-facing behavior) ───────────
 
-def test_scanner_js_served_with_javascript_content_type():
-    """GET the vendored decoder through the real app and assert 200 + a
-    JavaScript content-type (NOT text/html), which is what nosniff requires
-    for the <script> to execute."""
+def test_scanner_glue_served_as_javascript():
+    """GET the decoder glue through the real app: 200 + a JavaScript content-type
+    (NOT text/html), which nosniff requires for the <script> to execute."""
     from fastapi.testclient import TestClient
     from backend.main import app
     with TestClient(app) as client:
-        r = client.get("/assets/vendor/zxing.min.js")
+        r = client.get("/assets/vendor/zxing-wasm-reader.js")
         assert r.status_code == 200, f"got {r.status_code}"
         ct = r.headers.get("content-type", "").lower()
         assert "javascript" in ct, f"expected a JS content-type, got {ct!r}"
         assert not r.text.lstrip().startswith("<!DOCTYPE"), "served the SPA fallback, not the JS"
 
 
+def test_wasm_served_as_application_wasm():
+    """The .wasm binary must be served as application/wasm — WebAssembly
+    instantiateStreaming validates the MIME and refuses anything else."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    with TestClient(app) as client:
+        r = client.get("/assets/vendor/zxing_reader.wasm")
+        assert r.status_code == 200, f"got {r.status_code}"
+        ct = r.headers.get("content-type", "").lower()
+        assert "application/wasm" in ct, f"expected application/wasm, got {ct!r}"
+        assert r.content[:4] == b"\x00asm", "not a valid wasm binary"
+
+
+def test_csp_allows_wasm():
+    """The CSP script-src must include 'wasm-unsafe-eval' so the decoder can
+    instantiate WebAssembly (without it the browser blocks the whole module)."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    with TestClient(app) as client:
+        r = client.get("/")
+        csp = r.headers.get("content-security-policy", "")
+        assert "wasm-unsafe-eval" in csp, "CSP must allow WebAssembly instantiation"
+
+
 def main() -> int:
     tests = [
-        test_vendored_scanner_js_resolves,
-        test_vendored_file_exists_on_disk,
+        test_vendored_scanner_resolves,
+        test_vendored_files_exist_on_disk,
         test_deny_by_default_preserved,
         test_control_module_js_resolves,
-        test_scanner_js_served_with_javascript_content_type,
+        test_scanner_glue_served_as_javascript,
+        test_wasm_served_as_application_wasm,
+        test_csp_allows_wasm,
     ]
     failures = 0
     for fn in tests:
