@@ -234,6 +234,43 @@ eq("VN1 name with variant", VN(transport, FV(transport, "v1")), "Transportation 
 eq("VN2 name without variant is base name", VN(transport, null), "Transportation");
 eq("VN3 null product tolerated", VN(null, null), "");
 
+// ── collectEmailFaults (Settings Error Log — email delivery faults) ──────────
+const CEF = window.LTP_collectEmailFaults;
+const _inv = [
+  { id: 1, activity: [
+    { id: "a1", type: "email_sent", date: "2026-07-15", time: "09:00", message: "Email sent to x" },
+    { id: "a2", type: "email_failed", date: "2026-07-16", time: "10:00",
+      message: "Email to richard@dcsymphony.org failed",
+      changes: [{ cat: "Error", detail: "Gmail send failed (401): invalid_client" }, { cat: "To", detail: "richard@dcsymphony.org" }] },
+  ] },
+  { id: 2, activity: [
+    { id: "a3", type: "email_failed", date: "2026-07-14", time: "08:00",
+      message: "Payment receipt could not be sent — no valid client email on file",
+      changes: [{ cat: "Reference", detail: "INV-2026-002" }] },
+  ] },
+];
+const _qts = [
+  { id: 5, createdDate: "2026-07-16", activity: [
+    { id: "a4", type: "email_failed", date: "2026-07-16", time: "12:30", message: "Email to bob@acme.com failed",
+      changes: [{ cat: "Error", detail: "Gmail send failed (502): rejected" }] },
+  ] },
+  { id: 6, activity: [{ id: "a5", type: "viewed", date: "2026-07-16", time: "13:00", message: "viewed" }] },
+];
+const _faults = CEF(_inv, _qts);
+eq("CEF1 gathers only email_failed entries", _faults.length, 3);
+eq("CEF2 newest first (quote 07/16 12:30)", _faults[0].message, "Email to bob@acme.com failed");
+eq("CEF3 oldest last (invoice 07/14)", _faults[2].date, "2026-07-14");
+eq("CEF4 invoice context uses INV ref", _faults[1].context, window.LTP_INVOICE_REF(_inv[0]));
+eq("CEF5 quote context uses Q ref", _faults[0].context, window.LTP_QUOTE_REF(_qts[0]));
+eq("CEF6 error detail extracted from changes", _faults[0].errorDetail, "Gmail send failed (502): rejected");
+eq("CEF7 no Error change -> empty detail", _faults[2].errorDetail, "");
+ok("CEF8 null inputs tolerated", Array.isArray(CEF(null, null)) && CEF(null, null).length === 0);
+ok("CEF9 entities without activity tolerated", CEF([{ id: 9 }], [{ id: 8 }]).length === 0);
+eq("CEF10 message falls back when absent",
+   CEF([{ id: 1, activity: [{ type: "email_failed", date: "2026-01-01", time: "00:00" }] }], []).length === 1
+     ? CEF([{ id: 1, activity: [{ type: "email_failed", date: "2026-01-01", time: "00:00" }] }], [])[0].message
+     : "MISSING", "Email failed");
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

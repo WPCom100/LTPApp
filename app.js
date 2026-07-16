@@ -376,7 +376,7 @@ function LTPSignedInApp(props) {
       }));
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
-        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings }));
+        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings, invoices: invoices, quotes: quotes }));
       default: nav("dashboard"); return null;
     }
   }
