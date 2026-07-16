@@ -4,7 +4,7 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -597,17 +597,16 @@ async def web_manifest():
     # mimetypes doesn't reliably know .webmanifest, so set it explicitly.
     path = os.path.join(frontend_dir, "manifest.webmanifest")
     if _IS_DEV_VARIANT:
-        # Dev deployment: rename to "LTP Dev" and tint the splash/theme violet
-        # to match the dev icons. The icon `src`s stay the same paths — the
-        # /assets/icons route below serves the dev bytes for them. Built from
-        # the base file so every other field stays a single source of truth.
+        # Dev deployment: rename to "LTP Dev". The icon `src`s stay the same
+        # paths — the /assets/icons route below serves the dev bytes (the "DEV"
+        # variant) for them. Theme/background stay the base slate so the splash
+        # matches the dev icon's field. Built from the base file so every other
+        # field stays a single source of truth.
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             data["name"] = "LTP Dev"
             data["short_name"] = "LTP Dev"
-            data["theme_color"] = "#5B21B6"
-            data["background_color"] = "#5B21B6"
             resp = JSONResponse(data, media_type="application/manifest+json")
             resp.headers["Cache-Control"] = "no-cache"
             return resp
@@ -641,6 +640,37 @@ async def favicon():
     return FileResponse(dev or os.path.join(frontend_dir, "favicon.ico"))
 
 
+_INDEX_PATH = os.path.realpath(os.path.join(frontend_dir, "index.html"))
+# Exact strings rewritten for the dev deployment so the installed app reads
+# "LTP Dev" instead of "LTP". Kept as full-tag literals so a replace can't
+# accidentally match anything else in the document.
+_APPLE_TITLE_PROD = '<meta name="apple-mobile-web-app-title" content="LTP" />'
+_APPLE_TITLE_DEV = '<meta name="apple-mobile-web-app-title" content="LTP Dev" />'
+_DOC_TITLE_PROD = "<title>LTP Business Suite</title>"
+_DOC_TITLE_DEV = "<title>LTP Dev — Business Suite</title>"
+
+
+def _index_response():
+    """Serve index.html. On the dev deployment (LTP_APP_VARIANT=dev) rewrite the
+    iOS home-screen app name (apple-mobile-web-app-title) and the document title
+    to the 'LTP Dev' identity — iOS reads the home-screen label from that meta
+    tag, not the manifest. Production is served verbatim from disk (unchanged)."""
+    if _IS_DEV_VARIANT:
+        try:
+            with open(_INDEX_PATH, "r", encoding="utf-8") as f:
+                html = f.read()
+            html = html.replace(_APPLE_TITLE_PROD, _APPLE_TITLE_DEV)
+            html = html.replace(_DOC_TITLE_PROD, _DOC_TITLE_DEV)
+            resp = HTMLResponse(html)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        except Exception as e:
+            print(f"[LTP] dev index rewrite failed, serving base: {e}", flush=True)
+    resp = FileResponse(_INDEX_PATH)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
     # Anything under api/, auth/, or pdf/ that didn't match the routers
@@ -651,6 +681,10 @@ async def serve_frontend(full_path: str):
 
     static = _resolve_static(full_path)
     if static:
+        # index.html gets the dev-name rewrite (below); all other statics served
+        # straight from disk.
+        if os.path.realpath(static) == _INDEX_PATH:
+            return _index_response()
         resp = FileResponse(static)
         # App code (HTML/JS/CSS) is served from un-versioned filenames
         # (e.g. /theme.js), so without this a browser's heuristic cache could
@@ -663,7 +697,5 @@ async def serve_frontend(full_path: str):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
-    # SPA fallback for any unknown path
-    resp = FileResponse(os.path.join(frontend_dir, "index.html"))
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp
+    # SPA fallback for any unknown path (also the dev-name rewrite applies).
+    return _index_response()
