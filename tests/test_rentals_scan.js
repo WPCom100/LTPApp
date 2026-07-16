@@ -89,8 +89,11 @@ const scan = src("modules/rentals-scan.js");
 ok("S1 scan module uses buildScannedUnit", scan.indexOf("buildScannedUnit") !== -1);
 ok("S2 scan module uses isDuplicateCode", scan.indexOf("isDuplicateCode") !== -1);
 ok("S3 scan module carries all persistent fields", ["purchaseDate", "purchaseVendorId", "purchaseCost", "status", "location"].every(function (k) { return scan.indexOf(k) !== -1; }));
-ok("S4 scan module drives the camera decoder", scan.indexOf("decodeFromConstraints") !== -1);
-ok("S5 scan module stops the camera on cleanup", scan.indexOf(".reset()") !== -1);
+ok("S4 scan module drives a camera decoder (native BarcodeDetector or ZXing)",
+   scan.indexOf("getUserMedia") !== -1 && (scan.indexOf("BarcodeDetector") !== -1 && scan.indexOf("decodeBitmap") !== -1));
+ok("S4b scan module requests high resolution + centre crop for small barcodes",
+   scan.indexOf("ideal: 3840") !== -1 && scan.indexOf("grabCrop") !== -1);
+ok("S5 scan module stops the camera on cleanup", scan.indexOf(".reset()") !== -1 && scan.indexOf("stopLoop") !== -1);
 ok("S6 scan module lazy-loads the vendored decoder", scan.indexOf("/assets/vendor/zxing.min.js") !== -1);
 
 const shell = src("modules/rentals-shell.js");

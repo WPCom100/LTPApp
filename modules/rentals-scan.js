@@ -152,10 +152,16 @@
     var typed = typedPair[0], setTyped = typedPair[1];
     var diagPair = useState(false);
     var showDiag = diagPair[0], setShowDiag = diagPair[1];
+    var decoderPair = useState("");            // "native" | "zxing" | "" — which decoder is running
+    var decoderName = decoderPair[0], setDecoderName = decoderPair[1];
 
     var videoRef = useRef(null);
-    var readerRef = useRef(null);
+    var readerRef = useRef(null);              // ZXing BrowserMultiFormatReader (fallback path)
+    var detectorRef = useRef(null);            // native BarcodeDetector (preferred path)
     var streamRef = useRef(null);
+    var loopRef = useRef(null);                // decode-loop interval id
+    var busyRef = useRef(false);               // guards the async native detect() against overlap
+    var cropCanvasRef = useRef(null);          // reusable offscreen canvas for the centre crop
     var lastCodeRef = useRef("");
     var lastTimeRef = useRef(0);
     var cancelledRef = useRef(false);
@@ -227,71 +233,164 @@
       } catch (e) {}
     }
 
-    function startCamera() {
-      setCameraError("");
-      setCameraLoading(true);
-      ensureScanner().then(function(ZX) {
-        if (cancelledRef.current || !videoRef.current) return;
-        // TRY_HARDER makes ZXing scan each frame more thoroughly (rotations,
-        // finer sampling) — the biggest decode-rate win for small/blurry codes.
-        // Restricting to the formats an asset tag realistically uses keeps that
-        // affordable so the frame rate stays high.
+    // Draw the reticle-sized centre of the current frame to an offscreen canvas
+    // at native resolution — cropping to the box keeps full pixel density on the
+    // barcode (and drops the surrounding clutter) so it decodes from farther
+    // away. `maxSide` optionally caps the canvas so a 4K crop still decodes fast.
+    function grabCrop(maxSide) {
+      var v = videoRef.current;
+      if (!v || !v.videoWidth || !v.videoHeight) return null;
+      var vw = v.videoWidth, vh = v.videoHeight;
+      // Matches the on-screen reticle (inset 20% vertical, 10% horizontal).
+      var sx = Math.floor(vw * 0.10), sy = Math.floor(vh * 0.20);
+      var sw = vw - sx * 2, sh = vh - sy * 2;
+      var dw = sw, dh = sh;
+      if (maxSide && Math.max(sw, sh) > maxSide) {
+        var k = maxSide / Math.max(sw, sh);
+        dw = Math.max(1, Math.round(sw * k)); dh = Math.max(1, Math.round(sh * k));
+      }
+      var canvas = cropCanvasRef.current || (cropCanvasRef.current = document.createElement("canvas"));
+      canvas.width = dw; canvas.height = dh;
+      var ctx = canvas.getContext("2d", { willReadFrequently: true });
+      ctx.drawImage(v, sx, sy, sw, sh, 0, 0, dw, dh);
+      return canvas;
+    }
+
+    function onHit(text) { if (text && handleRef.current) handleRef.current(text, "camera"); }
+
+    // Native path: the platform BarcodeDetector reads the FULL frame — it's
+    // rotation-invariant and strong on small/angled/glare codes, so we don't
+    // crop (which could clip an off-center label); the whole 4K frame is fair game.
+    function tickNative() {
+      if (busyRef.current || !detectorRef.current) return;
+      var v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      busyRef.current = true;
+      detectorRef.current.detect(v).then(function(codes) {
+        busyRef.current = false;
+        if (codes && codes.length) onHit(codes[0].rawValue);
+      }).catch(function() { busyRef.current = false; });
+    }
+
+    // Fallback path: ZXing decodes the crop (capped so a 4K crop stays quick).
+    function tickZxing() {
+      var ZX = window.ZXing;
+      if (!ZX || !readerRef.current) return;
+      var canvas = grabCrop(2200);
+      if (!canvas) return;
+      try {
+        var src = new ZX.HTMLCanvasElementLuminanceSource(canvas);
+        var bmp = new ZX.BinaryBitmap(new ZX.HybridBinarizer(src));
+        var res = readerRef.current.decodeBitmap(bmp);
+        if (res) onHit(res.getText());
+      } catch (e) { /* NotFoundException on empty frames — expected */ }
+    }
+
+    function startLoop(tick, ms) { stopLoop(); loopRef.current = setInterval(tick, ms || 140); }
+    function stopLoop() {
+      if (loopRef.current) { clearInterval(loopRef.current); loopRef.current = null; }
+      busyRef.current = false;
+    }
+
+    // Prefer the native BarcodeDetector when it supports a format we care about.
+    function setupNativeDetector() {
+      if (!("BarcodeDetector" in window) || !window.BarcodeDetector.getSupportedFormats) return Promise.resolve(null);
+      var wanted = ["code_128", "code_39", "code_93", "codabar", "itf",
+                    "ean_13", "ean_8", "upc_a", "upc_e",
+                    "qr_code", "data_matrix", "aztec", "pdf417"];
+      return window.BarcodeDetector.getSupportedFormats().then(function(sup) {
+        var use = wanted.filter(function(f) { return sup.indexOf(f) !== -1; });
+        if (!use.length) return null;
+        try { return new window.BarcodeDetector({ formats: use }); } catch (e) { return null; }
+      }).catch(function() { return null; });
+    }
+
+    // Fallback: load ZXing and build a hint-tuned reader.
+    function setupZxing() {
+      return ensureScanner().then(function(ZX) {
         var hints = new Map();
         hints.set(ZX.DecodeHintType.TRY_HARDER, true);
         var BF = ZX.BarcodeFormat || {};
-        var formats = ["CODE_128", "CODE_39", "CODE_93", "ITF", "CODABAR",
-                       "EAN_13", "EAN_8", "UPC_A", "UPC_E",
-                       "QR_CODE", "DATA_MATRIX", "AZTEC", "PDF_417"]
-          .map(function(n) { return BF[n]; })
-          .filter(function(v) { return v !== undefined && v !== null; });
-        if (formats.length) hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, formats);
-        // 200ms between decode attempts (default 500) → ~5 tries/sec.
-        var reader = new ZX.BrowserMultiFormatReader(hints, 200);
-        readerRef.current = reader;
-        // Ask for the highest practical resolution: a small barcode covers far
-        // more pixels at 1080p than at the default ~480p, so it actually decodes.
-        // Ideal (not exact) so devices that can't hit it degrade gracefully.
-        var constraints = { video: {
-          facingMode: { ideal: "environment" },
-          width:  { ideal: 1920 },
-          height: { ideal: 1080 },
-        } };
-        reader.decodeFromConstraints(constraints, videoRef.current, function(result /*, err */) {
-          // `err` fires on every frame with no barcode — expected, ignored.
-          if (result && handleRef.current) handleRef.current(result.getText(), "camera");
-        }).then(function() {
+        var fmts = ["CODE_128", "CODE_39", "CODE_93", "ITF", "CODABAR",
+                    "EAN_13", "EAN_8", "UPC_A", "UPC_E",
+                    "QR_CODE", "DATA_MATRIX", "AZTEC", "PDF_417"]
+          .map(function(n) { return BF[n]; }).filter(function(v) { return v != null; });
+        if (fmts.length) hints.set(ZX.DecodeHintType.POSSIBLE_FORMATS, fmts);
+        return new ZX.BrowserMultiFormatReader(hints, 100);
+      });
+    }
+
+    function startCamera() {
+      setCameraError("");
+      setCameraLoading(true);
+      var md = navigator.mediaDevices;
+      if (!md || !md.getUserMedia) {
+        setCameraError("This browser can't open the camera. Use the manual field below.");
+        setCameraLoading(false);
+        return;
+      }
+      // Ask for the highest resolution available (up to 4K): a given barcode
+      // spans ~2x the pixels at 4K vs 1080p, which is the difference between
+      // "must be an inch away" and "reads at arm's length". Ideal (not exact)
+      // so a device that tops out lower simply gives its best.
+      var constraints = { audio: false, video: {
+        facingMode: { ideal: "environment" },
+        width:  { ideal: 3840 },
+        height: { ideal: 2160 },
+        frameRate: { ideal: 30 },
+      } };
+      md.getUserMedia(constraints).then(function(stream) {
+        if (cancelledRef.current) { stream.getTracks().forEach(function(t) { t.stop(); }); return; }
+        streamRef.current = stream;
+        var v = videoRef.current;
+        if (!v) { stream.getTracks().forEach(function(t) { t.stop(); }); return; }
+        v.srcObject = stream;
+        var pp = v.play ? v.play() : null;
+        if (pp && pp.catch) pp.catch(function() {});
+        tuneTrack(stream);
+        setupNativeDetector().then(function(detector) {
           if (cancelledRef.current) { stopCamera(); return; }
-          var stream = videoRef.current && videoRef.current.srcObject;
-          streamRef.current = stream || null;
-          tuneTrack(stream);
-          setCameraOn(true);
-          setCameraLoading(false);
-        }).catch(function(e) {
-          setCameraError(cameraErrMsg(e));
-          setCameraOn(false);
-          setCameraLoading(false);
-          readerRef.current = null;
+          if (detector) {
+            detectorRef.current = detector;
+            setDecoderName("native");
+            startLoop(tickNative, 120);         // native detect is fast/async
+            setCameraOn(true); setCameraLoading(false);
+            return;
+          }
+          setupZxing().then(function(reader) {
+            if (cancelledRef.current) { stopCamera(); return; }
+            readerRef.current = reader;
+            setDecoderName("zxing");
+            startLoop(tickZxing, 250);           // JS decode is heavier — pace it slower
+            setCameraOn(true); setCameraLoading(false);
+          }).catch(function(e) {
+            setCameraError(e.message || "Could not load the scanner.");
+            stopCamera(); setCameraLoading(false);
+          });
         });
       }).catch(function(e) {
-        setCameraError(e.message || "Could not load the scanner.");
-        setCameraLoading(false);
+        setCameraError(cameraErrMsg(e));
+        setCameraOn(false); setCameraLoading(false);
       });
     }
 
     function stopCamera() {
-      try { if (readerRef.current) readerRef.current.reset(); } catch (e) {}
-      // reset() stops the stream, but stop tracks explicitly as a belt-and-
-      // suspenders guard so the camera light never lingers.
+      stopLoop();
+      detectorRef.current = null;
+      try { if (readerRef.current && readerRef.current.reset) readerRef.current.reset(); } catch (e) {}
+      readerRef.current = null;
+      // Stop every track so the camera light never lingers.
       try {
         var s = streamRef.current;
         if (s && s.getTracks) s.getTracks().forEach(function(t) { try { t.stop(); } catch (e) {} });
       } catch (e) {}
-      readerRef.current = null;
+      try { if (videoRef.current) videoRef.current.srcObject = null; } catch (e) {}
       streamRef.current = null;
       setTorchOn(false);
       setTorchSupported(false);
       setZoomCaps(null);
       setZoomVal(1);
+      setDecoderName("");
       setCameraOn(false);
     }
 
@@ -360,8 +459,9 @@
     var camera = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
       h("div", { style: { position: "relative", background: "#000", borderRadius: 10, overflow: "hidden", border: "1px solid " + B.border, aspectRatio: "4 / 3", display: cameraOn ? "block" : "none" } },
         h("video", { ref: videoRef, playsInline: true, muted: true, autoPlay: true, style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }),
-        // Aiming reticle.
-        h("div", { style: { position: "absolute", inset: "18% 12%", border: "2px solid " + B.accent, borderRadius: 8, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)", pointerEvents: "none" } }),
+        // Aiming reticle — only this region is decoded (see grabCrop), so keep
+        // the inset in sync with it (20% vertical, 10% horizontal).
+        h("div", { style: { position: "absolute", inset: "20% 10%", border: "2px solid " + B.accent, borderRadius: 8, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)", pointerEvents: "none" } }),
         torchSupported && h("button", { onClick: toggleTorch, style: { position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: torchOn ? B.warn : "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, torchOn ? "🔦" : "🔦")
       ),
       // Zoom slider — lets the user fill the frame with a small label instead of
@@ -375,9 +475,9 @@
         h("span", { style: { fontSize: "11px", color: B.textMut, minWidth: 36, textAlign: "right", fontVariantNumeric: "tabular-nums" } }, (Math.round(zoomVal * 10) / 10) + "×")
       ),
       cameraOn && h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center" } },
-        "Fill the box with the barcode and hold steady. Small label? " +
-        (zoomCaps ? "Zoom in" : "Move closer (then back off if it blurs)") +
-        (torchSupported ? " or tap the flash." : ".")),
+        "Center the barcode in the box and hold steady a moment. Still not reading? " +
+        (zoomCaps ? "Zoom in" : "Move a little closer") +
+        (torchSupported ? " or tap the flash for glossy labels." : ".")),
       !cameraOn && h("button", { onClick: startCamera, disabled: cameraLoading,
         style: { background: B.raised, border: "1px dashed " + B.border, borderRadius: 10, color: B.accent, cursor: cameraLoading ? "default" : "pointer", padding: "20px", fontSize: "13px", fontWeight: 700, width: "100%", textAlign: "center" } },
         cameraLoading ? "Starting camera…" : "📷  Start camera"),
@@ -400,8 +500,8 @@
     var diagRows = [
       ["Secure context (HTTPS)", window.isSecureContext ? "yes" : "NO — camera needs HTTPS", !window.isSecureContext],
       ["Camera API (getUserMedia)", (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? "available" : "MISSING", !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)],
-      ["Scanner library (ZXing)", window.ZXing ? "loaded" : "not loaded yet", false],
-      ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "yes" : "no (ZXing used)", false],
+      ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "available" : "no (ZXing used)", false],
+      ["Active decoder", decoderName === "native" ? "BarcodeDetector (native)" : decoderName === "zxing" ? "ZXing (JS)" : "—", false],
       ["Camera state", cameraOn ? "on" : (cameraError ? "error" : "off"), !!cameraError],
       ["Video resolution", camRes || "—", false],
       ["Zoom", zoomCaps ? ((Math.round(zoomVal * 10) / 10) + "× (max " + zoomCaps.max + "×)") : "unsupported", false],
