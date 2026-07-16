@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import models, view_tracking
+from backend import models, view_tracking, webpush
 from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
@@ -301,6 +301,27 @@ async def get_view(
     return _sanitized_payload(kind, row, company, contact, project, settings)
 
 
+async def _notify_quote_response(db, row, decision: str, client_name: str, comment: str) -> None:
+    """Push-notify the quote's sender(s) — or all admins when it went out as an
+    anonymous share link — that the client accepted/declined. Fully best-effort:
+    a notification failure must never turn a valid client response into a 500."""
+    try:
+        ref = doc_ref("quote", {
+            "id": row.id,
+            "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+            "sentDate": row.sent_date or "",
+        })
+        who = client_name or "The client"
+        title = f"Quote {ref} {decision}"
+        body = f"{who} {decision} the quote"
+        if comment:
+            body += " · “" + comment + "”"
+        await webpush.notify_entity(db, "quote", row.id, title, body, f"/#/quotes/{row.id}")
+    except Exception as e:
+        print(f"[LTP] webpush: quote {decision} notify failed for "
+              f"quote {getattr(row, 'id', '?')}: {e}", flush=True)
+
+
 # ── POST /api/view/{token}/accept ─────────────────────────────────────────
 
 @view_router.post("/{token}/accept")
@@ -369,6 +390,7 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     )
     row.status = "accepted"
     await db.flush()
+    await _notify_quote_response(db, row, "accepted", client_name, comment)
     return {"status": "accepted", "activityId": entry["id"]}
 
 
@@ -409,6 +431,7 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
     )
     row.status = "declined"
     await db.flush()
+    await _notify_quote_response(db, row, "declined", client_name, comment)
     return {"status": "declined", "activityId": entry["id"]}
 
 

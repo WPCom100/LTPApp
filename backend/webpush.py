@@ -63,28 +63,19 @@ def _send_one(sub_info: dict, payload: str) -> None:
     )
 
 
-async def send_to_user(db, user_id, title: str, body: str, url: str = "/#/dashboard") -> int:
-    """Push (title, body, url) to every device the given INTERNAL user has
-    subscribed. Best-effort: prunes dead subscriptions on 404/410 and swallows
-    every other error so a failed push never breaks the request that triggered
-    it. Returns how many pushes were accepted by a push service.
+async def _deliver(db, rows, title: str, body: str, url: str) -> int:
+    """Fan (title, body, url) out to a set of already-loaded PushSubscription
+    rows. Best-effort: prunes dead subscriptions on 404/410 and swallows every
+    other error so a failed push never breaks the caller. Returns how many
+    pushes a push service accepted.
 
-    `db` is the caller's live AsyncSession — the delete rides its transaction,
-    committed by get_db alongside the triggering write."""
-    if not user_id or not is_configured():
+    `db` is the caller's live AsyncSession — the prune-delete rides its
+    transaction, committed by the caller (get_db, or the receipt poll's
+    per-invoice commit) alongside the triggering write."""
+    if not rows:
         return 0
 
     from pywebpush import WebPushException
-
-    rows = (
-        await db.execute(
-            select(models.PushSubscription).where(
-                models.PushSubscription.user_id == user_id
-            )
-        )
-    ).scalars().all()
-    if not rows:
-        return 0
 
     payload = json.dumps({"title": title, "body": body, "url": url})
     if len(payload.encode("utf-8")) > _MAX_PAYLOAD_BYTES:
@@ -115,3 +106,73 @@ async def send_to_user(db, user_id, title: str, body: str, url: str = "/#/dashbo
         print(f"[LTP] webpush: pruned {len(dead)} dead subscription(s)", flush=True)
 
     return sent
+
+
+async def send_to_user(db, user_id, title: str, body: str, url: str = "/#/dashboard") -> int:
+    """Push to every device ONE internal user has subscribed. See _deliver."""
+    if not user_id or not is_configured():
+        return 0
+    rows = (
+        await db.execute(
+            select(models.PushSubscription).where(
+                models.PushSubscription.user_id == user_id
+            )
+        )
+    ).scalars().all()
+    return await _deliver(db, rows, title, body, url)
+
+
+async def send_to_users(db, user_ids, title: str, body: str, url: str = "/#/dashboard") -> int:
+    """Push to every device of a SET of internal users (deduped). One query for
+    all their subscriptions, then a single delivery pass."""
+    ids = [int(u) for u in dict.fromkeys(user_ids or []) if u]  # dedup, drop falsy
+    if not ids or not is_configured():
+        return 0
+    rows = (
+        await db.execute(
+            select(models.PushSubscription).where(
+                models.PushSubscription.user_id.in_(ids)
+            )
+        )
+    ).scalars().all()
+    return await _deliver(db, rows, title, body, url)
+
+
+async def _entity_sender_ids(db, entity_type: str, entity_id) -> list:
+    """Internal user ids who have SENT this quote/invoice (distinct
+    EmailRecipient.sent_by_user_id). These are the people who care that the
+    client responded / paid."""
+    rows = (
+        await db.execute(
+            select(models.EmailRecipient.sent_by_user_id)
+            .where(
+                models.EmailRecipient.entity_type == entity_type,
+                models.EmailRecipient.entity_id == entity_id,
+                models.EmailRecipient.sent_by_user_id.isnot(None),
+            )
+            .distinct()
+        )
+    ).all()
+    return [r[0] for r in rows if r[0]]
+
+
+async def _admin_ids(db) -> list:
+    """All admin users — the fallback audience when an entity has no recorded
+    sender (e.g. a quote accepted via an anonymous preview link)."""
+    rows = (
+        await db.execute(select(models.User.id).where(models.User.role == "admin"))
+    ).all()
+    return [r[0] for r in rows]
+
+
+async def notify_entity(db, entity_type: str, entity_id, title: str, body: str,
+                        url: str = "/#/dashboard", *, fallback_admins: bool = True) -> int:
+    """Push a quote/invoice event to whoever sent it, or (when nobody did — an
+    anonymous share link) to all admins. `entity_type` ∈ {"quote", "invoice"}.
+    No-ops when push isn't configured."""
+    if not is_configured():
+        return 0
+    ids = await _entity_sender_ids(db, entity_type, entity_id)
+    if not ids and fallback_admins:
+        ids = await _admin_ids(db)
+    return await send_to_users(db, ids, title, body, url)
