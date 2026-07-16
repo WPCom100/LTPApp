@@ -268,9 +268,15 @@
 
     function onHit(text) { if (text && handleRef.current) handleRef.current(text, "camera"); }
 
-    // WASM readerOptions — try hard, and try rotations/inversions so a 90°-rotated
-    // or dark-on-light label still reads. Empty formats = every supported symbology.
-    var WASM_OPTS = { tryHarder: true, tryRotate: true, tryInvert: true, tryDownscale: true, formats: [], maxNumberOfSymbols: 1 };
+    // WASM readerOptions. tryHarder + rotate + invert so a 90°-rotated or
+    // dark-on-light label still reads. The BINARIZER is the key lever for printed
+    // asset tags: they're high-contrast black-on-white, and a glossy laminate's
+    // glare defeats the adaptive default — a FixedThreshold cuts straight through
+    // it (verified reading real glossy tags the adaptive binarizer couldn't). We
+    // try Fixed first, then fall back to LocalAverage for low-contrast / unevenly
+    // lit codes where the adaptive approach wins.
+    var WASM_OPTS_FIXED = { tryHarder: true, tryRotate: true, tryInvert: true, binarizer: "FixedThreshold", formats: [], maxNumberOfSymbols: 1 };
+    var WASM_OPTS_LOCAL = { tryHarder: true, tryRotate: true, tryInvert: true, binarizer: "LocalAverage", formats: [], maxNumberOfSymbols: 1 };
 
     // Native path: the platform BarcodeDetector reads the FULL frame — it's
     // rotation-invariant and strong on small/angled/glare codes.
@@ -285,15 +291,22 @@
       }).catch(function() { busyRef.current = false; });
     }
 
-    // Fallback path: ZXing-C++ (WASM) decodes the frame ImageData.
+    // Fallback path: ZXing-C++ (WASM). Decode the frame at ~2800px (the size
+    // that read real glossy tags fastest/most reliably; too-small aliases the
+    // bars, too-large is slow). Two passes on the same frame: FixedThreshold
+    // (glossy printed labels), then LocalAverage (everything else).
     function tickWasm() {
       if (busyRef.current || !readerRef.current) return;
-      var imgData = grabFrame(2000);
+      var imgData = grabFrame(2800);
       if (!imgData) return;
+      var reader = readerRef.current;
       busyRef.current = true;
-      readerRef.current.readBarcodes(imgData, WASM_OPTS).then(function(results) {
-        busyRef.current = false;
-        if (results && results.length && results[0].text) onHit(results[0].text);
+      reader.readBarcodes(imgData, WASM_OPTS_FIXED).then(function(results) {
+        if (results && results.length && results[0].text) { busyRef.current = false; onHit(results[0].text); return; }
+        return reader.readBarcodes(imgData, WASM_OPTS_LOCAL).then(function(r2) {
+          busyRef.current = false;
+          if (r2 && r2.length && r2[0].text) onHit(r2[0].text);
+        });
       }).catch(function() { busyRef.current = false; });
     }
 
