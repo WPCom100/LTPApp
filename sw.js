@@ -33,7 +33,12 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-var CACHE_VERSION = 'ltp-shell-v41';
+// v42: added the barcode scan-import module (modules/rentals-scan.js) + the
+// vendored ZXing decoder (assets/vendor/zxing.min.js). Both are runtime-cached
+// by the /modules/ and /assets/ stale-while-revalidate rules below — the
+// decoder is intentionally NOT precached so it doesn't add ~330 KB to install
+// for users who never scan; it's cached on first scan and then available offline.
+var CACHE_VERSION = 'ltp-shell-v42';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -300,6 +300,10 @@
   <script src="modules/rentals-utils.js"></script>
   <script src="modules/rentals-maintenance.js"></script>
   <script src="modules/rentals-equipment.js"></script>
+  <!-- Barcode scan-import session. After rentals-equipment.js (which opens it)
+       and before rentals-shell.js (which routes to it). Lazy-loads the vendored
+       ZXing decoder (assets/vendor/zxing.min.js) on first use. -->
+  <script src="modules/rentals-scan.js"></script>
   <script src="modules/rentals-availability.js"></script>
   <script src="modules/rentals-inventory.js"></script>
   <script src="modules/rentals-containers.js"></script>

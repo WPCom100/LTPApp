@@ -303,9 +303,12 @@ _SECURITY_HEADERS = [
     # React/DOMPurify scripts.
     (b"cross-origin-resource-policy", b"same-origin"),
     # Drop access to browser features the app never uses, so an injected script
-    # can't reach them either.
+    # can't reach them either. EXCEPTION: camera=(self) — the rentals barcode
+    # scan-import flow (modules/rentals-scan.js) reads the phone camera via
+    # getUserMedia to decode unit barcodes. `(self)` allows it ONLY for our own
+    # origin (never cross-origin/iframe embeds); microphone stays fully off.
     (b"permissions-policy",
-     b"geolocation=(), microphone=(), camera=(), payment=(), usb=(), "
+     b"geolocation=(), microphone=(), camera=(self), payment=(), usb=(), "
      b"magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()"),
 ]
 if _IS_HTTPS:
