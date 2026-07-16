@@ -26,21 +26,47 @@
   // only a fraction ever scan. So we inject the vendored, same-origin script the
   // first time a session opens (script-src 'self' permits it) and memoize the
   // promise. window.ZXing is the UMD global exposed by the bundle.
+  var SCANNER_URL = "/assets/vendor/zxing.min.js";
   var _scannerPromise = null;
+
+  // A <script> onerror carries no detail, so on failure we probe the URL to say
+  // WHY — the two common causes are a 404 or (the self-host trap) the server
+  // returning the SPA index.html for an un-allowlisted path, which nosniff then
+  // refuses to execute as a script. Returns a human-readable reason string.
+  function _diagnoseScannerFailure() {
+    return fetch(SCANNER_URL, { credentials: "same-origin" }).then(function(r) {
+      var ct = (r.headers.get("content-type") || "").toLowerCase();
+      if (!r.ok) return "server returned HTTP " + r.status + " for " + SCANNER_URL;
+      if (ct.indexOf("javascript") === -1) {
+        return "server served " + SCANNER_URL + " as “" + (ct || "no content-type") +
+               "”, not JavaScript (is assets/vendor/*.js allow-listed on the server?)";
+      }
+      return "script fetched OK (" + r.status + " " + ct + ") but wouldn't execute — possibly a CSP block";
+    }).catch(function(e) {
+      return "could not reach " + SCANNER_URL + " (" + ((e && e.message) || "network error") + ") — offline?";
+    });
+  }
+
   function ensureScanner() {
     if (window.ZXing) return Promise.resolve(window.ZXing);
     if (_scannerPromise) return _scannerPromise;
     _scannerPromise = new Promise(function(resolve, reject) {
       var s = document.createElement("script");
-      s.src = "/assets/vendor/zxing.min.js";
+      s.src = SCANNER_URL;
       s.async = true;
       s.onload = function() {
         if (window.ZXing) resolve(window.ZXing);
-        else { _scannerPromise = null; reject(new Error("The barcode scanner failed to initialize.")); }
+        else reject(new Error("scanner script loaded but window.ZXing is undefined"));
       };
-      s.onerror = function() { _scannerPromise = null; reject(new Error("Could not load the barcode scanner (offline?).")); };
+      s.onerror = function() {
+        _diagnoseScannerFailure().then(function(why) {
+          reject(new Error("Barcode scanner didn't load — " + why + "."));
+        });
+      };
       document.head.appendChild(s);
-    });
+    // Clear the cached promise on failure so the next "Start camera" retries the
+    // load (a transient offline blip shouldn't wedge the scanner permanently).
+    }).catch(function(e) { _scannerPromise = null; throw e; });
     return _scannerPromise;
   }
 
@@ -120,6 +146,8 @@
     var flash = flashPair[0], setFlash = flashPair[1];
     var typedPair = useState("");
     var typed = typedPair[0], setTyped = typedPair[1];
+    var diagPair = useState(false);
+    var showDiag = diagPair[0], setShowDiag = diagPair[1];
 
     var videoRef = useRef(null);
     var readerRef = useRef(null);
@@ -283,7 +311,32 @@
         cameraLoading ? "Starting camera…" : "📷  Start camera"),
       cameraOn && h("div", { style: { display: "flex", justifyContent: "flex-end" } },
         h("button", { onClick: stopCamera, style: { background: "none", border: "1px solid " + B.border, borderRadius: 8, color: B.textMut, cursor: "pointer", padding: "6px 12px", fontSize: "11px", fontWeight: 600 } }, "Stop camera")),
-      cameraError && h("div", { style: { background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: 8, padding: "8px 12px", color: B.warn, fontSize: "12px" } }, cameraError)
+      cameraError && h("div", { style: { background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: 8, padding: "8px 12px", color: B.warn, fontSize: "12px", lineHeight: 1.4, wordBreak: "break-word" } }, cameraError)
+    );
+
+    // Diagnostics — a live readout of the environment prerequisites, so an
+    // on-device failure (camera blocked, insecure origin, scanner not served)
+    // is self-explaining instead of a generic error. Collapsed by default.
+    var diagRows = [
+      ["Secure context (HTTPS)", window.isSecureContext ? "yes" : "NO — camera needs HTTPS", !window.isSecureContext],
+      ["Camera API (getUserMedia)", (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? "available" : "MISSING", !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)],
+      ["Scanner library (ZXing)", window.ZXing ? "loaded" : "not loaded yet", false],
+      ["Native BarcodeDetector", ("BarcodeDetector" in window) ? "yes" : "no (ZXing used)", false],
+      ["Camera state", cameraOn ? "on" : (cameraError ? "error" : "off"), !!cameraError],
+    ];
+    var diagnostics = h("div", null,
+      h("button", { onClick: function() { setShowDiag(!showDiag); },
+        style: { background: "none", border: "none", color: B.textMut, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: 0, textDecoration: "underline" } },
+        showDiag ? "Hide diagnostics" : "🔧 Diagnostics"),
+      showDiag && h("div", { style: { marginTop: 8, background: B.bg, border: "1px solid " + B.border, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 } },
+        diagRows.map(function(r, i) {
+          return h("div", { key: i, style: { display: "flex", justifyContent: "space-between", gap: 12, fontSize: "11px" } },
+            h("span", { style: { color: B.textMut } }, r[0]),
+            h("span", { style: { color: r[2] ? B.danger : B.textSec, fontWeight: 600, fontFamily: "monospace", textAlign: "right" } }, r[1]));
+        }),
+        cameraError && h("div", { style: { fontSize: "11px", color: B.danger, marginTop: 4, wordBreak: "break-word", lineHeight: 1.4 } }, "Last error: " + cameraError),
+        h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 4, wordBreak: "break-all" } }, "Scanner URL: " + SCANNER_URL)
+      )
     );
 
     // Manual / hardware-scanner entry.
@@ -334,6 +387,7 @@
         h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: "11px", color: B.textMut } },
           h("input", { type: "checkbox", checked: allowDup, onChange: function(e) { setAllowDup(e.target.checked); }, style: { accentColor: B.accent } }),
           "Allow duplicate codes (skip the double-scan guard)"),
+        diagnostics,
         banner,
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 } },
           h("div", { style: { fontSize: "12px", color: B.textSec, fontWeight: 600 } },

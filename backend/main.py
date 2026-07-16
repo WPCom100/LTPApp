@@ -521,6 +521,14 @@ _ALLOWED_TREES = {
     "modules/":    (".js",),
     "assets/":     (".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".ico",
                     ".woff", ".woff2", ".ttf", ".eot", ".otf", ".css"),
+    # Vendored third-party frontend libraries, self-hosted because the CSP is
+    # `script-src 'self' + cdnjs` and some libs (e.g. the ZXing barcode decoder
+    # used by modules/rentals-scan.js) aren't on cdnjs. Scoped to assets/vendor/
+    # so ONLY this subtree serves .js — the broad assets/ tree above deliberately
+    # still won't. Without this the request falls through to the SPA index.html
+    # fallback and the browser (X-Content-Type-Options: nosniff) refuses to
+    # execute HTML as a script.
+    "assets/vendor/": (".js",),
 }
 
 
