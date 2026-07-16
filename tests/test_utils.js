@@ -271,6 +271,31 @@ eq("CEF10 message falls back when absent",
      ? CEF([{ id: 1, activity: [{ type: "email_failed", date: "2026-01-01", time: "00:00" }] }], [])[0].message
      : "MISSING", "Email failed");
 
+// ── collectQboFaults + generic collectActivityFaults ────────────────────────
+const CQF = window.LTP_collectQboFaults;
+const _qinv = [
+  { id: 3, activity: [
+    { id: "q1", type: "qbo_synced", date: "2026-07-16", time: "09:00", message: "Synced to QuickBooks" },
+    { id: "q2", type: "qbo_sync_failed", date: "2026-07-16", time: "11:00", message: "QuickBooks sync failed",
+      changes: [{ cat: "Error", detail: "Request has invalid or unsupported property" }] },
+  ] },
+];
+const _qf = CQF(_qinv, []);
+eq("CQF1 gathers only qbo_sync_failed", _qf.length, 1);
+eq("CQF2 message present", _qf[0].message, "QuickBooks sync failed");
+eq("CQF3 error detail extracted", _qf[0].errorDetail, "Request has invalid or unsupported property");
+eq("CQF4 context is invoice ref", _qf[0].context, window.LTP_INVOICE_REF(_qinv[0]));
+ok("CQF5 null inputs tolerated", Array.isArray(CQF(null, null)) && CQF(null, null).length === 0);
+eq("CQF6 message fallback when absent",
+   CQF([{ id: 1, activity: [{ type: "qbo_sync_failed", date: "2026-01-01", time: "00:00" }] }], [])[0].message,
+   "QuickBooks sync failed");
+eq("CQF7 email faults not mixed into qbo", CQF(_inv, _qts).length, 0);
+// Generic collector filters strictly by activity type.
+const GEN = window.LTP_collectActivityFaults;
+eq("GEN1 filters email type", GEN(_inv, _qts, "email_failed").length, 3);
+eq("GEN2 filters qbo type", GEN(_qinv, [], "qbo_sync_failed").length, 1);
+eq("GEN3 unknown type -> none", GEN(_inv, _qts, "nope").length, 0);
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

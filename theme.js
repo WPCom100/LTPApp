@@ -1563,14 +1563,14 @@ window.LTP_QUOTE_REF = function(q) {
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
 };
 
-// Gather every failed email send across invoices and quotes for the Settings
-// Error Log. A failed send stamps an `email_failed` activity entry on its
-// entity from BOTH backend paths — the QuickBooks auto-receipt poller
-// (backend/qbo_receipts.py) and manual quote/invoice sends
-// (backend/routes/email.py) — so this one reducer surfaces them all. Returns
-// display-ready rows { id, date, time, message, errorDetail, context } sorted
-// newest-first. Pure (no DOM/React) so the Error Log logic is unit-tested.
-window.LTP_collectEmailFaults = function(invoices, quotes) {
+// Gather activity entries of a given fault type across invoices and quotes for
+// the Settings Error Log. Backend paths stamp typed activity entries on their
+// entity — `email_failed` (auto-receipt poller + manual sends) and
+// `qbo_sync_failed` (invoice → QuickBooks push) — and this one reducer surfaces
+// any of them. Returns display-ready rows { id, date, time, message,
+// errorDetail, context } sorted newest-first. Pure (no DOM/React) so the Error
+// Log logic is unit-tested.
+window.LTP_collectActivityFaults = function(invoices, quotes, activityType) {
   var faults = [];
   function errorDetail(a) {
     var ch = (a.changes || []).filter(function(c) { return c && c.cat === "Error"; })[0];
@@ -1579,12 +1579,12 @@ window.LTP_collectEmailFaults = function(invoices, quotes) {
   function gather(list, refFn, prefix) {
     (list || []).forEach(function(ent) {
       (ent.activity || []).forEach(function(a) {
-        if (a && a.type === "email_failed") {
+        if (a && a.type === activityType) {
           faults.push({
             id: a.id,
             date: a.date || "",
             time: a.time || "",
-            message: a.message || "Email failed",
+            message: a.message || "",
             errorDetail: errorDetail(a),
             context: refFn ? refFn(ent) : (prefix + (ent.id != null ? ent.id : "?")),
           });
@@ -1598,6 +1598,24 @@ window.LTP_collectEmailFaults = function(invoices, quotes) {
     return ((b.date || "") + (b.time || "")) > ((a.date || "") + (a.time || "")) ? 1 : -1;
   });
   return faults;
+};
+
+// Failed email sends (auto-receipt poller + manual quote/invoice sends).
+window.LTP_collectEmailFaults = function(invoices, quotes) {
+  return window.LTP_collectActivityFaults(invoices, quotes, "email_failed").map(function(f) {
+    if (!f.message) f.message = "Email failed";
+    return f;
+  });
+};
+
+// Failed invoice → QuickBooks pushes. Connection-level QuickBooks errors from
+// background contexts (the poller) aren't entity-stamped; they arrive via
+// /api/qbo/status (status.lastError) and are shown alongside these in Settings.
+window.LTP_collectQboFaults = function(invoices, quotes) {
+  return window.LTP_collectActivityFaults(invoices, quotes, "qbo_sync_failed").map(function(f) {
+    if (!f.message) f.message = "QuickBooks sync failed";
+    return f;
+  });
 };
 
 // A project's headline money figure. The budget entered on the project form is

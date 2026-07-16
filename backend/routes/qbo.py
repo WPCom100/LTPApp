@@ -120,6 +120,10 @@ async def callback(
     conn.refresh_token_expires_at = refresh_expires
     conn.environment = _qbo_environment()
     conn.connected_by_user_id = admin.id
+    # A fresh (re)connection retires any stale connection error so the Settings
+    # Error Log reflects the healthy state immediately, not next poll cycle.
+    conn.last_error = None
+    conn.last_error_at = None
     await db.flush()
 
     return RedirectResponse(url="/#/settings?qbo=connected", status_code=302)
@@ -193,6 +197,12 @@ async def status(
         "accessTokenExpiresAt": quickbooks._aware(conn.access_token_expires_at).isoformat() if conn.access_token_expires_at else None,
         "refreshTokenExpiresAt": refresh_exp.isoformat() if refresh_exp else None,
         "needsReconnect": needs_reconnect,
+        # Last connection-level error captured from a background context (chiefly
+        # the auto-receipt poller). Shown in Settings → Error Log; null when the
+        # last poll cycle was clean. Per-invoice sync failures live on the
+        # invoice's own activity, not here.
+        "lastError": conn.last_error or None,
+        "lastErrorAt": quickbooks._aware(conn.last_error_at).isoformat() if conn.last_error_at else None,
         # Auto-receipt surface for the Settings panel.
         "senderGmailConnected": sender_gmail_connected,
         "pendingReceipts": int(pending_receipts or 0),

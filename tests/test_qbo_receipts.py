@@ -413,6 +413,61 @@ async def test_poll_failed_receipt_not_restamped():
     _check("no recipient rows left after failed retries", await _count_recipients(inv_id) == 0)
 
 
+async def _get_conn():
+    from sqlalchemy import select
+    async with async_session() as db:
+        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
+        return r.scalar_one_or_none()
+
+
+async def _set_conn_last_error(msg):
+    from sqlalchemy import select
+    async with async_session() as db:
+        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
+        conn = r.scalar_one()
+        conn.last_error = msg
+        conn.last_error_at = datetime.now(timezone.utc)
+        await db.commit()
+
+
+async def test_poll_records_qbo_connection_error():
+    """A QuickBooks API error aborts the cycle AND snapshots the error on the
+    connection row so Settings → Error Log can show it (not just the server log)."""
+    print("test_poll_records_qbo_connection_error")
+    await _reset_schema()
+    await _seed(sender_has_gmail=True)
+    quickbooks.get_invoice = AsyncMock(
+        side_effect=quickbooks.QboApiError(500, "QuickBooks is temporarily unavailable"))
+    gmail.send = AsyncMock(return_value={"id": "x"})
+
+    summary = await qr.run_receipt_poll()
+    _check("cycle recorded a qbo_error", bool(summary.get("qbo_error")), str(summary))
+    conn = await _get_conn()
+    _check("connection last_error persisted", bool(conn and conn.last_error), str(conn and conn.last_error))
+    _check("last_error_at set", conn is not None and conn.last_error_at is not None)
+    _check("gmail never attempted after abort", gmail.send.await_count == 0)
+
+
+async def test_poll_clears_qbo_connection_error_on_clean_cycle():
+    """Once QuickBooks is reachable again, a clean poll cycle retires the stale
+    connection error so the Error Log clears itself."""
+    print("test_poll_clears_qbo_connection_error_on_clean_cycle")
+    await _reset_schema()
+    await _seed(sender_has_gmail=True)
+    await _set_conn_last_error("earlier failure")
+    # Unpaid invoice → nothing to send, no abort → clean cycle.
+    quickbooks.get_invoice = AsyncMock(return_value={
+        "Id": "QB-42", "SyncToken": "4", "Balance": 1000.0, "TotalAmt": 1000.0})
+    gmail.send = AsyncMock(return_value={"id": "x"})
+
+    conn_before = await _get_conn()
+    _check("precondition: last_error set", conn_before.last_error == "earlier failure")
+    await qr.run_receipt_poll()
+    conn = await _get_conn()
+    _check("clean cycle cleared last_error", conn.last_error is None)
+    _check("clean cycle cleared last_error_at", conn.last_error_at is None)
+
+
 async def test_poll_skipped_when_not_connected():
     print("test_poll_skipped_when_not_connected")
     await _reset_schema()  # no QboConnection row
@@ -438,7 +493,9 @@ def main():
         test_poll_sends_receipt_when_paid, test_poll_skips_unpaid,
         test_poll_caches_when_no_gmail, test_poll_caches_on_gmail_reconnect_error,
         test_poll_company_contact_resolution, test_poll_uses_google_creds_for_gmail,
-        test_poll_failed_receipt_not_restamped, test_poll_skipped_when_not_connected,
+        test_poll_failed_receipt_not_restamped, test_poll_records_qbo_connection_error,
+        test_poll_clears_qbo_connection_error_on_clean_cycle,
+        test_poll_skipped_when_not_connected,
     ]
     try:
         for t in sync_tests:

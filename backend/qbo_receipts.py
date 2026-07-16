@@ -500,6 +500,7 @@ async def run_receipt_poll() -> dict:
             print(f"[LTP] qbo-receipts: candidate set capped at {_MAX_INVOICES_PER_CYCLE}; "
                   "remaining invoices handled next cycle", flush=True)
 
+        aborted = False
         for invoice in invoices:
             summary["checked"] += 1
             try:
@@ -520,9 +521,20 @@ async def run_receipt_poll() -> dict:
                 # connection or API is unhealthy, so the rest will fail too.
                 await db.rollback()
                 print(f"[LTP] qbo-receipts: aborting cycle on QuickBooks error: {e}", flush=True)
+                # Snapshot it on the connection row (in a fresh commit, after the
+                # rollback above) so it surfaces in Settings → Error Log rather
+                # than only in the server logs.
+                summary["qbo_error"] = getattr(e, "safe_message", str(e))
+                await quickbooks.record_connection_error(db, summary["qbo_error"])
+                aborted = True
                 break
             except Exception as e:  # pragma: no cover - isolate one bad invoice
                 await db.rollback()
                 print(f"[LTP] qbo-receipts: invoice {invoice.id} failed (continuing): {e}", flush=True)
+
+        # A cycle that reached QuickBooks without an auth/API abort means the
+        # connection is healthy — retire any stale error so the Error Log clears.
+        if not aborted:
+            await quickbooks.clear_connection_error(db)
 
     return summary
