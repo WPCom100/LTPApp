@@ -138,6 +138,10 @@ shell exports.
 | `QBO_CLIENT_ID` / `QBO_CLIENT_SECRET` | **Required for QuickBooks** | — | OAuth app credentials from the [Intuit Developer](https://developer.intuit.com) portal → your app → Keys & credentials. Reuses `LTP_TOKEN_ENCRYPTION_KEY` to encrypt the stored QuickBooks tokens at rest. |
 | `QBO_REDIRECT_URI` | **Required for QuickBooks** | — | The full `https://yourdomain/api/qbo/callback` URL. Must match a redirect URI registered on the Intuit app (add both sandbox and production variants). |
 | `QBO_ENVIRONMENT` | Optional | `sandbox` | `sandbox` or `production` — selects the QuickBooks API host. Start in `sandbox`; switch to `production` (and reconnect) when ready to go live. |
+| `LTP_VAPID_PUBLIC_KEY` | **Required for push** | — | VAPID public key (base64url uncompressed P-256 point, ~87 chars) handed to browsers as the `applicationServerKey`. Generate with the command in [Push notifications](#push-notifications). |
+| `LTP_VAPID_PRIVATE_KEY` | **Required for push** | — | VAPID private key (base64url 32-byte scalar) that signs each push. **Secret — never sent to the browser.** Generated alongside the public key. |
+| `LTP_VAPID_SUBJECT` | **Required for push** | — | `mailto:you@yourdomain.com` — a contact the push services can reach about delivery problems. All three VAPID vars must be present for push to send; missing any one makes push a no-op. |
+| `LTP_APP_VARIANT` | Optional | (none) | Set to `dev` on a non-production deployment to give its installed PWA a distinct home-screen icon (the "DEV"-tagged variant) and name ("LTP Dev"), so it's unmistakable next to production ("LTP"). Unset = normal production identity. See [Dev app identity](#dev-app-identity). |
 
 ## Email feature deploy notes
 
@@ -287,6 +291,119 @@ table and never exposed to the browser; the client secret stays in env vars;
 every Intuit call is server-side; **connect / disconnect / push / delete are
 admin-only**; and `GET /api/qbo/status` returns booleans + a masked realm id
 only.
+
+## Dev app identity
+
+When you install both the production and a dev/staging deployment to the same
+home screen, they otherwise look identical. Setting `LTP_APP_VARIANT=dev` on the
+**dev deployment's Variables** gives it a distinct identity so you never confuse
+them:
+
+- the **"DEV"-tagged icon** (`assets/icons/dev/`) in place of the production
+  icon, and
+- the app name **"LTP Dev"** — in the manifest, the iOS home-screen label
+  (`apple-mobile-web-app-title`), and the browser tab title. Production shows
+  **"LTP"**.
+
+The switch is **environment-driven, not branch-driven**: the dev icons and the
+serving code live on every branch, but only activate where the variable is set.
+Production, with the variable unset, serves its normal icons and name
+byte-for-byte — so the dev identity can never leak into prod through a merge. To
+turn it on, add `LTP_APP_VARIANT=dev` to the dev deployment's Railway Variables
+and redeploy; reinstall the PWA (remove from the home screen and re-add) to pick
+up the new icon and name.
+
+### Icon source & regeneration
+
+The finished icon art lives in `assets/icons/src/` — `app-icon-prod.png` and
+`app-icon-dev.png` (square masters). From each, the full icon set (192/512
+"any" + maskable, apple-touch, favicon) is generated with:
+
+```bash
+python assets/icons/generate_from_src.py
+```
+
+To change an icon, drop a new square master (ideally 512×512+ for crisp large
+icons) into `assets/icons/src/` and re-run that script. `generate_icons.py`
+remains as the original tool that builds the production set from the brand
+lockup (`assets/logos/primary.png`).
+
+## Push notifications
+
+Admins can get Web Push notifications on an installed home-screen PWA
+(iPhone/iPad on **iOS 16.4+**, plus Android and desktop Chrome) for the events
+that otherwise require re-opening the app to notice:
+
+- a **crew member accepts or declines** a request → the producer who sent it
+- a **client accepts or declines a quote** → whoever sent the quote
+- an **invoice is marked paid** in QuickBooks → whoever sent the invoice
+- a **client opens a quote or invoice** → whoever sent it
+
+Quote/invoice notifications name the job — the document's **custom name** if set,
+otherwise its **project name** (e.g. "Chris accepted Summer Gala").
+
+For the three terminal events (crew response, quote accept/decline, invoice
+paid), if the entity has no recorded sender — e.g. a quote shared via an
+anonymous link — the notification broadcasts to **all admins** instead.
+
+**Opened** notifications are the exception: they go to the sender only (never
+broadcast to admins), and they're **debounced to ~once per 24h per viewer** and
+suppressed for internal previews and link-scanner bots — so opening a doc
+several times, or an LTP user previewing it, won't ping you.
+
+Push is **optional**: with the VAPID vars unset the app boots normally and
+sends become no-ops — the Settings toggle just reports "not set up". Same
+graceful-degrade posture as the Gmail path.
+
+### Generate VAPID keys
+
+A VAPID keypair identifies your server to the browser push services. Generate
+one **once** and keep it — rotating it invalidates every existing subscription
+(users would have to toggle notifications off and back on).
+
+Using the project's Python venv (nothing extra to install):
+
+```bash
+.venv/bin/python - <<'PY'
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives import serialization
+import base64
+b64url = lambda b: base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+priv = ec.generate_private_key(ec.SECP256R1())
+prv = b64url(priv.private_numbers().private_value.to_bytes(32, "big"))
+pub = b64url(priv.public_key().public_bytes(
+    serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
+print("LTP_VAPID_PUBLIC_KEY=" + pub)
+print("LTP_VAPID_PRIVATE_KEY=" + prv)
+PY
+```
+
+Or, if you have Node, `npx web-push generate-vapid-keys` prints an equivalent
+Public/Private pair (its Public Key → `LTP_VAPID_PUBLIC_KEY`, Private Key →
+`LTP_VAPID_PRIVATE_KEY`).
+
+### Setup
+
+1. Set `LTP_VAPID_PUBLIC_KEY`, `LTP_VAPID_PRIVATE_KEY`, and `LTP_VAPID_SUBJECT`
+   (`mailto:you@yourdomain.com`) in Railway → **Variables**, then redeploy.
+2. On the device, open the app in Safari → **Share** → **Add to Home Screen**,
+   and launch it from the new icon. (iOS only delivers Web Push to installed
+   PWAs — a normal Safari tab can't subscribe.)
+3. In the app, go to **Settings → Notifications → Turn On** and allow the
+   permission prompt. Notifications are **per-device** — repeat on each phone or
+   tablet you want alerted.
+
+### Security & notes
+
+- The **private key is a signing secret** — treat it like a password; only the
+  public key ever reaches the browser.
+- **Keep the keypair stable.** If you must rotate it, every device has to
+  re-subscribe (toggle notifications off then on) because existing
+  subscriptions are bound to the old public key.
+- Each subscription is tied to the signed-in user and stored in the
+  `push_subscriptions` table (migration runs automatically on deploy). Dead
+  subscriptions are pruned automatically when a push service reports them gone
+  (HTTP 404/410).
 
 ## API Endpoints
 

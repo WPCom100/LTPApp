@@ -50,14 +50,14 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import gmail, models, qbo_sync, quickbooks
+from backend import gmail, models, qbo_sync, quickbooks, webpush
 from backend.database import async_session
 from backend.email_compose import (
     _build_view_url, _email_brand, _fmt_iso_date, _paragraphs_to_html,
     _render_signature, email_shell,
 )
 from backend.email_validate import RecipientError, parse_recipients
-from backend.routes._shared import load_settings
+from backend.routes._shared import doc_display_name, load_settings
 from backend.sanitize import email_html
 
 
@@ -328,11 +328,26 @@ async def _process_invoice(db, conn, invoice, sender, settings_data, *,
 
     now = datetime.now(timezone.utc)
     ref = qbo_sync._invoice_ref(invoice)
+    was_paid = invoice.status == "paid"
     if _reconcile_paid(invoice, total_amt, now):
         qbo_sync._stamp(invoice, None, "paid",
                         f"Marked paid in QuickBooks ({ref})",
                         [{"cat": "Balance", "detail": "$0.00 — Paid in full"},
                          {"cat": "Source", "detail": "QuickBooks"}])
+        # Push-notify the invoice's sender(s) once, on the open→paid transition.
+        # Best-effort inside the receipt poll; no-ops when push isn't configured.
+        if not was_paid:
+            try:
+                amt = _num(total_amt)
+                name = await doc_display_name(db, invoice)
+                lead = (name + " · ") if name else ""
+                body = lead + "Paid in full" + (f" · ${amt:,.2f}" if amt else "")
+                await webpush.notify_entity(db, "invoice", invoice.id,
+                                            f"Invoice {ref} paid", body,
+                                            f"/#/invoices/{invoice.id}")
+            except Exception as e:
+                print(f"[LTP] webpush: invoice paid notify failed for "
+                      f"invoice {invoice.id}: {e}", flush=True)
 
     # Defensive: a manual receipt may have claimed the slot between query + now.
     if invoice.receipt_email_status == "sent":

@@ -1,9 +1,10 @@
 import asyncio
+import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from fastapi import FastAPI
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
@@ -17,6 +18,7 @@ from backend.routes.view import view_router
 from backend.routes.crew import crew_public_router, crew_admin_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
+from backend.routes.push import push_router
 from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
 
@@ -262,6 +264,12 @@ _IMG_SRC = (
 _CSP = (
     "default-src 'self'; "
     "script-src 'self' https://cdnjs.cloudflare.com; "
+    # Service worker (/sw.js) and the web-app manifest are same-origin. Both
+    # otherwise fall back to default-src 'self' (so the PWA already works), but
+    # we make the allowance explicit so a future default-src tightening can't
+    # silently break installability.
+    "worker-src 'self'; "
+    "manifest-src 'self'; "
     # Fonts are self-hosted (assets/fonts.css + assets/fonts/*.woff2), so style
     # and font sources are 'self' only — no fonts.googleapis.com / gstatic.com
     # (SECURITY_REVIEW.md L8). style-src keeps 'unsafe-inline' (React inline
@@ -488,6 +496,9 @@ app.include_router(email_router)
 # QuickBooks Online: admin-managed company connection + invoice push.
 # Session/admin-gated; see backend/routes/qbo.py.
 app.include_router(qbo_router)
+# Web Push: session-gated subscription management under /api/push/*. Sending
+# lives in backend/webpush.py, fired inline from event sites. See backend/routes/push.py.
+app.include_router(push_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────
@@ -535,6 +546,131 @@ def _resolve_static(full_path):
     return None
 
 
+# ── App variant (dev vs prod home-screen identity) ───────────────────────────
+# When a deployment sets LTP_APP_VARIANT=dev, the PWA gets a distinct icon set
+# and name ("LTP Dev") so an installed dev app is unmistakable next to
+# production on the home screen. The switch is env-driven, NOT branch-driven:
+# the code + dev icons live on every branch, but only activate where the var is
+# set (e.g. the dev Railway deployment). Production, with the var unset, is
+# byte-for-byte unaffected — nothing can leak the dev identity into prod.
+_APP_VARIANT = os.environ.get("LTP_APP_VARIANT", "").strip().lower()
+_IS_DEV_VARIANT = _APP_VARIANT == "dev"
+_DEV_ICON_DIR = os.path.realpath(os.path.join(frontend_dir, "assets", "icons", "dev"))
+
+
+def _dev_icon_path(icon_name: str):
+    """Absolute path to the dev-variant icon of this basename, or None when not
+    running the dev variant / no such dev file. basename-only (rejects any
+    separators or dotfiles) and confined to the dev icon dir — no traversal."""
+    if not _IS_DEV_VARIANT or not icon_name:
+        return None
+    if "/" in icon_name or "\\" in icon_name or icon_name.startswith("."):
+        return None
+    cand = os.path.realpath(os.path.join(_DEV_ICON_DIR, icon_name))
+    try:
+        if os.path.commonpath([_DEV_ICON_DIR, cand]) != _DEV_ICON_DIR:
+            return None
+    except ValueError:
+        return None
+    return cand if os.path.isfile(cand) else None
+
+
+# ── PWA endpoints ────────────────────────────────────────────────────────────
+# The service worker and web-app manifest are root-scoped files. They are
+# intentionally NOT in the static allowlist above (and need response headers the
+# generic FileResponse path doesn't set), so they get dedicated routes here —
+# registered BEFORE the catch-all so it can't swallow them and return index.html.
+@app.get("/sw.js")
+async def service_worker():
+    # media_type is explicit because a stale mimetypes map could otherwise serve
+    # the worker as text/plain (browsers refuse to register a non-JS worker).
+    # no-cache: always revalidate so an updated worker is picked up promptly.
+    # Service-Worker-Allowed: / lets a /sw.js worker claim the whole origin.
+    resp = FileResponse(os.path.join(frontend_dir, "sw.js"), media_type="text/javascript")
+    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
+@app.get("/manifest.webmanifest")
+async def web_manifest():
+    # mimetypes doesn't reliably know .webmanifest, so set it explicitly.
+    path = os.path.join(frontend_dir, "manifest.webmanifest")
+    if _IS_DEV_VARIANT:
+        # Dev deployment: rename to "LTP Dev". The icon `src`s stay the same
+        # paths — the /assets/icons route below serves the dev bytes (the "DEV"
+        # variant) for them. Theme/background stay the base slate so the splash
+        # matches the dev icon's field. Built from the base file so every other
+        # field stays a single source of truth.
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            data["name"] = "LTP Dev"
+            data["short_name"] = "LTP Dev"
+            resp = JSONResponse(data, media_type="application/manifest+json")
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        except Exception as e:
+            print(f"[LTP] dev manifest build failed, serving base: {e}", flush=True)
+    resp = FileResponse(path, media_type="application/manifest+json")
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
+@app.get("/assets/icons/{icon_name}")
+async def app_icon(icon_name: str):
+    """PWA / home-screen icons. On the dev deployment (LTP_APP_VARIANT=dev) the
+    dev-variant file of the same basename is served in place of the prod icon,
+    so an installed dev PWA is visibly distinct (violet field + "DEV" tag).
+    Registered before the catch-all so it wins for these paths; falls back to
+    the normal allowlisted static file when there's no dev override."""
+    dev = _dev_icon_path(icon_name)
+    if dev:
+        return FileResponse(dev)
+    static = _resolve_static(f"assets/icons/{icon_name}")
+    if static:
+        return FileResponse(static)
+    return Response(status_code=404)
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Browser-tab icon — dev variant swapped in on the dev deployment."""
+    dev = _dev_icon_path("favicon.ico")
+    return FileResponse(dev or os.path.join(frontend_dir, "favicon.ico"))
+
+
+_INDEX_PATH = os.path.realpath(os.path.join(frontend_dir, "index.html"))
+# Exact strings rewritten for the dev deployment so the installed app reads
+# "LTP Dev" instead of "LTP". Kept as full-tag literals so a replace can't
+# accidentally match anything else in the document.
+_APPLE_TITLE_PROD = '<meta name="apple-mobile-web-app-title" content="LTP" />'
+_APPLE_TITLE_DEV = '<meta name="apple-mobile-web-app-title" content="LTP Dev" />'
+_DOC_TITLE_PROD = "<title>LTP Business Suite</title>"
+_DOC_TITLE_DEV = "<title>LTP Dev — Business Suite</title>"
+
+
+def _index_response():
+    """Serve index.html. On the dev deployment (LTP_APP_VARIANT=dev) rewrite the
+    iOS home-screen app name (apple-mobile-web-app-title) and the document title
+    to the 'LTP Dev' identity — iOS reads the home-screen label from that meta
+    tag, not the manifest. Production is served verbatim from disk (unchanged)."""
+    if _IS_DEV_VARIANT:
+        try:
+            with open(_INDEX_PATH, "r", encoding="utf-8") as f:
+                html = f.read()
+            html = html.replace(_APPLE_TITLE_PROD, _APPLE_TITLE_DEV)
+            html = html.replace(_DOC_TITLE_PROD, _DOC_TITLE_DEV)
+            resp = HTMLResponse(html)
+            resp.headers["Cache-Control"] = "no-cache"
+            return resp
+        except Exception as e:
+            print(f"[LTP] dev index rewrite failed, serving base: {e}", flush=True)
+    resp = FileResponse(_INDEX_PATH)
+    resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/{full_path:path}")
 async def serve_frontend(full_path: str):
     # Anything under api/, auth/, or pdf/ that didn't match the routers
@@ -545,6 +681,10 @@ async def serve_frontend(full_path: str):
 
     static = _resolve_static(full_path)
     if static:
+        # index.html gets the dev-name rewrite (below); all other statics served
+        # straight from disk.
+        if os.path.realpath(static) == _INDEX_PATH:
+            return _index_response()
         resp = FileResponse(static)
         # App code (HTML/JS/CSS) is served from un-versioned filenames
         # (e.g. /theme.js), so without this a browser's heuristic cache could
@@ -557,7 +697,5 @@ async def serve_frontend(full_path: str):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
-    # SPA fallback for any unknown path
-    resp = FileResponse(os.path.join(frontend_dir, "index.html"))
-    resp.headers["Cache-Control"] = "no-cache"
-    return resp
+    # SPA fallback for any unknown path (also the dev-name rewrite applies).
+    return _index_response()

@@ -152,6 +152,7 @@
   //   CREW ROSTER TAB
   // ═══════════════════════════════════════════════════════════════════════════
   function CrewRoster({ contacts, setContacts, services, allPositions, settings }) {
+    var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingCrew, setEditingCrew] = useState(null);
@@ -313,13 +314,18 @@
             h("div", null,
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
               h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-                (c.crewRoles || []).join(", ") + (shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
+                (c.crewRoles || []).join(", ") + (!isMobile && shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
               h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } },
                 c.crewNotes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.crewNotes))),
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-              (c.crewDepartments || []).map(function(d) {
-                return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, d);
-              }),
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+              // Mobile swaps the department chips for tap-to-call / tap-to-email
+              // (the chips are visible when the row is tapped open to edit).
+              isMobile
+                ? [ h(window.LTPCallBtn, { key: "call", phone: c.phone, name: c.firstName + " " + c.lastName }),
+                    h(window.LTPMailBtn, { key: "mail", email: c.email, name: c.firstName + " " + c.lastName }) ]
+                : (c.crewDepartments || []).map(function(d) {
+                    return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, d);
+                  }),
               h(window.Badge, { status: c.crewStatus || "active" }))
           );
         }))
@@ -330,6 +336,7 @@
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
   function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests }) {
+    var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
@@ -762,12 +769,12 @@
                         var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
                         var conflicts = (crewConflicts || {})[pos.posId];
                         var hasConflict = conflicts && conflicts.length > 0;
-                        return h("div", { key: pos.posId + "-" + bi, style: { padding: "6px 10px", display: "flex", gap: 8, alignItems: "center", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
+                        return h("div", { key: pos.posId + "-" + bi, style: { padding: isMobile ? "8px 10px" : "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
                           hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
                             style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
-                          h("div", { style: { flex: 1, minWidth: 0 } },
-                            h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, pos.svcName),
+                          h("div", { style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 } },
+                            h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.text } }, pos.svcName),
                             // Person # within the role for this day (same numbering
                             // as the schedule editor) — shown when a role has 2+
                             // people so the right person goes into the right slot.
@@ -840,7 +847,7 @@
                               return;
                             }
                             doAssign();
-                          }, style: { width: 150, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                          }, style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             h("option", { value: "" }, "Assign crew\u2026"),
                             // Role-tagged crew first; everyone else stays reachable under
                             // "Other crew" so a role nobody is tagged with (e.g. a custom
@@ -868,7 +875,13 @@
                             h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 600, background: B.danger + "18", border: "1px solid " + B.danger + "33", borderRadius: "3px", padding: "2px 8px" } }, "Declined"),
                             h("button", { onClick: function() {
                               booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
-                            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign"))
+                            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign")),
+                          // Mobile: tap-to-call the assigned crew member straight from
+                          // the booking row (field leads confirming a shift on-site).
+                          isMobile && pos.crewId && (function() {
+                            var acm = contacts.find(function(c) { return c.id === pos.crewId; });
+                            return acm ? h(window.LTPCallBtn, { phone: acm.phone, name: acm.firstName + " " + acm.lastName, size: 36 }) : null;
+                          })()
                         );
                       })
                     )
@@ -1005,6 +1018,11 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function LaborCalendar({ allPositions }) {
     var [monthOffset, setMonthOffset] = useState(0);
+    var isMobile = window.LTP_useIsMobile();
+    var todayRef = React.useRef(null);
+    React.useEffect(function() {
+      if (isMobile && todayRef.current) todayRef.current.scrollIntoView({ block: "start" });
+    }, [isMobile, monthOffset]);
     var now = new Date();
     var viewDate = new Date(now.getFullYear(), now.getMonth() + monthOffset, 1);
     var year = viewDate.getFullYear(), month = viewDate.getMonth();
@@ -1018,6 +1036,37 @@
       var dateStr = year + "-" + String(month + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
       var dayPos = allPositions.filter(function(p) { return p.date === dateStr; });
       cells.push({ day: d, date: dateStr, positions: dayPos });
+    }
+
+    // \u2500\u2500 Mobile: day-list agenda (opens to today) instead of the month grid \u2500\u2500\u2500\u2500
+    if (isMobile) {
+      var agDays = cells.filter(function(c) { return c && c.positions.length > 0; });
+      var tISO = todayISO();
+      var tgt = null;
+      for (var gi = 0; gi < agDays.length; gi++) { if (agDays[gi].date >= tISO) { tgt = agDays[gi].date; break; } }
+      return h("div", null,
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+          h("button", { onClick: function() { setMonthOffset(monthOffset - 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25c0"),
+          h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, monthName),
+          h("button", { onClick: function() { setMonthOffset(monthOffset + 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25b6")),
+        agDays.length === 0
+          ? h(window.EmptyState, { text: "No crew positions this month." })
+          : agDays.map(function(cell) {
+              var d2 = new Date(cell.date + "T12:00:00");
+              var isToday = cell.date === tISO;
+              var confirmed = cell.positions.filter(function(p) { return p.status === "confirmed"; }).length;
+              var projGroups = {};
+              cell.positions.forEach(function(p) { if (!projGroups[p.projectId]) projGroups[p.projectId] = { name: p.projectName, count: 0 }; projGroups[p.projectId].count++; });
+              return h("div", { key: cell.date, ref: cell.date === tgt ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
+                h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } },
+                  d2.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) + (isToday ? " \u00b7 Today" : "") + "  \u00b7  " + confirmed + "/" + cell.positions.length + " confirmed"),
+                Object.keys(projGroups).map(function(pid) {
+                  var pg = projGroups[pid];
+                  return h("div", { key: pid, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + B.accent, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                    h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, pg.name),
+                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, pg.count + (pg.count > 1 ? " positions" : " position")));
+                }));
+            }));
     }
 
     return h("div", null,
@@ -1055,7 +1104,30 @@
   //   WEEKLY SCHEDULE TAB
   // ═══════════════════════════════════════════════════════════════════════════
   function WeeklySchedule({ allPositions, contacts }) {
-    var [weekOffset, setWeekOffset] = useState(0);
+    var isMobile = window.LTP_useIsMobile();
+    // A tap on a Calendar day parks that date in window.LTP_weeklyFocusDate
+    // before navigating here. Consume it once (lazy init) to open on that day's
+    // week and scroll to it; clear it so a later revisit opens on the current week.
+    function weekOffsetForDate(iso) {
+      var n = new Date();
+      var nmo = n.getDay() === 0 ? -6 : 1 - n.getDay();
+      var thisMon = new Date(n.getFullYear(), n.getMonth(), n.getDate() + nmo);
+      var t = new Date(iso + "T12:00:00");
+      var tmo = t.getDay() === 0 ? -6 : 1 - t.getDay();
+      var tMon = new Date(t.getFullYear(), t.getMonth(), t.getDate() + tmo);
+      return Math.round((tMon - thisMon) / (7 * 86400000));
+    }
+    var [focusDate] = useState(function() {
+      var f = window.LTP_weeklyFocusDate || null;
+      window.LTP_weeklyFocusDate = null;
+      return f;
+    });
+    var [weekOffset, setWeekOffset] = useState(function() { return focusDate ? weekOffsetForDate(focusDate) : 0; });
+    var scrollDate = focusDate || todayISO();
+    var todayRef = React.useRef(null);
+    React.useEffect(function() {
+      if (isMobile && todayRef.current) todayRef.current.scrollIntoView({ block: "start" });
+    }, [isMobile, weekOffset]);
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
     var now = new Date();
@@ -1080,6 +1152,45 @@
 
     var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
     if (activeCrew.length === 0) activeCrew = crew.slice(0, 6);
+
+    // \u2500\u2500 Mobile: day-first agenda \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // The crew\u00d77 matrix (140px + repeat(7,1fr)) is illegible on a phone. On
+    // mobile, pivot to a day-list: one section per day of the week listing who's
+    // working (crew \u2192 role \u2192 project, tap-to-call). Auto-scrolls to today. The
+    // desktop matrix is unchanged below.
+    if (isMobile) {
+      var byDay = {};
+      weekDates.forEach(function(ds) { byDay[ds] = []; });
+      activeCrew.forEach(function(c) {
+        (scheduleMap[c.id] || []).forEach(function(s) { if (byDay[s.date]) byDay[s.date].push({ crew: c, pos: s }); });
+      });
+      return h("div", null,
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
+          h("button", { onClick: function() { setWeekOffset(weekOffset - 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25c0"),
+          h("h3", { style: { fontSize: "14px", fontWeight: 700, color: B.text, margin: 0 } }, weekLabel),
+          h("button", { onClick: function() { setWeekOffset(weekOffset + 1); }, className: "ltp-tap", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 16px", color: B.textMut, cursor: "pointer", minHeight: 40 } }, "\u25b6")),
+        weekDates.map(function(ds) {
+          var d2 = new Date(ds + "T12:00:00");
+          var isToday = ds === todayISO();
+          var rows = byDay[ds];
+          var label = d2.toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" });
+          return h("div", { key: ds, ref: ds === scrollDate ? todayRef : null, style: { marginBottom: 16, scrollMarginTop: "8px" } },
+            h("div", { style: { fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: isToday ? B.accent : B.textSec, marginBottom: 8, paddingBottom: 6, borderBottom: "1px solid " + B.border } }, label + (isToday ? " \u00b7 Today" : "")),
+            rows.length === 0
+              ? h("div", { style: { fontSize: "13px", color: B.textMut, fontStyle: "italic", padding: "4px 2px 10px" } }, "No crew scheduled.")
+              : rows.map(function(r, ri) {
+                  var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
+                  var cname = r.crew.firstName + " " + r.crew.lastName;
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
+                    h("div", { style: { flex: 1, minWidth: 0 } },
+                      h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.role + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
+                    h(window.Badge, { status: r.pos.status }),
+                    h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
+                    h(window.LTPMailBtn, { email: r.crew.email, name: cname }));
+                }));
+        }));
+    }
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
@@ -1126,6 +1237,7 @@
   function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
   function PayoutsTab({ projects, setProjects, contacts, services }) {
+    var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
     function rangeFor(preset) {
       var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
@@ -1324,16 +1436,27 @@
         style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
 
+    var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
+    var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
+
     return h("div", null,
-      // Range controls + export
-      h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
-        presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
-        h("div", { style: { width: 130 } },
-          h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" })),
-        h("div", { style: { width: 130 } },
-          h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" })),
-        h("div", { style: { flex: 1 } }),
-        h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+      // Range controls + export. On mobile the custom From/To inputs drop to
+      // their own row so the presets + export don't crush against them.
+      isMobile
+      ? h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
+            h("div", { style: { flex: 1 } }),
+            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+          h("div", { style: { display: "flex", gap: 8 } },
+            h("div", { style: { flex: 1 } }, fromInput),
+            h("div", { style: { flex: 1 } }, toInput)))
+      : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+          presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
+          h("div", { style: { width: 130 } }, fromInput),
+          h("div", { style: { width: 130 } }, toInput),
+          h("div", { style: { flex: 1 } }),
+          h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
       h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
@@ -1366,35 +1489,40 @@
                     return h("button", { onClick: onClick, title: title,
                       style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
                   };
-                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: "center" } },
-                    h("div", { style: { width: 86, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
-                    h("div", { style: { flex: 1, minWidth: 0 } },
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: isMobile ? "flex-start" : "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
+                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
+                    h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
                       h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
                       (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
                         r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
                         "Changed since lock: " + fmtMoney(r.locked.total) + " locked → " + (r.current ? fmtMoney(r.current.total) : "no timed shifts") + " now")),
-                    minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
-                    allMargin && chip(B.success, "margin"),
-                    r.signed
-                      ? h(React.Fragment, null,
-                          chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
-                            "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                          sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
-                      : h(React.Fragment, null,
-                          !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
-                          (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
-                            style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                          canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
-                          canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
-                          canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
-                          !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                    sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
-                      "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct."),
-                    h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
+                    // Pay amount: pinned to the top row's right on mobile (order 2),
+                    // trails the action buttons on desktop.
+                    h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", order: isMobile ? 2 : undefined, marginLeft: isMobile ? "auto" : undefined, fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
                       title: r.signed ? "Final signed-off pay." : "Estimate — becomes payable when the day is signed off." },
-                      (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)));
+                      (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)),
+                    // Chips + sign-off buttons: a wrapped second line on mobile,
+                    // inline on desktop (display:contents leaves the row unchanged).
+                    h("div", { style: isMobile ? { order: 3, flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 2 } : { display: "contents" } },
+                      minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
+                      allMargin && chip(B.success, "margin"),
+                      r.signed
+                        ? h(React.Fragment, null,
+                            chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
+                              "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
+                            sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
+                        : h(React.Fragment, null,
+                            !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
+                            (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
+                              style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
+                            canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
+                            canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
+                            canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
+                            !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
+                      sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
+                        "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
 
@@ -1499,6 +1627,7 @@
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
   function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services, companies }) {
+    var isMobile = window.LTP_useIsMobile();
     // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
     var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
@@ -1695,8 +1824,7 @@
                 reqs.map(function(r) {
                   var info = reqInfo(r);
                   var ds = displayState(r, info);
-                  return h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
-                    h("div", { style: { flex: 1, minWidth: 0 } },
+                  var contentEl = h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
                       info.positions.length > 0
                         ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
@@ -1706,15 +1834,22 @@
                             }))
                         : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
                       // Note the crew member left when they accepted/declined.
-                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
-                    h("span", { style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label),
-                    ds.confirm && h("button", { onClick: function() { setConfirmDlg(r); },
-                      style: { flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✓ Confirm"),
-                    ds.resend && h("button", { onClick: function() { resendRequest(r); },
-                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Resend"),
-                    ds.withdraw && h("button", { onClick: function() { setWithdrawDlg(r); },
-                      style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "Withdraw")
-                  );
+                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”"));
+                  var badgeEl = h("span", { key: "badge", style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label);
+                  var actionEls = [
+                    ds.confirm && h("button", { key: "confirm", onClick: function() { setConfirmDlg(r); },
+                      style: Object.assign({ flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "✓ Confirm"),
+                    ds.resend && h("button", { key: "resend", onClick: function() { resendRequest(r); },
+                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Resend"),
+                    ds.withdraw && h("button", { key: "withdraw", onClick: function() { setWithdrawDlg(r); },
+                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Withdraw")
+                  ].filter(Boolean);
+                  return isMobile
+                    ? h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 } },
+                        h("div", { style: { display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between" } }, contentEl, badgeEl),
+                        actionEls.length > 0 && h("div", { style: { display: "flex", gap: 6 } }, actionEls))
+                    : h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
+                        contentEl, badgeEl, actionEls);
                 })
               )
             );

@@ -130,6 +130,7 @@
   }
 
   window.QuotesProducts = function({ products, setProducts, quotes, settings, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [catFilter, setCatFilter] = useState("all");
     var [editingId, setEditingId] = useState(null);
@@ -180,24 +181,25 @@
     }
 
     return h("div", null,
-      // Toolbar
+      // Toolbar — filter chips scroll horizontally on mobile; "+ Add" → FAB.
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           categories.map(function(c) {
             var active = catFilter === c;
-            return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
-                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
-                       padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c === "all" ? "All" : c);
+            return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
+                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px",
+                       padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, c === "all" ? "All" : c);
           })
         ),
-        h(window.Btn, { small: true, onClick: function() { setShowAdd(true); setEditingId(null); } }, "+ Add Product")
+        !isMobile && h(window.Btn, { small: true, onClick: function() { setShowAdd(true); setEditingId(null); } }, "+ Add Product")
       ),
+      isMobile && h(window.LTPFab, { label: "Add product", onClick: function() { setShowAdd(true); setEditingId(null); } }),
 
       // Search
       h("div", { style: { marginBottom: 10 } },
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search products…",
-          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } })
+          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: isMobile ? "8px" : "6px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: isMobile ? "100%" : 260 } })
       ),
 
       // Add form

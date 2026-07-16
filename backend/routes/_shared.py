@@ -18,6 +18,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend import models
 
 
+async def doc_display_name(db: AsyncSession, row) -> str:
+    """Human name for a quote/invoice — its `custom_name` if set, otherwise the
+    linked project's name, otherwise ''. Mirrors how custom_name overrides
+    project.name on the printed doc. `row` is a Quote or Invoice; used to label
+    push notifications. Best-effort — returns '' rather than raising."""
+    try:
+        cn = (getattr(row, "custom_name", "") or "").strip()
+        if cn:
+            return cn
+        pid = getattr(row, "project_id", None)
+        if pid:
+            name = (
+                await db.execute(
+                    select(models.Project.name).where(models.Project.id == pid)
+                )
+            ).scalar_one_or_none()
+            if name:
+                return name.strip()
+    except Exception:
+        pass
+    return ""
+
+
 def safe_pdf_filename(stem: str) -> str:
     """Sanitize a doc ref ('INV-2026-014') into a safe Content-Disposition /
     attachment filename, ensuring a .pdf suffix. Defensive against odd ref

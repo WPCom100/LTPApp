@@ -2,8 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- viewport-fit=cover is REQUIRED before iOS resolves env(safe-area-inset-*)
+       to non-zero — without it the safe-area padding in the shell and the
+       public crew/client views silently collapses to 0 on notch/home-indicator
+       devices. Pinch-zoom is intentionally left enabled (no maximum-scale/
+       user-scalable=no) for accessibility. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>LTP Business Suite</title>
+
+  <!-- ── PWA / iOS home-screen app ──────────────────────────────────────────
+       Makes LTPApp installable and full-screen from the iOS Share sheet.
+       The manifest + service worker are served from the app origin; see
+       backend/main.py (dedicated /manifest.webmanifest and /sw.js routes) and
+       components/register-sw.js (registration lives in a same-origin .js file
+       because the CSP script-src has no 'unsafe-inline'). -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <!-- Status-bar + chrome tint. #131C21 = LTP_THEME.bg (the app field). -->
+  <meta name="theme-color" content="#131C21" />
+  <!-- Launch full-screen (no Safari chrome) when opened from the home screen.
+       apple-mobile-web-app-capable is the iOS-specific flag; mobile-web-app-
+       capable is the standardized equivalent honored by other browsers. -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <!-- black-translucent lets the app field extend under the status bar; the
+       shell applies env(safe-area-inset-top) so content clears the clock. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="LTP" />
+  <link rel="apple-touch-icon" href="/assets/icons/apple-touch-icon.png" />
+  <link rel="icon" href="/favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" href="/assets/icons/icon-192.png" sizes="192x192" />
   <!-- Self-hosted fonts (Playfair Display + DM Sans). Served from our own
        origin so the CSP can drop fonts.googleapis.com / fonts.gstatic.com.
        See assets/fonts.css and docs/SECURITY_REVIEW.md L8. -->
@@ -17,10 +44,14 @@
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
        quote builder's Totals) below the visible viewport. `100vh` first as a
        fallback for engines without dvh support. */
-    #root { height: 100vh; height: 100dvh; }
+    /* --app-h is the true visible height set by components/viewport-height.js
+       (window.innerHeight); it corrects iOS standalone where 100dvh can report
+       the safe-area height and leave a dead gap below the shell. 100vh/100dvh
+       remain as pre-JS fallbacks (cascade: last valid declaration wins). */
+    #root { height: 100vh; height: 100dvh; height: var(--app-h, 100dvh); }
     /* Calendar grid is a fixed-height, viewport-anchored container (chrome above
        it is ~134px). Same iOS dvh rationale as #root; vh first as a fallback. */
-    .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); }
+    .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); height: calc(var(--app-h, 100dvh) - 134px); }
     /* Email Send-modal editor: give every top-level paragraph the SAME spacing
        the sent mail uses (theme.js PARA_STYLE = margin:0;line-height:1) —
        single-spaced, the sender adds blank lines for gaps — regardless of
@@ -53,6 +84,88 @@
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
+
+    /* ── Mobile / iOS PWA responsive layer ──────────────────────────────────
+       The app styles almost everything with inline React style objects, so
+       this class + element layer is where breakpoint and safe-area behavior
+       live. The 600px breakpoint matches the public crew/client views
+       (modules/crew-view.js) and the shared window.LTP_useIsMobile() hook.
+       Desktop ( > 600px ) is completely unaffected by everything below. */
+
+    /* Kill the grey iOS tap-flash on our interactive chrome (rows/buttons);
+       we provide our own :active feedback. Pinch-zoom stays enabled. */
+    .ltp-row-click, .ltp-btn-primary, .ltp-btn-quiet, .ltp-tap,
+    .ltp-bottom-nav button { -webkit-tap-highlight-color: transparent; }
+
+    /* Horizontally-scrollable tab strips (components/ui.js LTPTabs) hide their
+       scrollbar — the overflow is discoverable by swiping. */
+    .ltp-tabs-strip::-webkit-scrollbar { display: none; }
+
+    /* On touch devices, replace hover affordances with an :active press state
+       (hover never fires on touch, so rows/buttons looked dead). */
+    @media (hover: none) {
+      .ltp-row-click:active { background: rgba(237,243,242,0.06); }
+      .ltp-btn-primary:active, .ltp-btn-quiet:active { filter: brightness(1.08); }
+    }
+
+    @media (max-width: 600px) {
+      /* iOS zooms the page whenever a focused form control is < 16px. Force
+         16px on mobile so focusing any field never zooms. !important is needed
+         to beat the inline font sizes the components set (13px on shared
+         inputs, 9–11px in the dense builder rows). */
+      input, select, textarea { font-size: 16px !important; }
+
+      /* iOS Safari renders date / time inputs with their OWN intrinsic control
+         height — taller than our text inputs — plus an internal value element
+         that carries default margins, so a date field looks oversized next to
+         the fields around it (and the 16px rule above makes it worse). This is
+         invisible in Chromium/desktop, which is why it only shows on iPhone.
+         Stripping the native appearance makes these inputs obey the same box
+         model (padding + font-size, with the global `box-sizing: border-box`)
+         as every other field; zeroing the inner value's margin removes the
+         last of the extra height. The whole field stays tappable and still
+         opens the native picker. Mobile-only so desktop keeps its calendar
+         glyph and native control. */
+      input[type="date"],
+      input[type="time"],
+      input[type="datetime-local"],
+      input[type="month"] {
+        -webkit-appearance: none;
+        appearance: none;
+      }
+      input[type="date"]::-webkit-date-and-time-value,
+      input[type="time"]::-webkit-date-and-time-value,
+      input[type="datetime-local"]::-webkit-date-and-time-value,
+      input[type="month"]::-webkit-date-and-time-value {
+        margin: 0;
+        text-align: left;
+      }
+
+      /* LTPModal (components/ui.js) → full-screen sheet: fill the viewport with
+         no floating card, and inset content from the notch + home indicator.
+         classNames are applied in ui.js; dynamic bits stay inline.
+         Height uses --app-h (the true screen height from
+         components/viewport-height.js), NOT 100dvh — on an installed iOS PWA
+         100dvh under-reports the screen, which left the sheet stopping short
+         with a dark band below it (same bug that was fixed for the app shell).
+         The backdrop drops inset:0's bottom so its own --app-h height wins. */
+      .ltp-modal-backdrop {
+        align-items: stretch !important;
+        justify-content: stretch !important;
+        padding: 0 !important;
+        bottom: auto !important;
+        height: var(--app-h, 100dvh) !important;
+      }
+      .ltp-modal-panel {
+        width: 100% !important;
+        max-width: 100% !important;
+        height: var(--app-h, 100dvh) !important;
+        max-height: var(--app-h, 100dvh) !important;
+        border-radius: 0 !important;
+        padding-top: calc(20px + env(safe-area-inset-top)) !important;
+        padding-bottom: calc(24px + env(safe-area-inset-bottom)) !important;
+      }
+    }
   </style>
 </head>
 <body>
@@ -93,6 +206,11 @@
        at the END of that group, and confirm anything it reads is loaded
        above. If something errors on load, that's almost always the cause.
        ════════════════════════════════════════════════════════════════════ -->
+
+  <!-- App viewport height — runs FIRST (no deps) so --app-h is set before React
+       mounts. Fixes the iOS standalone bottom gap where CSS 100dvh underreports
+       the screen height. See components/viewport-height.js. -->
+  <script src="components/viewport-height.js"></script>
 
   <!-- 0. Auth check — fires GET /auth/me; populates window.LTP_AUTH_USER -->
   <script src="components/auth.js"></script>
@@ -218,5 +336,15 @@
        backend/main.py can use `script-src 'self'` without `'unsafe-inline'`.
        MUST load after app.js. -->
   <script src="mount.js"></script>
+
+  <!-- 9. PWA service-worker registration + "new version" prompt. Same-origin
+       file (CSP-safe, like mount.js). Loads last; registers on window 'load'
+       so it never blocks first paint. -->
+  <script src="components/register-sw.js"></script>
+
+  <!-- 10. Web Push helper (window.LTP_Push). Same-origin/CSP-safe. Defines the
+       subscribe/unsubscribe API used by the Settings "Notifications" toggle;
+       loads after register-sw.js so window.LTP_isStandalone is available. -->
+  <script src="components/push.js"></script>
 </body>
 </html>

@@ -23,6 +23,7 @@
   }
 
   window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict }) {
+    var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [deletionDlg, setDeletionDlg] = useState(null);
     var [conflictWarn, setConflictWarn] = useState(null);
@@ -433,28 +434,33 @@
                 var itemSlots = window.LTP_effectiveSlots(itemPositions);
 
                 return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
-                  // Item header: title + times + delete
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
+                  // Item header: title + times + delete. On mobile the title
+                  // takes a full row (delete beside it) and the date/time controls
+                  // flex to fit, instead of three fixed 120px inputs wrapping into
+                  // an unreadable stack.
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", marginBottom: 4 } },
                     h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
-                      style: Object.assign({}, inp, { flex: 1 }) }),
-                    h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+                      style: Object.assign({}, inp, { flex: 1, minWidth: 0 }) }),
+                    isMobile && h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
+                      style: { flexShrink: 0, background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "20px", padding: "0 4px", lineHeight: 1 } }, "×"),
+                    h("div", { style: { display: "flex", gap: isMobile ? 6 : 4, alignItems: "center", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined } },
                       // One updateItem only — it syncs endDate itself. A second
                       // call here recomputed from the stale `schedule` prop and
                       // clobbered the date update entirely (freezing half-typed
                       // dates like "0002-08-14" into the hidden endDate).
                       h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); },
-                        style: Object.assign({}, inp, { width: 120, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
+                        style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : undefined, width: isMobile ? undefined : 120, minWidth: 0, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
                       h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
-                        style: Object.assign({}, inp, { width: 120 }) }),
+                        style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
                       h("span", { style: { color: B.textMut, fontSize: "10px" } }, "\u2192"),
                       h("input", { type: "time", value: s.endTime, onChange: function(e) { updateItem(s.id, "endTime", e.target.value); },
-                        style: Object.assign({}, inp, { width: 120 }) }),
-                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut } }, calcHours(s.time, s.endTime) ? calcHours(s.time, s.endTime) + "h" : ""),
+                        style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
+                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, flexShrink: 0 } }, calcHours(s.time, s.endTime) ? calcHours(s.time, s.endTime) + "h" : ""),
                       h("button", { onClick: function() { updateItem(s.id, "showOnCalendar", !s.showOnCalendar); },
-                        style: { background: s.showOnCalendar ? B.accent + "22" : "transparent", border: "1px solid " + (s.showOnCalendar ? B.accent : B.border), borderRadius: "3px", padding: "2px 6px", color: s.showOnCalendar ? B.accent : B.textMut, fontSize: "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+                        style: { flexShrink: 0, background: s.showOnCalendar ? B.accent + "22" : "transparent", border: "1px solid " + (s.showOnCalendar ? B.accent : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 6px", color: s.showOnCalendar ? B.accent : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
                         s.showOnCalendar ? "\u2713 Cal" : "Cal"),
-                      h("button", { onClick: function() { removeItem(s.id); }, style: { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "\u00d7")
+                      !isMobile && h("button", { onClick: function() { removeItem(s.id); }, style: { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "\u00d7")
                     )
                   ),
                   // Item breaks
@@ -491,15 +497,18 @@
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
-                      return h("div", { key: pos.id, style: { background: hasConflict ? B.danger + "08" : B.surface, border: "1px solid " + (hasConflict ? B.danger + "66" : B.border), borderRadius: "3px", padding: "4px 8px", display: "flex", gap: 6, alignItems: "center" } },
+                      return h("div", { key: pos.id, style: { background: hasConflict ? B.danger + "08" : B.surface, border: "1px solid " + (hasConflict ? B.danger + "66" : B.border), borderRadius: "3px", padding: isMobile ? "8px" : "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
                         hasConflict && h("div", { title: "Double-booked: also on " + posConflicts.map(function(c) { return c.projectName; }).join(", "),
                           style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
                           h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
+                        // Role + person-slot share one row on mobile; the wrapper is
+                        // display:contents on desktop so that layout is unchanged.
+                        h("div", { style: { display: isMobile ? "flex" : "contents", flex: isMobile ? "1 1 100%" : undefined, gap: 6, alignItems: "center" } },
                         h("select", { value: pos.serviceId || "", onChange: function(e) {
                           var sid = Number(e.target.value) || null;
                           var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
                           updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
-                        }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                        }, style: { flex: 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Role\u2026"),
                           svcs.map(function(sv) { return h("option", { key: sv.id, value: sv.id }, sv.role + " \u2014 " + sv.description); })
                         ),
@@ -516,9 +525,10 @@
                           return h("select", { value: effSlot,
                             title: "Person #" + effSlot + " for this role. Different number = different person (tracked separately); same number across shifts = same person.",
                             onChange: function(e) { updatePosition(s.id, pos.id, { slot: Number(e.target.value) }); },
-                            style: { width: 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                            style: { flexShrink: 0, width: isMobile ? 58 : 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px 4px" : "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                             opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
-                        })(),
+                        })()
+                        ),
                         h("select", { value: pos.crewId || "", onChange: function(e) {
                           var cid = Number(e.target.value) || null;
                           if (cid) { assignCrewToDay(s.id, pos, cid); }
@@ -527,7 +537,7 @@
                           // reassignStatus, and it keeps the stale-write guard's
                           // "downgrade clears the assignee" invariant intact).
                           else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
-                        }, style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                        }, style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
                           h("option", { value: "" }, "Crew\u2026"),
                           // Role-tagged crew first; everyone else stays reachable under
                           // "Other crew" so a role nobody is tagged with (e.g. a custom
@@ -540,12 +550,17 @@
                             return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
                           })()
                         ),
+                        // Footer row on mobile: status + margin toggle + breaks on
+                        // the left, rate + copy + delete pushed to the right. The
+                        // wrapper is display:contents on desktop so the single-line
+                        // layout there is unchanged.
+                        h("div", { style: { display: isMobile ? "flex" : "contents", flex: isMobile ? "1 1 100%" : undefined, alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: isMobile ? 2 : undefined } },
                         // Status — read-only in schedule editor, manage via Labor module
-                        h("span", { style: { width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "3px 6px" } }, pos.status),
+                        h("span", { style: { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "4px 6px" } }, pos.status),
                         // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
                         h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
                           title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
-                          style: { background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                          style: { flexShrink: 0, background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
                           pos.fullMargin ? "✓ MGN" : "MGN"),
                         // Individual meal break(s) for THIS person (added by the
                         // meal-penalty fix; removable). Distinct from the item's
@@ -558,7 +573,7 @@
                               h("button", { onClick: function() { updatePosition(s.id, pos.id, { breaks: (pos.breaks || []).filter(function(x) { return x.id !== br.id; }) }); },
                                 style: { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "9px", padding: 0, lineHeight: 1 } }, "×"));
                           })),
-                        h("div", { style: { width: 92, textAlign: "right", fontSize: "9px" } },
+                        h("div", { style: { flexShrink: 0, width: 92, textAlign: "right", fontSize: "9px", marginLeft: isMobile ? "auto" : undefined } },
                           !posUnit ? null : (isUnitPrimary
                             ? [
                                 h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
@@ -569,13 +584,15 @@
                                       "$" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
                               ]
                             : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
-                        h("button", { onClick: function() { removePosition(s.id, pos.id); },
-                          style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px" } }, "\u00d7"),
+                        h("button", { onClick: function() { removePosition(s.id, pos.id); }, "aria-label": "Remove position",
+                          style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.danger : B.textMut, cursor: "pointer", fontSize: isMobile ? "20px" : "12px", padding: isMobile ? "4px 6px" : 0, minHeight: isMobile ? 40 : undefined } }, "\u00d7"),
                         i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
                           title: "Copy role to next item",
-                          style: { background: "transparent", border: "none", color: B.border, cursor: "pointer", fontSize: "10px", padding: "1px 3px" },
+                          // Hover reveal doesn't fire on touch, so keep it visible on mobile.
+                          style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.accent : B.border, cursor: "pointer", fontSize: isMobile ? "18px" : "10px", padding: isMobile ? "4px 8px" : "1px 3px", minHeight: isMobile ? 40 : undefined },
                           onMouseOver: function(e) { e.currentTarget.style.color = B.accent; },
-                          onMouseOut:  function(e) { e.currentTarget.style.color = B.border; } }, "\u21e9")
+                          onMouseOut:  function(e) { e.currentTarget.style.color = isMobile ? B.accent : B.border; } }, "\u21e9")
+                        )
                       );
                     })
                   ),

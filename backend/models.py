@@ -661,6 +661,28 @@ class Session(Base):
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class PushSubscription(Base):
+    """A browser Web Push subscription for one internal user's device (iOS
+    home-screen PWA, Android, or desktop). One row per device endpoint — a user
+    with two phones has two rows. Created from the Settings "Notifications"
+    toggle (POST /api/push/subscribe) and pruned automatically when the push
+    service reports the endpoint dead (404/410) at send time — see
+    backend/webpush.py. Nothing secret at rest: endpoint + p256dh + auth are the
+    public halves the Web Push protocol needs to send TO this device; they grant
+    no read access to anything. CASCADE on user_id mirrors Session so deleting a
+    user cleans up their subscriptions."""
+    __tablename__ = "push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Push endpoints are long provider URLs (Apple / FCM) and unique per device.
+    endpoint = Column(Text, nullable=False, unique=True, index=True)
+    p256dh = Column(Text, nullable=False)     # client public key (base64url)
+    auth = Column(Text, nullable=False)       # client auth secret (base64url)
+    ua = Column(String(300), nullable=True)   # user-agent at subscribe time (debugging only)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class QboConnection(Base):
     """The single company-wide QuickBooks Online connection (singleton row,
     id=1). Unlike Gmail tokens — which are PER-USER because the email is sent

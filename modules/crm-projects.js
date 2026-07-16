@@ -45,6 +45,7 @@
   }
 
   window.CRMProjectDetail = function({ ctx }) {
+    var isMobile = window.LTP_useIsMobile();
     var project = ctx.selectedProject; if (!project) return null;
     var company = ctx.companies.find(function(c) { return c.id === project.companyId; });
     var projContacts = ctx.contacts.filter(function(c) { return project.contactIds.includes(c.id); });
@@ -82,7 +83,7 @@
 
       // OVERVIEW
       projTab === "overview" && h("div", null,
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 12, marginBottom: 20 } },
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
             h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, headline.quoted ? "Total Quoted" : "Total Budget"),
             h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent } }, "$" + Math.round(headline.total).toLocaleString()),
@@ -146,13 +147,19 @@
       // MEETINGS TAB (with linked notes shown)
       projTab === "meetings" && h("div", null, h(window.Btn, { small: true, onClick: function() { ctx.setShowAddMeeting(project.id); }, style: { marginBottom: 14 } }, "+ Schedule Meeting"), project.meetings.length === 0 ? h(window.EmptyState, { text: "No meetings scheduled." }) : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, project.meetings.map(function(m) {
         var linkedNotes = (m.linkedNoteIds || []).map(function(nid) { return project.notes.find(function(n) { return n.id === nid; }); }).filter(Boolean);
+        var titleBlock = h("div", { style: { minWidth: 0 } }, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees"));
+        var joinLink = m.meetLink && h("a", { key: "join", href: window.LTP_safeUrl(m.meetLink), target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600, whiteSpace: "nowrap" } }, "Join Meet \u2197");
+        var gcalBtn = h(window.Btn, { key: "gcal", small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var u = window.LTP_gcalUrl({ title: m.title + " \u2014 " + project.name, date: m.date, time: m.time, attendees: ae, details: "LTP Project: " + project.name }); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal");
         return h("div", { key: m.id, style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
-            h("div", null, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, m.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(m.date) + " at " + ft(m.time) + " \u00b7 " + m.attendees.length + " attendees")),
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-              m.meetLink && h("a", { href: window.LTP_safeUrl(m.meetLink), target: "_blank", rel: "noopener noreferrer", style: { fontSize: "11px", color: B.info, textDecoration: "none", fontWeight: 600 } }, "Join Meet \u2197"),
-              h(window.Btn, { small: true, variant: m.calSynced ? "ghost" : "primary", onClick: function() { var ae = ctx.contacts.filter(function(c) { return m.attendees.includes(c.id); }).map(function(c) { return c.email; }); var u = window.LTP_gcalUrl({ title: m.title + " \u2014 " + project.name, date: m.date, time: m.time, attendees: ae, details: "LTP Project: " + project.name }); window.open(u, "_blank"); ctx.setProjects(function(prev) { return prev.map(function(pr) { return pr.id === project.id ? Object.assign({}, pr, { meetings: pr.meetings.map(function(mt) { return mt.id === m.id ? Object.assign({}, mt, { calSynced: true }) : mt; }) }) : pr; }); }); } }, m.calSynced ? "\u2713 Synced" : "Export to GCal"))
-          ),
+          // On mobile the title stacks above its actions so a long title +
+          // "Join Meet" + "Export to GCal" no longer overflow the card width.
+          isMobile
+          ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
+              titleBlock,
+              h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } }, joinLink, gcalBtn))
+          : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: linkedNotes.length > 0 ? 8 : 0 } },
+              titleBlock,
+              h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, joinLink, gcalBtn)),
           linkedNotes.length > 0 && h("div", { style: { marginTop: 6, padding: "6px 10px", background: B.bg, borderRadius: "4px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, marginBottom: 4 } }, "Linked Notes:"),
             linkedNotes.map(function(n) { return h("div", { key: n.id, onClick: function() { onNoteClick(n.id); }, style: { fontSize: "11px", color: B.accent, cursor: "pointer", marginBottom: 2 } }, n.author + " \u2014 " + fmt(n.date) + ": " + (n.text.substring(0, 60).replace(/<[^>]*>/g, "")) + "..."); })
@@ -247,12 +254,13 @@
   };
 
   window.CRMProjectForm = function({ ctx, initial, onSave, onClose }) {
+    var isMobile = window.LTP_useIsMobile();
     var [name, setName] = useState(initial ? initial.name : "");
     var [compId, setCompId] = useState(initial ? initial.companyId : null);
     var [cat, setCat] = useState(initial ? initial.category : "Rental");
     var [projStatus, setProjStatus] = useState(initial ? initial.status : "upcoming");
-    var [start, setStart] = useState(initial ? initial.startDate : "");
-    var [end, setEnd] = useState(initial ? initial.endDate : "");
+    var [start, setStart] = useState(initial ? initial.startDate : window.LTP_todayISO());
+    var [end, setEnd] = useState(initial ? initial.endDate : window.LTP_todayISO());
     var [venue, setVenue] = useState(initial ? (initial.venue || "") : "");
     var [siteAddr, setSiteAddr] = useState(initial ? (initial.siteAddress || "") : "");
     var [siteUseComp, setSiteUseComp] = useState(initial ? !!initial.siteUseCompanyAddress : false);
@@ -339,7 +347,7 @@
         })(),
         h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Preliminary Budget"),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10 } },
           h(window.LTPInput, { label: "Lighting", value: budL, onChange: function(v) { setBudL(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Labor", value: budLb, onChange: function(v) { setBudLb(Number(v) || 0); }, type: "number" }),
           h(window.LTPInput, { label: "Rentals", value: budR, onChange: function(v) { setBudR(Number(v) || 0); }, type: "number" }),

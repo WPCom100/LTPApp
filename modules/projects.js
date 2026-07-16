@@ -2,6 +2,7 @@
 window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, invoices, setInvoices, route }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
+  var isMobile = window.LTP_useIsMobile();
   var nav = window.LTPRouter.navigate;
 
   // URL shapes:
@@ -12,19 +13,6 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   //   #/projects/7/edit           edit form
   var urlId     = route.id     || null;
   var urlAction = route.action || null;
-
-  // Full-screen schedule builder
-  if (urlId && urlAction === "schedule") {
-    var schedProject = projects.find(function(p) { return p.id === urlId; });
-    if (schedProject) {
-      return h(window.ScheduleBuilder, {
-        project: schedProject, projects: projects, setProjects: setProjects,
-        contacts: contacts, setContacts: setContacts, services: services,
-        companies: companies,
-        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
-      });
-    }
-  }
 
   var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1 };
   var urlTab = (urlId && PROJECT_TABS[urlAction]) ? urlAction : null;
@@ -49,6 +37,23 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var [editNote,        setEditNote]        = useState(null);
   var [deleteConfirm,   setDeleteConfirm]   = useState(null);
   var [deleteWizard,    setDeleteWizard]    = useState(null); // { projectId, name, steps completed tracking }
+
+  // Full-screen schedule builder. This conditional return MUST stay below every
+  // hook above: an early return placed before the useState calls changes the
+  // hook count between the list route and the schedule route (which keep the
+  // same ProjectsView instance mounted), tripping React error #310 — "rendered
+  // fewer hooks than during the previous render."
+  if (urlId && urlAction === "schedule") {
+    var schedProject = projects.find(function(p) { return p.id === urlId; });
+    if (schedProject) {
+      return h(window.ScheduleBuilder, {
+        project: schedProject, projects: projects, setProjects: setProjects,
+        contacts: contacts, setContacts: setContacts, services: services,
+        companies: companies,
+        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
+      });
+    }
+  }
 
   var selectedProject = selectedProjectId ? projects.find(function(p) { return p.id === selectedProjectId; }) : null;
 
@@ -199,8 +204,11 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     return a.name.localeCompare(b.name);
   });
 
-  var searchBar = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search...",
-    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 180 } });
+  // Show/Hide completed toggle — a chip on mobile (rides the filter row at the
+  // right), the small inline button on desktop (rides the sort row).
+  var showCompletedBtn = h("button", { onClick: function() { setShowCompleted(!showCompleted); }, className: "ltp-tap",
+    style: { flexShrink: 0, background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
+    showCompleted ? "✓ Completed" : "Show Completed");
 
   function sortBtns() {
     var opts = [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "date-asc", l: "Date \u2191" }, { k: "date-desc", l: "Date \u2193" }];
@@ -211,46 +219,50 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   }
 
   return h("div", null,
-    h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "Projects"),
+    // Title + search share the top row (search to the right of the title);
+    // desktop keeps the + Create button at the far right — matching Invoices.
+    h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } },
+      h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Projects"),
+      h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
+        style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: isMobile ? undefined : "12px", fontFamily: "inherit", outline: "none" } }),
+      !isMobile && h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")),
 
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
-      h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+    // Category filters + Show Completed on the right (both viewports).
+    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
+      h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
         ["all"].concat(CATS).map(function(f) {
-          return h("button", { key: f, onClick: function() { setProjectFilter(f); },
-            style: { background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, f === "all" ? "All" : f);
+          return h("button", { key: f, onClick: function() { setProjectFilter(f); }, className: "ltp-tap",
+            style: { flexShrink: 0, whiteSpace: "nowrap", background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, f === "all" ? "All" : f);
         })
       ),
-      h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")
+      showCompletedBtn
     ),
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8, flexWrap: "wrap" } },
-      h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-        searchBar,
-        h("button", { onClick: function() { setShowCompleted(!showCompleted); },
-          style: { background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
-          showCompleted ? "✓ Showing Completed" : "Show Completed")
-      ),
-      sortBtns()),
+
+    // Sort row (both viewports).
+    h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns()),
 
     fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
     h(window.LTPList, null,
       fp.map(function(p) {
         var comp = companies.find(function(c) { return c.id === p.companyId; });
-        // Quoted total once quotes exist; preliminary budget until then.
-        var tot  = Math.round(window.LTP_projectHeadlineTotal(p, quotes).total);
         return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
           style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-            h("div", null,
-              h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name : "") + " \u00b7 " + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
-            h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-              h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + tot.toLocaleString()),
-              h(window.Badge, { status: CAT_KEYS[p.category] }),
-              h(window.Badge, { status: p.status }))),
-          h("div", { style: { display: "flex", gap: 12, marginTop: 6, fontSize: "11px", color: B.textMut } },
-            h("span", null, p.notes.length + " notes"),
-            h("span", null, p.schedule.length + " schedule"),
-            h("span", null, p.meetings.length + " meetings")));
+          isMobile
+            ? h("div", null,
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
+                  h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0 } }, p.name),
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
+                    h(window.Badge, { status: CAT_KEYS[p.category] }),
+                    p.status !== "upcoming" && h(window.Badge, { status: p.status }))),
+                comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp.name),
+                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate)))
+            : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
+                  h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name + " \u00b7 " : "") + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
+                h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                  h(window.Badge, { status: CAT_KEYS[p.category] }),
+                  p.status !== "upcoming" && h(window.Badge, { status: p.status }))));
       })
     ),
 

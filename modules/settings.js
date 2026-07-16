@@ -9,7 +9,119 @@
   var sectionStyle = { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "18px 20px", marginBottom: 14 };
   var sectionTitle = { fontSize: "13px", fontWeight: 700, color: B.text, marginBottom: 14 };
 
+  // A settings section. On desktop it renders exactly as before (a bordered
+  // card with a heading). On mobile the long settings page becomes unwieldy, so
+  // each section collapses into a tap-to-expand accordion panel — the first one
+  // starts open. Every section header is a full-width tap target.
+  function AccordionSection(props) {
+    var isMobile = window.LTP_useIsMobile();
+    var kids = React.Children.toArray(props.children);
+    var openState = useState(props.defaultOpen != null ? props.defaultOpen : !isMobile);
+    var open = openState[0], setOpen = openState[1];
+    if (!isMobile) {
+      return h("div", { style: sectionStyle }, h("div", { style: sectionTitle }, props.title), kids);
+    }
+    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", marginBottom: 12, overflow: "hidden" } },
+      h("button", { onClick: function() { setOpen(!open); }, className: "ltp-tap",
+        style: { width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, background: "transparent", border: "none", padding: "16px 18px", cursor: "pointer", fontFamily: "inherit", textAlign: "left" } },
+        h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.text } }, props.title),
+        h("span", { style: { fontSize: "16px", lineHeight: 1, color: B.textMut, transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 } }, "›")),
+      open && h("div", { style: { padding: "0 18px 18px" } }, kids));
+  }
+
+  // ── Notifications panel ────────────────────────────────────────────────────
+  // Per-DEVICE push toggle (this browser's subscription), rendered inside the
+  // Settings "Notifications" accordion. Push on iOS only works from a
+  // home-screen install, so this walks the user through the gate:
+  //   • no API / not standalone  → explain what's needed (add to Home Screen)
+  //   • server not configured    → "not set up yet" (admin sets VAPID vars)
+  //   • otherwise                → an Enable / Disable toggle
+  // All work goes through window.LTP_Push (components/push.js); enable() is
+  // called straight from the button's onClick so it counts as a user gesture.
+  function NotificationsPanel() {
+    var stateHook = useState(null);       // null = loading
+    var st = stateHook[0], setSt = stateHook[1];
+    var busyHook = useState(false);
+    var busy = busyHook[0], setBusy = busyHook[1];
+
+    function refresh() {
+      if (!window.LTP_Push) { setSt({ unsupported: true }); return; }
+      window.LTP_Push.getState().then(setSt).catch(function() { setSt({ unsupported: true }); });
+    }
+    useEffect(function() { refresh(); }, []);
+
+    function toast(title, opts) { if (window.LTP_toast) window.LTP_toast(title, opts); }
+
+    function onEnable() {
+      setBusy(true);
+      window.LTP_Push.enable().then(function(res) {
+        setBusy(false);
+        if (res.ok) {
+          toast("Notifications on", { message: "This device will receive alerts.", variant: "success" });
+        } else {
+          var reasons = {
+            "not-standalone": "Add LTPApp to your Home Screen first, then open it from there.",
+            "not-configured": "Push isn't set up on the server yet.",
+            "denied": "Notification permission was blocked. Enable it in your device settings for LTPApp.",
+            "unsupported": "This browser doesn't support notifications.",
+            "network": "Subscribed, but couldn't reach the server — try again.",
+            "server-error": "The server rejected the subscription — try again.",
+          };
+          toast("Couldn't enable notifications", { message: reasons[res.reason] || ("Error: " + res.reason), variant: "error" });
+        }
+        refresh();
+      });
+    }
+
+    function onDisable() {
+      setBusy(true);
+      window.LTP_Push.disable().then(function() {
+        setBusy(false);
+        toast("Notifications off", { message: "This device won't receive alerts.", variant: "info" });
+        refresh();
+      });
+    }
+
+    var note = { fontSize: "11px", color: B.textMut, lineHeight: 1.5 };
+
+    if (st === null) {
+      return h("div", { style: note }, "Checking notification status…");
+    }
+    // Browser genuinely can't do Web Push.
+    if (st.unsupported || !st.apisPresent) {
+      return h("div", { style: note }, "This browser doesn't support push notifications.");
+    }
+    // APIs exist but the app isn't installed to the Home Screen (the iOS gate).
+    if (!st.standalone) {
+      return h("div", null,
+        h("div", { style: Object.assign({}, note, { marginBottom: 8 }) },
+          "To get notifications on iPhone or iPad, add LTPApp to your Home Screen and open it from there:"),
+        h("ol", { style: { margin: 0, paddingLeft: 18, fontSize: "11px", color: B.textSec, lineHeight: 1.7 } },
+          h("li", null, "Tap the Share button in Safari."),
+          h("li", null, "Choose “Add to Home Screen”."),
+          h("li", null, "Open LTPApp from the new icon, then come back here.")));
+    }
+    // Server hasn't been given VAPID keys.
+    if (!st.configured) {
+      return h("div", { style: note },
+        "Push notifications aren’t set up on the server yet. Once the VAPID keys are configured, this device can subscribe.");
+    }
+
+    var on = !!st.subscribed;
+    return h("div", null,
+      h("div", { style: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" } },
+        h("span", { style: { display: "inline-flex", alignItems: "center", gap: 7, fontSize: "12px", fontWeight: 700, color: on ? B.success : B.textMut } },
+          h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: on ? B.success : B.textMut, display: "inline-block" } }),
+          on ? "On for this device" : "Off for this device"),
+        on
+          ? h(window.Btn, { small: true, variant: "ghost", onClick: onDisable, disabled: busy }, busy ? "Working…" : "Turn Off")
+          : h(window.Btn, { small: true, onClick: onEnable, disabled: busy }, busy ? "Working…" : "Turn On")),
+      h("div", { style: Object.assign({}, note, { marginTop: 10 }) },
+        "Notifications are per-device — turn them on for each phone or tablet you want alerted. You’ll get a push when a crew member responds to a request."));
+  }
+
   window.SettingsView = function({ settings, setSettings }) {
+    var isMobile = window.LTP_useIsMobile();
     var [draft, setDraft] = useState(Object.assign({}, settings));
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
     // a save+nav from flashing a bogus "unsaved changes" prompt.
@@ -204,8 +316,7 @@
       ),
 
       // ── Company Info ───────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Company Information"),
+      h(AccordionSection, { title: "Company Information", defaultOpen: true },
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPInput, { label: "Company Name", value: draft.companyName || "", onChange: function(v) { set("companyName", v); } }),
           h(window.LTPInput, { label: "Short Name", value: draft.companyShort || "", onChange: function(v) { set("companyShort", v); }, placeholder: "e.g. LTP" })
@@ -221,9 +332,15 @@
         )
       ),
 
+      // ── Notifications ──────────────────────────────────────────────────────
+      // Per-device Web Push toggle (this browser's subscription). Panel manages
+      // its own state via window.LTP_Push; see NotificationsPanel above.
+      h(AccordionSection, { title: "Notifications" },
+        h(NotificationsPanel, null)
+      ),
+
       // ── Address ────────────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Address"),
+      h(AccordionSection, { title: "Address" },
         h("div", { style: { display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12 } },
           h(window.LTPInput, { label: "Street", value: draft.street || "", onChange: function(v) { set("street", v); } }),
           h(window.LTPInput, { label: "Suite / Unit", value: draft.suite || "", onChange: function(v) { set("suite", v); } })
@@ -236,8 +353,7 @@
       ),
 
       // ── Branding ───────────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Branding"),
+      h(AccordionSection, { title: "Branding" },
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h("div", null,
             h(window.LTPInput, { label: "Accent Color", value: draft.accentColor || "#EF5822", onChange: function(v) { set("accentColor", v); } }),
@@ -270,8 +386,7 @@
       ),
 
       // ── Tag & Badge Colors ─────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Tag & Badge Colors"),
+      h(AccordionSection, { title: "Tag & Badge Colors" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
           "Customize colors for departments, statuses, and categories. Changes apply immediately across the app."),
         function() {
@@ -310,8 +425,7 @@
       ),
 
       // ── Crew Options ──────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Crew Options"),
+      h(AccordionSection, { title: "Crew Options" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
           "Manage the available roles and departments for crew members. These appear as selectable tags on the crew form. Roles from the labor rate card (Quotes → Services) show up there automatically, and one-off custom roles can be typed directly on the crew form."),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
@@ -373,8 +487,7 @@
       ),
 
       // ── Document Defaults ───────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Document Defaults"),
+      h(AccordionSection, { title: "Document Defaults" },
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
           h(window.LTPSelect, { label: "Default Payment Terms", value: String(draft.defaultPaymentTerms || 30), onChange: function(v) { set("defaultPaymentTerms", Number(v)); },
             options: [{ value: "0", label: "Due on Receipt" }, { value: "15", label: "Net 15" }, { value: "20", label: "Net 20" }, { value: "30", label: "Net 30" }, { value: "45", label: "Net 45" }, { value: "60", label: "Net 60" }] }),
@@ -394,8 +507,7 @@
       ),
 
       // ── Email Settings ─────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Email Settings"),
+      h(AccordionSection, { title: "Email Settings" },
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPInput, { label: "Send From Email", value: draft.emailFrom || "", onChange: function(v) { set("emailFrom", v); }, type: "email",
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } }),
@@ -409,8 +521,7 @@
       // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}}/{{userPhoto}} against the
       // sender's User row when an email body contains {{signature}}. Stored
       // pre-sanitized server-side (PUT /api/settings runs email_html on it).
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Email Signature Template"),
+      h(AccordionSection, { title: "Email Signature Template" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
           "HTML signature rendered per-user when a template body uses ",
           h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{signature}}"),
@@ -460,8 +571,7 @@
       // phone, role. Identity fields (name/email/picture) come from Google
       // and refresh on every login — not editable here. Self-demotion is
       // blocked server-side.
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Team Members"),
+      h(AccordionSection, { title: "Team Members" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
           "Title and Phone feed the email signature template above. Role changes take effect on the user's next request — they don't need to sign out."),
         usersErr && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 10 } }, usersErr),
@@ -526,8 +636,7 @@
       // Company-wide accounting connection (admin-managed). Tokens live
       // encrypted server-side; this panel only ever sees booleans + masked
       // metadata. See backend/routes/qbo.py.
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "QuickBooks Online"),
+      h(AccordionSection, { title: "QuickBooks Online" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 12, lineHeight: 1.5 } },
           "Connect your QuickBooks Online company to push generated invoices. Customers and products/services are created in QuickBooks automatically if they're missing, and QuickBooks calculates sales tax. The connection is company-wide."),
         qbo === null && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Checking connection…"),
@@ -587,8 +696,7 @@
       ),
 
       // ── Email Templates ────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Email Templates"),
+      h(AccordionSection, { title: "Email Templates" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
           "Customize email templates for quotes, invoices, and crew. Use ", h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{variable}}"), " placeholders for dynamic content. Each template lists the variables it supports below."),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
@@ -671,8 +779,7 @@
 
       // Confirmation dialogs
       // ── Error Log ──────────────────────────────────────────────────────────
-      h("div", { style: sectionStyle },
-        h("div", { style: sectionTitle }, "Error Log"),
+      h(AccordionSection, { title: "Error Log" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
           "Recent application errors are captured here for diagnostics. " + ((window.__LTP_ERROR_LOG || []).length === 0 ? "No errors recorded." : (window.__LTP_ERROR_LOG || []).length + " error" + ((window.__LTP_ERROR_LOG || []).length !== 1 ? "s" : "") + " recorded.")),
         (window.__LTP_ERROR_LOG || []).length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },

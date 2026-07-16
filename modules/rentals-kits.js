@@ -275,6 +275,7 @@
   // ── Kits List View ──────────────────────────────────────────────────────────
   window.RentalsKitsView = function({ kits, equipment, onOpenKit }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
     var [catFilter,  setCatFilter]  = useState("all");
     var [search,     setSearch]     = useState("");
     var [sortMode,   setSortMode]   = useState("az");
@@ -298,25 +299,45 @@
       return a.name.localeCompare(b.name);
     });
 
+    var sortBtnsEl = h("div", { style: { display: "flex", gap: 6 } },
+      [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
+        return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
+          style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      }));
+
+    // Show Archived \u2014 a filter chip like the categories, but tinted GREEN when
+    // active (per request) to read as an inclusion toggle rather than a filter.
+    var showArchivedBtn = h("button", { onClick: function() { setShowArchived(!showArchived); }, className: "ltp-tap",
+      style: { flexShrink: 0, whiteSpace: "nowrap", background: showArchived ? B.success : B.raised, color: showArchived ? B.btnInk : B.textMut, border: "1px solid " + (showArchived ? B.success : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } },
+      showArchived ? "\u2713 Archived" : "Show Archived");
+
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      // Mobile: title + search share the top row (the shell suppresses its own
+      // header for kits on mobile).
+      isMobile && h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12 } },
+        h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Kits"),
+        h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026",
+          style: Object.assign({}, R.INP, { flex: 1, minWidth: 0, borderRadius: "8px", padding: "9px 12px" }) })),
+
+      // Category filters; Show Archived rides the right (mobile), or joins the
+      // search + sort cluster (desktop).
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: isMobile ? "nowrap" : "wrap" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           cats.map(function(c) {
-            return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, c === "all" ? "All" : c);
+            return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, c === "all" ? "All" : c);
           })
         ),
-        h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026", style: Object.assign({}, R.INP, { width: 180 }) }),
-          [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
-            return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
-          }),
-          h("button", { onClick: function() { setShowArchived(!showArchived); },
-            style: { background: showArchived ? B.raised : "transparent", color: B.textMut, border: "1px solid " + (showArchived ? B.border : "transparent"), borderRadius: 4, padding: "4px 10px", fontSize: "11px", cursor: "pointer" } },
-            showArchived ? "Hide Archived" : "Show Archived")
-        )
+        isMobile
+          ? showArchivedBtn
+          : h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+              h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026", style: Object.assign({}, R.INP, { width: 180 }) }),
+              sortBtnsEl,
+              showArchivedBtn)
       ),
+
+      // Mobile: sort row sits below the filters.
+      isMobile && h("div", { style: { display: "flex", marginBottom: 12 } }, sortBtnsEl),
 
       filtered.length === 0
         ? h(window.EmptyState, { text: "No kits match your search." })

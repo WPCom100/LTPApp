@@ -5,6 +5,7 @@
 
   window.RentalsInventoryView = function({ equipment, allocations, onOpenEquipment }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
+    var isMobile = window.LTP_useIsMobile();
 
     var [catFilter, setCatFilter] = useState("all");
     var [search,    setSearch]    = useState("");
@@ -31,14 +32,14 @@
     return h("div", null,
 
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
           cats.map(function(c) {
-            return h("button", { key: c, onClick: function() { setCatFilter(c); },
-              style: { background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: 4, padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, c);
+            return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
+              style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, c);
           })
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search inventory...", style: Object.assign({}, R.INP, { width: 180 }) }),
+          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search inventory...", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 180 }, isMobile ? { borderRadius: "8px", padding: "9px 12px" } : {}) }),
           [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
             return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
               style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
@@ -71,7 +72,9 @@
               ),
               activeOut > 0
                 ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
-                : h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.successBg, color: B.success, border: "1px solid " + B.successBd, padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "available")
+                // The green "available" chip is the default state — redundant on
+                // a phone, so it's dropped there (kept on desktop).
+                : (!isMobile && h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.successBg, color: B.success, border: "1px solid " + B.successBd, padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "available"))
             )
           );
         })

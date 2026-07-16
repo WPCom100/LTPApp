@@ -31,13 +31,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import models, view_tracking
+from backend import models, view_tracking, webpush
 from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
 from backend.routes._shared import (
-    quote_dict, invoice_dict,
+    quote_dict, invoice_dict, doc_display_name,
     load_related, load_settings,
     public_section_items, public_activity, public_settings,
     safe_pdf_filename as _safe_filename,
@@ -217,6 +217,42 @@ def _bump_recipient_pdf(recipient: models.EmailRecipient, now: datetime) -> None
         recipient.pdf_downloaded_at = now
 
 
+async def _notify_doc_viewed(db, kind: str, row, recipient) -> None:
+    """Push-notify a quote/invoice's sender(s) that the client OPENED it. Called
+    only from the view gate above, so it inherits that gate's protections — no
+    bots, no internal previews, and ~once/24h per viewer — which is what keeps
+    "opened" from becoming spam.
+
+    Senders only (fallback_admins=False): an anonymously-shared doc with no
+    recorded sender produces no view ping. A view is lower-signal than an
+    accept/decline/paid, so we don't broadcast it to every admin the way those
+    terminal events do. Fully best-effort — never raises."""
+    try:
+        if kind == "invoice":
+            ref = doc_ref("invoice", {
+                "id": row.id,
+                "invoiceDate": getattr(row, "invoice_date", "") or "",
+                "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+            })
+            url = f"/#/invoices/{row.id}"
+        else:
+            ref = doc_ref("quote", {
+                "id": row.id,
+                "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+                "sentDate": getattr(row, "sent_date", "") or "",
+            })
+            url = f"/#/quotes/{row.id}"
+        name = await doc_display_name(db, row)
+        who = recipient.recipient_email if recipient is not None else "Someone"
+        tail = "" if recipient is not None else " (via the share link)"
+        title = f"{kind.title()} {ref} opened"
+        body = f"{who} opened {name or ('the ' + kind)}{tail}"
+        await webpush.notify_entity(db, kind, row.id, title, body, url, fallback_admins=False)
+    except Exception as e:
+        print(f"[LTP] webpush: {kind} viewed notify failed for "
+              f"{getattr(row, 'id', '?')}: {e}", flush=True)
+
+
 async def _record_open(
     *, db: AsyncSession, entity: _TrackedEntity, kind: str, request: Request,
     optional_user: models.User | None, action: _TrackAction,
@@ -268,6 +304,12 @@ async def _record_open(
             else:
                 _bump_recipient_pdf(recipient, now)
         await db.flush()
+        # A stamped entry means: not a bot, not an internal preview, and past
+        # the ~24h debounce — exactly when a "client opened your doc" push is
+        # worth sending. Only for opens (not PDF downloads). Best-effort; the
+        # helper never raises.
+        if action == "view" and kind in ("quote", "invoice"):
+            await _notify_doc_viewed(db, kind, entity, recipient)
     except Exception as e:
         # Never let tracking break the render. Log loudly so ops can
         # diagnose if the activity feed goes mysteriously quiet.
@@ -299,6 +341,28 @@ async def get_view(
     )
     settings = await load_settings(db)
     return _sanitized_payload(kind, row, company, contact, project, settings)
+
+
+async def _notify_quote_response(db, row, decision: str, client_name: str, comment: str) -> None:
+    """Push-notify the quote's sender(s) — or all admins when it went out as an
+    anonymous share link — that the client accepted/declined. Fully best-effort:
+    a notification failure must never turn a valid client response into a 500."""
+    try:
+        ref = doc_ref("quote", {
+            "id": row.id,
+            "createdDate": row.created_at.isoformat() if getattr(row, "created_at", None) else "",
+            "sentDate": row.sent_date or "",
+        })
+        name = await doc_display_name(db, row)
+        who = client_name or "The client"
+        title = f"Quote {ref} {decision}"
+        body = f"{who} {decision} {name or 'the quote'}"
+        if comment:
+            body += " · “" + comment + "”"
+        await webpush.notify_entity(db, "quote", row.id, title, body, f"/#/quotes/{row.id}")
+    except Exception as e:
+        print(f"[LTP] webpush: quote {decision} notify failed for "
+              f"quote {getattr(row, 'id', '?')}: {e}", flush=True)
 
 
 # ── POST /api/view/{token}/accept ─────────────────────────────────────────
@@ -369,6 +433,7 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     )
     row.status = "accepted"
     await db.flush()
+    await _notify_quote_response(db, row, "accepted", client_name, comment)
     return {"status": "accepted", "activityId": entry["id"]}
 
 
@@ -409,6 +474,7 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
     )
     row.status = "declined"
     await db.flush()
+    await _notify_quote_response(db, row, "declined", client_name, comment)
     return {"status": "declined", "activityId": entry["id"]}
 
 
