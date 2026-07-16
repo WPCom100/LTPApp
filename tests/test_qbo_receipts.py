@@ -346,6 +346,73 @@ async def test_poll_company_contact_resolution():
     _check("resolved company's contact email", captured.get("to") == ["bob@acme.com"])
 
 
+async def test_poll_uses_google_creds_for_gmail():
+    """Regression: the QB API fetch must get the QuickBooks OAuth client while
+    the Gmail send must get the GOOGLE OAuth client. Handing QB creds to Gmail's
+    token endpoint (the old bug) returns invalid_client and every receipt fails
+    even though manual quote sends — which use the Google creds — work."""
+    print("test_poll_uses_google_creds_for_gmail")
+    await _reset_schema()
+    await _seed(sender_has_gmail=True)
+
+    os.environ["QBO_CLIENT_ID"] = "qbo-cid"
+    os.environ["QBO_CLIENT_SECRET"] = "qbo-secret"
+    os.environ["GOOGLE_CLIENT_ID"] = "google-cid"
+    os.environ["GOOGLE_CLIENT_SECRET"] = "google-secret"
+
+    captured = {}
+
+    async def _fake_get_invoice(*args, **kwargs):
+        captured["qb_id"] = kwargs.get("client_id")
+        captured["qb_secret"] = kwargs.get("client_secret")
+        return {"Id": "QB-42", "SyncToken": "4", "Balance": 0, "TotalAmt": 1000.0}
+
+    async def _fake_send(**kwargs):
+        captured["gmail_id"] = kwargs.get("client_id")
+        captured["gmail_secret"] = kwargs.get("client_secret")
+        return {"id": "gmail-msg"}
+
+    quickbooks.get_invoice = AsyncMock(side_effect=_fake_get_invoice)
+    gmail.send = AsyncMock(side_effect=_fake_send)
+
+    summary = await qr.run_receipt_poll()
+    _check("receipt sent with correct creds", summary["sent"] == 1, str(summary))
+    _check("QB fetch got QuickBooks client id", captured.get("qb_id") == "qbo-cid",
+           f"qb_id={captured.get('qb_id')!r}")
+    _check("QB fetch got QuickBooks client secret", captured.get("qb_secret") == "qbo-secret")
+    _check("Gmail send got Google client id", captured.get("gmail_id") == "google-cid",
+           f"gmail_id={captured.get('gmail_id')!r}")
+    _check("Gmail send got Google client secret", captured.get("gmail_secret") == "google-secret")
+    _check("Gmail did NOT receive the QuickBooks client", captured.get("gmail_id") != "qbo-cid")
+
+
+async def test_poll_failed_receipt_not_restamped():
+    """A receipt Gmail keeps rejecting (GmailSendError) is retried each cycle but
+    must log a single email_failed entry — on the transition into 'failed' — not
+    a fresh one every cycle. The old behavior flooded the activity feed."""
+    print("test_poll_failed_receipt_not_restamped")
+    await _reset_schema()
+    inv_id = await _seed(sender_has_gmail=True)
+    quickbooks.get_invoice = AsyncMock(return_value={
+        "Id": "QB-42", "SyncToken": "4", "Balance": 0, "TotalAmt": 1000.0})
+    gmail.send = AsyncMock(side_effect=gmail.GmailSendError(400, "Gmail rejected the message"))
+
+    summary1 = await qr.run_receipt_poll()
+    _check("first cycle records one failure", summary1["failed"] == 1, str(summary1))
+    inv = await _get_invoice(inv_id)
+    _check("status is failed after first cycle", inv.receipt_email_status == "failed")
+    n1 = len([a for a in (inv.activity or []) if a.get("type") == "email_failed"])
+    _check("exactly one email_failed after first cycle", n1 == 1, f"n={n1}")
+
+    # Second cycle: still failing, but must NOT append another email_failed.
+    gmail.send = AsyncMock(side_effect=gmail.GmailSendError(400, "Gmail rejected the message"))
+    await qr.run_receipt_poll()
+    inv = await _get_invoice(inv_id)
+    n2 = len([a for a in (inv.activity or []) if a.get("type") == "email_failed"])
+    _check("still exactly one email_failed after retry", n2 == 1, f"n={n2}")
+    _check("no recipient rows left after failed retries", await _count_recipients(inv_id) == 0)
+
+
 async def test_poll_skipped_when_not_connected():
     print("test_poll_skipped_when_not_connected")
     await _reset_schema()  # no QboConnection row
@@ -370,7 +437,8 @@ def main():
     async_tests = [
         test_poll_sends_receipt_when_paid, test_poll_skips_unpaid,
         test_poll_caches_when_no_gmail, test_poll_caches_on_gmail_reconnect_error,
-        test_poll_company_contact_resolution, test_poll_skipped_when_not_connected,
+        test_poll_company_contact_resolution, test_poll_uses_google_creds_for_gmail,
+        test_poll_failed_receipt_not_restamped, test_poll_skipped_when_not_connected,
     ]
     try:
         for t in sync_tests:

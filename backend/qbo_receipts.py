@@ -24,6 +24,18 @@ later cycle, so it goes out once "the admin's Gmail connection is
 reestablished." Reconciling the invoice to paid still happens regardless (that
 is QuickBooks truth); only the email waits.
 
+Two OAuth clients, never interchangeable
+========================================
+A cycle touches TWO different OAuth apps: the QuickBooks app credentials
+(``QBO_CLIENT_ID``/``QBO_CLIENT_SECRET`` via ``qbo_sync.creds()``) authenticate
+the QB API fetch, and the Google app credentials
+(``GOOGLE_CLIENT_ID``/``GOOGLE_CLIENT_SECRET``) refresh the sender's Gmail token
+for the send — exactly the creds routes/email.py and routes/crew.py use for
+their sends. They are NOT interchangeable: handing the QuickBooks client to
+Google's token endpoint returns ``invalid_client`` ("The OAuth client was not
+found"), which surfaces as a GmailSendError and a failed receipt even though
+manual quote/invoice sends (which use the Google creds) work fine.
+
 Idempotency
 ===========
 ``Invoice.receipt_email_status`` is the state machine (null → pending/failed →
@@ -42,6 +54,7 @@ the shared ``email_shell``, and hand the result to ``gmail.send`` — reusing th
 helpers in routes/email.py and routes/crew.py so an auto-receipt is
 byte-for-byte the same shape as a manually sent one.
 """
+import os
 import secrets
 from datetime import datetime, timezone
 from html import escape
@@ -251,11 +264,18 @@ def _reconcile_paid(invoice: models.Invoice, total_amt: float, now: datetime) ->
 # ── Per-invoice processing ───────────────────────────────────────────────────
 
 async def _send_receipt(db, invoice, sender, settings_data, to_list, cc_list,
-                        subject, inner_html, now, *, client_id, client_secret) -> str:
+                        subject, inner_html, now, *, client_id, client_secret,
+                        prev_status=None) -> str:
     """Mint per-recipient tracking tokens, persist EmailRecipient rows, finalize
     the HTML with the primary recipient's {{viewUrl}}, send via the sender's
     Gmail, and stamp activity — the server-side twin of routes/email.py's send
     block. Returns the new receipt_email_status ('sent' | 'pending' | 'failed').
+
+    ``client_id``/``client_secret`` here are the GOOGLE app credentials (Gmail
+    token refresh), NOT the QuickBooks ones — see the module docstring.
+    ``prev_status`` is the invoice's receipt_email_status before this attempt;
+    it gates the failure stamp so a receipt Gmail keeps rejecting is logged once
+    (on the null/pending → failed transition), not re-stamped every poll cycle.
     """
     from backend.routes.email import _stamp_email_failed, _stamp_email_sent
 
@@ -297,7 +317,12 @@ async def _send_receipt(db, invoice, sender, settings_data, to_list, cc_list,
     except gmail.GmailSendError as e:
         for r in rows:
             await db.delete(r)
-        _stamp_email_failed(invoice, sender, to_list, cc_list, subject, str(e), now)
+        # Stamp the failure once, on the transition into 'failed'. The poller
+        # re-attempts failed receipts every cycle; without this guard a receipt
+        # Gmail keeps rejecting appends an identical email_failed entry on every
+        # cycle and floods the activity feed. Already-failed → retry silently.
+        if prev_status != "failed":
+            _stamp_email_failed(invoice, sender, to_list, cc_list, subject, str(e), now)
         await db.flush()
         return "failed"
 
@@ -311,11 +336,17 @@ async def _send_receipt(db, invoice, sender, settings_data, to_list, cc_list,
 
 
 async def _process_invoice(db, conn, invoice, sender, settings_data, *,
-                           client_id, client_secret, can_email) -> str:
+                           qb_client_id, qb_client_secret,
+                           gmail_client_id, gmail_client_secret, can_email) -> str:
     """Fetch this invoice's QB balance; if paid, reconcile locally and (if able)
-    email the receipt. Returns a short outcome string for the cycle summary."""
+    email the receipt. Returns a short outcome string for the cycle summary.
+
+    Takes BOTH OAuth client pairs: the QuickBooks app creds authenticate the QB
+    API fetch, the Google app creds refresh the sender's Gmail token for the
+    send. They are not interchangeable (module docstring)."""
+    prev_status = invoice.receipt_email_status
     qb_inv = await quickbooks.get_invoice(
-        conn, db, invoice.qb_invoice_id, client_id=client_id, client_secret=client_secret,
+        conn, db, invoice.qb_invoice_id, client_id=qb_client_id, client_secret=qb_client_secret,
     )
     balance = qb_inv.get("Balance")
     total_amt = qb_inv.get("TotalAmt")
@@ -367,9 +398,12 @@ async def _process_invoice(db, conn, invoice, sender, settings_data, *,
         to_list = []
     if not to_list:
         invoice.receipt_email_status = "failed"
-        qbo_sync._stamp(invoice, sender, "email_failed",
-                        "Payment receipt could not be sent — no valid client email on file",
-                        [{"cat": "Reference", "detail": ref}])
+        # Stamp once, on the transition into 'failed' (see _send_receipt) so a
+        # permanently unaddressable invoice doesn't flood the activity feed.
+        if prev_status != "failed":
+            qbo_sync._stamp(invoice, sender, "email_failed",
+                            "Payment receipt could not be sent — no valid client email on file",
+                            [{"cat": "Reference", "detail": ref}])
         await db.flush()
         return "failed"
 
@@ -399,7 +433,7 @@ async def _process_invoice(db, conn, invoice, sender, settings_data, *,
 
     status = await _send_receipt(
         db, invoice, sender, settings_data, to_list, cc_list, subject, inner_html, now,
-        client_id=client_id, client_secret=client_secret,
+        client_id=gmail_client_id, client_secret=gmail_client_secret, prev_status=prev_status,
     )
     invoice.receipt_email_status = status
     await db.flush()
@@ -437,7 +471,11 @@ async def run_receipt_poll() -> dict:
     session sweeper). Returns a small summary dict for logging/tests. Never
     raises for an individual invoice — those are isolated and logged."""
     summary = {"checked": 0, "sent": 0, "pending": 0, "failed": 0, "paid": 0, "skipped": False}
-    client_id, client_secret = qbo_sync.creds()
+    # Two distinct OAuth clients (module docstring): QuickBooks app creds for the
+    # QB API fetch, Google app creds for the Gmail token refresh on the send.
+    qb_client_id, qb_client_secret = qbo_sync.creds()
+    gmail_client_id = os.environ.get("GOOGLE_CLIENT_ID", "")
+    gmail_client_secret = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
     async with async_session() as db:
         try:
@@ -467,7 +505,9 @@ async def run_receipt_poll() -> dict:
             try:
                 outcome = await _process_invoice(
                     db, conn, invoice, sender, settings_data,
-                    client_id=client_id, client_secret=client_secret, can_email=can_email,
+                    qb_client_id=qb_client_id, qb_client_secret=qb_client_secret,
+                    gmail_client_id=gmail_client_id, gmail_client_secret=gmail_client_secret,
+                    can_email=can_email,
                 )
                 # outcome ∈ open | sent | pending | failed | already_sent
                 if outcome != "open":
