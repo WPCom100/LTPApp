@@ -328,6 +328,28 @@ async def test_poll_caches_on_gmail_reconnect_error():
     _check("still reconciled to paid", inv.status == "paid")
 
 
+async def test_poll_caches_on_gmail_auth_error():
+    """A 401 from Google's token endpoint (bad/missing GOOGLE_CLIENT_ID/SECRET)
+    is an app-config problem, not this invoice's fault: cache as pending and
+    retry silently — do NOT stamp an email_failed every cycle."""
+    print("test_poll_caches_on_gmail_auth_error")
+    await _reset_schema()
+    inv_id = await _seed(sender_has_gmail=True)
+    quickbooks.get_invoice = AsyncMock(return_value={
+        "Id": "QB-42", "SyncToken": "4", "Balance": 0, "TotalAmt": 1000.0})
+    gmail.send = AsyncMock(side_effect=gmail.GmailSendError(401, "Google token refresh failed: invalid_client"))
+
+    summary = await qr.run_receipt_poll()
+    _check("auth error cached as pending", summary["pending"] == 1, str(summary))
+    _check("auth error NOT counted as failed", summary["failed"] == 0, str(summary))
+    inv = await _get_invoice(inv_id)
+    _check("receipt cached pending", inv.receipt_email_status == "pending")
+    _check("no email_failed stamped for auth error",
+           not any(a.get("type") == "email_failed" for a in (inv.activity or [])))
+    _check("recipient rows rolled back", await _count_recipients(inv_id) == 0)
+    _check("still reconciled to paid", inv.status == "paid")
+
+
 async def test_poll_company_contact_resolution():
     print("test_poll_company_contact_resolution")
     await _reset_schema()
@@ -492,6 +514,7 @@ def main():
     async_tests = [
         test_poll_sends_receipt_when_paid, test_poll_skips_unpaid,
         test_poll_caches_when_no_gmail, test_poll_caches_on_gmail_reconnect_error,
+        test_poll_caches_on_gmail_auth_error,
         test_poll_company_contact_resolution, test_poll_uses_google_creds_for_gmail,
         test_poll_failed_receipt_not_restamped, test_poll_records_qbo_connection_error,
         test_poll_clears_qbo_connection_error_on_clean_cycle,

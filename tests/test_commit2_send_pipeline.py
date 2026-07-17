@@ -346,6 +346,38 @@ async def test_refresh_invalid_grant_raises_reconnect():
     _check("stored tokens cleared", u.gmail_refresh_token is None and u.gmail_access_token is None)
 
 
+async def test_refresh_401_surfaces_oauth_error_code():
+    print("test_refresh_401_surfaces_oauth_error_code")
+    u = models.User(google_sub="g4b", email="x@y.com", name="X")
+    u.gmail_refresh_token = crypto.encrypt_token("some-refresh")
+    u.gmail_token_expires_at = datetime.now(timezone.utc) - timedelta(minutes=5)
+
+    body = '{"error": "invalid_client", "error_description": "The OAuth client was not found."}'
+    fake_resp = MagicMock()
+    fake_resp.status_code = 401
+    fake_resp.text = body
+    fake_resp.json = MagicMock(return_value={
+        "error": "invalid_client", "error_description": "The OAuth client was not found."})
+    client = MagicMock()
+    client.post = AsyncMock(return_value=fake_resp)
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    raised = None
+    try:
+        await gmail.refresh_if_needed(
+            u, db, client_id="cid", client_secret="csec", httpx_client=client,
+        )
+    except gmail.GmailSendError as e:
+        raised = e
+    _check("401 refresh raises GmailSendError", raised is not None)
+    _check("GmailSendError carries status 401", getattr(raised, "status", None) == 401)
+    # The Settings Error Log should name the real cause, not a generic message.
+    _check("error message names the OAuth error code", "invalid_client" in str(raised))
+    # A 401 is an app-credential problem, not a user revoke — tokens must stay.
+    _check("tokens NOT cleared on 401", u.gmail_refresh_token is not None)
+
+
 async def test_refresh_missing_token_raises_reconnect():
     print("test_refresh_missing_token_raises_reconnect")
     u = models.User(google_sub="g5", email="x@y.com", name="X")
@@ -609,6 +641,7 @@ def main() -> int:
     asyncio.run(test_refresh_calls_google_when_expired())
     asyncio.run(test_refresh_persists_rotated_refresh_token())
     asyncio.run(test_refresh_invalid_grant_raises_reconnect())
+    asyncio.run(test_refresh_401_surfaces_oauth_error_code())
     asyncio.run(test_refresh_missing_token_raises_reconnect())
     asyncio.run(test_send_success())
     asyncio.run(test_send_401_triggers_one_retry())

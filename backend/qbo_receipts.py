@@ -317,10 +317,16 @@ async def _send_receipt(db, invoice, sender, settings_data, to_list, cc_list,
     except gmail.GmailSendError as e:
         for r in rows:
             await db.delete(r)
-        # Stamp the failure once, on the transition into 'failed'. The poller
-        # re-attempts failed receipts every cycle; without this guard a receipt
-        # Gmail keeps rejecting appends an identical email_failed entry on every
-        # cycle and floods the activity feed. Already-failed → retry silently.
+        # Auth / transport failures (401 invalid_client from bad or missing
+        # GOOGLE_CLIENT_ID/SECRET, 403, or a 5xx/outage) are NOT this invoice's
+        # fault and clear once the config or outage is fixed — cache and retry
+        # silently like a reconnect, so a broken app credential doesn't stamp an
+        # email_failed on every 2-hour cycle. Only a genuine per-message
+        # rejection (a 4xx on the send itself, e.g. a bad address) is a real
+        # per-invoice failure worth recording — stamped once, on entry to failed.
+        if e.status in (401, 403) or 500 <= e.status < 600:
+            await db.flush()
+            return "pending"
         if prev_status != "failed":
             _stamp_email_failed(invoice, sender, to_list, cc_list, subject, str(e), now)
         await db.flush()
