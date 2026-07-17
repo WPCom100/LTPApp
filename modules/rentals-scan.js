@@ -88,6 +88,33 @@
     return _scannerPromise;
   }
 
+  // ── Label OCR fallback (Claude via the backend) ─────────────────────────────
+  // When the barcode decoders miss, the serial PRINTED under the bars usually
+  // still reads — so frames/stills can fall back to /api/scan/ocr, where the
+  // server asks Claude to extract the printed code. Feature-flagged server-side
+  // on ANTHROPIC_API_KEY; the status probe below gates every OCR affordance so
+  // the UI never offers what the deploy can't serve. The key never reaches the
+  // browser.
+  var OCR_STATUS_URL = "/api/scan/ocr/status";
+  var OCR_URL = "/api/scan/ocr";
+  var _ocrAvailable = null;   // null = not yet probed; boolean thereafter (per page load)
+  function checkOcrAvailable() {
+    if (_ocrAvailable !== null) return Promise.resolve(_ocrAvailable);
+    return fetch(OCR_STATUS_URL, { credentials: "same-origin" })
+      .then(function(r) { return r.ok ? r.json() : { available: false }; })
+      .then(function(d) { _ocrAvailable = !!(d && d.available); return _ocrAvailable; })
+      .catch(function() { return false; });   // transient failure: don't cache, just skip OCR for now
+  }
+  function ocrRead(jpegB64) {
+    return fetch(OCR_URL, {
+      method: "POST", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image: jpegB64, mediaType: "image/jpeg" }),
+    }).then(function(r) { return r.ok ? r.json() : null; })
+      .then(function(d) { return (d && d.code) ? d.code : null; })
+      .catch(function() { return null; });
+  }
+
   // ── Audible + haptic feedback (best-effort; silently no-ops if unsupported) ─
   var _audioCtx = null;
   function tone(freq, ms, type) {
@@ -180,6 +207,12 @@
     var attempts = attemptsPair[0], setAttempts = attemptsPair[1];
     var camLabelPair = useState("");           // active camera's human label (e.g. "Back Ultra Wide Camera")
     var camLabel = camLabelPair[0], setCamLabel = camLabelPair[1];
+    var ocrOnPair = useState(false);           // server has ANTHROPIC_API_KEY → label-OCR affordances active
+    var ocrOn = ocrOnPair[0], setOcrOn = ocrOnPair[1];
+    var ocrBusyPair = useState(false);         // a live-view escalation call is in flight (viewfinder indicator)
+    var ocrBusy = ocrBusyPair[0], setOcrBusy = ocrBusyPair[1];
+    var shutterPair = useState(false);         // in-viewfinder capture decode in flight
+    var shutterBusy = shutterPair[0], setShutterBusy = shutterPair[1];
 
     var videoRef = useRef(null);
     var readerRef = useRef(null);              // ZXing-C++ WASM reader (fallback path; has readBarcodes)
@@ -194,6 +227,11 @@
     var camsRef = useRef([]);                  // videoinput deviceIds (for the camera-switch button)
     var camIdxRef = useRef(0);                 // index into camsRef of the active camera
     var fileInputRef = useRef(null);           // hidden <input type=file capture> for the Snap path
+    var ocrOnRef = useRef(false);              // mirrors ocrOn for the decode ticks (no re-render reads)
+    var ocrBusyRef = useRef(false);            // one escalation call at a time
+    var stallStartRef = useRef(0);             // when the current run of failed live decodes began
+    var lastOcrAtRef = useRef(0);              // last escalation attempt (min-interval throttle)
+    var captureBusyRef = useRef(false);        // shutter capture in progress — live ticks pause
     var lastCodeRef = useRef("");
     var lastTimeRef = useRef(0);
     var cancelledRef = useRef(false);
@@ -210,6 +248,9 @@
       var code = R.cleanScanCode ? R.cleanScanCode(rawCode) : (rawCode == null ? "" : String(rawCode)).trim();
       if (!code) return;
       var now = Date.now();
+      // Something readable is in view — the live loop isn't stalled, so push
+      // the Claude-escalation window out (see maybeEscalate).
+      stallStartRef.current = now;
       // The camera re-reads the same code every frame it stays in view — and a
       // snap of the label the live loop just caught can race the dup guard's
       // stale closure — so debounce same-code repeats within 1.5 s for BOTH
@@ -228,7 +269,7 @@
       setSessionUnits(function(prev) { return prev.concat([unit]); });
       onAddUnit(unit);
       feedbackOk();
-      setFlash({ kind: "ok", code: code, at: now });
+      setFlash({ kind: "ok", code: code + (source === "ocr" ? "  ·  🤖 read from label text" : ""), at: now });
     };
 
     function removeSessionUnit(id) {
@@ -268,16 +309,27 @@
     }
 
     // Draw a source rect of a video/image element to the reusable offscreen
-    // canvas (downscaled so the long side is at most maxSide) and return its
-    // ImageData. The single primitive behind both the live loop and Snap mode.
-    function drawToImageData(el, sx, sy, sw, sh, maxSide) {
+    // canvas (downscaled so the long side is at most maxSide). The single
+    // primitive behind the live loop, Snap mode, and the OCR upload — callers
+    // must consume the canvas (getImageData / toDataURL) before drawing again.
+    function drawToCanvas(el, sx, sy, sw, sh, maxSide) {
       var scale = (maxSide && Math.max(sw, sh) > maxSide) ? maxSide / Math.max(sw, sh) : 1;
       var dw = Math.max(1, Math.round(sw * scale)), dh = Math.max(1, Math.round(sh * scale));
       var canvas = cropCanvasRef.current || (cropCanvasRef.current = document.createElement("canvas"));
       canvas.width = dw; canvas.height = dh;
-      var ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(el, sx, sy, sw, sh, 0, 0, dw, dh);
-      return ctx.getImageData(0, 0, dw, dh);
+      canvas.getContext("2d", { willReadFrequently: true }).drawImage(el, sx, sy, sw, sh, 0, 0, dw, dh);
+      return canvas;
+    }
+
+    function drawToImageData(el, sx, sy, sw, sh, maxSide) {
+      var canvas = drawToCanvas(el, sx, sy, sw, sh, maxSide);
+      return canvas.getContext("2d", { willReadFrequently: true }).getImageData(0, 0, canvas.width, canvas.height);
+    }
+
+    // JPEG base64 (no data: prefix) for the OCR upload — ~1280px @ q0.72 keeps
+    // a frame around 100-200 KB, plenty for Claude to read printed text.
+    function canvasToJpegB64(canvas) {
+      return canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
     }
 
     // Full current frame, downscaled to maxSide.
@@ -319,8 +371,41 @@
 
     // Native path: the platform BarcodeDetector reads the FULL frame — it's
     // rotation-invariant and strong on small/angled/glare codes.
+    // Live-view Claude escalation. When the user has clearly been AIMING at
+    // something that won't decode (>2.5s of continuous misses), send ONE
+    // reticle-crop frame to the label-OCR endpoint and let Claude read the
+    // printed serial. Cost stays negligible by construction: never concurrent,
+    // ≥4s between attempts, only while stalled, stops the moment anything
+    // reads (every accepted code resets stallStartRef in handleRef).
+    function maybeEscalate() {
+      if (!ocrOnRef.current || ocrBusyRef.current || captureBusyRef.current) return;
+      if (cancelledRef.current || !loopRef.current) return;
+      var now = Date.now();
+      if (!stallStartRef.current) { stallStartRef.current = now; return; }
+      if (now - stallStartRef.current < 2500) return;
+      if (now - lastOcrAtRef.current < 4000) return;
+      var v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      var b64;
+      try {
+        var vw = v.videoWidth, vh = v.videoHeight;
+        var sx = Math.floor(vw * 0.10), sy = Math.floor(vh * 0.20);
+        b64 = canvasToJpegB64(drawToCanvas(v, sx, sy, vw - sx * 2, vh - sy * 2, 1280));
+      } catch (e) { return; }
+      lastOcrAtRef.current = now;
+      ocrBusyRef.current = true;
+      setOcrBusy(true);
+      ocrRead(b64).then(function(code) {
+        ocrBusyRef.current = false;
+        if (cancelledRef.current) return;
+        setOcrBusy(false);
+        stallStartRef.current = Date.now();      // fresh stall window either way
+        if (code && loopRef.current && handleRef.current) handleRef.current(code, "ocr");
+      });
+    }
+
     function tickNative() {
-      if (busyRef.current || !detectorRef.current) return;
+      if (busyRef.current || captureBusyRef.current || !detectorRef.current) return;
       var v = videoRef.current;
       if (!v || !v.videoWidth) return;
       busyRef.current = true;
@@ -331,6 +416,7 @@
       detectorRef.current.detect(v).then(function(codes) {
         busyRef.current = false;
         if (codes && codes.length) onHit(codes[0].rawValue);
+        else maybeEscalate();
       }).catch(function() { busyRef.current = false; });
     }
 
@@ -343,7 +429,7 @@
     // LocalAverage (low-contrast/unevenly-lit codes) on the same pixels, so
     // within ~1s of aiming, four distinct treatments have seen the label.
     function tickWasm() {
-      if (busyRef.current || !readerRef.current) return;
+      if (busyRef.current || captureBusyRef.current || !readerRef.current) return;
       tickNRef.current++;
       var imgData = (tickNRef.current % 2 === 0) ? grabReticleCrop() : grabFrame(2800);
       if (!imgData) return;
@@ -358,6 +444,7 @@
         return reader.readBarcodes(imgData, WASM_OPTS_LOCAL).then(function(r2) {
           busyRef.current = false;
           if (r2 && r2.length && r2[0].text) onHit(r2[0].text);
+          else maybeEscalate();
         });
       }).catch(function() { busyRef.current = false; });
     }
@@ -450,6 +537,9 @@
         if (pp && pp.catch) pp.catch(function() {});
         tuneTrack(stream);
         refreshCameraList();
+        // Fresh stall window: the Claude escalation timer starts counting from
+        // camera start (and re-arms on every successful read / lens switch).
+        stallStartRef.current = Date.now();
         setupNativeDetector().then(function(detector) {
           if (cancelledRef.current) { stopCamera(); return; }
           if (detector) {
@@ -570,26 +660,19 @@
       return viaImg();
     }
 
-    function decodePhoto(file) {
-      setSnapBusy(true);
-      setCameraError("");
-      var photo = null;
-      loadPhoto(file).then(function(p) {
-        photo = p;
-        if (!p.w || !p.h) throw new Error("Couldn't read that photo.");
-        // Free first pass: the platform BarcodeDetector (Android), which reads
-        // the still without downloading the ~1 MB WASM decoder — and keeps Snap
-        // working offline on those devices. Misses fall through to the ladder.
-        return setupNativeDetector().then(function(det) {
-          if (!det) return null;
-          return det.detect(p.el).then(function(codes) {
-            return (codes && codes.length && codes[0].rawValue) ? codes[0].rawValue : null;
-          }).catch(function() { return null; });
-        });
+    // Decode a loaded still ({el, w, h}) through the full battery: the free
+    // platform BarcodeDetector first (Android — no 1 MB WASM download, works
+    // offline), then the WASM (scale, binarizer) ladder. Resolves the barcode
+    // text or null. Shared by Snap mode and the in-viewfinder shutter.
+    function runStillLadder(p) {
+      return setupNativeDetector().then(function(det) {
+        if (!det) return null;
+        return det.detect(p.el).then(function(codes) {
+          return (codes && codes.length && codes[0].rawValue) ? codes[0].rawValue : null;
+        }).catch(function() { return null; });
       }).then(function(nativeText) {
         if (nativeText) return nativeText;
         return ensureScanner().then(function(zxw) {
-          var p = photo;
           var i = 0;
           function nextPass() {
             if (i >= SNAP_PASSES.length) return null;    // ladder exhausted — no code found
@@ -607,17 +690,42 @@
           }
           return nextPass();
         });
+      });
+    }
+
+    // Last resort for a still: Claude reads the serial PRINTED on the label
+    // (the barcode ladder already came up empty). Resolves the code or null;
+    // instantly null when the server has no key configured.
+    function ocrStill(p) {
+      if (!ocrOnRef.current) return Promise.resolve(null);
+      var b64;
+      try { b64 = canvasToJpegB64(drawToCanvas(p.el, 0, 0, p.w, p.h, 1280)); }
+      catch (e) { return Promise.resolve(null); }
+      return ocrRead(b64);
+    }
+
+    function decodePhoto(file) {
+      setSnapBusy(true);
+      setCameraError("");
+      var photo = null;
+      loadPhoto(file).then(function(p) {
+        photo = p;
+        if (!p.w || !p.h) throw new Error("Couldn't read that photo.");
+        return runStillLadder(p);
       }).then(function(text) {
+        if (text) return { code: text, via: "photo" };
+        return ocrStill(photo).then(function(code) { return { code: code, via: "ocr" }; });
+      }).then(function(res) {
         if (photo) photo.done();
         // Session closed while the decode was in flight — drop the result
         // rather than adding a unit to a dismissed session.
         if (cancelledRef.current) return;
         setSnapBusy(false);
-        if (text) {
-          if (handleRef.current) handleRef.current(text, "photo");
+        if (res && res.code) {
+          if (handleRef.current) handleRef.current(res.code, res.via);
         } else {
           feedbackDup();
-          setFlash({ kind: "err", code: "No barcode found in that photo — fill more of the frame with the label and retake.", at: Date.now() });
+          setFlash({ kind: "err", code: "No " + (ocrOnRef.current ? "barcode or readable code" : "barcode") + " found in that photo — fill more of the frame with the label and retake.", at: Date.now() });
         }
       }).catch(function(e) {
         if (photo) photo.done();
@@ -631,6 +739,75 @@
       var f = e.target.files && e.target.files[0];
       e.target.value = "";                       // allow snapping the same label twice in a row
       if (f) decodePhoto(f);
+    }
+
+    // Copy the current video frame to its OWN canvas (not the shared one — the
+    // ladder redraws that per pass) and wrap it like a loaded photo.
+    function grabVideoStill() {
+      var v = videoRef.current;
+      if (!v || !v.videoWidth) return null;
+      var c = document.createElement("canvas");
+      c.width = v.videoWidth; c.height = v.videoHeight;
+      c.getContext("2d").drawImage(v, 0, 0);
+      return { el: c, w: c.width, h: c.height, done: function() {} };
+    }
+
+    // In-viewfinder shutter: one deliberate tap decodes what you SEE — the full
+    // still ladder plus the Claude fallback — without leaving the app. Where
+    // ImageCapture exists (Android Chrome) takePhoto() returns a true still at
+    // photo resolution; elsewhere (iOS Safari) the current video frame is used.
+    // For tiny labels 📸 Snap is still stronger: only the native camera app
+    // gets macro-lens focus.
+    function captureFrame() {
+      if (captureBusyRef.current || cancelledRef.current) return;
+      var v = videoRef.current;
+      if (!v || !v.videoWidth) return;
+      captureBusyRef.current = true;             // live ticks pause while we work
+      setShutterBusy(true);
+      var track = null;
+      try { track = streamRef.current && streamRef.current.getVideoTracks()[0]; } catch (e) {}
+      var stillP;
+      if (window.ImageCapture && track) {
+        stillP = new Promise(function(resolve) {
+          var settled = false;
+          function fallback() { if (!settled) { settled = true; resolve(grabVideoStill()); } }
+          try {
+            new window.ImageCapture(track).takePhoto().then(function(blob) {
+              if (settled) return; settled = true;
+              loadPhoto(blob).then(resolve, function() { resolve(grabVideoStill()); });
+            }, fallback);
+            setTimeout(fallback, 2000);          // takePhoto can hang on some devices
+          } catch (e) { fallback(); }
+        });
+      } else {
+        stillP = Promise.resolve(grabVideoStill());
+      }
+      var photo = null;
+      stillP.then(function(p) {
+        photo = p;
+        if (!p) return null;
+        return runStillLadder(p).then(function(text) {
+          if (text) return { code: text, via: "photo" };
+          return ocrStill(p).then(function(code) { return { code: code, via: "ocr" }; });
+        });
+      }).then(function(res) {
+        if (photo && photo.done) photo.done();
+        captureBusyRef.current = false;
+        if (cancelledRef.current) return;
+        setShutterBusy(false);
+        stallStartRef.current = Date.now();      // a deliberate capture resets the escalation clock
+        if (res && res.code) {
+          if (handleRef.current) handleRef.current(res.code, res.via);
+        } else {
+          feedbackDup();
+          setFlash({ kind: "err", code: "Couldn't read that capture — hold steady and fill the box, or use 📸 Snap photo.", at: Date.now() });
+        }
+      }).catch(function() {
+        if (photo && photo.done) photo.done();
+        captureBusyRef.current = false;
+        if (cancelledRef.current) return;
+        setShutterBusy(false);
+      });
     }
 
     function openSnap() {
@@ -647,6 +824,13 @@
     // Stop the camera when the session unmounts (route change / Done / Close).
     useEffect(function() {
       cancelledRef.current = false;
+      // One cheap probe per page load: is label OCR (Claude) configured
+      // server-side? Gates the escalation, the snap fallback, and the UI copy.
+      checkOcrAvailable().then(function(ok) {
+        if (cancelledRef.current) return;
+        ocrOnRef.current = ok;
+        setOcrOn(ok);
+      });
       return function() { cancelledRef.current = true; stopCamera(); };
     }, []); // eslint-disable-line
 
@@ -703,7 +887,18 @@
         // Lens switch — on iPhone the main lens can't focus close; the
         // ultra-wide can. Cycling cameras is often what fixes close-up blur.
         camCount > 1 && h("button", { onClick: switchCamera, title: "Switch camera",
-          style: { position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, "🔄")
+          style: { position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, "🔄"),
+        // Shutter — capture what you see and decode it hard (full still ladder
+        // + Claude fallback) without leaving the app.
+        h("button", { onClick: captureFrame, disabled: shutterBusy, title: "Capture & read", "aria-label": "Capture and read barcode",
+          style: { position: "absolute", left: "50%", bottom: 10, transform: "translateX(-50%)",
+                   width: 54, height: 54, borderRadius: "50%", padding: 0,
+                   background: shutterBusy ? "rgba(255,255,255,0.35)" : "rgba(255,255,255,0.92)",
+                   border: "4px solid rgba(0,0,0,0.35)", boxShadow: "0 0 0 3px rgba(255,255,255,0.6)",
+                   cursor: shutterBusy ? "default" : "pointer" } }),
+        // Busy indicator: a shutter decode or a live Claude escalation in flight.
+        (shutterBusy || ocrBusy) && h("div", { style: { position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)", background: "rgba(0,0,0,0.65)", color: "#fff", borderRadius: 8, padding: "4px 12px", fontSize: "11px", fontWeight: 600, whiteSpace: "nowrap" } },
+          shutterBusy ? "Reading capture…" : "🤖 Reading label text…")
       ),
       // Zoom slider — lets the user fill the frame with a small label instead of
       // pushing the phone closer than it can focus. Shown only where the camera
@@ -717,10 +912,12 @@
       ),
       cameraOn && h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center", lineHeight: 1.5 } },
         (camLabel ? "Lens: " + camLabel + " · " : "") +
-        "Center the barcode in the box and hold steady. Blurry up close? Back up a few inches" +
+        "Center the barcode in the box and hold steady" +
+        (ocrOn ? " — if the bars won't scan, the printed serial is read automatically" : "") +
+        ". Tap the ⬤ shutter to capture & read what you see. Blurry up close? Back up a few inches" +
         (camCount > 1 ? " or tap 🔄 to switch lenses" : "") +
         (torchSupported ? "; the 🔦 flash helps glossy labels" : "") +
-        ". Won't read? 📸 Snap photo below is the sure path."),
+        ". 📸 Snap photo below is the sure path."),
       // Start camera + Snap photo, side by side. Snap works with or without the
       // live camera running (it opens the NATIVE camera, which focuses close).
       h("div", { style: { display: "flex", gap: 8 } },
@@ -757,6 +954,7 @@
       ["Zoom", zoomCaps ? ((Math.round(zoomVal * 10) / 10) + "× (max " + zoomCaps.max + "×)") : "unsupported", false],
       ["Cameras found", camCount ? String(camCount) : "—", false],
       ["Live decode attempts", String(attempts), false],
+      ["Label OCR (Claude)", ocrOn ? "available" : "not configured", false],
     ];
     var diagnostics = h("div", null,
       h("button", { onClick: function() { var nv = !showDiag; showDiagRef.current = nv; setShowDiag(nv); if (nv) setAttempts(attemptsRef.current); },

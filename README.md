@@ -142,6 +142,8 @@ shell exports.
 | `LTP_VAPID_PRIVATE_KEY` | **Required for push** | — | VAPID private key (base64url 32-byte scalar) that signs each push. **Secret — never sent to the browser.** Generated alongside the public key. |
 | `LTP_VAPID_SUBJECT` | **Required for push** | — | `mailto:you@yourdomain.com` — a contact the push services can reach about delivery problems. All three VAPID vars must be present for push to send; missing any one makes push a no-op. |
 | `LTP_APP_VARIANT` | Optional | (none) | Set to `dev` on a non-production deployment to give its installed PWA a distinct home-screen icon (the "DEV"-tagged variant) and name ("LTP Dev"), so it's unmistakable next to production ("LTP"). Unset = normal production identity. See [Dev app identity](#dev-app-identity). |
+| `ANTHROPIC_API_KEY` | Optional | (none) | Enables label OCR in the barcode scan-import flow: when the barcode won't decode (glare/angle), the frame is sent to Claude to read the serial *printed* on the label. Unset = the feature hides itself entirely. **Secret — server-side only.** Get a key at console.anthropic.com; usage is roughly $2–3 per 1,000 fallback reads. |
+| `LTP_OCR_MODEL` | Optional | `claude-haiku-4-5-20251001` | Overrides the Claude model used for label OCR. Haiku is fast and cheap; only change if Anthropic deprecates the default. |
 
 ## Email feature deploy notes
 

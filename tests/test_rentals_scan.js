@@ -108,6 +108,11 @@ ok("S6 scan module lazy-loads the vendored WASM decoder",
 ok("S6b snap mode: native-camera capture input + photo decode ladder",
    scan.indexOf('capture: "environment"') !== -1 && scan.indexOf("decodePhoto") !== -1 && scan.indexOf("SNAP_PASSES") !== -1);
 ok("S6c camera switching for close-focus lenses", scan.indexOf("switchCamera") !== -1 && scan.indexOf("enumerateDevices") !== -1);
+ok("S6d label OCR wired (status probe + live escalation + snap fallback)",
+   scan.indexOf("/api/scan/ocr/status") !== -1 && scan.indexOf("/api/scan/ocr") !== -1 &&
+   scan.indexOf("maybeEscalate") !== -1 && scan.indexOf("ocrStill") !== -1);
+ok("S6e in-viewfinder shutter capture (ImageCapture still or frame grab)",
+   scan.indexOf("captureFrame") !== -1 && scan.indexOf("ImageCapture") !== -1 && scan.indexOf("grabVideoStill") !== -1);
 
 const shell = src("modules/rentals-shell.js");
 ok("S7 shell routes the scan action", shell.indexOf('action === "scan"') !== -1);

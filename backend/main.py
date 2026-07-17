@@ -19,6 +19,7 @@ from backend.routes.crew import crew_public_router, crew_admin_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.routes.push import push_router
+from backend.routes.scan import scan_router
 from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
 
@@ -510,6 +511,10 @@ app.include_router(qbo_router)
 # Web Push: session-gated subscription management under /api/push/*. Sending
 # lives in backend/webpush.py, fired inline from event sites. See backend/routes/push.py.
 app.include_router(push_router)
+# Label OCR: session-gated Claude fallback for the barcode scan-import flow —
+# reads the serial printed under a barcode when the bars won't decode. Feature-
+# flagged on ANTHROPIC_API_KEY. See backend/routes/scan.py.
+app.include_router(scan_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────
