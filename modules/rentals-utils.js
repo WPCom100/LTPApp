@@ -193,6 +193,17 @@
   // Kept as plain functions (no React/DOM) so they're unit-testable in Node
   // (tests/test_rentals_scan.js) and reusable by the future check-in/out flow.
 
+  // Normalize a scanned/typed code before it touches state or the DB. Scanned
+  // text is the one string a NON-user can author (anyone can print a QR sticker
+  // and have staff scan it), so: trim, strip control + bidi-override characters
+  // (which can visually spoof adjacent UI), and cap the length — real asset
+  // tags are tens of characters; a QR can carry kilobytes.
+  function cleanScanCode(code) {
+    var c = (code == null ? "" : String(code)).trim();
+    c = c.replace(/[\u0000-\u001F\u007F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+    return c.slice(0, 128);
+  }
+
   // Build one serialized-unit record from a scanned/typed code + the active
   // "persistent info" for the current batch. Per the product decision the
   // scanned value lands in `barcode` (asset #); `serial` stays blank/editable.
@@ -208,7 +219,7 @@
     return {
       id: nextId,
       serial: "",
-      barcode: (code == null ? "" : String(code)).trim(),
+      barcode: cleanScanCode(code),
       purchaseDate: info.purchaseDate || "",
       purchaseVendorId: info.purchaseVendorId || null,
       purchaseCost: cost,
@@ -248,6 +259,7 @@
     SerialSearch:  SerialSearch,
     VendorSearch:  VendorSearch,
     buildScannedUnit: buildScannedUnit,
+    cleanScanCode:    cleanScanCode,
     isDuplicateCode:  isDuplicateCode,
     batchLabel:       batchLabel,
     ALLOC_COLORS:  ALLOC_COLORS,

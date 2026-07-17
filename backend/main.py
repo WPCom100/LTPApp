@@ -247,14 +247,17 @@ _IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startsw
 # allowlist (SECURITY_REVIEW.md M2). Covers Google profile avatars, the storage
 # host used by email-signature icons in the Send preview, and the LTP logo
 # host. `data:` stays for canvas signatures + base64-pasted logos (a data: URL
-# issues no network request, so it is not an exfil vector). A deploy whose
-# Settings.logoUrl lives on another host adds it via LTP_IMG_SRC_EXTRA
-# (space-separated origins). style-src keeps 'unsafe-inline' — React inline
-# styles and the sanitized email preview rely on it; removing it needs a nonce
-# architecture (tracked as future work).
+# issues no network request, so it is not an exfil vector). `blob:` likewise
+# references data already held by the page — it's the <img> fallback for the
+# barcode scan-import Snap path (modules/rentals-scan.js decodePhoto), which
+# loads the user's just-taken photo; primary path is createImageBitmap and
+# never touches img-src. A deploy whose Settings.logoUrl lives on another host
+# adds it via LTP_IMG_SRC_EXTRA (space-separated origins). style-src keeps
+# 'unsafe-inline' — React inline styles and the sanitized email preview rely
+# on it; removing it needs a nonce architecture (tracked as future work).
 _IMG_SRC_EXTRA = os.environ.get("LTP_IMG_SRC_EXTRA", "").strip()
 _IMG_SRC = (
-    "img-src 'self' data: "
+    "img-src 'self' data: blob: "
     "https://*.googleusercontent.com https://googleusercontent.com "
     "https://storage.googleapis.com "
     "https://www.luminarytechnology.productions https://luminarytechnology.productions"

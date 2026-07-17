@@ -15,8 +15,9 @@
 // stages them in its local units state until the form is saved).
 //
 // Depends on: rentals-utils.js (LTP_RENTALS.{VendorSearch,buildScannedUnit,
-//   isDuplicateCode,batchLabel,Field,INP,LBL}), components/ui.js (LTPModal, Btn),
-//   theme.js (LTP_THEME), and the vendored ZXing decoder (assets/vendor/zxing.min.js).
+//   cleanScanCode,isDuplicateCode,batchLabel,Field,INP,LBL}), components/ui.js
+//   (LTPModal, Btn), theme.js (LTP_THEME), and the vendored ZXing-C++ WASM
+//   decoder (assets/vendor/zxing-wasm-reader.js + zxing_reader.wasm).
 (function() {
   var h = React.createElement;
   var useState = React.useState, useRef = React.useRef, useEffect = React.useEffect;
@@ -169,8 +170,16 @@
     var typed = typedPair[0], setTyped = typedPair[1];
     var diagPair = useState(false);
     var showDiag = diagPair[0], setShowDiag = diagPair[1];
-    var decoderPair = useState("");            // "native" | "zxing" | "" — which decoder is running
+    var decoderPair = useState("");            // "native" | "wasm" | "" — which decoder is running
     var decoderName = decoderPair[0], setDecoderName = decoderPair[1];
+    var snapBusyPair = useState(false);        // true while a snapped photo is being decoded
+    var snapBusy = snapBusyPair[0], setSnapBusy = snapBusyPair[1];
+    var camCountPair = useState(0);            // number of video-input devices (shows the switch button when >1)
+    var camCount = camCountPair[0], setCamCount = camCountPair[1];
+    var attemptsPair = useState(0);            // live decode attempts (diagnostics: proves the loop is running)
+    var attempts = attemptsPair[0], setAttempts = attemptsPair[1];
+    var camLabelPair = useState("");           // active camera's human label (e.g. "Back Ultra Wide Camera")
+    var camLabel = camLabelPair[0], setCamLabel = camLabelPair[1];
 
     var videoRef = useRef(null);
     var readerRef = useRef(null);              // ZXing-C++ WASM reader (fallback path; has readBarcodes)
@@ -179,6 +188,12 @@
     var loopRef = useRef(null);                // decode-loop interval id
     var busyRef = useRef(false);               // guards the async native detect() against overlap
     var cropCanvasRef = useRef(null);          // reusable offscreen canvas for the centre crop
+    var tickNRef = useRef(0);                  // live-loop tick counter (alternates frame treatments)
+    var attemptsRef = useRef(0);               // raw attempt count — mirrored to state only when diagnostics is open
+    var showDiagRef = useRef(false);           // lets the decode ticks see diagnostics visibility without re-rendering
+    var camsRef = useRef([]);                  // videoinput deviceIds (for the camera-switch button)
+    var camIdxRef = useRef(0);                 // index into camsRef of the active camera
+    var fileInputRef = useRef(null);           // hidden <input type=file capture> for the Snap path
     var lastCodeRef = useRef("");
     var lastTimeRef = useRef(0);
     var cancelledRef = useRef(false);
@@ -192,13 +207,15 @@
     // state rather than a stale closure.
     var handleRef = useRef(null);
     handleRef.current = function(rawCode, source) {
-      var code = (rawCode == null ? "" : String(rawCode)).trim();
+      var code = R.cleanScanCode ? R.cleanScanCode(rawCode) : (rawCode == null ? "" : String(rawCode)).trim();
       if (!code) return;
       var now = Date.now();
-      // The camera re-reads the same code every frame it stays in view; ignore
-      // repeats within 1.5 s. Manual/wedge entries are deliberate, so they skip
+      // The camera re-reads the same code every frame it stays in view — and a
+      // snap of the label the live loop just caught can race the dup guard's
+      // stale closure — so debounce same-code repeats within 1.5 s for BOTH
+      // camera and photo sources. Manual/wedge entries are deliberate and skip
       // the debounce (but still get duplicate-checked below).
-      if (source === "camera" && code === lastCodeRef.current && (now - lastTimeRef.current) < 1500) return;
+      if (source !== "typed" && code === lastCodeRef.current && (now - lastTimeRef.current) < 1500) return;
       lastCodeRef.current = code; lastTimeRef.current = now;
 
       var known = baselineRef.current.concat(sessionUnits);
@@ -250,23 +267,45 @@
       } catch (e) {}
     }
 
-    // Grab the current frame as ImageData, downscaled so the long side is at most
-    // `maxSide` — keeps WASM decode fast while leaving plenty of resolution (the
-    // decoder reads a small tag even when it's a modest fraction of the frame).
-    function grabFrame(maxSide) {
-      var v = videoRef.current;
-      if (!v || !v.videoWidth || !v.videoHeight) return null;
-      var vw = v.videoWidth, vh = v.videoHeight;
-      var scale = (maxSide && Math.max(vw, vh) > maxSide) ? maxSide / Math.max(vw, vh) : 1;
-      var dw = Math.max(1, Math.round(vw * scale)), dh = Math.max(1, Math.round(vh * scale));
+    // Draw a source rect of a video/image element to the reusable offscreen
+    // canvas (downscaled so the long side is at most maxSide) and return its
+    // ImageData. The single primitive behind both the live loop and Snap mode.
+    function drawToImageData(el, sx, sy, sw, sh, maxSide) {
+      var scale = (maxSide && Math.max(sw, sh) > maxSide) ? maxSide / Math.max(sw, sh) : 1;
+      var dw = Math.max(1, Math.round(sw * scale)), dh = Math.max(1, Math.round(sh * scale));
       var canvas = cropCanvasRef.current || (cropCanvasRef.current = document.createElement("canvas"));
       canvas.width = dw; canvas.height = dh;
       var ctx = canvas.getContext("2d", { willReadFrequently: true });
-      ctx.drawImage(v, 0, 0, dw, dh);
+      ctx.drawImage(el, sx, sy, sw, sh, 0, 0, dw, dh);
       return ctx.getImageData(0, 0, dw, dh);
     }
 
-    function onHit(text) { if (text && handleRef.current) handleRef.current(text, "camera"); }
+    // Full current frame, downscaled to maxSide.
+    function grabFrame(maxSide) {
+      var v = videoRef.current;
+      if (!v || !v.videoWidth || !v.videoHeight) return null;
+      return drawToImageData(v, 0, 0, v.videoWidth, v.videoHeight, maxSide);
+    }
+
+    // Reticle-sized centre of the current frame at NATIVE resolution (no
+    // resampling → zero aliasing on the bars). Matches the on-screen reticle
+    // inset (20% vertical, 10% horizontal); capped only to bound worst cases.
+    function grabReticleCrop() {
+      var v = videoRef.current;
+      if (!v || !v.videoWidth || !v.videoHeight) return null;
+      var vw = v.videoWidth, vh = v.videoHeight;
+      var sx = Math.floor(vw * 0.10), sy = Math.floor(vh * 0.20);
+      return drawToImageData(v, sx, sy, vw - sx * 2, vh - sy * 2, 3200);
+    }
+
+    // Live-loop hit. A detect()/readBarcodes promise already in flight when the
+    // user taps Stop camera / Done resolves AFTER stopLoop cleared the interval —
+    // drop those results (loopRef is null once stopped; cancelledRef after
+    // unmount) so a stale frame can't add a unit to a stopped or closed session.
+    function onHit(text) {
+      if (cancelledRef.current || !loopRef.current) return;
+      if (text && handleRef.current) handleRef.current(text, "camera");
+    }
 
     // WASM readerOptions. tryHarder + rotate + invert so a 90°-rotated or
     // dark-on-light label still reads. The BINARIZER is the key lever for printed
@@ -285,22 +324,35 @@
       var v = videoRef.current;
       if (!v || !v.videoWidth) return;
       busyRef.current = true;
+      attemptsRef.current++;
+      // Only re-render for the counter while diagnostics is actually open —
+      // otherwise a hidden number would rebuild the whole modal 4-8x/sec.
+      if (showDiagRef.current) setAttempts(attemptsRef.current);
       detectorRef.current.detect(v).then(function(codes) {
         busyRef.current = false;
         if (codes && codes.length) onHit(codes[0].rawValue);
       }).catch(function() { busyRef.current = false; });
     }
 
-    // Fallback path: ZXing-C++ (WASM). Decode the frame at ~2800px (the size
-    // that read real glossy tags fastest/most reliably; too-small aliases the
-    // bars, too-large is slow). Two passes on the same frame: FixedThreshold
-    // (glossy printed labels), then LocalAverage (everything else).
+    // Fallback path: ZXing-C++ (WASM). Real tags proved maddeningly sensitive
+    // to the exact (scale, binarizer) pairing — no single treatment reads them
+    // all — so alternate treatments across ticks: even ticks decode the full
+    // frame at ~2800px (the size that read real glossy tags), odd ticks decode
+    // the reticle crop at native resolution (zero resampling on the bars).
+    // Each tick runs FixedThreshold (cuts through glossy-laminate glare) then
+    // LocalAverage (low-contrast/unevenly-lit codes) on the same pixels, so
+    // within ~1s of aiming, four distinct treatments have seen the label.
     function tickWasm() {
       if (busyRef.current || !readerRef.current) return;
-      var imgData = grabFrame(2800);
+      tickNRef.current++;
+      var imgData = (tickNRef.current % 2 === 0) ? grabReticleCrop() : grabFrame(2800);
       if (!imgData) return;
       var reader = readerRef.current;
       busyRef.current = true;
+      attemptsRef.current++;
+      // Only re-render for the counter while diagnostics is actually open —
+      // otherwise a hidden number would rebuild the whole modal 4-8x/sec.
+      if (showDiagRef.current) setAttempts(attemptsRef.current);
       reader.readBarcodes(imgData, WASM_OPTS_FIXED).then(function(results) {
         if (results && results.length && results[0].text) { busyRef.current = false; onHit(results[0].text); return; }
         return reader.readBarcodes(imgData, WASM_OPTS_LOCAL).then(function(r2) {
@@ -329,7 +381,46 @@
       }).catch(function() { return null; });
     }
 
-    function startCamera() {
+    // After permission is granted, device labels/ids become available. Cache the
+    // video inputs so the 🔄 button can cycle lenses — on iPhone the MAIN lens
+    // can't focus closer than ~6-8", but the ultra-wide can macro-focus, so
+    // switching cameras is often what makes a close-up label snap sharp.
+    function refreshCameraList() {
+      var md = navigator.mediaDevices;
+      if (!md || !md.enumerateDevices) return;
+      md.enumerateDevices().then(function(devs) {
+        var vids = devs.filter(function(d) { return d.kind === "videoinput" && d.deviceId; });
+        // The selfie camera is never useful for scanning a label — drop
+        // front-facing devices from the cycle when any other camera remains.
+        // (Labels are localized; this heuristic catches English iOS/Android.
+        // Worst case an exotic locale keeps the front cam as one extra hop.)
+        var back = vids.filter(function(d) { return !/front|face ?time|user/i.test(d.label || ""); });
+        var use = back.length ? back : vids;
+        var cams = use.map(function(d) { return d.deviceId; });
+        camsRef.current = cams;
+        // Track which entry is live so the next 🔄 press advances from it, and
+        // surface the active lens name so switching isn't blind.
+        try {
+          var track = streamRef.current && streamRef.current.getVideoTracks()[0];
+          var cur = track && track.getSettings ? track.getSettings().deviceId : null;
+          var idx = cams.indexOf(cur);
+          if (idx >= 0) camIdxRef.current = idx;
+          setCamLabel((track && track.label) || "");
+        } catch (e) {}
+        setCamCount(cams.length);
+      }).catch(function() {});
+    }
+
+    function switchCamera() {
+      var cams = camsRef.current || [];
+      if (cams.length < 2) return;
+      camIdxRef.current = (camIdxRef.current + 1) % cams.length;
+      startCamera(cams[camIdxRef.current]);
+    }
+
+    function startCamera(deviceId) {
+      if (typeof deviceId !== "string") deviceId = null;   // tolerate onClick's event arg
+      stopCamera();                              // release any current stream first (camera switch)
       setCameraError("");
       setCameraLoading(true);
       var md = navigator.mediaDevices;
@@ -342,13 +433,14 @@
       // spans ~2x the pixels at 4K vs 1080p, which is the difference between
       // "must be an inch away" and "reads at arm's length". Ideal (not exact)
       // so a device that tops out lower simply gives its best.
-      var constraints = { audio: false, video: {
-        facingMode: { ideal: "environment" },
+      var video = {
         width:  { ideal: 3840 },
         height: { ideal: 2160 },
         frameRate: { ideal: 30 },
-      } };
-      md.getUserMedia(constraints).then(function(stream) {
+      };
+      if (deviceId) video.deviceId = { exact: deviceId };
+      else video.facingMode = { ideal: "environment" };
+      md.getUserMedia({ audio: false, video: video }).then(function(stream) {
         if (cancelledRef.current) { stream.getTracks().forEach(function(t) { t.stop(); }); return; }
         streamRef.current = stream;
         var v = videoRef.current;
@@ -357,6 +449,7 @@
         var pp = v.play ? v.play() : null;
         if (pp && pp.catch) pp.catch(function() {});
         tuneTrack(stream);
+        refreshCameraList();
         setupNativeDetector().then(function(detector) {
           if (cancelledRef.current) { stopCamera(); return; }
           if (detector) {
@@ -401,6 +494,7 @@
       setZoomCaps(null);
       setZoomVal(1);
       setDecoderName("");
+      setCamLabel("");
       setCameraOn(false);
     }
 
@@ -420,6 +514,134 @@
         var track = streamRef.current && streamRef.current.getVideoTracks()[0];
         if (track) track.applyConstraints({ advanced: [{ zoom: v }] }).catch(function() {});
       } catch (e) {}
+    }
+
+    // ── Snap mode: decode a NATIVE-CAMERA photo ─────────────────────────────
+    // The most reliable path on phones, because it sidesteps the two things
+    // that break live-video scanning: (1) getUserMedia is pinned to the main
+    // lens, which can't focus closer than ~6-8" (the native camera app
+    // auto-switches to the macro lens); (2) video frames are far softer than
+    // stills (no multi-frame fusion). A photo taken through
+    // <input type=file capture=environment> gets the full native pipeline —
+    // and verified real label photos decode in ~100-170ms.
+    //
+    // The still is run through a ladder of (scale, binarizer) passes, stopping
+    // at the first hit. Order reflects measured success on real tags: 2800px
+    // first (fastest reliable), then bigger/smaller scales, each FixedThreshold
+    // (glossy glare) before LocalAverage (uneven lighting). 4000 is the ceiling
+    // — NOT native — because 24MP-default iPhones return 5712×4284 stills and
+    // iOS Safari's 2D canvas area limit (~16.7M px) silently yields dead pixels
+    // above roughly 4000×3000; a 4:3 frame at 4000 stays safely under it.
+    var SNAP_PASSES = [
+      { maxSide: 2800, opts: "fixed" },
+      { maxSide: 2800, opts: "local" },
+      { maxSide: 4000, opts: "fixed" },
+      { maxSide: 4000, opts: "local" },
+      { maxSide: 2200, opts: "fixed" },
+      { maxSide: 2200, opts: "local" },
+      { maxSide: 3400, opts: "fixed" },
+      { maxSide: 3400, opts: "local" },
+    ];
+
+    // Load the snapped file into something drawImage accepts. Prefer
+    // createImageBitmap: it decodes the Blob directly (no <img src=blob:…>, so
+    // the CSP img-src is never involved) and applies EXIF orientation. Fall
+    // back to an <img> + object URL for engines without it (img-src includes
+    // blob: for exactly this path).
+    function loadPhoto(file) {
+      function viaImg() {
+        var url = URL.createObjectURL(file);
+        return new Promise(function(resolve, reject) {
+          var img = new Image();
+          img.onload = function() {
+            resolve({ el: img, w: img.naturalWidth, h: img.naturalHeight,
+                      done: function() { URL.revokeObjectURL(url); } });
+          };
+          img.onerror = function() { URL.revokeObjectURL(url); reject(new Error("Couldn't read that photo.")); };
+          img.src = url;
+        });
+      }
+      if (window.createImageBitmap) {
+        return window.createImageBitmap(file).then(function(bmp) {
+          return { el: bmp, w: bmp.width, h: bmp.height,
+                   done: function() { try { bmp.close(); } catch (e) {} } };
+        }).catch(viaImg);
+      }
+      return viaImg();
+    }
+
+    function decodePhoto(file) {
+      setSnapBusy(true);
+      setCameraError("");
+      var photo = null;
+      loadPhoto(file).then(function(p) {
+        photo = p;
+        if (!p.w || !p.h) throw new Error("Couldn't read that photo.");
+        // Free first pass: the platform BarcodeDetector (Android), which reads
+        // the still without downloading the ~1 MB WASM decoder — and keeps Snap
+        // working offline on those devices. Misses fall through to the ladder.
+        return setupNativeDetector().then(function(det) {
+          if (!det) return null;
+          return det.detect(p.el).then(function(codes) {
+            return (codes && codes.length && codes[0].rawValue) ? codes[0].rawValue : null;
+          }).catch(function() { return null; });
+        });
+      }).then(function(nativeText) {
+        if (nativeText) return nativeText;
+        return ensureScanner().then(function(zxw) {
+          var p = photo;
+          var i = 0;
+          function nextPass() {
+            if (i >= SNAP_PASSES.length) return null;    // ladder exhausted — no code found
+            var pass = SNAP_PASSES[i++];
+            var imgData;
+            // A pass can fail on canvas/memory limits for huge stills — skip it
+            // and keep climbing the ladder rather than aborting the whole snap.
+            try { imgData = drawToImageData(p.el, 0, 0, p.w, p.h, pass.maxSide); }
+            catch (e) { return nextPass(); }
+            var opts = (pass.opts === "local") ? WASM_OPTS_LOCAL : WASM_OPTS_FIXED;
+            return zxw.readBarcodes(imgData, opts).then(function(results) {
+              if (results && results.length && results[0].text) return results[0].text;
+              return nextPass();
+            }, function() { return nextPass(); });
+          }
+          return nextPass();
+        });
+      }).then(function(text) {
+        if (photo) photo.done();
+        // Session closed while the decode was in flight — drop the result
+        // rather than adding a unit to a dismissed session.
+        if (cancelledRef.current) return;
+        setSnapBusy(false);
+        if (text) {
+          if (handleRef.current) handleRef.current(text, "photo");
+        } else {
+          feedbackDup();
+          setFlash({ kind: "err", code: "No barcode found in that photo — fill more of the frame with the label and retake.", at: Date.now() });
+        }
+      }).catch(function(e) {
+        if (photo) photo.done();
+        if (cancelledRef.current) return;
+        setSnapBusy(false);
+        setCameraError((e && e.message) || "Couldn't read that photo.");
+      });
+    }
+
+    function onSnapFile(e) {
+      var f = e.target.files && e.target.files[0];
+      e.target.value = "";                       // allow snapping the same label twice in a row
+      if (f) decodePhoto(f);
+    }
+
+    function openSnap() {
+      if (snapBusy || !fileInputRef.current) return;
+      // iOS has ONE camera pipeline: presenting the native camera over a live
+      // getUserMedia stream interrupts the track, and on return the preview
+      // often stays frozen/black with no event to recover from. Stop the live
+      // camera first (also frees its memory before iOS backgrounds the page).
+      // The user can tap Live scan again afterwards.
+      if (cameraOn || cameraLoading) stopCamera();
+      fileInputRef.current.click();
     }
 
     // Stop the camera when the session unmounts (route change / Done / Close).
@@ -467,12 +689,21 @@
 
     // Camera viewport (or its start button / error state).
     var camera = h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+      // Hidden native-camera input: capture="environment" makes iOS/Android open
+      // the camera app directly. The still it returns gets the full native photo
+      // pipeline (macro lens switching, focus, fusion) — the reliable Snap path.
+      h("input", { ref: fileInputRef, type: "file", accept: "image/*", capture: "environment",
+        onChange: onSnapFile, style: { display: "none" } }),
       h("div", { style: { position: "relative", background: "#000", borderRadius: 10, overflow: "hidden", border: "1px solid " + B.border, aspectRatio: "4 / 3", display: cameraOn ? "block" : "none" } },
         h("video", { ref: videoRef, playsInline: true, muted: true, autoPlay: true, style: { width: "100%", height: "100%", objectFit: "cover", display: "block" } }),
         // Aiming reticle — a guide to center the label. The whole frame is
         // decoded, so a slightly off-center code still reads.
         h("div", { style: { position: "absolute", inset: "20% 10%", border: "2px solid " + B.accent, borderRadius: 8, boxShadow: "0 0 0 100vmax rgba(0,0,0,0.25)", pointerEvents: "none" } }),
-        torchSupported && h("button", { onClick: toggleTorch, style: { position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: torchOn ? B.warn : "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, torchOn ? "🔦" : "🔦")
+        torchSupported && h("button", { onClick: toggleTorch, style: { position: "absolute", top: 10, right: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: torchOn ? B.warn : "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, torchOn ? "🔦" : "🔦"),
+        // Lens switch — on iPhone the main lens can't focus close; the
+        // ultra-wide can. Cycling cameras is often what fixes close-up blur.
+        camCount > 1 && h("button", { onClick: switchCamera, title: "Switch camera",
+          style: { position: "absolute", top: 10, left: 10, background: "rgba(0,0,0,0.55)", border: "1px solid " + B.border, borderRadius: 8, color: "#fff", fontSize: "18px", padding: "6px 10px", cursor: "pointer" } }, "🔄")
       ),
       // Zoom slider — lets the user fill the frame with a small label instead of
       // pushing the phone closer than it can focus. Shown only where the camera
@@ -484,13 +715,22 @@
           style: { flex: 1, accentColor: B.accent } }),
         h("span", { style: { fontSize: "11px", color: B.textMut, minWidth: 36, textAlign: "right", fontVariantNumeric: "tabular-nums" } }, (Math.round(zoomVal * 10) / 10) + "×")
       ),
-      cameraOn && h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center" } },
-        "Center the barcode in the box and hold steady a moment. Still not reading? " +
-        (zoomCaps ? "Zoom in" : "Move a little closer") +
-        (torchSupported ? " or tap the flash for glossy labels." : ".")),
-      !cameraOn && h("button", { onClick: startCamera, disabled: cameraLoading,
-        style: { background: B.raised, border: "1px dashed " + B.border, borderRadius: 10, color: B.accent, cursor: cameraLoading ? "default" : "pointer", padding: "20px", fontSize: "13px", fontWeight: 700, width: "100%", textAlign: "center" } },
-        cameraLoading ? "Starting camera…" : "📷  Start camera"),
+      cameraOn && h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "center", lineHeight: 1.5 } },
+        (camLabel ? "Lens: " + camLabel + " · " : "") +
+        "Center the barcode in the box and hold steady. Blurry up close? Back up a few inches" +
+        (camCount > 1 ? " or tap 🔄 to switch lenses" : "") +
+        (torchSupported ? "; the 🔦 flash helps glossy labels" : "") +
+        ". Won't read? 📸 Snap photo below is the sure path."),
+      // Start camera + Snap photo, side by side. Snap works with or without the
+      // live camera running (it opens the NATIVE camera, which focuses close).
+      h("div", { style: { display: "flex", gap: 8 } },
+        !cameraOn && h("button", { onClick: function() { startCamera(); }, disabled: cameraLoading,
+          style: { flex: 1, background: B.raised, border: "1px dashed " + B.border, borderRadius: 10, color: B.accent, cursor: cameraLoading ? "default" : "pointer", padding: "20px 10px", fontSize: "13px", fontWeight: 700, textAlign: "center" } },
+          cameraLoading ? "Starting camera…" : "📷  Live scan"),
+        h("button", { onClick: openSnap, disabled: snapBusy,
+          style: { flex: 1, background: B.raised, border: "1px dashed " + B.accent, borderRadius: 10, color: B.accent, cursor: snapBusy ? "default" : "pointer", padding: cameraOn ? "12px 10px" : "20px 10px", fontSize: "13px", fontWeight: 700, textAlign: "center" } },
+          snapBusy ? "Reading photo…" : "📸  Snap photo")
+      ),
       cameraOn && h("div", { style: { display: "flex", justifyContent: "flex-end" } },
         h("button", { onClick: stopCamera, style: { background: "none", border: "1px solid " + B.border, borderRadius: 8, color: B.textMut, cursor: "pointer", padding: "6px 12px", fontSize: "11px", fontWeight: 600 } }, "Stop camera")),
       cameraError && h("div", { style: { background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: 8, padding: "8px 12px", color: B.warn, fontSize: "12px", lineHeight: 1.4, wordBreak: "break-word" } }, cameraError)
@@ -515,9 +755,11 @@
       ["Camera state", cameraOn ? "on" : (cameraError ? "error" : "off"), !!cameraError],
       ["Video resolution", camRes || "—", false],
       ["Zoom", zoomCaps ? ((Math.round(zoomVal * 10) / 10) + "× (max " + zoomCaps.max + "×)") : "unsupported", false],
+      ["Cameras found", camCount ? String(camCount) : "—", false],
+      ["Live decode attempts", String(attempts), false],
     ];
     var diagnostics = h("div", null,
-      h("button", { onClick: function() { setShowDiag(!showDiag); },
+      h("button", { onClick: function() { var nv = !showDiag; showDiagRef.current = nv; setShowDiag(nv); if (nv) setAttempts(attemptsRef.current); },
         style: { background: "none", border: "none", color: B.textMut, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: 0, textDecoration: "underline" } },
         showDiag ? "Hide diagnostics" : "🔧 Diagnostics"),
       showDiag && h("div", { style: { marginTop: 8, background: B.bg, border: "1px solid " + B.border, borderRadius: 8, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 5 } },
@@ -547,7 +789,9 @@
         border: "1px solid " + (flash.kind === "ok" ? B.successBd : B.warnBd),
         borderRadius: 8, padding: "8px 12px",
         color: flash.kind === "ok" ? B.success : B.warn, fontSize: "12px", fontWeight: 600 } },
-      flash.kind === "ok" ? ("✓ Added " + flash.code) : ("⚠ Already in this item: " + flash.code + (allowDup ? "" : " (skipped)")));
+      flash.kind === "ok" ? ("✓ Added " + flash.code)
+        : flash.kind === "err" ? ("⚠ " + flash.code)
+        : ("⚠ Already in this item: " + flash.code + (allowDup ? "" : " (skipped)")));
 
     // Running list (newest first) with batch dividers.
     var listRows = [];

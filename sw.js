@@ -33,14 +33,13 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-// v43: barcode scan-import now uses the native BarcodeDetector where available,
-// falling back to the vendored ZXing-C++ WASM decoder
-// (assets/vendor/zxing-wasm-reader.js + zxing_reader.wasm, ~1 MB). All
-// runtime-cached by the /modules/ and /assets/ stale-while-revalidate rules —
-// the WASM is intentionally NOT precached (it's fetched lazily on the first scan
-// that needs it, then available offline). Bumped from v42 (which shipped the
-// now-removed pure-JS zxing.min.js).
-var CACHE_VERSION = 'ltp-shell-v43';
+// v44: scan-import adds Snap-photo mode (decode a native-camera still — the
+// reliable path on phones whose live video can't focus close), a camera/lens
+// switch button, and an alternating live-frame decode loop. Decoder stack is
+// unchanged from v43: native BarcodeDetector where available, else the vendored
+// ZXing-C++ WASM (assets/vendor/zxing-wasm-reader.js + zxing_reader.wasm,
+// ~1 MB, runtime-cached on first scan — intentionally NOT precached).
+var CACHE_VERSION = 'ltp-shell-v44';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -62,6 +62,15 @@ eq("B16 id beats large timestamp ids", R.buildScannedUnit("Z", INFO, [1751000000
   ok("B17 250 rapid scans → all ids unique", new Set(ids).size === ids.length, "dupes present");
 })();
 
+// ── cleanScanCode (scanned text is attacker-authorable — must be sanitized) ──
+const CC = R.cleanScanCode;
+eq("C1 trims whitespace", CC("  LTP-1 "), "LTP-1");
+eq("C2 strips control chars", CC("LTP\u0007\u001F-2"), "LTP-2");
+eq("C3 strips bidi overrides (RLO spoofing)", CC("LTP\u202E3"), "LTP3");
+eq("C4 caps length at 128", CC("X".repeat(4000)).length, 128);
+eq("C5 null → empty", CC(null), "");
+eq("C6 buildScannedUnit applies it", R.buildScannedUnit("  A\u202EB  ", {}, []).barcode, "AB");
+
 // ── isDuplicateCode ─────────────────────────────────────────────────────────
 const UNITS = [
   { id: 1, barcode: "LTP-CBL-001", serial: "" },
@@ -96,6 +105,9 @@ ok("S4b scan module requests high resolution + downscaled frame grab",
 ok("S5 scan module stops the camera on cleanup", scan.indexOf("stopLoop") !== -1 && scan.indexOf("t.stop()") !== -1);
 ok("S6 scan module lazy-loads the vendored WASM decoder",
    scan.indexOf("/assets/vendor/zxing-wasm-reader.js") !== -1 && scan.indexOf("/assets/vendor/zxing_reader.wasm") !== -1);
+ok("S6b snap mode: native-camera capture input + photo decode ladder",
+   scan.indexOf('capture: "environment"') !== -1 && scan.indexOf("decodePhoto") !== -1 && scan.indexOf("SNAP_PASSES") !== -1);
+ok("S6c camera switching for close-focus lenses", scan.indexOf("switchCamera") !== -1 && scan.indexOf("enumerateDevices") !== -1);
 
 const shell = src("modules/rentals-shell.js");
 ok("S7 shell routes the scan action", shell.indexOf('action === "scan"') !== -1);
