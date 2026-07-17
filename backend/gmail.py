@@ -174,11 +174,23 @@ async def refresh_if_needed(
         await db.flush()
         raise GmailReconnectRequired("Google refused the token refresh; reconnect required.")
     if resp.status_code != 200:
-        # Network blip, 5xx from Google — surface so caller can decide
-        # whether to retry. Don't clear tokens; the refresh might work next time.
+        # Non-400 failure: 401 invalid_client (the app's GOOGLE_CLIENT_ID /
+        # GOOGLE_CLIENT_SECRET are wrong or missing), 403, or a 5xx/network blip.
+        # Surface Google's OAuth error code — a standard enum like "invalid_client",
+        # not a secret — so the Settings Error Log names the real cause instead of
+        # a generic message; the raw body stays server-side only (H10). Don't
+        # clear tokens; the refresh may succeed once the config/outage is fixed.
+        oauth_error = ""
+        try:
+            oauth_error = str((resp.json() or {}).get("error", "")).strip()
+        except Exception:
+            oauth_error = ""
         print(f"[LTP] gmail: refresh endpoint returned {resp.status_code}: "
               f"{resp.text[:200]}", flush=True)
-        raise GmailSendError(resp.status_code, "Google token endpoint returned an error.")
+        detail = "Google token refresh failed"
+        if oauth_error:
+            detail += f": {oauth_error}"
+        raise GmailSendError(resp.status_code, detail)
 
     data = resp.json()
     new_access = data.get("access_token")
