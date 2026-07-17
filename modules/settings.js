@@ -120,7 +120,7 @@
         "Notifications are per-device — turn them on for each phone or tablet you want alerted. You’ll get a push when a crew member responds to a request."));
   }
 
-  window.SettingsView = function({ settings, setSettings }) {
+  window.SettingsView = function({ settings, setSettings, invoices, quotes }) {
     var isMobile = window.LTP_useIsMobile();
     var [draft, setDraft] = useState(Object.assign({}, settings));
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
@@ -304,6 +304,18 @@
       }
       setIsDirty(false);
     }
+
+    // Email delivery faults gathered from invoice/quote activity logs (already
+    // loaded in memory) so the Error Log is one place to see why an email didn't
+    // go out — a receipt that keeps failing surfaces here, not just as a
+    // transient "Send Failed" toast. See window.LTP_collectEmailFaults (theme.js).
+    var emailFaults = window.LTP_collectEmailFaults(invoices, quotes);
+    // QuickBooks faults: per-invoice sync failures (qbo_sync_failed activity)
+    // plus a connection-level error from a background context (the auto-receipt
+    // poller), which arrives via /api/qbo/status rather than on any entity.
+    var qboFaults = window.LTP_collectQboFaults(invoices, quotes);
+    var qboConnError = (qbo && qbo.lastError)
+      ? { message: qbo.lastError, at: qbo.lastErrorAt } : null;
 
     return h("div", { style: { maxWidth: 800, margin: "0 auto" } },
       // Header
@@ -780,6 +792,64 @@
       // Confirmation dialogs
       // ── Error Log ──────────────────────────────────────────────────────────
       h(AccordionSection, { title: "Error Log" },
+        // Email delivery faults, gathered from invoice/quote activity logs.
+        h("div", { style: { marginBottom: 18 } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Email Delivery Faults"),
+          h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: emailFaults.length ? 12 : 0, lineHeight: 1.5 } },
+            emailFaults.length === 0
+              ? "No failed email sends recorded. ✓"
+              : (emailFaults.length + " failed email send" + (emailFaults.length !== 1 ? "s" : "") + " recorded across invoices and quotes.")),
+          emailFaults.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            emailFaults.slice(0, 20).map(function(a, i) {
+              var detail = a.errorDetail;
+              return h("div", { key: "ef-" + i, style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px" } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 8 } },
+                  h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger } }, a.context || "Email"),
+                  h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, (a.date || "") + (a.time ? " " + a.time : ""))),
+                h("div", { style: { fontSize: "10px", color: B.textSec, wordBreak: "break-word" } }, a.message || "Email failed"),
+                detail && h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 3, wordBreak: "break-word" } }, detail));
+            }),
+            h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+              h("button", { onClick: function() {
+                var text = emailFaults.map(function(a) {
+                  return "[" + (a.date || "") + " " + (a.time || "") + "] " + (a.context || "") + ": " + (a.message || "") + (a.errorDetail ? "\n  " + a.errorDetail : "");
+                }).join("\n---\n");
+                if (navigator.clipboard) navigator.clipboard.writeText(text);
+              }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Copy Email Faults"))
+          )),
+        // QuickBooks faults: connection-level error (from poll status) + per-invoice sync failures.
+        h("div", { style: { marginBottom: 18 } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" } }, "QuickBooks Faults"),
+          h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: (qboConnError || qboFaults.length) ? 12 : 0, lineHeight: 1.5 } },
+            (function() {
+              var parts = [];
+              if (qboConnError) parts.push("a connection error");
+              if (qboFaults.length) parts.push(qboFaults.length + " failed sync" + (qboFaults.length !== 1 ? "s" : ""));
+              return parts.length ? ("QuickBooks reported " + parts.join(" and ") + ".") : "No QuickBooks faults recorded. ✓";
+            })()),
+          qboConnError && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", marginBottom: qboFaults.length ? 6 : 0 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 8 } },
+              h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger } }, "Connection"),
+              h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, qboConnError.at ? String(qboConnError.at).substring(0, 19).replace("T", " ") : "")),
+            h("div", { style: { fontSize: "10px", color: B.textSec, wordBreak: "break-word" } }, qboConnError.message)),
+          qboFaults.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            qboFaults.slice(0, 20).map(function(a, i) {
+              return h("div", { key: "qf-" + i, style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px" } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", marginBottom: 4, gap: 8 } },
+                  h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.danger } }, a.context || "QuickBooks"),
+                  h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, (a.date || "") + (a.time ? " " + a.time : ""))),
+                h("div", { style: { fontSize: "10px", color: B.textSec, wordBreak: "break-word" } }, a.message || "QuickBooks sync failed"),
+                a.errorDetail && h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 3, wordBreak: "break-word" } }, a.errorDetail));
+            }),
+            h("div", { style: { display: "flex", gap: 8, marginTop: 8 } },
+              h("button", { onClick: function() {
+                var text = (qboConnError ? ("[" + (qboConnError.at || "") + "] Connection: " + qboConnError.message + "\n---\n") : "") + qboFaults.map(function(a) {
+                  return "[" + (a.date || "") + " " + (a.time || "") + "] " + (a.context || "") + ": " + (a.message || "") + (a.errorDetail ? "\n  " + a.errorDetail : "");
+                }).join("\n---\n");
+                if (navigator.clipboard) navigator.clipboard.writeText(text);
+              }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 12px", color: B.textMut, fontSize: "10px", cursor: "pointer", fontFamily: "inherit" } }, "Copy QuickBooks Faults"))
+          )),
+        h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, marginBottom: 6, textTransform: "uppercase", letterSpacing: "0.04em" } }, "Application Errors"),
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
           "Recent application errors are captured here for diagnostics. " + ((window.__LTP_ERROR_LOG || []).length === 0 ? "No errors recorded." : (window.__LTP_ERROR_LOG || []).length + " error" + ((window.__LTP_ERROR_LOG || []).length !== 1 ? "s" : "") + " recorded.")),
         (window.__LTP_ERROR_LOG || []).length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },

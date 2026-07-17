@@ -192,6 +192,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var q = searchQuery.toLowerCase();
 
   var fp = projects.filter(function(p) {
+    if (p.internal) return false;  // manual/one-off shifts live in Labor, not the client Projects list
     if (!showCompleted && p.status === "completed") return false;
     if (projectFilter !== "all" && p.category !== projectFilter) return false;
     var comp = companies.find(function(c) { return c.id === p.companyId; });

@@ -333,6 +333,105 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  //   MANUAL SHIFT MODAL — one-off adder for labor not tied to a client project
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Warehouse load-outs, prep days, and other work that "doesn't fall into a
+  // project" still need crew requests and payouts. Rather than the full schedule
+  // editor, this is a single-screen adder: name + one day + roles (and optional
+  // crew). It builds an "internal" project (window.LTP_manualShiftProject) — the
+  // same Project + schedule shape everything else reads — so the new shift flows
+  // straight into Assignments, crew requests, and Payouts with no special-casing.
+  function ManualShiftModal({ services, contacts, onSave, onClose }) {
+    var isMobile = window.LTP_useIsMobile();
+    var [title, setTitle] = useState("");
+    var [date, setDate] = useState(todayISO());
+    var [start, setStart] = useState("08:00");
+    var [end, setEnd] = useState("18:00");
+    var [location, setLocation] = useState("");
+    var [notes, setNotes] = useState("");
+    // Position rows — each is a role (rate-card Service) + optional crew member.
+    var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
+    var [err, setErr] = useState("");
+
+    var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; })
+      .sort(function(a, b) { return ((a.firstName || "") + (a.lastName || "")).localeCompare((b.firstName || "") + (b.lastName || "")); });
+    var svcs = (services || []).slice().sort(function(a, b) { return (a.role || "").localeCompare(b.role || ""); });
+
+    function updateRow(i, patch) { setRows(function(rs) { return rs.map(function(r, j) { return j === i ? Object.assign({}, r, patch) : r; }); }); }
+    function addRow() { setRows(function(rs) { return rs.concat([{ serviceId: "", crewId: "" }]); }); }
+    function removeRow(i) { setRows(function(rs) { return rs.length > 1 ? rs.filter(function(_, j) { return j !== i; }) : rs; }); }
+
+    // Crew tagged with the row's role float to the top (like the schedule editor),
+    // but everyone stays selectable so an untagged role is never unassignable.
+    function crewOptionsFor(serviceId) {
+      var sv = serviceId ? svcs.find(function(s) { return s.id === Number(serviceId); }) : null;
+      var roleCode = sv ? sv.role : "";
+      var tagged = [], others = [];
+      crew.forEach(function(c) {
+        if (roleCode && (c.crewRoles || []).indexOf(roleCode) !== -1) tagged.push(c); else others.push(c);
+      });
+      var toOpt = function(c) { return { value: String(c.id), label: (c.firstName + " " + c.lastName).trim() }; };
+      var opts = [{ value: "", label: "Unassigned" }];
+      if (tagged.length && others.length) {
+        return opts.concat(tagged.map(toOpt)).concat([{ value: "__sep", label: "— other crew —" }]).concat(others.map(toOpt));
+      }
+      return opts.concat(crew.map(toOpt));
+    }
+
+    function handleSave() {
+      if (!title.trim()) { setErr("Give the shift a name."); return; }
+      if (!date) { setErr("Pick a date for the shift."); return; }
+      if (!(end > start)) { setErr("End time must be after start time. For overnight shifts, use a project's schedule builder."); return; }
+      var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
+        var sv = svcs.find(function(s) { return s.id === Number(r.serviceId); });
+        return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: (r.crewId && r.crewId !== "__sep") ? Number(r.crewId) : null };
+      });
+      if (!positions.length) { setErr("Add at least one role."); return; }
+      setErr("");
+      onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
+        location: location.trim(), notes: notes.trim(), positions: positions });
+    }
+
+    var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
+    return h(window.LTPModal, { title: "Add Manual Shift", onClose: onClose, wide: true, disableBackdrop: true },
+      h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+        h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.5 } },
+          "A one-off shift for labor not tied to a client project (e.g. warehouse work). It joins crew requests and payouts like any other shift — no schedule editor needed."),
+        h(window.LTPInput, { label: "Shift Name *", value: title, onChange: setTitle, placeholder: "e.g. Warehouse Load-out" }),
+        h("div", { style: half },
+          h(window.LTPInput, { label: "Date *", value: date, onChange: setDate, type: "date" }),
+          h(window.LTPInput, { label: "Location", value: location, onChange: setLocation, placeholder: "Job-site address (optional)" })
+        ),
+        h("div", { style: half },
+          h(window.LTPInput, { label: "Start Time", value: start, onChange: setStart, type: "time" }),
+          h(window.LTPInput, { label: "End Time", value: end, onChange: setEnd, type: "time" })
+        ),
+        // Roles / crew
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles *"),
+          svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
+          rows.map(function(r, i) {
+            return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
+              h(window.LTPSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
+                options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: String(s.id), label: s.role + (s.description ? " — " + s.description : "") }; })) }),
+              h(window.LTPSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId, onChange: function(v) { updateRow(i, { crewId: v }); },
+                options: crewOptionsFor(r.serviceId) }),
+              h(window.Btn, { small: true, variant: "ghost", onClick: function() { removeRow(i); }, style: { opacity: rows.length > 1 ? 1 : 0.4 } }, "✕")
+            );
+          }),
+          h("div", null, h(window.Btn, { small: true, variant: "ghost", onClick: addRow }, "+ Add role"))
+        ),
+        h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Optional notes for this shift" }),
+        err && h("div", { style: { fontSize: "11px", color: B.danger } }, err),
+        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 } },
+          h(window.Btn, { variant: "ghost", onClick: onClose }, "Cancel"),
+          h(window.Btn, { onClick: handleSave, disabled: svcs.length === 0 }, "Create Shift")
+        )
+      )
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
   function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests }) {
@@ -343,7 +442,26 @@
     var [showSendPanel, setShowSendPanel] = useState(false);
     var [sendSelection, setSendSelection] = useState({});
     var [conflictWarn, setConflictWarn] = useState(null);
+    var [showManualShift, setShowManualShift] = useState(false);
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
+
+    // Create a one-off manual shift: build an internal project (no client, no
+    // schedule editor) and append it to the projects collection — data-state.js
+    // POSTs it like any other project. It then appears in Assignments (and, once
+    // crew are assigned + confirmed, in crew requests and Payouts) automatically.
+    function createManualShift(form) {
+      var newId = Math.max.apply(null, (projects || []).map(function(x) { return x.id; }).concat([0])) + 1;
+      var proj = window.LTP_manualShiftProject(Object.assign({ id: newId }, form));
+      setProjects(function(prev) { return (prev || []).concat([proj]); });
+      setShowManualShift(false);
+      var assigned = (proj.schedule[0].positions || []).filter(function(p) { return p.crewId; }).length;
+      window.LTP_toast("Manual shift created", {
+        variant: "success",
+        message: assigned > 0
+          ? "Assigned crew are ready to send as requests below."
+          : "Assign crew to its roles below, then send requests.",
+      });
+    }
 
     // Sending crew requests lives here (you select positions and send); the
     // sent-requests list + accept/decline tracking lives in the Crew Requests
@@ -721,9 +839,13 @@
           projOptions.map(function(p) { return h("option", { key: p.id, value: p.id }, p.name); })
         ),
         h("div", { style: { flex: 1 } }),
+        h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
+          style: { background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "+ Manual Shift"),
         pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
           style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
       ),
+      // One-off manual-shift adder (warehouse labor etc. \u2014 see ManualShiftModal).
+      showManualShift && h(ManualShiftModal, { services: services, contacts: contacts, onSave: createManualShift, onClose: function() { setShowManualShift(false); } }),
 
       // Grouped by project
       defaultView && fullyRequestedCount > 0 && projectGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },

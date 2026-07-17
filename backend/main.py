@@ -19,6 +19,7 @@ from backend.routes.crew import crew_public_router, crew_admin_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.routes.push import push_router
+from backend.routes.scan import scan_router
 from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
 
@@ -247,14 +248,17 @@ _IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startsw
 # allowlist (SECURITY_REVIEW.md M2). Covers Google profile avatars, the storage
 # host used by email-signature icons in the Send preview, and the LTP logo
 # host. `data:` stays for canvas signatures + base64-pasted logos (a data: URL
-# issues no network request, so it is not an exfil vector). A deploy whose
-# Settings.logoUrl lives on another host adds it via LTP_IMG_SRC_EXTRA
-# (space-separated origins). style-src keeps 'unsafe-inline' — React inline
-# styles and the sanitized email preview rely on it; removing it needs a nonce
-# architecture (tracked as future work).
+# issues no network request, so it is not an exfil vector). `blob:` likewise
+# references data already held by the page — it's the <img> fallback for the
+# barcode scan-import Snap path (modules/rentals-scan.js decodePhoto), which
+# loads the user's just-taken photo; primary path is createImageBitmap and
+# never touches img-src. A deploy whose Settings.logoUrl lives on another host
+# adds it via LTP_IMG_SRC_EXTRA (space-separated origins). style-src keeps
+# 'unsafe-inline' — React inline styles and the sanitized email preview rely
+# on it; removing it needs a nonce architecture (tracked as future work).
 _IMG_SRC_EXTRA = os.environ.get("LTP_IMG_SRC_EXTRA", "").strip()
 _IMG_SRC = (
-    "img-src 'self' data: "
+    "img-src 'self' data: blob: "
     "https://*.googleusercontent.com https://googleusercontent.com "
     "https://storage.googleapis.com "
     "https://www.luminarytechnology.productions https://luminarytechnology.productions"
@@ -263,7 +267,12 @@ _IMG_SRC = (
 )
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' https://cdnjs.cloudflare.com; "
+    # 'wasm-unsafe-eval' permits compiling/instantiating WebAssembly (and ONLY
+    # that — it does NOT re-enable eval()/new Function like 'unsafe-eval' would).
+    # Needed by the barcode scan-import decoder: assets/vendor/zxing-wasm-reader.js
+    # instantiates the self-hosted ZXing-C++ WASM (assets/vendor/zxing_reader.wasm),
+    # which reads small/rotated/glossy labels far better than the pure-JS decoder.
+    "script-src 'self' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; "
     # Service worker (/sw.js) and the web-app manifest are same-origin. Both
     # otherwise fall back to default-src 'self' (so the PWA already works), but
     # we make the allowance explicit so a future default-src tightening can't
@@ -303,9 +312,12 @@ _SECURITY_HEADERS = [
     # React/DOMPurify scripts.
     (b"cross-origin-resource-policy", b"same-origin"),
     # Drop access to browser features the app never uses, so an injected script
-    # can't reach them either.
+    # can't reach them either. EXCEPTION: camera=(self) — the rentals barcode
+    # scan-import flow (modules/rentals-scan.js) reads the phone camera via
+    # getUserMedia to decode unit barcodes. `(self)` allows it ONLY for our own
+    # origin (never cross-origin/iframe embeds); microphone stays fully off.
     (b"permissions-policy",
-     b"geolocation=(), microphone=(), camera=(), payment=(), usb=(), "
+     b"geolocation=(), microphone=(), camera=(self), payment=(), usb=(), "
      b"magnetometer=(), gyroscope=(), accelerometer=(), interest-cohort=()"),
 ]
 if _IS_HTTPS:
@@ -499,6 +511,10 @@ app.include_router(qbo_router)
 # Web Push: session-gated subscription management under /api/push/*. Sending
 # lives in backend/webpush.py, fired inline from event sites. See backend/routes/push.py.
 app.include_router(push_router)
+# Label OCR: session-gated Claude fallback for the barcode scan-import flow —
+# reads the serial printed under a barcode when the bars won't decode. Feature-
+# flagged on ANTHROPIC_API_KEY. See backend/routes/scan.py.
+app.include_router(scan_router)
 
 
 # ── Static frontend serving ─────────────────────────────────────────────────
@@ -518,6 +534,15 @@ _ALLOWED_TREES = {
     "modules/":    (".js",),
     "assets/":     (".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".ico",
                     ".woff", ".woff2", ".ttf", ".eot", ".otf", ".css"),
+    # Vendored third-party frontend libraries, self-hosted because the CSP is
+    # `script-src 'self' + cdnjs` and some libs (e.g. the ZXing barcode decoder
+    # used by modules/rentals-scan.js) aren't on cdnjs. Scoped to assets/vendor/
+    # so ONLY this subtree serves .js/.wasm — the broad assets/ tree above
+    # deliberately still won't. Without this the request falls through to the SPA
+    # index.html fallback and the browser (X-Content-Type-Options: nosniff)
+    # refuses to execute HTML as a script. `.wasm` is here for the ZXing-C++
+    # barcode decoder binary (served as application/wasm below).
+    "assets/vendor/": (".js", ".wasm"),
 }
 
 
@@ -685,7 +710,14 @@ async def serve_frontend(full_path: str):
         # straight from disk.
         if os.path.realpath(static) == _INDEX_PATH:
             return _index_response()
-        resp = FileResponse(static)
+        # WebAssembly must be served as application/wasm — the browser's
+        # WebAssembly.instantiateStreaming validates the MIME and refuses
+        # anything else (Python's mimetypes doesn't reliably know .wasm, so set
+        # it explicitly). Used by the vendored ZXing-C++ barcode decoder.
+        if static.endswith(".wasm"):
+            resp = FileResponse(static, media_type="application/wasm")
+        else:
+            resp = FileResponse(static)
         # App code (HTML/JS/CSS) is served from un-versioned filenames
         # (e.g. /theme.js), so without this a browser's heuristic cache could
         # keep serving a stale copy AFTER a deploy — masking frontend fixes

@@ -505,6 +505,80 @@ window.LTP_crewMinMap = function(contacts) {
   return m;
 };
 
+// ── Manual / one-off shift (warehouse labor not tied to a client job) ────────
+//
+// Build a lightweight "internal" project row from the Labor > Manual Shift
+// adder. A manual shift deliberately reuses the Project + schedule shape so it
+// flows through the crew-request and payout pipelines with NO special-casing:
+// both iterate every project's `schedule[].positions[]`. The row is marked
+// `internal: true` (companyId null, no schedule editor) so client-facing
+// surfaces hide it while every Labor surface still shows it.
+//
+// opts = {
+//   id,                       // caller-minted integer project id (required)
+//   title,                    // shift name, e.g. "Warehouse Load-out"
+//   date,                     // ISO YYYY-MM-DD — the single shift day
+//   startTime, endTime,       // "HH:MM" (default 08:00 → 18:00)
+//   location,                 // free-text job-site address (crew-facing)
+//   notes,                    // free-text, stored as scheduleNotes
+//   positions: [{ serviceId, role, crewId }]   // role = rate-card Service; crew optional
+// }
+// Positions start `status:"open"` — the same state the schedule editor mints —
+// so an assigned crew member is immediately sendable as a crew request, and a
+// confirmed one flows into payouts once it carries a serviceId with rates.
+window.LTP_manualShiftProject = function(opts) {
+  opts = opts || {};
+  var genId = window.LTP_genId;
+  var date = opts.date || "";
+  var title = (opts.title || "").trim() || "Manual Shift";
+  // A manual-shift role is always a rate-card Service (serviceId); positions
+  // without one carry no rate and can't be paid, so they're dropped here — the
+  // builder stays the single source of truth for what a valid position is,
+  // independent of the caller.
+  var positions = (opts.positions || []).filter(function(p) {
+    return p && p.serviceId != null && p.serviceId !== "";
+  }).map(function(p) {
+    return {
+      id: genId("pos"),
+      role: p.role || "",
+      serviceId: p.serviceId,
+      crewId: (p.crewId != null && p.crewId !== "") ? p.crewId : null,
+      status: "open",
+      fullMargin: false,
+    };
+  });
+  var shift = {
+    id: genId("sch"),
+    title: title,
+    date: date,
+    time: opts.startTime || "08:00",
+    endDate: date,
+    endTime: opts.endTime || "18:00",
+    showOnCalendar: true,
+    breaks: [],
+    positions: positions,
+  };
+  return {
+    id: opts.id,
+    name: title,
+    companyId: null,
+    internal: true,
+    category: "Labor",          // a real category so badge/color lookups resolve
+    status: "in-progress",
+    startDate: date,
+    endDate: date,
+    venue: "",
+    siteAddress: opts.location || "",
+    siteUseCompanyAddress: false,
+    contactIds: [],
+    budget: { lighting: 0, labor: 0, rentals: 0, misc: 0 },
+    notes: [],
+    meetings: [],
+    scheduleNotes: (opts.notes || ""),
+    schedule: [shift],
+  };
+};
+
 // ── Crew payout (locked pay + payouts aggregation) ───────────────────────────
 //
 // Pay is agreed at HIRE. When a producer confirms a crew member, their pay for
@@ -1561,6 +1635,61 @@ window.LTP_QUOTE_TOTALS = function(q) {
 window.LTP_QUOTE_REF = function(q) {
   var year = (q.createdDate || "").substring(0, 4) || String(new Date().getFullYear());
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
+};
+
+// Gather activity entries of a given fault type across invoices and quotes for
+// the Settings Error Log. Backend paths stamp typed activity entries on their
+// entity — `email_failed` (auto-receipt poller + manual sends) and
+// `qbo_sync_failed` (invoice → QuickBooks push) — and this one reducer surfaces
+// any of them. Returns display-ready rows { id, date, time, message,
+// errorDetail, context } sorted newest-first. Pure (no DOM/React) so the Error
+// Log logic is unit-tested.
+window.LTP_collectActivityFaults = function(invoices, quotes, activityType) {
+  var faults = [];
+  function errorDetail(a) {
+    var ch = (a.changes || []).filter(function(c) { return c && c.cat === "Error"; })[0];
+    return ch ? String(ch.detail || "") : "";
+  }
+  function gather(list, refFn, prefix) {
+    (list || []).forEach(function(ent) {
+      (ent.activity || []).forEach(function(a) {
+        if (a && a.type === activityType) {
+          faults.push({
+            id: a.id,
+            date: a.date || "",
+            time: a.time || "",
+            message: a.message || "",
+            errorDetail: errorDetail(a),
+            context: refFn ? refFn(ent) : (prefix + (ent.id != null ? ent.id : "?")),
+          });
+        }
+      });
+    });
+  }
+  gather(invoices, window.LTP_INVOICE_REF, "INV-");
+  gather(quotes, window.LTP_QUOTE_REF, "Q-");
+  faults.sort(function(a, b) {
+    return ((b.date || "") + (b.time || "")) > ((a.date || "") + (a.time || "")) ? 1 : -1;
+  });
+  return faults;
+};
+
+// Failed email sends (auto-receipt poller + manual quote/invoice sends).
+window.LTP_collectEmailFaults = function(invoices, quotes) {
+  return window.LTP_collectActivityFaults(invoices, quotes, "email_failed").map(function(f) {
+    if (!f.message) f.message = "Email failed";
+    return f;
+  });
+};
+
+// Failed invoice → QuickBooks pushes. Connection-level QuickBooks errors from
+// background contexts (the poller) aren't entity-stamped; they arrive via
+// /api/qbo/status (status.lastError) and are shown alongside these in Settings.
+window.LTP_collectQboFaults = function(invoices, quotes) {
+  return window.LTP_collectActivityFaults(invoices, quotes, "qbo_sync_failed").map(function(f) {
+    if (!f.message) f.message = "QuickBooks sync failed";
+    return f;
+  });
 };
 
 // A project's headline money figure. The budget entered on the project form is

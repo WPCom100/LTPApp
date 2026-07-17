@@ -265,6 +265,43 @@ async def _drop_connection(conn: models.QboConnection, db: AsyncSession) -> None
         print(f"[LTP] qbo: failed to drop stale connection: {e}", flush=True)
 
 
+# ── Connection-level error snapshot (Settings → Error Log) ───────────────────
+
+async def record_connection_error(db: AsyncSession, message: str) -> None:
+    """Persist the most recent connection-level QuickBooks error on the singleton
+    connection row so it surfaces in Settings → Error Log. For background contexts
+    (the auto-receipt poller) that hit an auth/API failure with no entity to
+    stamp. Best-effort with its own commit — call AFTER rolling back the failed
+    operation's transaction so this snapshot isn't undone with it. No-op when
+    QuickBooks is disconnected (nothing to annotate)."""
+    try:
+        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
+        conn = r.scalar_one_or_none()
+        if conn is None:
+            return
+        conn.last_error = (message or "QuickBooks error")[:300]
+        conn.last_error_at = datetime.now(timezone.utc)
+        await db.commit()
+    except Exception as e:  # pragma: no cover - diagnostics must never crash a caller
+        print(f"[LTP] qbo: failed to record connection error: {e}", flush=True)
+
+
+async def clear_connection_error(db: AsyncSession) -> None:
+    """Clear a previously recorded connection error once QuickBooks is healthy
+    again (a clean poll cycle or a successful reconnect). Best-effort, own commit;
+    no-op when disconnected or already clear so healthy cycles stay write-free."""
+    try:
+        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
+        conn = r.scalar_one_or_none()
+        if conn is None or conn.last_error is None:
+            return
+        conn.last_error = None
+        conn.last_error_at = None
+        await db.commit()
+    except Exception as e:  # pragma: no cover
+        print(f"[LTP] qbo: failed to clear connection error: {e}", flush=True)
+
+
 # ── Request wrapper ──────────────────────────────────────────────────────────
 
 async def _request(

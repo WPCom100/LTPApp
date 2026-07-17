@@ -33,7 +33,12 @@
 // ── Bump this string whenever the app shell or any precached asset changes. ──
 // It is the sole cache-busting lever (filenames are un-versioned and the server
 // serves them no-cache/ETag, so the version here is what forces a fresh shell).
-var CACHE_VERSION = 'ltp-shell-v41';
+// v45: scan-import adds Claude label-OCR (live-view auto-escalation, snap
+// fallback, and an in-viewfinder shutter). /api/scan/* is dynamic and already
+// hard-bypassed by isBypass's /api/ rule — nothing OCR-related is ever cached.
+// Decoder stack unchanged: native BarcodeDetector where available, else the
+// vendored ZXing-C++ WASM (runtime-cached on first scan, not precached).
+var CACHE_VERSION = 'ltp-shell-v45';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

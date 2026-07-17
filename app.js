@@ -265,6 +265,7 @@ function LTPSignedInApp(props) {
     });
 
     projects.forEach(function(p) {
+      if (p.internal) return;  // manual/one-off shifts aren't client projects \u2014 reached via Labor, not global project search
       var co = findById(companies, p.companyId);
       if (p.name.toLowerCase().indexOf(q) !== -1 || (co && co.name.toLowerCase().indexOf(q) !== -1)) {
         results.push({ type: "Project", label: p.name, sub: (co ? co.name + " \u00b7 " : "") + p.category + " \u00b7 " + p.status, module: "projects",
@@ -376,7 +377,7 @@ function LTPSignedInApp(props) {
       }));
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
-        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings }));
+        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings, invoices: invoices, quotes: quotes }));
       default: nav("dashboard"); return null;
     }
   }

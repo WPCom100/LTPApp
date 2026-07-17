@@ -108,6 +108,17 @@ class Project(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     category = Column(String(100), default="")           # {rental, labor, service, full-production}
     status = Column(String(50), default="upcoming")      # {upcoming, in-progress, completed, cancelled}
+    # Manual/one-off shift marker. An "internal" project is a lightweight
+    # container for labor that doesn't belong to a client job — warehouse
+    # load-outs, prep days, etc. It carries no company and is created through the
+    # Labor module's one-off "Manual Shift" adder (a single dated schedule day
+    # with positions), NOT the schedule editor. It deliberately reuses the
+    # Project+schedule shape so a manual shift flows through the crew-request and
+    # payout pipelines unchanged (both iterate every project's schedule). The
+    # flag exists purely so client-facing surfaces (Projects list, dashboard,
+    # calendar, quote/invoice pickers, global search) can hide it while every
+    # Labor surface keeps showing it. USER-WRITABLE (flows through normal CRUD).
+    internal = Column(Boolean, default=False)
     start_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     venue = Column(String(255), default="")
@@ -719,5 +730,13 @@ class QboConnection(Base):
     # Surfaced via GET /api/qbo/status as incomeAccounts / incomeAccountsUpdatedAt.
     income_accounts = Column(JSON, nullable=True)
     income_accounts_updated_at = Column(DateTime(timezone=True), nullable=True)
+    # Last connection-level QuickBooks error (auth/reconnect/API) captured from a
+    # background context that has no entity to stamp — chiefly the auto-receipt
+    # poller (backend/qbo_receipts.py) aborting a cycle. Surfaced via
+    # GET /api/qbo/status and shown in Settings → Error Log; cleared on the next
+    # clean poll cycle or a successful reconnect. Per-invoice sync failures are
+    # NOT recorded here — those stamp `qbo_sync_failed` on the invoice itself.
+    last_error = Column(Text, nullable=True)
+    last_error_at = Column(DateTime(timezone=True), nullable=True)
     connected_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

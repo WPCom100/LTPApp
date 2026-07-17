@@ -56,6 +56,10 @@ _RULES = [
     # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.
     ("/api/email/send",   20),
     ("/api/sync",         10),
+    # Label OCR — each hit is a paid Anthropic API call, so bound per-IP spend.
+    # 30/min is far above real scanning cadence (it only fires on barcode
+    # misses) while capping a hostile/runaway client at pennies per minute.
+    ("/api/scan",         30),
 ]
 
 

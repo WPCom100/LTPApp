@@ -150,8 +150,118 @@
     );
   }
 
+  // Vendor typeahead (type-to-filter CRM vendors → pick a companyId). Shared by
+  // the equipment form's per-unit vendor picker AND the scan-import session's
+  // persistent-info panel, so it lives here rather than in one surface. Only
+  // needs the theme (B); no LTP_RENTALS deref, so it's safe to define here.
+  function VendorSearch(props) {
+    var vendors = props.vendors, value = props.value, onChange = props.onChange;
+    var sel = value ? (vendors || []).find(function(v) { return v.id === value; }) : null;
+    var qPair = useState(sel ? sel.name : "");
+    var query = qPair[0], setQuery = qPair[1];
+    var fPair = useState(false);
+    var focused = fPair[0], setFocused = fPair[1];
+    var filtered = (vendors || []).filter(function(v) { return v.name.toLowerCase().indexOf(query.toLowerCase()) !== -1; });
+
+    return h("div", { style: { position: "relative" } },
+      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
+        sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
+          sel.name,
+          h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
+        ),
+        h("input", { type: "text", value: sel ? "" : query, placeholder: sel ? "" : "Type to search vendors...",
+          onChange: function(e) { if (!sel) { setQuery(e.target.value); setFocused(true); } },
+          onFocus: function() { if (!sel) setFocused(true); },
+          onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
+          onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
+          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" }
+        })
+      ),
+      focused && !sel && query.length > 0 && filtered.length > 0 && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 140, overflowY: "auto", zIndex: 20 } },
+        filtered.map(function(v) {
+          return h("div", { key: v.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { onChange(v.id); setQuery(""); setFocused(false); },
+            style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border },
+            onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
+            onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; }
+          }, v.name);
+        })
+      )
+    );
+  }
+
+  // ── Scan-import pure helpers (barcode → unit) ─────────────────────────────
+  // Kept as plain functions (no React/DOM) so they're unit-testable in Node
+  // (tests/test_rentals_scan.js) and reusable by the future check-in/out flow.
+
+  // Normalize a scanned/typed code before it touches state or the DB. Scanned
+  // text is the one string a NON-user can author (anyone can print a QR sticker
+  // and have staff scan it), so: trim, strip control + bidi-override characters
+  // (which can visually spoof adjacent UI), and cap the length — real asset
+  // tags are tens of characters; a QR can carry kilobytes.
+  function cleanScanCode(code) {
+    var c = (code == null ? "" : String(code)).trim();
+    c = c.replace(/[\u0000-\u001F\u007F\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, "");
+    return c.slice(0, 128);
+  }
+
+  // Build one serialized-unit record from a scanned/typed code + the active
+  // "persistent info" for the current batch. Per the product decision the
+  // scanned value lands in `barcode` (asset #); `serial` stays blank/editable.
+  // `existingIds` = every unit id already present (DB units + this session's) so
+  // the new id can't collide during a rapid scan burst — we take max+1 rather
+  // than Date.now() (which can repeat within the same millisecond).
+  function buildScannedUnit(code, info, existingIds) {
+    info = info || {};
+    var ids = (existingIds || []).map(function(x) { return Number(x); }).filter(function(n) { return !isNaN(n); });
+    var nextId = (ids.length ? Math.max.apply(null, ids) : 0) + 1;
+    var costRaw = info.purchaseCost;
+    var cost = (costRaw === "" || costRaw === null || costRaw === undefined) ? null : (Number(costRaw) || null);
+    return {
+      id: nextId,
+      serial: "",
+      barcode: cleanScanCode(code),
+      purchaseDate: info.purchaseDate || "",
+      purchaseVendorId: info.purchaseVendorId || null,
+      purchaseCost: cost,
+      status: info.status || "available",
+      location: info.location || "",
+      maintenanceLogs: [],
+    };
+  }
+
+  // True if `code` already exists as a barcode OR serial on any of `units`
+  // (case/whitespace-insensitive). Guards against scanning the same physical
+  // item twice into the same product.
+  function isDuplicateCode(code, units) {
+    var c = (code == null ? "" : String(code)).trim().toLowerCase();
+    if (!c) return false;
+    return (units || []).some(function(u) {
+      return (u.barcode || "").trim().toLowerCase() === c ||
+             (u.serial  || "").trim().toLowerCase() === c;
+    });
+  }
+
+  // Human-readable divider for a batch (a run of scans sharing the same
+  // persistent info): "Vendor · Date · Location". Empty → "No batch info set".
+  function batchLabel(info, vendors) {
+    info = info || {};
+    var parts = [];
+    if (info.purchaseVendorId) {
+      var v = (vendors || []).find(function(x) { return x.id === info.purchaseVendorId; });
+      parts.push(v ? v.name : "Vendor #" + info.purchaseVendorId);
+    }
+    if (info.purchaseDate) parts.push(info.purchaseDate);
+    if (info.location) parts.push(info.location);
+    return parts.length ? parts.join(" · ") : "No batch info set";
+  }
+
   window.LTP_RENTALS = {
     SerialSearch:  SerialSearch,
+    VendorSearch:  VendorSearch,
+    buildScannedUnit: buildScannedUnit,
+    cleanScanCode:    cleanScanCode,
+    isDuplicateCode:  isDuplicateCode,
+    batchLabel:       batchLabel,
     ALLOC_COLORS:  ALLOC_COLORS,
     ALLOC_STATES:  ALLOC_STATES,
     CATEGORIES:    CATEGORIES,
