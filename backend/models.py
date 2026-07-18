@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey, LargeBinary
+from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey, LargeBinary, UniqueConstraint
 from sqlalchemy.sql import func
 from backend.database import Base
 
@@ -92,6 +92,13 @@ class Contact(Base):
     # deliberately no `taxable` flag here; directly-billed contacts are treated
     # as tax-exempt (see backend/qbo_sync.py).
     qb_customer_id = Column(String(32), nullable=True, index=True)
+    # QuickBooks Online VENDOR link — the accounts-PAYABLE mirror of
+    # qb_customer_id, used when this crew member is paid via a payout vendor bill
+    # (backend/qbo_payouts.py). Distinct id because QuickBooks models a person you
+    # pay (Vendor) separately from one you bill (Customer). Server-owned: written
+    # only by the vendor find-or-create path and stripped from client PUTs
+    # (backend/routes/api.py::_READONLY_COLS).
+    qb_vendor_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -394,6 +401,12 @@ class Service(Base):
     # service — same semantics as the identically-named Product columns.
     qb_income_account_id = Column(String(32), nullable=True)      # user-editable override; null = mapped default
     qb_income_account_synced = Column(String(32), nullable=True)  # server-authoritative last-confirmed account
+    # Which QuickBooks EXPENSE account a crew payout for this role posts to on a
+    # vendor bill (backend/qbo_payouts.py). User-editable per-service override
+    # (like qb_income_account_id), null = fall back to settings.qboPayoutExpenseAccountId.
+    # No "_synced" sibling: a bill line references the account directly, so there
+    # is no backing QB Item whose account we'd have to keep re-pointed.
+    qb_expense_account_id = Column(String(32), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -730,6 +743,13 @@ class QboConnection(Base):
     # Surfaced via GET /api/qbo/status as incomeAccounts / incomeAccountsUpdatedAt.
     income_accounts = Column(JSON, nullable=True)
     income_accounts_updated_at = Column(DateTime(timezone=True), nullable=True)
+    # Cached active Expense/COGS accounts and Accounts-Payable accounts for the
+    # payout vendor-bill mapping — same admin-refresh-only contract and shape
+    # (list[{id, name, type}]) as income_accounts. Surfaced via GET /api/qbo/status
+    # as expenseAccounts / apAccounts, populated by POST /api/qbo/accounts/refresh.
+    expense_accounts = Column(JSON, nullable=True)
+    ap_accounts = Column(JSON, nullable=True)
+    expense_accounts_updated_at = Column(DateTime(timezone=True), nullable=True)
     # Last connection-level QuickBooks error (auth/reconnect/API) captured from a
     # background context that has no entity to stamp — chiefly the auto-receipt
     # poller (backend/qbo_receipts.py) aborting a cycle. Surfaced via
@@ -740,3 +760,64 @@ class QboConnection(Base):
     last_error_at = Column(DateTime(timezone=True), nullable=True)
     connected_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PayoutBill(Base):
+    """One crew payout exported to QuickBooks as a Vendor Bill — the accounts-
+    PAYABLE mirror of an Invoice, keyed on (crew member, pay period). This is the
+    idempotency anchor for the fan-in export (many payout days -> one Bill): the
+    unique (contact_id, period_start, period_end) constraint plus the deterministic
+    DocNumber `PAY-{contactId}-{periodIndex}` guarantee re-running the export
+    updates the same Bill instead of duplicating it.
+
+    SERVER-AUTHORITATIVE, like QboConnection: never exposed through the CRUD
+    factory, never client-writable. Written only by backend/qbo_payouts.py, whose
+    money comes from re-deriving Project.schedule snapshots (backend/payouts.py) —
+    never a client-submitted amount.
+
+    The qb_* columns mirror Invoice's sync block (id/token/status/error) so the
+    push path reuses the invoice create-or-update + SyncToken/DocNumber recovery.
+    `line_signature` is a hash of the billed lines; an unchanged signature on a
+    re-push short-circuits to a no-op instead of round-tripping to QuickBooks."""
+    __tablename__ = "payout_bills"
+    __table_args__ = (UniqueConstraint("contact_id", "period_start", "period_end",
+                                       name="uq_payout_bill_contact_period"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
+    period_start = Column(String(10), nullable=False)   # ISO YYYY-MM-DD, inclusive
+    period_end = Column(String(10), nullable=False)     # ISO YYYY-MM-DD, inclusive
+    period_index = Column(Integer, nullable=True)       # pay-period index (DocNumber convenience only)
+    doc_number = Column(String(21), nullable=True)      # PAY-{contactId}-{periodIndex}, QB DocNumber (<=21)
+    amount = Column(Float, nullable=True)               # total billed (sum of lines), for display/reconciliation
+    line_signature = Column(Text, nullable=True)        # hash of billed lines -> re-push no-op detection
+    qb_bill_id = Column(String(32), nullable=True, index=True)  # QB Bill.Id
+    qb_sync_token = Column(String(16), nullable=True)   # QB SyncToken (optimistic concurrency)
+    qb_sync_status = Column(String(20), nullable=True)  # {null, synced, error}
+    qb_synced_at = Column(DateTime(timezone=True), nullable=True)
+    qb_last_error = Column(Text, nullable=True)
+    activity = Column(JSON, nullable=True)              # append-only stamps (created/updated/failed)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PayoutBillLine(Base):
+    """Ledger of every crew payout day that has been billed — the physical
+    double-pay guard. The unique (contact_id, project_id, date) constraint makes
+    it IMPOSSIBLE to bill the same person's project-day on two different pay
+    periods, even if the pay-period anchor/length is reconfigured after bills
+    exist. Rows are replaced wholesale each time a bill is (re)pushed.
+
+    project_id is a plain int (not an enforced FK) so a line survives the deletion
+    of its project — the historical bill must remain a faithful record."""
+    __tablename__ = "payout_bill_lines"
+    __table_args__ = (UniqueConstraint("contact_id", "project_id", "date",
+                                       name="uq_payout_bill_line_day"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    payout_bill_id = Column(Integer, ForeignKey("payout_bills.id", ondelete="CASCADE"), nullable=False, index=True)
+    contact_id = Column(Integer, nullable=False, index=True)
+    project_id = Column(Integer, nullable=True)
+    date = Column(String(10), nullable=False)           # ISO YYYY-MM-DD
+    amount = Column(Float, nullable=True)
+    tier = Column(String(20), nullable=True)
