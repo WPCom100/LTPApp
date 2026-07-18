@@ -156,6 +156,36 @@ def test_push_not_connected_aborts_batch():
     assert r.status_code == 409 and r.json()["reason"] == "not_connected"
 
 
+# ── Per-shift day-status ─────────────────────────────────────────────────────
+
+def test_day_status_reports_paid():
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06", payPeriodPayDayOffsetDays=5,
+                                       qboPayoutExpenseAccountId="80")
+    proj_id = crew_id + 1   # _setup seeds the project at base+2 (crew_id is base+1)
+    from backend.database import async_session
+
+    async def seed_bill():
+        async with async_session() as db:
+            pb = models.PayoutBill(contact_id=crew_id, period_start="2026-07-06", period_end="2026-07-19",
+                                   doc_number="PAY-26-14", qb_bill_id="B1", qb_sync_status="synced",
+                                   line_signature="STALE", amount=600.0, qb_paid_at=datetime.now(timezone.utc))
+            db.add(pb)
+            await db.flush()
+            db.add(models.PayoutBillLine(payout_bill_id=pb.id, contact_id=crew_id, project_id=proj_id,
+                                         date="2026-07-08", amount=600.0))
+            await db.commit()
+
+    asyncio.run(seed_bill())
+    r = client.post("/api/qbo/payouts/day-status",
+                    json={"periodStart": "2026-07-06", "periodEnd": "2026-07-19"},
+                    cookies={"ltp_session": admin})
+    assert r.status_code == 200, r.text
+    days = r.json()["days"]
+    key = "%s|%s|2026-07-08" % (crew_id, proj_id)
+    assert key in days and days[key]["paid"] is True
+    assert days[key]["status"] in ("paid", "paid_changed") and days[key]["docNumber"] == "PAY-26-14"
+
+
 # ── Account refresh now caches Expense + AP; status returns them ─────────────
 
 def test_accounts_refresh_caches_expense_and_ap():

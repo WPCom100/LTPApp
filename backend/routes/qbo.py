@@ -601,6 +601,67 @@ async def payout_push_route(
     return {"ok": True, "connected": True, "period": _period_out(period), "results": results}
 
 
+@qbo_router.post("/payouts/day-status")
+async def payout_day_status_route(
+    body: PayoutExportRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: models.User = Depends(require_session),
+):
+    """Per-shift export/paid status for the Payouts tab. Returns a map keyed
+    "{contactId}|{projectId}|{date}" -> {status, paid, paidAt, docNumber, qbBillId}
+    for every day that's been exported (i.e. is in the bill ledger) within the
+    requested date range. status ∈ exported | needs_reexport | paid | paid_changed
+    (a day absent from the map is simply not exported). Staleness is computed per
+    overlapping bill by re-deriving its period and comparing the live signature."""
+    start, end = body.periodStart, body.periodEnd
+    lines = (await db.execute(select(models.PayoutBillLine).where(
+        models.PayoutBillLine.date >= start, models.PayoutBillLine.date <= end))).scalars().all()
+    if not lines:
+        return {"days": {}}
+
+    bill_ids = {ln.payout_bill_id for ln in lines}
+    bills = {b.id: b for b in (await db.execute(
+        select(models.PayoutBill).where(models.PayoutBill.id.in_(bill_ids)))).scalars().all()}
+
+    # Live signature per bill (for drift detection), computed once per distinct period.
+    services = (await db.execute(select(models.Service))).scalars().all()
+    accounts = await qbo_payouts.resolve_payout_accounts(db, services)
+    live_sig = {}
+    periods = {}
+    for b in bills.values():
+        periods.setdefault((b.period_start, b.period_end), []).append(b)
+    for (ps, pe), blist in periods.items():
+        period, _ = await _resolve_period(db, ps, pe)
+        if period is None:
+            continue  # config drifted — leave live_sig unset (treated as fresh)
+        drafts = {d["contact_id"]: d for d in await payouts.load_payout_drafts(db, ps, pe)}
+        for b in blist:
+            d = drafts.get(b.contact_id)
+            if d is None:
+                continue
+            try:
+                live_sig[b.id] = qbo_payouts.plan_bill(b.contact_id, d, period, accounts)["signature"]
+            except qbo_payouts.PayoutNotBillable:
+                pass
+
+    days = {}
+    for ln in lines:
+        b = bills.get(ln.payout_bill_id)
+        if b is None or not b.qb_bill_id:
+            continue
+        stale = b.id in live_sig and live_sig[b.id] != b.line_signature
+        if b.qb_paid_at is not None:
+            status = "paid_changed" if stale else "paid"
+        else:
+            status = "needs_reexport" if stale else "exported"
+        days["%s|%s|%s" % (ln.contact_id, ln.project_id, ln.date)] = {
+            "status": status, "paid": b.qb_paid_at is not None,
+            "paidAt": b.qb_paid_at.isoformat() if b.qb_paid_at else None,
+            "docNumber": b.doc_number, "qbBillId": b.qb_bill_id,
+        }
+    return {"days": days}
+
+
 # ── Compute a quote's sales tax via a temporary estimate ──────────────────────
 
 @qbo_router.post("/quotes/{quote_id}/estimate-tax")

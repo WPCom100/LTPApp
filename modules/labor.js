@@ -1679,6 +1679,21 @@
       return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
     }, [projects, contacts, services, range.start, range.end]);
 
+    // Per-shift QuickBooks export/paid status, keyed "crewId|projectId|date".
+    // Fetched from the server (ledger + bill payment state) whenever the range
+    // changes; drives the per-row status pill AND the paid-day edit guard.
+    var [dayStatus, setDayStatus] = useState({});
+    function loadDayStatus() {
+      if (!qbo || !qbo.connected) { setDayStatus({}); return; }
+      fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
+        .then(function(r) { return r.ok ? r.json() : { days: {} }; })
+        .then(function(b) { setDayStatus((b && b.days) || {}); })
+        .catch(function() { setDayStatus({}); });
+    }
+    React.useEffect(loadDayStatus, [range.start, range.end, qbo && qbo.connected]);
+    function dayStatusOf(r) { return dayStatus[r.crewId + "|" + r.projectId + "|" + r.date] || null; }
+
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
     // ── Day-of sign-off ──────────────────────────────────────────────────────
@@ -1954,6 +1969,17 @@
                     // Chips + sign-off buttons: a wrapped second line on mobile,
                     // inline on desktop (display:contents leaves the row unchanged).
                     h("div", { style: isMobile ? { order: 3, flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 2 } : { display: "contents" } },
+                      (function() {
+                        var ds = dayStatusOf(r);
+                        if (!ds) return null;
+                        var S = {
+                          exported: { t: "QB ✓", c: B.info, title: "Exported to QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
+                          needs_reexport: { t: "QB ↻", c: B.warn, title: "Exported, then changed — re-export to update QuickBooks" },
+                          paid: { t: "QB paid", c: B.success, title: "Paid in QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
+                          paid_changed: { t: "QB paid ⚠", c: B.danger, title: "Paid in QuickBooks, but this day changed after payment" },
+                        }[ds.status];
+                        return S ? chip(S.c, S.t, S.title) : null;
+                      })(),
                       minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
                       allMargin && chip(B.success, "margin"),
                       r.signed
