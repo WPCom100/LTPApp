@@ -374,6 +374,7 @@ function LTPSignedInApp(props) {
         contacts: contacts, setContacts: setContacts,
         projects: projects, setProjects: setProjects,
         services: services, quotes: quotes, companies: companies, settings: settings, route: route,
+        isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });

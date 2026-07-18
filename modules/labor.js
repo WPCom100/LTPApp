@@ -1485,9 +1485,24 @@
   // snapshots existed show as "not locked" with a live figure and a Lock button.
   function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-  function PayoutsTab({ projects, setProjects, contacts, services }) {
+  function PayoutsTab({ projects, setProjects, contacts, services, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+
+    // ── Pay-period config (bi-weekly payroll cycle) ──────────────────────────
+    // Anchor + length come from Settings; when unset, the pay-period presets
+    // hide and the tab falls back to the week/month presets. The period range
+    // is computed by the same helpers the backend mirrors (theme.js::LTP_payPeriod*).
+    var payAnchor = settings && settings.payPeriodAnchor;
+    var payLen = (settings && settings.payPeriodLengthDays) || 14;
+    var payOffset = (settings && settings.payPeriodPayDayOffsetDays) || 0;
+    var curPeriod = window.LTP_payPeriodBounds(payAnchor, payLen, todayISO());
+    var payConfigured = !!curPeriod;
+    function periodRange(idx) {
+      var pp = window.LTP_payPeriodForIndex(payAnchor, payLen, idx);
+      return pp ? { start: pp.start, end: pp.end } : null;
+    }
+
     function rangeFor(preset) {
       var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
       if (preset === "month") {
@@ -1497,9 +1512,22 @@
       var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
       return { start: iso(mon), end: iso(sun) };
     }
-    var [preset, setPreset] = useState("week");
-    var [range, setRange] = useState(function() { return rangeFor("week"); });
-    function pickPreset(p) { setPreset(p); setRange(rangeFor(p)); }
+    var [preset, setPreset] = useState(payConfigured ? "period" : "week");
+    var [periodIndex, setPeriodIndex] = useState(payConfigured ? curPeriod.index : 0);
+    var [range, setRange] = useState(function() { return payConfigured ? periodRange(curPeriod.index) : rangeFor("week"); });
+    function pickPreset(p) {
+      // "period" = this cycle; "lastperiod" = previous cycle. Both live under the
+      // "period" preset (the navigator drives the index); other presets are date-window.
+      if (p === "period" || p === "lastperiod") {
+        var i = (curPeriod ? curPeriod.index : 0) - (p === "lastperiod" ? 1 : 0);
+        setPreset("period"); setPeriodIndex(i); setRange(periodRange(i) || rangeFor("week"));
+      } else { setPreset(p); setRange(rangeFor(p)); }
+    }
+    function shiftPeriod(delta) {
+      var i = periodIndex + delta;
+      var r = periodRange(i); if (!r) return;
+      setPreset("period"); setPeriodIndex(i); setRange(r);
+    }
 
     var data = useMemo(function() {
       return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
@@ -1684,6 +1712,21 @@
       return h("button", { key: key, onClick: function() { pickPreset(key); },
         style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
+    // Pay-period presets: "period" (this cycle) / "lastperiod" (previous). Active
+    // highlight tracks the navigator index, not a distinct preset value.
+    var payPeriodBtn = function(key, label) {
+      var active = preset === "period" && curPeriod && (key === "period" ? periodIndex === curPeriod.index : periodIndex === curPeriod.index - 1);
+      return h("button", { key: key, onClick: function() { pickPreset(key); },
+        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+    };
+    // ◀ [period label · pay day] ▶ — shown only when a cycle is configured and a
+    // pay-period preset is active (not for week/month/custom).
+    var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+      h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
+      h("div", null,
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Pay Period: " + window.LTP_payPeriodLabel(range.start, range.end)),
+        h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
+      h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
 
     var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
     var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
@@ -1694,6 +1737,7 @@
       isMobile
       ? h("div", { style: { marginBottom: 14 } },
           h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+            payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
             presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
             h("div", { style: { flex: 1 } }),
             h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
@@ -1701,11 +1745,14 @@
             h("div", { style: { flex: 1 } }, fromInput),
             h("div", { style: { flex: 1 } }, toInput)))
       : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+          payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
           presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
           h("div", { style: { width: 130 } }, fromInput),
           h("div", { style: { width: 130 } }, toInput),
           h("div", { style: { flex: 1 } }),
           h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+
+      periodNav,
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
       h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
@@ -2139,7 +2186,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
-  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route }) {
+  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route, isAdmin, qbo }) {
     // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
     // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
     //   labor            → assignments (default)
@@ -2198,7 +2245,7 @@
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
-      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services })
+      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services, settings: settings, isAdmin: isAdmin, qbo: qbo })
     );
   };
 })();

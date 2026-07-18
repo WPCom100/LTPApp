@@ -362,6 +362,40 @@ eq("MSP4 row names the manual shift", _pr.groups[0].rows[0].projectName, "Prep D
 ok("MSP5 confirmed-but-unsigned day is a positive pending estimate", _pr.pendingCount === 1 && _pr.pendingTotal > 0);
 ok("MSP6 open (unassigned/unconfirmed) shift yields no payout", window.LTP_payoutRows([_ms], _payContacts, _payServices, "2026-08-01", "2026-08-31").groups.length === 0);
 
+// ── Pay periods (bi-weekly payroll cycles) ───────────────────────────────────
+// Anchor matches the app default: Mon 2026-07-06 → Sun 2026-07-19, length 14.
+const _ppA = "2026-07-06";
+const PPI = window.LTP_payPeriodIndex, PPF = window.LTP_payPeriodForIndex, PPB = window.LTP_payPeriodBounds;
+eq("PP1 anchor day is index 0", PPI(_ppA, 14, "2026-07-06"), 0);
+eq("PP2 last day of period 0 (end inclusive)", PPI(_ppA, 14, "2026-07-19"), 0);
+eq("PP3 first day of period 1", PPI(_ppA, 14, "2026-07-20"), 1);
+eq("PP4 day before anchor is index -1", PPI(_ppA, 14, "2026-07-05"), -1);
+eq("PP5 far-past date floors negative", PPI(_ppA, 14, "2026-01-01"), -14);
+const _pp0 = PPF(_ppA, 14, 0);
+ok("PP6 period 0 bounds", _pp0.start === "2026-07-06" && _pp0.end === "2026-07-19", JSON.stringify(_pp0));
+const _pp1 = PPF(_ppA, 14, 1);
+ok("PP7 period 1 bounds", _pp1.start === "2026-07-20" && _pp1.end === "2026-08-02", JSON.stringify(_pp1));
+const _ppN1 = PPF(_ppA, 14, -1);
+ok("PP8 period -1 bounds", _ppN1.start === "2026-06-22" && _ppN1.end === "2026-07-05", JSON.stringify(_ppN1));
+const _ppMid = PPB(_ppA, 14, "2026-07-15");
+ok("PP9 bounds contains its date", _ppMid.index === 0 && _ppMid.start === "2026-07-06" && _ppMid.end === "2026-07-19");
+eq("PP10 pay day = end + 5 (the following Friday)", window.LTP_payPeriodPayDay("2026-07-19", 5), "2026-07-24");
+eq("PP11 pay day offset 0 = end", window.LTP_payPeriodPayDay("2026-07-19", 0), "2026-07-19");
+// Non-14 length still tiles cleanly.
+eq("PP12 weekly length index", PPI(_ppA, 7, "2026-07-13"), 1);
+const _ppW = PPF(_ppA, 7, 1);
+ok("PP13 weekly period 1 bounds", _ppW.start === "2026-07-13" && _ppW.end === "2026-07-19", JSON.stringify(_ppW));
+// Invalid/absent anchor → null (callers fall back to week/month presets).
+eq("PP14 empty anchor -> null", PPI("", 14, "2026-07-19"), null);
+eq("PP15 malformed date -> null", PPI(_ppA, 14, "not-a-date"), null);
+eq("PP16 overflow-normalized anchor rejected", PPB("2026-02-31", 14, "2026-07-19"), null);
+eq("PP17 invalid length falls back to 14", PPI(_ppA, 0, "2026-07-20"), 1);
+// Month-boundary crossing stays exact (no DST/tz drift).
+eq("PP18 crosses month end exactly", PPI(_ppA, 14, "2026-08-02"), 1);
+eq("PP19 next period starts day after", PPI(_ppA, 14, "2026-08-03"), 2);
+const _ppLabel = window.LTP_payPeriodLabel("2026-07-06", "2026-07-19");
+ok("PP20 label reads both endpoints", /July 6th, 2026/.test(_ppLabel) && /July 19th, 2026/.test(_ppLabel), _ppLabel);
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

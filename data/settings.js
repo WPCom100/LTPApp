@@ -54,6 +54,16 @@ window.LTP_DATA_SETTINGS = {
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
 
+  // Pay periods (crew payroll cycle) — drives the Payouts tab's pay-period
+  // presets and the QuickBooks vendor-bill dates. `payPeriodAnchor` is the
+  // start date of any known cycle; periods tile the calendar from there in
+  // fixed `payPeriodLengthDays`-day windows. The pay (bill due) date is the
+  // period end plus `payPeriodPayDayOffsetDays`. Default: the two-week cycle
+  // Mon 2026-07-06 → Sun 2026-07-19, paid the following Friday (end + 5).
+  payPeriodAnchor: "2026-07-06",
+  payPeriodLengthDays: 14,
+  payPeriodPayDayOffsetDays: 5,
+
   // Email — company-level outbound config (admin-edited).
   emailFrom: "",
   emailReplyTo: "",
