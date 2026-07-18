@@ -173,6 +173,31 @@ eq("DF5 still theirs -> no removal", g.length, 0);
 g = DIFF([{ positions: [{ id: "p1", crewId: 5, status: "open" }] }], [{ positions: [] }], contacts, svcs);
 eq("DF6 non-active status ignored", g.length, 0);
 
+// ── diffChangedShifts ────────────────────────────────────────────────────────
+const DIFFC = window.LTP_diffChangedShifts;
+const cBefore = [{ id: "s1", title: "Day", date: "2026-07-01", time: "09:00", endTime: "14:00", positions: [{ id: "p1", crewId: 5, status: "accepted", serviceId: 1 }] }];
+const cAfter  = [{ id: "s1", title: "Day", date: "2026-07-01", time: "11:00", endTime: "16:00", positions: [{ id: "p1", crewId: 5, status: "accepted", serviceId: 1 }] }];
+let cg = DIFFC(cBefore, cAfter, contacts, svcs);
+eq("DC1 time change -> 1 group", cg.length, 1);
+eq("DC2 template scheduleChanged", cg[0] && cg[0].template, "crewScheduleChanged");
+eq("DC3 new startTime", cg[0] && cg[0].shifts[0].startTime, "11:00");
+eq("DC4 prev startTime carried", cg[0] && cg[0].shifts[0].prevStartTime, "09:00");
+eq("DC5 prev endTime carried", cg[0] && cg[0].shifts[0].prevEndTime, "14:00");
+cg = DIFFC(cBefore, [{ id: "s1", date: "2026-07-02", time: "09:00", endTime: "14:00", positions: [{ id: "p1", crewId: 5, status: "confirmed", serviceId: 1 }] }], contacts, svcs);
+eq("DC6 date change -> 1 group", cg.length, 1);
+eq("DC7 prev date carried", cg[0] && cg[0].shifts[0].prevDate, "2026-07-01");
+cg = DIFFC(cBefore, cBefore, contacts, svcs);
+eq("DC8 no change -> 0", cg.length, 0);
+cg = DIFFC([{ id: "s1", date: "2026-07-01", time: "09:00", endTime: "14:00", positions: [{ id: "p1", crewId: 5, status: "open", serviceId: 1 }] }],
+           [{ id: "s1", date: "2026-07-01", time: "11:00", endTime: "16:00", positions: [{ id: "p1", crewId: 5, status: "open", serviceId: 1 }] }], contacts, svcs);
+eq("DC9 non-committed status ignored", cg.length, 0);
+cg = DIFFC(cBefore, [{ id: "s1", date: "2026-07-01", time: "11:00", endTime: "16:00", positions: [] }], contacts, svcs);
+eq("DC10 removed position not a change (left to diffRemovedCrew)", cg.length, 0);
+cg = DIFFC(cBefore, [{ id: "s1", date: "2026-07-01", time: "11:00", endTime: "16:00", positions: [{ id: "p1", crewId: 6, status: "accepted", serviceId: 1 }] }], contacts, svcs);
+eq("DC11 reassigned away not a change", cg.length, 0);
+cg = DIFFC(cBefore, [{ id: "s1", date: "", time: "09:00", endTime: "14:00", positions: [{ id: "p1", crewId: 5, status: "accepted", serviceId: 1 }] }], contacts, svcs);
+eq("DC12 cleared date not a reschedule (withdrawn server-side)", cg.length, 0);
+
 // ── detectCrewConflicts ──────────────────────────────────────────────────────
 const DCC = window.LTP_detectCrewConflicts;
 let conf = DCC([

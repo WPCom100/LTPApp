@@ -341,17 +341,34 @@
   // crew). It builds an "internal" project (window.LTP_manualShiftProject) — the
   // same Project + schedule shape everything else reads — so the new shift flows
   // straight into Assignments, crew requests, and Payouts with no special-casing.
-  function ManualShiftModal({ services, contacts, onSave, onClose }) {
+  function ManualShiftModal({ services, contacts, onSave, onClose, editProject }) {
     var isMobile = window.LTP_useIsMobile();
-    var [title, setTitle] = useState("");
-    var [date, setDate] = useState(todayISO());
-    var [start, setStart] = useState("08:00");
-    var [end, setEnd] = useState("18:00");
-    var [location, setLocation] = useState("");
-    var [notes, setNotes] = useState("");
+    // Edit mode: prefill from an existing internal (manual-shift) project. Only
+    // the shift's times/date/name/location/notes are editable here — roles and
+    // crew are managed on the Assignments tab, so editShift.positions is left
+    // untouched (its ids/crew/status survive, and so do any crew requests).
+    var editing = !!editProject;
+    var editShift = editing ? ((editProject.schedule && editProject.schedule[0]) || {}) : {};
+    var [title, setTitle] = useState(editing ? (editProject.name || editShift.title || "") : "");
+    var [date, setDate] = useState(editing ? (editShift.date || editProject.startDate || "") : todayISO());
+    var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");
+    var [end, setEnd] = useState(editing ? (editShift.endTime || "18:00") : "18:00");
+    var [location, setLocation] = useState(editing ? (editProject.siteAddress || "") : "");
+    var [notes, setNotes] = useState(editing ? (editProject.scheduleNotes || "") : "");
     // Position rows — each is a role (rate-card Service) + optional crew member.
     var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
+    // Crew-wide meal breaks on the shift (same {id,startTime,endTime,type} shape
+    // the schedule editor uses). Editable in both create and edit modes — unpaid
+    // breaks are deducted from paid hours in Payouts. Prefilled when editing.
+    var [breaks, setBreaks] = useState(editing
+      ? (editShift.breaks || []).map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime || "12:00", endTime: b.endTime || "13:00", type: b.type === "paid" ? "paid" : "unpaid" }; })
+      : []);
     var [err, setErr] = useState("");
+    // Crew already committed to this shift (edit mode) — a heads-up that saving a
+    // time/date change queues them to be re-notified.
+    var editCommitted = (editShift.positions || []).filter(function(p) {
+      return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
+    });
 
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; })
       .sort(function(a, b) { return ((a.firstName || "") + (a.lastName || "")).localeCompare((b.firstName || "") + (b.lastName || "")); });
@@ -360,6 +377,10 @@
     function updateRow(i, patch) { setRows(function(rs) { return rs.map(function(r, j) { return j === i ? Object.assign({}, r, patch) : r; }); }); }
     function addRow() { setRows(function(rs) { return rs.concat([{ serviceId: "", crewId: "" }]); }); }
     function removeRow(i) { setRows(function(rs) { return rs.length > 1 ? rs.filter(function(_, j) { return j !== i; }) : rs; }); }
+
+    function addBreak() { setBreaks(function(bs) { return bs.concat([{ id: genId("brk"), startTime: "12:00", endTime: "13:00", type: "unpaid" }]); }); }
+    function updateBreak(i, patch) { setBreaks(function(bs) { return bs.map(function(b, j) { return j === i ? Object.assign({}, b, patch) : b; }); }); }
+    function removeBreak(i) { setBreaks(function(bs) { return bs.filter(function(_, j) { return j !== i; }); }); }
 
     // Crew tagged with the row's role float to the top (like the schedule editor),
     // but everyone stays selectable so an untagged role is never unassignable.
@@ -382,21 +403,31 @@
       if (!title.trim()) { setErr("Give the shift a name."); return; }
       if (!date) { setErr("Pick a date for the shift."); return; }
       if (!(end > start)) { setErr("End time must be after start time. For overnight shifts, use a project's schedule builder."); return; }
+      if (breaks.some(function(b) { return !(b.endTime > b.startTime); })) { setErr("Each break's end time must be after its start time."); return; }
+      setErr("");
+      var cleanBreaks = breaks.map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" }; });
+      if (editing) {
+        // Roles/crew aren't touched here — only the shift's scalar fields + breaks.
+        onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
+          location: location.trim(), notes: notes.trim(), breaks: cleanBreaks });
+        return;
+      }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
         var sv = svcs.find(function(s) { return s.id === Number(r.serviceId); });
         return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: (r.crewId && r.crewId !== "__sep") ? Number(r.crewId) : null };
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
-      setErr("");
       onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-        location: location.trim(), notes: notes.trim(), positions: positions });
+        location: location.trim(), notes: notes.trim(), breaks: cleanBreaks, positions: positions });
     }
 
     var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
-    return h(window.LTPModal, { title: "Add Manual Shift", onClose: onClose, wide: true, disableBackdrop: true },
+    return h(window.LTPModal, { title: editing ? "Edit Manual Shift" : "Add Manual Shift", onClose: onClose, wide: true, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.5 } },
-          "A one-off shift for labor not tied to a client project (e.g. warehouse work). It joins crew requests and payouts like any other shift — no schedule editor needed."),
+          editing
+            ? "Adjust this one-off shift's date, time, or details. Roles and crew stay on the Assignments tab — any crew already committed are queued to be re-notified (in the notify tray) when you save a time or date change."
+            : "A one-off shift for labor not tied to a client project (e.g. warehouse work). It joins crew requests and payouts like any other shift — no schedule editor needed."),
         h(window.LTPInput, { label: "Shift Name *", value: title, onChange: setTitle, placeholder: "e.g. Warehouse Load-out" }),
         h("div", { style: half },
           h(window.LTPInput, { label: "Date *", value: date, onChange: setDate, type: "date" }),
@@ -406,26 +437,74 @@
           h(window.LTPInput, { label: "Start Time", value: start, onChange: setStart, type: "time" }),
           h(window.LTPInput, { label: "End Time", value: end, onChange: setEnd, type: "time" })
         ),
-        // Roles / crew
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles *"),
-          svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
-          rows.map(function(r, i) {
-            return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
-              h(window.LTPSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
-                options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: String(s.id), label: s.role + (s.description ? " — " + s.description : "") }; })) }),
-              h(window.LTPSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId, onChange: function(v) { updateRow(i, { crewId: v }); },
-                options: crewOptionsFor(r.serviceId) }),
-              h(window.Btn, { small: true, variant: "ghost", onClick: function() { removeRow(i); }, style: { opacity: rows.length > 1 ? 1 : 0.4 } }, "✕")
-            );
-          }),
-          h("div", null, h(window.Btn, { small: true, variant: "ghost", onClick: addRow }, "+ Add role"))
+        // Heads-up (edit mode) when crew are already committed to this shift.
+        editing && editCommitted.length > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "6px 8px", display: "flex", alignItems: "center", gap: 6 } },
+          h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
+          h("span", null, editCommitted.length + " committed crew member" + (editCommitted.length > 1 ? "s" : "") + " on this shift — changing the date or time will queue a re-notification when you save.")),
+        // Meal breaks — crew-wide, editable in both create and edit. Same
+        // {id,startTime,endTime,type} shape the schedule editor uses; unpaid
+        // breaks are deducted from paid hours in Payouts.
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Meal Breaks"),
+          h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+            breaks.map(function(brk, i) {
+              var isPaid = brk.type === "paid";
+              var tInp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 4px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", width: 110 };
+              return h("div", { key: brk.id, style: { display: "inline-flex", gap: 4, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "4px", padding: "3px 6px" } },
+                h("button", { type: "button", onClick: function() { updateBreak(i, { type: isPaid ? "unpaid" : "paid" }); }, title: "Toggle paid / unpaid",
+                  style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "3px", padding: "1px 5px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } }, isPaid ? "PAID" : "UNPAID"),
+                h("input", { type: "time", value: brk.startTime, onChange: function(e) { updateBreak(i, { startTime: e.target.value }); }, style: tInp }),
+                h("span", { style: { color: B.textMut, fontSize: "10px" } }, "→"),
+                h("input", { type: "time", value: brk.endTime, onChange: function(e) { updateBreak(i, { endTime: e.target.value }); }, style: tInp }),
+                h("button", { type: "button", onClick: function() { removeBreak(i); }, "aria-label": "Remove break",
+                  style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: "0 2px", lineHeight: 1 } }, "×")
+              );
+            }),
+            h("button", { type: "button", onClick: addBreak,
+              style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.textMut, cursor: "pointer", fontSize: "10px", fontWeight: 600 } }, "+ Break")
+          ),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Unpaid breaks are deducted from paid hours in Payouts.")
         ),
+        // Roles / crew — editable when creating, read-only summary when editing
+        // (crew are managed on the Assignments tab, so a time edit never disturbs them).
+        editing
+          ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+              h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles & Crew"),
+              (editShift.positions || []).length === 0
+                ? h("div", { style: { fontSize: "11px", color: B.textMut } }, "No roles on this shift yet.")
+                : h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                    (editShift.positions || []).map(function(p, i) {
+                      var sv = svcs.find(function(s) { return s.id === Number(p.serviceId); });
+                      var roleName = sv ? (sv.role + (sv.description ? " — " + sv.description : "")) : (p.role || "Role");
+                      var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
+                      var crewName = cm ? (cm.firstName + " " + cm.lastName).trim() : "Unassigned";
+                      return h("div", { key: i, style: { fontSize: "11px", color: B.text, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                        h("span", { style: { fontWeight: 600 } }, roleName),
+                        h("span", { style: { color: B.textMut } }, "— " + crewName),
+                        p.status && p.status !== "open" && h("span", { style: { fontSize: "9px", color: B.textMut, textTransform: "capitalize" } }, "(" + p.status + ")"));
+                    })
+                  ),
+              h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Manage roles and crew on the Assignments tab.")
+            )
+          : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+              h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles *"),
+              svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
+              rows.map(function(r, i) {
+                return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
+                  h(window.LTPSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
+                    options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: String(s.id), label: s.role + (s.description ? " — " + s.description : "") }; })) }),
+                  h(window.LTPSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId, onChange: function(v) { updateRow(i, { crewId: v }); },
+                    options: crewOptionsFor(r.serviceId) }),
+                  h(window.Btn, { small: true, variant: "ghost", onClick: function() { removeRow(i); }, style: { opacity: rows.length > 1 ? 1 : 0.4 } }, "✕")
+                );
+              }),
+              h("div", null, h(window.Btn, { small: true, variant: "ghost", onClick: addRow }, "+ Add role"))
+            ),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Optional notes for this shift" }),
         err && h("div", { style: { fontSize: "11px", color: B.danger } }, err),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 } },
           h(window.Btn, { variant: "ghost", onClick: onClose }, "Cancel"),
-          h(window.Btn, { onClick: handleSave, disabled: svcs.length === 0 }, "Create Shift")
+          h(window.Btn, { onClick: handleSave, disabled: !editing && svcs.length === 0 }, editing ? "Save Changes" : "Create Shift")
         )
       )
     );
@@ -443,6 +522,7 @@
     var [sendSelection, setSendSelection] = useState({});
     var [conflictWarn, setConflictWarn] = useState(null);
     var [showManualShift, setShowManualShift] = useState(false);
+    var [editManualProject, setEditManualProject] = useState(null);
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
     // Create a one-off manual shift: build an internal project (no client, no
@@ -461,6 +541,44 @@
           ? "Assigned crew are ready to send as requests below."
           : "Assign crew to its roles below, then send requests.",
       });
+    }
+
+    // Edit an existing manual shift (an internal project) — times & details only.
+    // Only the shift's scalar fields change; schedule[0].positions is preserved
+    // verbatim, so position ids/crew/status (and any crew requests) survive. Crew
+    // committed to a moved time/date are parked in the notify tray, exactly like
+    // the Schedule Builder save path (window.LTP_diffChangedShifts).
+    function updateManualShift(form) {
+      var proj = editManualProject;
+      setEditManualProject(null);
+      if (!proj) return;
+      var before = proj.schedule || [];
+      var shift0 = (proj.schedule && proj.schedule[0]) || {};
+      var newShift0 = Object.assign({}, shift0, {
+        title: form.title, date: form.date, time: form.startTime, endDate: form.date, endTime: form.endTime,
+        breaks: form.breaks || shift0.breaks || [],
+      });
+      var newSchedule = before.length ? [newShift0].concat(before.slice(1)) : [newShift0];
+      setProjects(function(prev) {
+        return (prev || []).map(function(p) {
+          return p.id === proj.id ? Object.assign({}, p, {
+            name: form.title, startDate: form.date, endDate: form.date,
+            siteAddress: form.location, scheduleNotes: form.notes, schedule: newSchedule,
+          }) : p;
+        });
+      });
+      var changed = window.LTP_diffChangedShifts(before, newSchedule, contacts, services);
+      changed.forEach(function(g) {
+        window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: proj.id, projectName: form.title || proj.name || "", template: g.template, shifts: g.shifts });
+      });
+      if (changed.length) {
+        window.LTP_toast("Shift updated — crew to notify", {
+          variant: "info",
+          message: changed.length + " crew member" + (changed.length > 1 ? "s" : "") + " queued — review and send from the notify tray (bottom-left).",
+        });
+      } else {
+        window.LTP_toast("Manual shift updated", { variant: "success" });
+      }
     }
 
     // Sending crew requests lives here (you select positions and send); the
@@ -846,6 +964,9 @@
       ),
       // One-off manual-shift adder (warehouse labor etc. \u2014 see ManualShiftModal).
       showManualShift && h(ManualShiftModal, { services: services, contacts: contacts, onSave: createManualShift, onClose: function() { setShowManualShift(false); } }),
+      // Lightweight editor for an existing manual shift (internal project) \u2014
+      // times & details only; roles/crew stay on this tab.
+      editManualProject && h(ManualShiftModal, { services: services, contacts: contacts, editProject: editManualProject, onSave: updateManualShift, onClose: function() { setEditManualProject(null); } }),
 
       // Grouped by project
       defaultView && fullyRequestedCount > 0 && projectGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },
@@ -857,11 +978,17 @@
           : "No positions match this filter." }),
       projectGroups.map(function(pg) {
         var totalBookings = pg.dates.reduce(function(s, d) { return s + (d.dayBookings || []).length; }, 0);
+        var pgProject = (projects || []).find(function(p) { return p.id === pg.projectId; });
+        var isInternal = !!(pgProject && pgProject.internal);
         return h("div", { key: pg.projectId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
-          // Project header
+          // Project header — a manual shift (internal project) opens the
+          // lightweight editor; a real project opens its Schedule Builder.
           h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
-            h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: "pointer" }, onClick: function() { nav("projects/" + pg.projectId + "/schedule"); } }, pg.projectName),
-            h("span", { style: { fontSize: "10px", color: B.textMut } }, totalBookings + " crew booking" + (totalBookings !== 1 ? "s" : ""))),
+            h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: "pointer" }, onClick: function() { if (isInternal && pgProject) { setEditManualProject(pgProject); } else { nav("projects/" + pg.projectId + "/schedule"); } } }, pg.projectName),
+            h("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
+              isInternal && pgProject && h("button", { onClick: function() { setEditManualProject(pgProject); }, title: "Edit this manual shift's date, time, or details",
+                style: { background: "transparent", border: "1px solid " + B.accent + "55", borderRadius: "4px", padding: "2px 8px", color: B.accent, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "✎ Edit"),
+              h("span", { style: { fontSize: "10px", color: B.textMut } }, totalBookings + " crew booking" + (totalBookings !== 1 ? "s" : "")))),
           // Date groups
           pg.dates.map(function(g) {
             return h("div", { key: pg.projectId + "|" + (g.date || "_") },

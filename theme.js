@@ -547,6 +547,13 @@ window.LTP_manualShiftProject = function(opts) {
       fullMargin: false,
     };
   });
+  // Crew-wide meal breaks — same shape the schedule editor uses. Drop any
+  // without both endpoints; unpaid breaks are deducted from paid hours in pay.
+  var breaks = (opts.breaks || []).filter(function(b) {
+    return b && b.startTime && b.endTime;
+  }).map(function(b) {
+    return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
+  });
   var shift = {
     id: genId("sch"),
     title: title,
@@ -555,7 +562,7 @@ window.LTP_manualShiftProject = function(opts) {
     endDate: date,
     endTime: opts.endTime || "18:00",
     showOnCalendar: true,
-    breaks: [],
+    breaks: breaks,
     positions: positions,
   };
   return {
@@ -1036,6 +1043,51 @@ window.LTP_crewNotify = function(contactId, projectId, template, opts) {
           groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: template, shifts: [] };
         }
         groups[k].shifts.push(shiftSnap(sh, p, svcById));
+      });
+    });
+    return Object.keys(groups).map(function(k) { return groups[k]; });
+  };
+
+  // Diff two schedule snapshots; return the crew whose STILL-HELD active
+  // assignment had its shift MOVED (call/wrap/date changed while the position and
+  // its crew member stayed put), bucketed per person with the new times plus the
+  // previous ones. Mirrors LTP_diffRemovedCrew but for reschedules — the two are
+  // disjoint by construction: a removed/reassigned position is caught by
+  // diffRemovedCrew (it's gone from `after` or held by someone else), and only a
+  // surviving, same-crew position can be a reschedule here. Returns
+  // [{ crewId, crewName, template:"crewScheduleChanged",
+  //    shifts:[{...snap, prevDate, prevStartTime, prevEndTime}] }] — park each
+  // into the notify tray. A shift whose date was CLEARED is skipped: that's an
+  // auto-withdrawal handled server-side (crew_integrity), not a reschedule.
+  window.LTP_diffChangedShifts = function(before, after, contacts, services) {
+    var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+    var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
+    var afterPos = {};  // position id -> { crewId, shift } in the after schedule
+    (after || []).forEach(function(sh) {
+      (sh.positions || []).forEach(function(p) { afterPos[p.id] = { crewId: p.crewId || null, shift: sh }; });
+    });
+    var groups = {};  // "crewId"
+    (before || []).forEach(function(sh) {
+      (sh.positions || []).forEach(function(p) {
+        if (!p.crewId || !ACTIVE[p.status]) return;
+        var a = afterPos[p.id];
+        if (!a || a.crewId !== p.crewId) return;          // removed or reassigned — a removal, not a reschedule
+        var as = a.shift;
+        if (!((as.date || "").trim())) return;             // date cleared — withdrawal, handled elsewhere
+        var moved = (sh.time || "") !== (as.time || "")
+                 || (sh.endTime || "") !== (as.endTime || "")
+                 || (sh.date || "") !== (as.date || "");
+        if (!moved) return;
+        var k = String(p.crewId);
+        if (!groups[k]) {
+          var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
+          groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: "crewScheduleChanged", shifts: [] };
+        }
+        var snap = shiftSnap(as, p, svcById);              // new date/time from the after shift
+        snap.prevDate = sh.date || "";
+        snap.prevStartTime = sh.time || "";
+        snap.prevEndTime = sh.endTime || "";
+        groups[k].shifts.push(snap);
       });
     });
     return Object.keys(groups).map(function(k) { return groups[k]; });
