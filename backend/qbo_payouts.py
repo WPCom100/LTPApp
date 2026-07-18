@@ -151,46 +151,92 @@ def doc_number(period) -> str:
     return f"PAY-{int(y):02d}-{int(n)}"[:21]
 
 
-def _line_desc(day) -> str:
-    tier = day.get("tier") or ""
-    base = f"{day.get('project_name') or 'Payout'} · {day.get('date') or ''}"
-    return (base + (f" · {tier}" if tier else ""))[:1000]
+_TIER_LABEL = {"half": "Half day", "full": "Full day", "mixed": "Mixed"}
+
+
+def _f(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _hours_label(paid_hours, ot_hours):
+    """'10h' / '8h +2h OT' / '' when there are no hours (e.g. a no-show line)."""
+    ph, oth = round(_f(paid_hours), 2), round(_f(ot_hours), 2)
+    if ph <= 0 and oth <= 0:
+        return ""
+    base = ("%g" % ph) + "h"
+    return base + (" +%gh OT" % oth if oth > 0 else "")
+
+
+def _work_line_desc(day, hours_label) -> str:
+    parts = [day.get("project_name") or "Payout", day.get("date") or ""]
+    tier = _TIER_LABEL.get(day.get("tier") or "", (day.get("tier") or ""))
+    if tier:
+        parts.append(tier)
+    if hours_label:
+        parts.append(hours_label)
+    return " · ".join([p for p in parts if p])[:1000]
+
+
+def _adj_line_desc(day, label) -> str:
+    parts = [day.get("project_name") or "Payout", day.get("date") or "", label or "Adjustment"]
+    return " · ".join([p for p in parts if p])[:1000]
 
 
 def build_bill_lines(billable, accounts) -> list[dict]:
-    """One line per payout day, split by expense account only when a day's roles
-    map to different accounts. Each day's lines sum EXACTLY to that day's payable:
-    the primary (largest-base) account line absorbs day-level adjustments and any
-    rounding residual. Raises PayoutNotBillable if no account can be resolved."""
+    """Itemized bill lines per payout day:
+      - one WORK line per expense account the day's roles map to (hours in the
+        Description; the day's primary/largest-role line absorbs the rounding
+        residual so work lines sum to work.pay.total);
+      - one ADJUSTMENT line per pay adjustment (parking, bonus, deduction…),
+        posted to the day's PRIMARY role account (default expense account when
+        the day has no worked units, e.g. a no-show + kill fee).
+    Every day's lines sum EXACTLY to its payable. Raises PayoutNotBillable when no
+    account can be resolved."""
     lines = []
     for day in billable:
-        groups = {}   # account_id -> cents (base, from unit costs)
+        groups = {}   # account_id -> {"cents", "paid", "ot"}
         order = []    # first-seen account order -> deterministic primary
         for u in day.get("units") or []:
             acct = accounts["by_service"].get(u.get("service_id")) or accounts["default_expense"]
             if not acct:
                 raise PayoutNotBillable("no expense account configured for this payout")
             if acct not in groups:
-                groups[acct] = 0
+                groups[acct] = {"cents": 0, "paid": 0.0, "ot": 0.0}
                 order.append(acct)
-            groups[acct] += int(round(u["amount"] * 100))
+            groups[acct]["cents"] += int(round(u["amount"] * 100))
+            groups[acct]["paid"] += _f(u.get("paid_hours"))
+            groups[acct]["ot"] += _f(u.get("ot_hours"))
+
+        adjustments = day.get("adjustments") or []
+        adj_cents = sum(int(round(_f(a.get("amount")) * 100)) for a in adjustments)
         payable_cents = int(round(day["payable"] * 100))
-        if not order:
-            # No unit costs (e.g. a no-show day with only an adjustment).
-            acct = accounts["default_expense"]
-            if not acct:
+        work_total_cents = payable_cents - adj_cents   # == round(work.pay.total)
+
+        if order:
+            primary = max(order, key=lambda a: (groups[a]["cents"], -order.index(a)))
+            non_primary = sum(groups[a]["cents"] for a in order if a != primary)
+            groups[primary]["cents"] = work_total_cents - non_primary  # absorb residual
+            for a in order:
+                c = groups[a]["cents"]
+                if c == 0:
+                    continue
+                lines.append({"account_id": a, "amount": round(c / 100.0, 2),
+                              "description": _work_line_desc(day, _hours_label(groups[a]["paid"], groups[a]["ot"]))})
+        else:
+            # No worked units (adjustment-only day) — adjustments fall to the default.
+            primary = accounts["default_expense"]
+            if not primary:
                 raise PayoutNotBillable("no default expense account for an adjustment-only day")
-            order = [acct]
-            groups[acct] = 0
-        # Primary absorbs adjustments + rounding residual so lines reconcile.
-        primary = max(order, key=lambda a: (groups[a], -order.index(a)))
-        non_primary = sum(groups[a] for a in order if a != primary)
-        desc = _line_desc(day)
-        for a in order:
-            cents = (payable_cents - non_primary) if a == primary else groups[a]
-            if cents == 0:
+
+        for adj in adjustments:
+            c = int(round(_f(adj.get("amount")) * 100))
+            if c == 0:
                 continue
-            lines.append({"account_id": a, "amount": round(cents / 100.0, 2), "description": desc})
+            lines.append({"account_id": primary, "amount": round(c / 100.0, 2),
+                          "description": _adj_line_desc(day, adj.get("label"))})
     return lines
 
 

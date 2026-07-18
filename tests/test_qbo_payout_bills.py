@@ -276,16 +276,40 @@ async def test_multi_account_lines_reconcile_in_payload():
     async with _db() as db:
         c = await _seed_contact(db)
         # A day worked as two roles: svc 1 -> default acct 80, svc 2 -> acct 81,
-        # plus a +30 adjustment folded into the payable.
+        # plus a +30 "Parking" adjustment as its OWN line on the primary role account.
         day = _day(payable=570.0, tier="mixed",
-                   units=[{"service_id": 1, "amount": 300.0}, {"service_id": 2, "amount": 240.0}])
+                   units=[{"service_id": 1, "amount": 300.0, "paid_hours": 10},
+                          {"service_id": 2, "amount": 240.0, "paid_hours": 5}])
         day["adj_total"] = 30.0
+        day["adjustments"] = [{"label": "Parking", "amount": 30.0}]
         with _patch() as m:
             await qbo_payouts.push_payout_bill(db, c, _draft(5, [day]), _period(), _ACCTS, client_id="x", client_secret="y")
-        payload = m["create_bill"].await_args.args[2]
-        by_acct = {ln["AccountBasedExpenseLineDetail"]["AccountRef"]["value"]: ln["Amount"] for ln in payload["Line"]}
-        assert by_acct == {"80": 330.0, "81": 240.0}       # primary (80) absorbed the +30
-        assert round(sum(payload["Line"][i]["Amount"] for i in range(len(payload["Line"]))), 2) == 570.0
+        lines = m["create_bill"].await_args.args[2]["Line"]
+        assert round(sum(ln["Amount"] for ln in lines), 2) == 570.0
+        per_acct = {}
+        for ln in lines:
+            a = ln["AccountBasedExpenseLineDetail"]["AccountRef"]["value"]
+            per_acct[a] = round(per_acct.get(a, 0) + ln["Amount"], 2)
+        assert per_acct == {"80": 330.0, "81": 240.0}      # 300 work + 30 adj on 80; 240 work on 81
+        adj_lines = [ln for ln in lines if "Parking" in ln["Description"]]
+        assert len(adj_lines) == 1 and adj_lines[0]["Amount"] == 30.0
+        assert adj_lines[0]["AccountBasedExpenseLineDetail"]["AccountRef"]["value"] == "80"
+        assert any("10h" in ln["Description"] for ln in lines)   # hours shown on the work line
+
+
+def test_build_bill_lines_hours_and_adjustment_only():
+    # Pure line-building: a no-show + kill-fee day (no worked units) -> a single
+    # adjustment line on the default account; a worked day shows hours + OT.
+    accts = {"default_expense": "80", "ap": None, "by_service": {2: "81"}}
+    noshow = {"project_name": "Wh", "date": "2026-07-11", "tier": "", "payable": 100.0,
+              "adj_total": 100.0, "units": [], "adjustments": [{"label": "Kill fee", "amount": 100.0}]}
+    lines = qbo_payouts.build_bill_lines([noshow], accts)
+    assert lines == [{"account_id": "80", "amount": 100.0, "description": "Wh · 2026-07-11 · Kill fee"}]
+    worked = {"project_name": "Fest", "date": "2026-07-08", "tier": "full", "payable": 1050.0,
+              "adj_total": 0.0, "adjustments": [],
+              "units": [{"service_id": 1, "amount": 1050.0, "paid_hours": 10, "ot_hours": 5}]}
+    wl = qbo_payouts.build_bill_lines([worked], accts)
+    assert wl[0]["amount"] == 1050.0 and "10h +5h OT" in wl[0]["description"]
 
 
 async def test_ap_account_included_when_configured():

@@ -264,11 +264,24 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     amt = js_round2(_num(u.get("total")))
                     if amt == 0:
                         continue  # full-margin / zero-cost units carry no line
-                    units_out.append({"service_id": u.get("serviceId"), "amount": amt})
+                    units_out.append({
+                        "service_id": u.get("serviceId"), "amount": amt,
+                        "paid_hours": js_round2(_num(u.get("paidHours"))),
+                        "ot_hours": js_round2(_num(u.get("otHours"))),
+                    })
+                # Itemized adjustments (label + amount) so the bill lists each one
+                # separately; drop zero-amount entries (they carry no line).
+                adjustments = [
+                    {"label": (a.get("label") or "").strip(), "amount": js_round2(_num(a.get("amount")))}
+                    for a in adj if isinstance(a, dict) and int(round(_num(a.get("amount")) * 100)) != 0
+                ]
                 grp["days"].append({
                     "project_id": pid, "project_name": pname, "date": d,
                     "tier": work_pay.get("tier") or "", "state": _rollup_state(e["states"]),
-                    "payable": payable, "adj_total": adj_total, "units": units_out,
+                    "payable": payable, "adj_total": adj_total,
+                    "paid_hours": js_round2(_num(work_pay.get("paidHours"))),
+                    "ot_hours": js_round2(_num(work_pay.get("otHours"))),
+                    "units": units_out, "adjustments": adjustments,
                 })
 
     drafts = []
