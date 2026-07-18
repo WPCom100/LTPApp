@@ -183,6 +183,22 @@ async def status(
         .where(models.Invoice.receipt_email_status == "pending")
     )
 
+    # Payout vendor-bill payment state (from the bill-payment poller).
+    paid_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_paid_at.isnot(None))
+    )
+    unpaid_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_bill_id.isnot(None), models.PayoutBill.qb_paid_at.is_(None))
+    )
+    mismatch_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_sync_status == "synced",
+               models.PayoutBill.qb_total_amt.isnot(None),
+               func.abs(models.PayoutBill.qb_total_amt - models.PayoutBill.amount) > 0.01)
+    )
+
     realm = conn.realm_id or ""
     masked_realm = ("…" + realm[-4:]) if len(realm) > 4 else realm
 
@@ -206,6 +222,10 @@ async def status(
         # Auto-receipt surface for the Settings panel.
         "senderGmailConnected": sender_gmail_connected,
         "pendingReceipts": int(pending_receipts or 0),
+        # Payout vendor-bill payment state (bill-payment poller).
+        "paidBills": int(paid_bills or 0),
+        "unpaidBills": int(unpaid_bills or 0),
+        "amountMismatchCount": int(mismatch_bills or 0),
         # Admin-refreshed Income account list (feeds the mapping dropdowns in
         # Settings and the per-item pickers). [] until the first refresh.
         "incomeAccounts": conn.income_accounts or [],
