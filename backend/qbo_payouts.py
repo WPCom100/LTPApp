@@ -140,9 +140,15 @@ async def find_or_create_vendor(conn, db, contact, *, client_id, client_secret) 
 
 # ── Bill payload ─────────────────────────────────────────────────────────────
 
-def doc_number(contact_id, period_index) -> str:
-    """Deterministic, idempotent DocNumber PAY-{contactId}-{periodIndex} (<=21)."""
-    return f"PAY-{contact_id}-{period_index}"[:21]
+def doc_number(period) -> str:
+    """Human-readable, idempotent DocNumber PAY-{year2}-{number} (e.g. PAY-26-14) —
+    the year + the payroll period's ordinal within it. Unique PER VENDOR per pay
+    period (so the orphan-adoption queries scope by VendorRef). <=21 chars; falls
+    back to the raw period index if the number-in-year wasn't resolved."""
+    y, n = period.get("year2"), period.get("number")
+    if y is None or n is None:
+        return f"PAY-P{period.get('index')}"[:21]
+    return f"PAY-{int(y):02d}-{int(n)}"[:21]
 
 
 def _line_desc(day) -> str:
@@ -230,7 +236,7 @@ def plan_bill(contact_id, draft, period, accounts) -> dict:
     lines = build_bill_lines(billable, accounts)
     if not lines:
         raise PayoutNotBillable("no billable bill lines after account resolution")
-    doc_no = doc_number(contact_id, period.get("index"))
+    doc_no = doc_number(period)
     return {"billable": billable, "total": total, "lines": lines,
             "doc_number": doc_no, "signature": _line_signature(doc_no, period, lines)}
 
@@ -289,9 +295,11 @@ def _stamp(pb, user, etype, message, changes):
                            message=message, now=datetime.now(timezone.utc), changes=changes)
 
 
-async def _create_bill_with_recovery(conn, db, payload, *, client_id, client_secret) -> dict:
+async def _create_bill_with_recovery(conn, db, payload, vendor_id, *, client_id, client_secret) -> dict:
     """Create the bill, recovering from 6140 duplicate-DocNumber (adopt by
-    DocNumber -> update) and DocNumber-not-allowed (retry without it)."""
+    DocNumber -> update) and DocNumber-not-allowed (retry without it). The
+    DocNumber (PAY-{yy}-{n}) is shared across vendors, so the adopt-query scopes
+    by VendorRef to find THIS vendor's bill."""
     try:
         resp = await quickbooks.create_bill(conn, db, payload, client_id=client_id, client_secret=client_secret)
         return resp.get("Bill") or {}
@@ -300,7 +308,8 @@ async def _create_bill_with_recovery(conn, db, payload, *, client_id, client_sec
         if e.fault_code == "6140" or "duplicate document number" in body:
             existing = await quickbooks.query(
                 conn, db,
-                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(payload.get('DocNumber', ''))}'",
+                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(payload.get('DocNumber', ''))}'"
+                f" AND VendorRef = '{escape_query_value(str(vendor_id))}'",
                 client_id=client_id, client_secret=client_secret,
             )
             if existing:
@@ -366,7 +375,8 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
             # QB's duplicate-bill-number check is a preference that may be off).
             existing = await quickbooks.query(
                 conn, db,
-                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(doc_no)}'",
+                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(doc_no)}'"
+                f" AND VendorRef = '{escape_query_value(str(vendor_id))}'",
                 client_id=client_id, client_secret=client_secret,
             )
             if existing:
@@ -378,7 +388,7 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
                 action = "updated"
             else:
                 resp_bill = await _create_bill_with_recovery(
-                    conn, db, payload, client_id=client_id, client_secret=client_secret)
+                    conn, db, payload, vendor_id, client_id=client_id, client_secret=client_secret)
                 action = "created"
         else:
             payload["Id"] = pb.qb_bill_id

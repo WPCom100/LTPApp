@@ -139,6 +139,27 @@ def pay_period_label(start_iso, end_iso):
     return _ordinal_date(start_iso) + " – " + _ordinal_date(end_iso)
 
 
+def pay_period_number_in_year(anchor_iso, length_days, index):
+    """{'year','year2','number'} for a period index — a human-friendly payroll
+    label. `number` is the 1-based ordinal of this period within its START date's
+    calendar year (period #1 = the first period that STARTS that year; resets each
+    January; ~26/yr). Drives the QuickBooks bill number PAY-{year2}-{number}, e.g.
+    PAY-26-14. Mirrors theme.js::LTP_payPeriodNumberInYear."""
+    pp = pay_period_for_index(anchor_iso, length_days, index)
+    if pp is None:
+        return None
+    a = _parse_iso(anchor_iso)
+    start = _parse_iso(pp["start"])
+    year = start.year
+    length = _pp_len(length_days)
+    # The first period that STARTS in `year`: the period containing Jan 1, bumped
+    # one forward when that period actually began in the prior year (straddle).
+    idx_jan1 = (date(year, 1, 1) - a).days // length
+    start_jan1 = a + timedelta(days=idx_jan1 * length)
+    first_idx = idx_jan1 if start_jan1.year == year else idx_jan1 + 1
+    return {"year": year, "year2": year % 100, "number": index - first_idx + 1}
+
+
 # ── Payout re-derivation from frozen schedule snapshots ─────────────────────
 #
 # Mirrors theme.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each

@@ -87,8 +87,10 @@ async def _seed_contact(db, cid=5, first="Alex", last="Crew"):
 
 
 def _period(index=0):
+    # Anchor 2026-07-06 → index 0 is the 14th period of 2026 (PAY-26-14).
     return {"start": "2026-07-06", "end": "2026-07-19", "index": index,
-            "pay_day": "2026-07-24", "label": "July 6th, 2026 – July 19th, 2026"}
+            "pay_day": "2026-07-24", "label": "July 6th, 2026 – July 19th, 2026",
+            "year": 2026, "year2": 26, "number": 14}
 
 
 def _day(project_id=10, name="Fest", date="2026-07-08", payable=600.0, units=None, tier="full"):
@@ -115,13 +117,13 @@ async def test_push_creates_bill():
         assert res["action"] == "created" and res["qbBillId"] == "B1", res
         pb = (await db.execute(select(models.PayoutBill))).scalar_one()
         assert pb.qb_bill_id == "B1" and pb.amount == 600.0 and pb.qb_sync_status == "synced"
-        assert pb.doc_number == "PAY-5-0" and pb.line_signature
+        assert pb.doc_number == "PAY-26-14" and pb.line_signature
         lines = (await db.execute(select(models.PayoutBillLine))).scalars().all()
         assert len(lines) == 1 and lines[0].date == "2026-07-08" and lines[0].amount == 600.0
         payload = m["create_bill"].await_args.args[2]
         assert payload["VendorRef"]["value"] == "V1"
         assert payload["Line"][0]["AccountBasedExpenseLineDetail"]["AccountRef"]["value"] == "80"
-        assert payload["DocNumber"] == "PAY-5-0"
+        assert payload["DocNumber"] == "PAY-26-14"
         assert payload["TxnDate"] == "2026-07-19" and payload["DueDate"] == "2026-07-24"
         assert "APAccountRef" not in payload           # no AP configured -> omitted
         assert c.qb_vendor_id == "V1"                  # cached back on the contact
@@ -175,7 +177,7 @@ async def test_push_5010_refetch_and_retry():
         c = await _seed_contact(db)
         # Seed an already-synced bill so the update path runs.
         db.add(models.PayoutBill(contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
-                                 period_index=0, doc_number="PAY-5-0", qb_bill_id="B1",
+                                 period_index=0, doc_number="PAY-26-14", qb_bill_id="B1",
                                  qb_sync_token="1", qb_sync_status="synced", line_signature="OLD", amount=1.0))
         await db.flush()
         with _patch(update_bill=AsyncMock(side_effect=[_fault("5010"), {"Bill": {"Id": "B1", "SyncToken": "9"}}]),

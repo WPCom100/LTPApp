@@ -377,10 +377,13 @@ async def _resolve_period(db, period_start, period_end):
         return None, "Invalid pay-period configuration — check the anchor date in Settings."
     if bounds["start"] != period_start or bounds["end"] != period_end:
         return None, "The selected range isn't a pay period — use the This/Last Pay Period presets."
+    numbering = payouts.pay_period_number_in_year(anchor, length, bounds["index"]) or {}
     return {
         "start": bounds["start"], "end": bounds["end"], "index": bounds["index"],
         "pay_day": payouts.pay_period_pay_day(bounds["end"], offset),
         "label": payouts.pay_period_label(bounds["start"], bounds["end"]),
+        "year": numbering.get("year"), "year2": numbering.get("year2"),
+        "number": numbering.get("number"),
     }, None
 
 

@@ -1871,7 +1871,9 @@
     var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
       h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
       h("div", null,
-        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Pay Period: " + window.LTP_payPeriodLabel(range.start, range.end)),
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
+          (function() { var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex); return n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : ""; })()
+          + window.LTP_payPeriodLabel(range.start, range.end)),
         h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
       h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
 
