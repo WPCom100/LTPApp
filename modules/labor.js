@@ -357,6 +357,12 @@
     var [notes, setNotes] = useState(editing ? (editProject.scheduleNotes || "") : "");
     // Position rows — each is a role (rate-card Service) + optional crew member.
     var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
+    // Crew-wide meal breaks on the shift (same {id,startTime,endTime,type} shape
+    // the schedule editor uses). Editable in both create and edit modes — unpaid
+    // breaks are deducted from paid hours in Payouts. Prefilled when editing.
+    var [breaks, setBreaks] = useState(editing
+      ? (editShift.breaks || []).map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime || "12:00", endTime: b.endTime || "13:00", type: b.type === "paid" ? "paid" : "unpaid" }; })
+      : []);
     var [err, setErr] = useState("");
     // Crew already committed to this shift (edit mode) — a heads-up that saving a
     // time/date change queues them to be re-notified.
@@ -371,6 +377,10 @@
     function updateRow(i, patch) { setRows(function(rs) { return rs.map(function(r, j) { return j === i ? Object.assign({}, r, patch) : r; }); }); }
     function addRow() { setRows(function(rs) { return rs.concat([{ serviceId: "", crewId: "" }]); }); }
     function removeRow(i) { setRows(function(rs) { return rs.length > 1 ? rs.filter(function(_, j) { return j !== i; }) : rs; }); }
+
+    function addBreak() { setBreaks(function(bs) { return bs.concat([{ id: genId("brk"), startTime: "12:00", endTime: "13:00", type: "unpaid" }]); }); }
+    function updateBreak(i, patch) { setBreaks(function(bs) { return bs.map(function(b, j) { return j === i ? Object.assign({}, b, patch) : b; }); }); }
+    function removeBreak(i) { setBreaks(function(bs) { return bs.filter(function(_, j) { return j !== i; }); }); }
 
     // Crew tagged with the row's role float to the top (like the schedule editor),
     // but everyone stays selectable so an untagged role is never unassignable.
@@ -393,11 +403,13 @@
       if (!title.trim()) { setErr("Give the shift a name."); return; }
       if (!date) { setErr("Pick a date for the shift."); return; }
       if (!(end > start)) { setErr("End time must be after start time. For overnight shifts, use a project's schedule builder."); return; }
+      if (breaks.some(function(b) { return !(b.endTime > b.startTime); })) { setErr("Each break's end time must be after its start time."); return; }
       setErr("");
+      var cleanBreaks = breaks.map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" }; });
       if (editing) {
-        // Roles/crew aren't touched here — only the shift's scalar fields.
+        // Roles/crew aren't touched here — only the shift's scalar fields + breaks.
         onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-          location: location.trim(), notes: notes.trim() });
+          location: location.trim(), notes: notes.trim(), breaks: cleanBreaks });
         return;
       }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
@@ -406,7 +418,7 @@
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
       onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-        location: location.trim(), notes: notes.trim(), positions: positions });
+        location: location.trim(), notes: notes.trim(), breaks: cleanBreaks, positions: positions });
     }
 
     var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
@@ -429,6 +441,30 @@
         editing && editCommitted.length > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "6px 8px", display: "flex", alignItems: "center", gap: 6 } },
           h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
           h("span", null, editCommitted.length + " committed crew member" + (editCommitted.length > 1 ? "s" : "") + " on this shift — changing the date or time will queue a re-notification when you save.")),
+        // Meal breaks — crew-wide, editable in both create and edit. Same
+        // {id,startTime,endTime,type} shape the schedule editor uses; unpaid
+        // breaks are deducted from paid hours in Payouts.
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Meal Breaks"),
+          h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+            breaks.map(function(brk, i) {
+              var isPaid = brk.type === "paid";
+              var tInp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 4px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", width: 110 };
+              return h("div", { key: brk.id, style: { display: "inline-flex", gap: 4, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "4px", padding: "3px 6px" } },
+                h("button", { type: "button", onClick: function() { updateBreak(i, { type: isPaid ? "unpaid" : "paid" }); }, title: "Toggle paid / unpaid",
+                  style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "3px", padding: "1px 5px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } }, isPaid ? "PAID" : "UNPAID"),
+                h("input", { type: "time", value: brk.startTime, onChange: function(e) { updateBreak(i, { startTime: e.target.value }); }, style: tInp }),
+                h("span", { style: { color: B.textMut, fontSize: "10px" } }, "→"),
+                h("input", { type: "time", value: brk.endTime, onChange: function(e) { updateBreak(i, { endTime: e.target.value }); }, style: tInp }),
+                h("button", { type: "button", onClick: function() { removeBreak(i); }, "aria-label": "Remove break",
+                  style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: "0 2px", lineHeight: 1 } }, "×")
+              );
+            }),
+            h("button", { type: "button", onClick: addBreak,
+              style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.textMut, cursor: "pointer", fontSize: "10px", fontWeight: 600 } }, "+ Break")
+          ),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Unpaid breaks are deducted from paid hours in Payouts.")
+        ),
         // Roles / crew — editable when creating, read-only summary when editing
         // (crew are managed on the Assignments tab, so a time edit never disturbs them).
         editing
@@ -520,6 +556,7 @@
       var shift0 = (proj.schedule && proj.schedule[0]) || {};
       var newShift0 = Object.assign({}, shift0, {
         title: form.title, date: form.date, time: form.startTime, endDate: form.date, endTime: form.endTime,
+        breaks: form.breaks || shift0.breaks || [],
       });
       var newSchedule = before.length ? [newShift0].concat(before.slice(1)) : [newShift0];
       setProjects(function(prev) {

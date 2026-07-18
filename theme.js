@@ -547,6 +547,13 @@ window.LTP_manualShiftProject = function(opts) {
       fullMargin: false,
     };
   });
+  // Crew-wide meal breaks — same shape the schedule editor uses. Drop any
+  // without both endpoints; unpaid breaks are deducted from paid hours in pay.
+  var breaks = (opts.breaks || []).filter(function(b) {
+    return b && b.startTime && b.endTime;
+  }).map(function(b) {
+    return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
+  });
   var shift = {
     id: genId("sch"),
     title: title,
@@ -555,7 +562,7 @@ window.LTP_manualShiftProject = function(opts) {
     endDate: date,
     endTime: opts.endTime || "18:00",
     showOnCalendar: true,
-    breaks: [],
+    breaks: breaks,
     positions: positions,
   };
   return {
