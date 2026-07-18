@@ -139,6 +139,27 @@ def pay_period_label(start_iso, end_iso):
     return _ordinal_date(start_iso) + " – " + _ordinal_date(end_iso)
 
 
+def pay_period_number_in_year(anchor_iso, length_days, index):
+    """{'year','year2','number'} for a period index — a human-friendly payroll
+    label. `number` is the 1-based ordinal of this period within its START date's
+    calendar year (period #1 = the first period that STARTS that year; resets each
+    January; ~26/yr). Drives the QuickBooks bill number PAY-{year2}-{number}, e.g.
+    PAY-26-14. Mirrors theme.js::LTP_payPeriodNumberInYear."""
+    pp = pay_period_for_index(anchor_iso, length_days, index)
+    if pp is None:
+        return None
+    a = _parse_iso(anchor_iso)
+    start = _parse_iso(pp["start"])
+    year = start.year
+    length = _pp_len(length_days)
+    # The first period that STARTS in `year`: the period containing Jan 1, bumped
+    # one forward when that period actually began in the prior year (straddle).
+    idx_jan1 = (date(year, 1, 1) - a).days // length
+    start_jan1 = a + timedelta(days=idx_jan1 * length)
+    first_idx = idx_jan1 if start_jan1.year == year else idx_jan1 + 1
+    return {"year": year, "year2": year % 100, "number": index - first_idx + 1}
+
+
 # ── Payout re-derivation from frozen schedule snapshots ─────────────────────
 #
 # Mirrors theme.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each
@@ -243,11 +264,24 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     amt = js_round2(_num(u.get("total")))
                     if amt == 0:
                         continue  # full-margin / zero-cost units carry no line
-                    units_out.append({"service_id": u.get("serviceId"), "amount": amt})
+                    units_out.append({
+                        "service_id": u.get("serviceId"), "amount": amt,
+                        "paid_hours": js_round2(_num(u.get("paidHours"))),
+                        "ot_hours": js_round2(_num(u.get("otHours"))),
+                    })
+                # Itemized adjustments (label + amount) so the bill lists each one
+                # separately; drop zero-amount entries (they carry no line).
+                adjustments = [
+                    {"label": (a.get("label") or "").strip(), "amount": js_round2(_num(a.get("amount")))}
+                    for a in adj if isinstance(a, dict) and int(round(_num(a.get("amount")) * 100)) != 0
+                ]
                 grp["days"].append({
                     "project_id": pid, "project_name": pname, "date": d,
                     "tier": work_pay.get("tier") or "", "state": _rollup_state(e["states"]),
-                    "payable": payable, "adj_total": adj_total, "units": units_out,
+                    "payable": payable, "adj_total": adj_total,
+                    "paid_hours": js_round2(_num(work_pay.get("paidHours"))),
+                    "ot_hours": js_round2(_num(work_pay.get("otHours"))),
+                    "units": units_out, "adjustments": adjustments,
                 })
 
     drafts = []

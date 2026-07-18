@@ -788,7 +788,7 @@ class PayoutBill(Base):
     period_start = Column(String(10), nullable=False)   # ISO YYYY-MM-DD, inclusive
     period_end = Column(String(10), nullable=False)     # ISO YYYY-MM-DD, inclusive
     period_index = Column(Integer, nullable=True)       # pay-period index (DocNumber convenience only)
-    doc_number = Column(String(21), nullable=True)      # PAY-{contactId}-{periodIndex}, QB DocNumber (<=21)
+    doc_number = Column(String(21), nullable=True)      # PAY-{yy}-{n} QB DocNumber (<=21)
     amount = Column(Float, nullable=True)               # total billed (sum of lines), for display/reconciliation
     line_signature = Column(Text, nullable=True)        # hash of billed lines -> re-push no-op detection
     qb_bill_id = Column(String(32), nullable=True, index=True)  # QB Bill.Id
@@ -796,7 +796,16 @@ class PayoutBill(Base):
     qb_sync_status = Column(String(20), nullable=True)  # {null, synced, error}
     qb_synced_at = Column(DateTime(timezone=True), nullable=True)
     qb_last_error = Column(Text, nullable=True)
-    activity = Column(JSON, nullable=True)              # append-only stamps (created/updated/failed)
+    # Payment state, tracked by the bill-payment poller (backend/qbo_bill_poll.py)
+    # exactly like Invoice: qb_total_amt is QuickBooks' returned Bill total (also
+    # cross-checked against `amount` at push time — a mismatch is stamped);
+    # qb_balance is the last observed outstanding balance (0 = paid); qb_paid_at
+    # is set once Balance hits 0 — non-null means the bill is PAID (polling stops,
+    # and its days are protected from silent re-pricing).
+    qb_total_amt = Column(Float, nullable=True)
+    qb_balance = Column(Float, nullable=True)
+    qb_paid_at = Column(DateTime(timezone=True), nullable=True)
+    activity = Column(JSON, nullable=True)              # append-only stamps (created/updated/failed/paid)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

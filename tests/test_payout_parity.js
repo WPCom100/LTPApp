@@ -39,6 +39,8 @@ periods.cases.forEach((c, i) => {
   eq("PP index " + i, window.LTP_payPeriodIndex(c.anchor, c.length, c.date), c.index);
   const b = window.LTP_payPeriodForIndex(c.anchor, c.length, c.index);
   ok("PP bounds " + i, b && b.start === c.start && b.end === c.end, JSON.stringify(b));
+  const n = window.LTP_payPeriodNumberInYear(c.anchor, c.length, c.index);
+  ok("PP number " + i, n && n.year2 === c.year2 && n.number === c.number, JSON.stringify(n));
 });
 periods.payday.forEach((p, i) => {
   eq("PP payday " + i, window.LTP_payPeriodPayDay(p.end, p.offset), p.payDay);

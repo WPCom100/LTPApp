@@ -55,6 +55,9 @@ def test_pay_period_vectors_match_js():
         # bounds(as_of=date) resolves to the same window
         bnd = payouts.pay_period_bounds(c["anchor"], c["length"], c["date"])
         assert bnd["start"] == c["start"] and bnd["end"] == c["end"], (c, bnd)
+        # period-of-year numbering matches the JS-generated vectors
+        n = payouts.pay_period_number_in_year(c["anchor"], c["length"], c["index"])
+        assert n["year2"] == c["year2"] and n["number"] == c["number"], (c, n)
     for p in fx["payday"]:
         assert payouts.pay_period_pay_day(p["end"], p["offset"]) == p["payDay"], p
 
@@ -64,6 +67,13 @@ def test_pay_period_invalid_inputs_return_none():
     assert payouts.pay_period_index("2026-07-06", 14, "nope") is None
     assert payouts.pay_period_bounds("2026-02-31", 14, "2026-07-19") is None   # overflow-normalized rejected
     assert payouts.pay_period_index("2026-07-06", 0, "2026-07-20") == 1        # invalid length -> 14
+
+
+def test_doc_number_format():
+    from backend.qbo_payouts import doc_number
+    assert doc_number({"year2": 26, "number": 14, "index": 0}) == "PAY-26-14"
+    assert doc_number({"year2": 5, "number": 3}) == "PAY-05-3"
+    assert doc_number({"index": 7}) == "PAY-P7"   # fallback when numbering is absent
 
 
 def test_pay_period_label_matches_js_format():

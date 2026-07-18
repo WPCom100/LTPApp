@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks
+from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
 
@@ -183,6 +183,22 @@ async def status(
         .where(models.Invoice.receipt_email_status == "pending")
     )
 
+    # Payout vendor-bill payment state (from the bill-payment poller).
+    paid_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_paid_at.isnot(None))
+    )
+    unpaid_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_bill_id.isnot(None), models.PayoutBill.qb_paid_at.is_(None))
+    )
+    mismatch_bills = await db.scalar(
+        select(func.count()).select_from(models.PayoutBill)
+        .where(models.PayoutBill.qb_sync_status == "synced",
+               models.PayoutBill.qb_total_amt.isnot(None),
+               func.abs(models.PayoutBill.qb_total_amt - models.PayoutBill.amount) > 0.01)
+    )
+
     realm = conn.realm_id or ""
     masked_realm = ("…" + realm[-4:]) if len(realm) > 4 else realm
 
@@ -206,6 +222,10 @@ async def status(
         # Auto-receipt surface for the Settings panel.
         "senderGmailConnected": sender_gmail_connected,
         "pendingReceipts": int(pending_receipts or 0),
+        # Payout vendor-bill payment state (bill-payment poller).
+        "paidBills": int(paid_bills or 0),
+        "unpaidBills": int(unpaid_bills or 0),
+        "amountMismatchCount": int(mismatch_bills or 0),
         # Admin-refreshed Income account list (feeds the mapping dropdowns in
         # Settings and the per-item pickers). [] until the first refresh.
         "incomeAccounts": conn.income_accounts or [],
@@ -377,10 +397,13 @@ async def _resolve_period(db, period_start, period_end):
         return None, "Invalid pay-period configuration — check the anchor date in Settings."
     if bounds["start"] != period_start or bounds["end"] != period_end:
         return None, "The selected range isn't a pay period — use the This/Last Pay Period presets."
+    numbering = payouts.pay_period_number_in_year(anchor, length, bounds["index"]) or {}
     return {
         "start": bounds["start"], "end": bounds["end"], "index": bounds["index"],
         "pay_day": payouts.pay_period_pay_day(bounds["end"], offset),
         "label": payouts.pay_period_label(bounds["start"], bounds["end"]),
+        "year": numbering.get("year"), "year2": numbering.get("year2"),
+        "number": numbering.get("number"),
     }, None
 
 
@@ -489,19 +512,29 @@ async def payout_preview_route(
             contacts_out.append(card)
             continue
 
+        paid = pb is not None and pb.qb_paid_at is not None
         if pb is None or not pb.qb_bill_id:
             bill_status = "new"
+        elif paid:
+            bill_status = "paid" if pb.line_signature == plan["signature"] else "paid_changed"
         elif pb.qb_sync_status == "error":
             bill_status = "error"
         elif pb.line_signature == plan["signature"]:
             bill_status = "up_to_date"
         else:
             bill_status = "needs_update"
+        # A paid bill is blocked from re-export — never overwrite it.
+        reason = None
+        if bill_status == "paid":
+            reason = "Already paid in QuickBooks."
+        elif bill_status == "paid_changed":
+            reason = "Paid in QuickBooks but the payout changed since — QuickBooks won't be overwritten; adjust the bill in QB."
         card.update({
-            "blocked": False, "reason": None, "total": plan["total"],
+            "blocked": paid, "reason": reason, "total": plan["total"],
             "lineCount": len(plan["lines"]), "days": days_out, "billStatus": bill_status,
             "existingBill": ({"docNumber": pb.doc_number, "qbBillId": pb.qb_bill_id,
                               "syncedAt": pb.qb_synced_at.isoformat() if pb.qb_synced_at else None,
+                              "paidAt": pb.qb_paid_at.isoformat() if pb.qb_paid_at else None,
                               "amount": pb.amount, "status": pb.qb_sync_status} if pb else None),
             "warnings": cwarn,
         })
@@ -566,6 +599,113 @@ async def payout_push_route(
                             "error": "QuickBooks connection expired. Reconnect it in Settings."})
 
     return {"ok": True, "connected": True, "period": _period_out(period), "results": results}
+
+
+@qbo_router.post("/payouts/day-status")
+async def payout_day_status_route(
+    body: PayoutExportRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: models.User = Depends(require_session),
+):
+    """Per-shift export/paid status for the Payouts tab. Returns a map keyed
+    "{contactId}|{projectId}|{date}" -> {status, paid, paidAt, docNumber, qbBillId}
+    for every day that's been exported (i.e. is in the bill ledger) within the
+    requested date range. status ∈ exported | needs_reexport | paid | paid_changed
+    (a day absent from the map is simply not exported). Staleness is computed per
+    overlapping bill by re-deriving its period and comparing the live signature."""
+    start, end = body.periodStart, body.periodEnd
+    lines = (await db.execute(select(models.PayoutBillLine).where(
+        models.PayoutBillLine.date >= start, models.PayoutBillLine.date <= end))).scalars().all()
+    if not lines:
+        return {"days": {}}
+
+    bill_ids = {ln.payout_bill_id for ln in lines}
+    bills = {b.id: b for b in (await db.execute(
+        select(models.PayoutBill).where(models.PayoutBill.id.in_(bill_ids)))).scalars().all()}
+
+    # Live signature per bill (for drift detection), computed once per distinct period.
+    services = (await db.execute(select(models.Service))).scalars().all()
+    accounts = await qbo_payouts.resolve_payout_accounts(db, services)
+    live_sig = {}
+    periods = {}
+    for b in bills.values():
+        periods.setdefault((b.period_start, b.period_end), []).append(b)
+    for (ps, pe), blist in periods.items():
+        period, _ = await _resolve_period(db, ps, pe)
+        if period is None:
+            continue  # config drifted — leave live_sig unset (treated as fresh)
+        drafts = {d["contact_id"]: d for d in await payouts.load_payout_drafts(db, ps, pe)}
+        for b in blist:
+            d = drafts.get(b.contact_id)
+            if d is None:
+                continue
+            try:
+                live_sig[b.id] = qbo_payouts.plan_bill(b.contact_id, d, period, accounts)["signature"]
+            except qbo_payouts.PayoutNotBillable:
+                pass
+
+    days = {}
+    for ln in lines:
+        b = bills.get(ln.payout_bill_id)
+        if b is None or not b.qb_bill_id:
+            continue
+        stale = b.id in live_sig and live_sig[b.id] != b.line_signature
+        if b.qb_paid_at is not None:
+            status = "paid_changed" if stale else "paid"
+        else:
+            status = "needs_reexport" if stale else "exported"
+        days["%s|%s|%s" % (ln.contact_id, ln.project_id, ln.date)] = {
+            "status": status, "paid": b.qb_paid_at is not None,
+            "paidAt": b.qb_paid_at.isoformat() if b.qb_paid_at else None,
+            "docNumber": b.doc_number, "qbBillId": b.qb_bill_id,
+        }
+    return {"days": days}
+
+
+class PayoutEditNotice(BaseModel):
+    contactId: int
+    projectId: int | None = None
+    date: str
+    where: str | None = None   # "payouts" | "schedule"
+
+
+@qbo_router.post("/payouts/notify-edit")
+async def payout_notify_edit_route(
+    body: PayoutEditNotice,
+    db: AsyncSession = Depends(get_db),
+    user: models.User = Depends(require_session),
+):
+    """Record + broadcast that a producer changed a day that's already been PAID
+    in QuickBooks (an override confirmed in the Payouts tab or Schedule Builder).
+    Stamps the paid bill's activity and web-pushes admins. Best-effort."""
+    cr = (await db.execute(select(models.Contact).where(models.Contact.id == body.contactId))).scalar_one_or_none()
+    name = ((cr.first_name or "") + " " + (cr.last_name or "")).strip() if cr else "A crew member"
+
+    q = select(models.PayoutBillLine).where(
+        models.PayoutBillLine.contact_id == body.contactId, models.PayoutBillLine.date == body.date)
+    if body.projectId is not None:
+        q = q.where(models.PayoutBillLine.project_id == body.projectId)
+    ln = (await db.execute(q)).scalars().first()
+    pb = None
+    if ln is not None:
+        pb = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == ln.payout_bill_id))).scalar_one_or_none()
+
+    doc = pb.doc_number if pb else None
+    where = "the schedule" if body.where == "schedule" else "a payout"
+    msg = (f"{name} · {body.date}" + (f" ({doc})" if doc else "")
+           + f" was changed in {where} after being paid in QuickBooks")
+    if pb is not None:
+        qbo_payouts._stamp(pb, user, "qbo_payout_edited_after_paid",
+                           f"Paid payout edited: {name} · {body.date}",
+                           [{"cat": "Edited in", "detail": where},
+                            {"cat": "By", "detail": (user.name or user.email or "")}])
+        await db.flush()
+    try:
+        await webpush.notify_entity(db, "payout", (pb.id if pb else 0),
+                                    "Paid payout edited", msg, "/#/labor/payouts")
+    except Exception as e:  # pragma: no cover - best-effort
+        print(f"[LTP] webpush: paid-edit notify failed: {e}", flush=True)
+    return {"ok": True}
 
 
 # ── Compute a quote's sales tax via a temporary estimate ──────────────────────

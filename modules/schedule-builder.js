@@ -61,6 +61,62 @@
     // reserved for confirm/cancel decisions). Variant defaults to "error".
     function showAlert(title, msg, variant) { window.LTP_toast(title, { message: msg, variant: variant || "error" }); }
 
+    // ── Paid-day guard ───────────────────────────────────────────────────────
+    // Days already PAID in QuickBooks (crewId|date -> {docNumber,…}) for THIS
+    // project. Editing a shift's time/positions reprices the day, so a save that
+    // touches a paid day is gated behind a warn+confirm; confirming records the
+    // override (web-pushes admins). See /api/qbo/payouts/day-status + notify-edit.
+    var [paidDays, setPaidDays] = useState({});
+    var [paidWarn, setPaidWarn] = useState(null);   // [{crewId, date, ds}] while confirming
+    useEffect(function() {
+      var dates = (project.schedule || []).map(function(s) { return s.date; }).filter(Boolean).sort();
+      if (!dates.length) { setPaidDays({}); return; }
+      fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: dates[0], periodEnd: dates[dates.length - 1] }) })
+        .then(function(r) { return r.ok ? r.json() : { days: {} }; })
+        .then(function(b) {
+          var days = (b && b.days) || {}, mine = {};
+          Object.keys(days).forEach(function(k) {
+            var parts = k.split("|");   // crewId|projectId|date
+            if (String(parts[1]) === String(project.id) && days[k].paid) mine[parts[0] + "|" + parts[2]] = days[k];
+          });
+          setPaidDays(mine);
+        })
+        .catch(function() { setPaidDays({}); });
+    }, [project.id]);
+
+    // Payout-relevant fingerprint of each (crewId, date): shift times, breaks,
+    // and the crew's positions (role/service/status). A change here reprices pay.
+    function _paidSig(schedule) {
+      var m = {};
+      (schedule || []).forEach(function(s) {
+        if (!s.date) return;
+        (s.positions || []).forEach(function(p) {
+          if (p.crewId == null) return;
+          var key = p.crewId + "|" + s.date;
+          (m[key] = m[key] || []).push([s.time, s.endTime, p.serviceId, p.role, p.status, (s.breaks || []).length].join(","));
+        });
+      });
+      Object.keys(m).forEach(function(k) { m[k].sort(); });
+      return m;
+    }
+    function changedPaidDays() {
+      if (!Object.keys(paidDays).length) return [];
+      var before = _paidSig(cleanRef.current.schedule), after = _paidSig(draft.schedule);
+      var out = [];
+      Object.keys(paidDays).forEach(function(cd) {
+        if ((before[cd] || []).join(";") !== (after[cd] || []).join(";")) {
+          var parts = cd.split("|");
+          out.push({ crewId: Number(parts[0]), date: parts[1], ds: paidDays[cd] });
+        }
+      });
+      return out;
+    }
+    function notifyPaidEdit(cp) {
+      fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ contactId: cp.crewId, projectId: project.id, date: cp.date, where: "schedule" }) }).catch(function() {});
+    }
+
     // ── Compute summary stats ────────────────────────────────────────────────
     var stats = useMemo(function() {
       var totalPos = 0, filledPos = 0, totalRate = 0, totalCost = 0;
@@ -135,6 +191,14 @@
     // declines. Snapshot the shifts here (the positions are about to be deleted)
     // so the email still renders. Then persist.
     function save() {
+      // Guard: a save that reprices a paid day warns first; confirming records
+      // the override and continues via _runSave().
+      var cp = changedPaidDays();
+      if (cp.length) { setPaidWarn(cp); return; }
+      _runSave();
+    }
+
+    function _runSave() {
       if (project.id) {
         // Two kinds of crew notice come out of a save: crew pulled off a shift
         // (removed/reassigned) and crew whose still-held shift was MOVED. Both
@@ -491,6 +555,19 @@
           )
         )
       ),
+
+      // Paid-day change guard (warn + confirm; confirming records the override).
+      paidWarn && h(window.LTPModal, { title: "Changing a paid day", onClose: function() { setPaidWarn(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 10 } },
+          "This save changes " + paidWarn.length + " day" + (paidWarn.length > 1 ? "s" : "") + " already paid in QuickBooks. The paid QuickBooks bill" + (paidWarn.length > 1 ? "s" : "") + " won't update automatically — adjust " + (paidWarn.length > 1 ? "them" : "it") + " in QuickBooks to stay in sync."),
+        h("ul", { style: { margin: "0 0 14px", paddingLeft: 18, fontSize: "11px", color: B.text } },
+          paidWarn.map(function(cp, i) {
+            var c = contacts.find(function(x) { return x.id === cp.crewId; });
+            return h("li", { key: i, style: { marginBottom: 3 } }, (c ? (c.firstName + " " + c.lastName).trim() : "Crew") + " · " + fmt(cp.date) + (cp.ds && cp.ds.docNumber ? " (" + cp.ds.docNumber + ")" : ""));
+          })),
+        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setPaidWarn(null); } }, "Cancel"),
+          h(window.Btn, { variant: "danger", onClick: function() { var cps = paidWarn; setPaidWarn(null); cps.forEach(notifyPaidEdit); _runSave(); } }, "Save anyway"))),
 
       // Activity detail modal
       viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },

@@ -942,6 +942,23 @@ window.LTP_payPeriodLabel = function(startISO, endISO) {
   return window.LTP_formatDate(startISO) + " – " + window.LTP_formatDate(endISO);
 };
 
+// { year, year2, number } for a period index — 'number' is the 1-based ordinal
+// of this period within its start date's calendar year (period #1 = first period
+// starting that year; resets each January). Drives the "PAY-26-14" bill number
+// and the navigator's "Period 14 · 2026" label. Python mirror:
+// backend/payouts.py::pay_period_number_in_year.
+window.LTP_payPeriodNumberInYear = function(anchorISO, lengthDays, index) {
+  var pp = window.LTP_payPeriodForIndex(anchorISO, lengthDays, index);
+  if (!pp) return null;
+  var aDays = _ppEpochDays(anchorISO);
+  var year = new Date(_ppEpochDays(pp.start) * 86400000).getUTCFullYear();
+  var len = _ppLen(lengthDays);
+  var idxJan1 = Math.floor((_ppEpochDays(year + "-01-01") - aDays) / len);
+  var startJan1Year = new Date((aDays + idxJan1 * len) * 86400000).getUTCFullYear();
+  var firstIdx = (startJan1Year === year) ? idxJan1 : idxJan1 + 1;
+  return { year: year, year2: year % 100, number: index - firstIdx + 1 };
+};
+
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
 // breaks, positionId }), return the individual unpaid breaks needed to clear
 // THEIR meal penalties — each tagged with the positionId (shift) it attaches

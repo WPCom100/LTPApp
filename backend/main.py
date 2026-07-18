@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
-from backend import models, qbo_receipts
+from backend import models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.auth import router as auth_router
@@ -97,6 +97,35 @@ async def _qbo_receipt_poll_loop():
             raise
 
 
+# ── QuickBooks payout-bill payment poller ───────────────────────────────────
+# Wakes on the same cadence, asks QuickBooks which linked crew-payout Vendor
+# Bills are now paid (Balance 0), marks them paid, and web-pushes admins. Once
+# paid, a bill's days are protected from re-pricing and it stops being polled.
+# See backend/qbo_bill_poll.py. Cadence: LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS
+# (default 2 hours).
+QBO_PAYOUT_POLL_INTERVAL = int(os.environ.get("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", str(2 * 3600)))
+
+
+async def _qbo_payout_poll_loop():
+    """Long-running background task: one bill-payment poll cycle per iteration,
+    then sleep. Per-bill failures are isolated inside run_bill_poll; a transient
+    blip here is caught + logged so the poller survives to the next interval."""
+    while True:
+        try:
+            summary = await qbo_bill_poll.run_bill_poll()
+            if not summary.get("skipped") and summary.get("paid"):
+                print(f"[LTP] qbo-bill-poll: {summary['paid']} newly paid "
+                      f"(of {summary['checked']} checked)", flush=True)
+        except asyncio.CancelledError:
+            raise  # propagate shutdown signal
+        except Exception as e:
+            print(f"[LTP] qbo-bill-poll error (will retry next interval): {e}", flush=True)
+        try:
+            await asyncio.sleep(QBO_PAYOUT_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -109,14 +138,15 @@ async def lifespan(app: FastAPI):
     app.state.client_view_seen = {}
     sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
     receipt_poller = asyncio.create_task(_qbo_receipt_poll_loop(), name="ltp_qbo_receipt_poller")
+    bill_poller = asyncio.create_task(_qbo_payout_poll_loop(), name="ltp_qbo_payout_poller")
     try:
         yield
     finally:
         # Graceful shutdown: cancel, then await so each task actually finishes
         # its current iteration (asyncio.Task.cancel() alone just sets a flag).
-        for task in (sweeper, receipt_poller):
+        for task in (sweeper, receipt_poller, bill_poller):
             task.cancel()
-        for task in (sweeper, receipt_poller):
+        for task in (sweeper, receipt_poller, bill_poller):
             try:
                 await task
             except (asyncio.CancelledError, Exception):

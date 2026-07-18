@@ -97,7 +97,9 @@ const ppCases = [
 ].map(function (c) {
   const idx = window.LTP_payPeriodIndex(c[0], c[1], c[2]);
   const b = window.LTP_payPeriodForIndex(c[0], c[1], idx);
-  return { anchor: c[0], length: c[1], date: c[2], index: idx, start: b.start, end: b.end };
+  const n = window.LTP_payPeriodNumberInYear(c[0], c[1], idx);
+  return { anchor: c[0], length: c[1], date: c[2], index: idx, start: b.start, end: b.end,
+    year: n.year, year2: n.year2, number: n.number };
 });
 const ppPayday = [["2026-07-19", 5], ["2026-07-19", 0], ["2026-08-02", 5]].map(function (c) {
   return { end: c[0], offset: c[1], payDay: window.LTP_payPeriodPayDay(c[0], c[1]) };

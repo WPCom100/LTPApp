@@ -11,6 +11,7 @@ import contextlib
 import inspect
 import os
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -87,8 +88,10 @@ async def _seed_contact(db, cid=5, first="Alex", last="Crew"):
 
 
 def _period(index=0):
+    # Anchor 2026-07-06 → index 0 is the 14th period of 2026 (PAY-26-14).
     return {"start": "2026-07-06", "end": "2026-07-19", "index": index,
-            "pay_day": "2026-07-24", "label": "July 6th, 2026 – July 19th, 2026"}
+            "pay_day": "2026-07-24", "label": "July 6th, 2026 – July 19th, 2026",
+            "year": 2026, "year2": 26, "number": 14}
 
 
 def _day(project_id=10, name="Fest", date="2026-07-08", payable=600.0, units=None, tier="full"):
@@ -115,13 +118,13 @@ async def test_push_creates_bill():
         assert res["action"] == "created" and res["qbBillId"] == "B1", res
         pb = (await db.execute(select(models.PayoutBill))).scalar_one()
         assert pb.qb_bill_id == "B1" and pb.amount == 600.0 and pb.qb_sync_status == "synced"
-        assert pb.doc_number == "PAY-5-0" and pb.line_signature
+        assert pb.doc_number == "PAY-26-14" and pb.line_signature
         lines = (await db.execute(select(models.PayoutBillLine))).scalars().all()
         assert len(lines) == 1 and lines[0].date == "2026-07-08" and lines[0].amount == 600.0
         payload = m["create_bill"].await_args.args[2]
         assert payload["VendorRef"]["value"] == "V1"
         assert payload["Line"][0]["AccountBasedExpenseLineDetail"]["AccountRef"]["value"] == "80"
-        assert payload["DocNumber"] == "PAY-5-0"
+        assert payload["DocNumber"] == "PAY-26-14"
         assert payload["TxnDate"] == "2026-07-19" and payload["DueDate"] == "2026-07-24"
         assert "APAccountRef" not in payload           # no AP configured -> omitted
         assert c.qb_vendor_id == "V1"                  # cached back on the contact
@@ -175,7 +178,7 @@ async def test_push_5010_refetch_and_retry():
         c = await _seed_contact(db)
         # Seed an already-synced bill so the update path runs.
         db.add(models.PayoutBill(contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
-                                 period_index=0, doc_number="PAY-5-0", qb_bill_id="B1",
+                                 period_index=0, doc_number="PAY-26-14", qb_bill_id="B1",
                                  qb_sync_token="1", qb_sync_status="synced", line_signature="OLD", amount=1.0))
         await db.flush()
         with _patch(update_bill=AsyncMock(side_effect=[_fault("5010"), {"Bill": {"Id": "B1", "SyncToken": "9"}}]),
@@ -274,16 +277,89 @@ async def test_multi_account_lines_reconcile_in_payload():
     async with _db() as db:
         c = await _seed_contact(db)
         # A day worked as two roles: svc 1 -> default acct 80, svc 2 -> acct 81,
-        # plus a +30 adjustment folded into the payable.
+        # plus a +30 "Parking" adjustment as its OWN line on the primary role account.
         day = _day(payable=570.0, tier="mixed",
-                   units=[{"service_id": 1, "amount": 300.0}, {"service_id": 2, "amount": 240.0}])
+                   units=[{"service_id": 1, "amount": 300.0, "paid_hours": 10},
+                          {"service_id": 2, "amount": 240.0, "paid_hours": 5}])
         day["adj_total"] = 30.0
+        day["adjustments"] = [{"label": "Parking", "amount": 30.0}]
         with _patch() as m:
             await qbo_payouts.push_payout_bill(db, c, _draft(5, [day]), _period(), _ACCTS, client_id="x", client_secret="y")
-        payload = m["create_bill"].await_args.args[2]
-        by_acct = {ln["AccountBasedExpenseLineDetail"]["AccountRef"]["value"]: ln["Amount"] for ln in payload["Line"]}
-        assert by_acct == {"80": 330.0, "81": 240.0}       # primary (80) absorbed the +30
-        assert round(sum(payload["Line"][i]["Amount"] for i in range(len(payload["Line"]))), 2) == 570.0
+        lines = m["create_bill"].await_args.args[2]["Line"]
+        assert round(sum(ln["Amount"] for ln in lines), 2) == 570.0
+        per_acct = {}
+        for ln in lines:
+            a = ln["AccountBasedExpenseLineDetail"]["AccountRef"]["value"]
+            per_acct[a] = round(per_acct.get(a, 0) + ln["Amount"], 2)
+        assert per_acct == {"80": 330.0, "81": 240.0}      # 300 work + 30 adj on 80; 240 work on 81
+        adj_lines = [ln for ln in lines if "Parking" in ln["Description"]]
+        assert len(adj_lines) == 1 and adj_lines[0]["Amount"] == 30.0
+        assert adj_lines[0]["AccountBasedExpenseLineDetail"]["AccountRef"]["value"] == "80"
+        assert any("10h" in ln["Description"] for ln in lines)   # hours shown on the work line
+
+
+def test_build_bill_lines_hours_and_adjustment_only():
+    # Pure line-building: a no-show + kill-fee day (no worked units) -> a single
+    # adjustment line on the default account; a worked day shows hours + OT.
+    accts = {"default_expense": "80", "ap": None, "by_service": {2: "81"}}
+    noshow = {"project_name": "Wh", "date": "2026-07-11", "tier": "", "payable": 100.0,
+              "adj_total": 100.0, "units": [], "adjustments": [{"label": "Kill fee", "amount": 100.0}]}
+    lines = qbo_payouts.build_bill_lines([noshow], accts)
+    assert lines == [{"account_id": "80", "amount": 100.0, "description": "Wh · 2026-07-11 · Kill fee"}]
+    worked = {"project_name": "Fest", "date": "2026-07-08", "tier": "full", "payable": 1050.0,
+              "adj_total": 0.0, "adjustments": [],
+              "units": [{"service_id": 1, "amount": 1050.0, "paid_hours": 10, "ot_hours": 5}]}
+    wl = qbo_payouts.build_bill_lines([worked], accts)
+    assert wl[0]["amount"] == 1050.0 and "10h +5h OT" in wl[0]["description"]
+
+
+async def test_amount_reconciliation_mismatch_stamped():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # QuickBooks returns a TotalAmt different from our computed 600 -> flagged.
+        with _patch(create_bill=AsyncMock(return_value={"Bill": {"Id": "B1", "SyncToken": "0", "TotalAmt": 599.5}})):
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res["action"] == "created"
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert pb.qb_total_amt == 599.5
+        assert pb.qb_last_error and "599.50" in pb.qb_last_error
+        assert any(a.get("type") == "qbo_payout_mismatch" for a in (pb.activity or []))
+
+
+async def test_paid_bill_not_overwritten():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # A PAID bill whose payout has since changed (stale signature) must NOT be
+        # overwritten — push refuses and hits QuickBooks zero times.
+        db.add(models.PayoutBill(contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
+                                 period_index=0, doc_number="PAY-26-14", qb_bill_id="B1", qb_sync_token="1",
+                                 qb_sync_status="synced", line_signature="OLD", amount=600.0,
+                                 qb_paid_at=datetime.now(timezone.utc)))
+        await db.flush()
+        with _patch() as m:
+            raised = False
+            try:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable as e:
+                raised = True
+                assert "already paid" in str(e)
+            assert raised
+            assert m["create_bill"].await_count == 0 and m["update_bill"].await_count == 0
+
+
+async def test_paid_bill_unchanged_is_noop_not_blocked():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # First push creates + captures the signature; then mark it paid and re-push
+        # the SAME data -> the no-op short-circuit wins (no error), no QB overwrite.
+        with _patch() as m:
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+            pb.qb_paid_at = datetime.now(timezone.utc)
+            await db.flush()
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res["action"] == "unchanged"
+        assert m["create_bill"].await_count == 1 and m["update_bill"].await_count == 0
 
 
 async def test_ap_account_included_when_configured():
