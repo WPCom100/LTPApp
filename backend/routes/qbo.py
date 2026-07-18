@@ -492,19 +492,29 @@ async def payout_preview_route(
             contacts_out.append(card)
             continue
 
+        paid = pb is not None and pb.qb_paid_at is not None
         if pb is None or not pb.qb_bill_id:
             bill_status = "new"
+        elif paid:
+            bill_status = "paid" if pb.line_signature == plan["signature"] else "paid_changed"
         elif pb.qb_sync_status == "error":
             bill_status = "error"
         elif pb.line_signature == plan["signature"]:
             bill_status = "up_to_date"
         else:
             bill_status = "needs_update"
+        # A paid bill is blocked from re-export — never overwrite it.
+        reason = None
+        if bill_status == "paid":
+            reason = "Already paid in QuickBooks."
+        elif bill_status == "paid_changed":
+            reason = "Paid in QuickBooks but the payout changed since — QuickBooks won't be overwritten; adjust the bill in QB."
         card.update({
-            "blocked": False, "reason": None, "total": plan["total"],
+            "blocked": paid, "reason": reason, "total": plan["total"],
             "lineCount": len(plan["lines"]), "days": days_out, "billStatus": bill_status,
             "existingBill": ({"docNumber": pb.doc_number, "qbBillId": pb.qb_bill_id,
                               "syncedAt": pb.qb_synced_at.isoformat() if pb.qb_synced_at else None,
+                              "paidAt": pb.qb_paid_at.isoformat() if pb.qb_paid_at else None,
                               "amount": pb.amount, "status": pb.qb_sync_status} if pb else None),
             "warnings": cwarn,
         })

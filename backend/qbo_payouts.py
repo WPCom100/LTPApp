@@ -376,6 +376,12 @@ def _apply_bill_result(pb, resp_bill, total, sig, doc_no, period):
         pb.qb_bill_id = str(resp_bill["Id"])
     if resp_bill.get("SyncToken") is not None:
         pb.qb_sync_token = str(resp_bill["SyncToken"])
+    ta = resp_bill.get("TotalAmt")
+    if ta is not None:
+        try:
+            pb.qb_total_amt = float(ta)
+        except (TypeError, ValueError):
+            pb.qb_total_amt = None
     pb.amount = total
     pb.line_signature = sig
     pb.doc_number = doc_no
@@ -409,6 +415,11 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
     if pb.qb_bill_id and pb.qb_sync_status == "synced" and pb.line_signature == sig:
         return {"ok": True, "action": "unchanged", "contactId": contact.id,
                 "qbBillId": pb.qb_bill_id, "amount": pb.amount}
+
+    # Already paid in QuickBooks + the payout has since changed -> never overwrite
+    # a paid bill. The producer must void/adjust the bill in QB (or issue a credit).
+    if pb.qb_paid_at is not None:
+        raise PayoutNotBillable("already paid in QuickBooks — changes were not pushed")
 
     await _assert_not_double_billed(db, contact.id, pb.id, billable)
 
@@ -459,6 +470,13 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
         return {"ok": False, "action": "error", "contactId": contact.id, "error": e.safe_message}
 
     _apply_bill_result(pb, resp_bill, total, sig, doc_no, period)
+    # Reconcile QuickBooks' returned total against ours (QB derives it from the
+    # same lines, so a mismatch signals a bug worth surfacing — flag, don't block).
+    if pb.qb_total_amt is not None and abs(pb.qb_total_amt - total) > 0.01:
+        pb.qb_last_error = f"QuickBooks total ${pb.qb_total_amt:.2f} ≠ computed ${total:.2f}"
+        _stamp(pb, user, "qbo_payout_mismatch", "QuickBooks bill total differs from the computed payout",
+               [{"cat": "QuickBooks total", "detail": f"${pb.qb_total_amt:.2f}"},
+                {"cat": "Computed", "detail": f"${total:.2f}"}])
     await _replace_ledger(db, pb, contact.id, billable)
     _stamp(pb, user, "qbo_payout_synced",
            f"Payout bill {action} for {period.get('label') or period['end']} — ${total:.2f}",

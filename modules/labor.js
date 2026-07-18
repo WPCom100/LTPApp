@@ -1553,6 +1553,7 @@
     var STATUS = {
       "new": { label: "New", color: B.info }, needs_update: { label: "Needs update", color: B.warn },
       up_to_date: { label: "Up to date", color: B.success }, error: { label: "Error", color: B.danger },
+      paid: { label: "Paid", color: B.success }, paid_changed: { label: "Paid · changed", color: B.danger },
       blocked: { label: "Blocked", color: B.danger },
     };
     var RESULT = {

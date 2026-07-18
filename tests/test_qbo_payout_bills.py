@@ -11,6 +11,7 @@ import contextlib
 import inspect
 import os
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -310,6 +311,55 @@ def test_build_bill_lines_hours_and_adjustment_only():
               "units": [{"service_id": 1, "amount": 1050.0, "paid_hours": 10, "ot_hours": 5}]}
     wl = qbo_payouts.build_bill_lines([worked], accts)
     assert wl[0]["amount"] == 1050.0 and "10h +5h OT" in wl[0]["description"]
+
+
+async def test_amount_reconciliation_mismatch_stamped():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # QuickBooks returns a TotalAmt different from our computed 600 -> flagged.
+        with _patch(create_bill=AsyncMock(return_value={"Bill": {"Id": "B1", "SyncToken": "0", "TotalAmt": 599.5}})):
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res["action"] == "created"
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert pb.qb_total_amt == 599.5
+        assert pb.qb_last_error and "599.50" in pb.qb_last_error
+        assert any(a.get("type") == "qbo_payout_mismatch" for a in (pb.activity or []))
+
+
+async def test_paid_bill_not_overwritten():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # A PAID bill whose payout has since changed (stale signature) must NOT be
+        # overwritten — push refuses and hits QuickBooks zero times.
+        db.add(models.PayoutBill(contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
+                                 period_index=0, doc_number="PAY-26-14", qb_bill_id="B1", qb_sync_token="1",
+                                 qb_sync_status="synced", line_signature="OLD", amount=600.0,
+                                 qb_paid_at=datetime.now(timezone.utc)))
+        await db.flush()
+        with _patch() as m:
+            raised = False
+            try:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable as e:
+                raised = True
+                assert "already paid" in str(e)
+            assert raised
+            assert m["create_bill"].await_count == 0 and m["update_bill"].await_count == 0
+
+
+async def test_paid_bill_unchanged_is_noop_not_blocked():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # First push creates + captures the signature; then mark it paid and re-push
+        # the SAME data -> the no-op short-circuit wins (no error), no QB overwrite.
+        with _patch() as m:
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+            pb.qb_paid_at = datetime.now(timezone.utc)
+            await db.flush()
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res["action"] == "unchanged"
+        assert m["create_bill"].await_count == 1 and m["update_bill"].await_count == 0
 
 
 async def test_ap_account_included_when_configured():
