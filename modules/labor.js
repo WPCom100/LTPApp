@@ -1898,6 +1898,7 @@
           h("div", { style: { width: 130 } }, fromInput),
           h("div", { style: { width: 130 } }, toInput),
           h("div", { style: { flex: 1 } }),
+          canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
           h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
 
       periodNav,
