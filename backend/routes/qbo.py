@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import crypto, models, qbo_sync, quickbooks
+from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
 
@@ -210,6 +210,11 @@ async def status(
         # Settings and the per-item pickers). [] until the first refresh.
         "incomeAccounts": conn.income_accounts or [],
         "incomeAccountsUpdatedAt": accounts_updated.isoformat() if accounts_updated else None,
+        # Expense/COGS + Accounts-Payable account lists for the payout vendor-bill
+        # mapping (default expense account, per-role overrides, AP account).
+        "expenseAccounts": conn.expense_accounts or [],
+        "apAccounts": conn.ap_accounts or [],
+        "expenseAccountsUpdatedAt": quickbooks._aware(conn.expense_accounts_updated_at).isoformat() if conn.expense_accounts_updated_at else None,
     }
 
 
@@ -220,16 +225,20 @@ async def refresh_income_accounts(
     db: AsyncSession = Depends(get_db),
     _admin: models.User = Depends(require_admin),
 ):
-    """Admin-only. Re-fetch the QB company's active Income accounts and cache
-    them on the connection row. Deliberately button-driven (no background
-    sync): the chart of accounts is near-static, so the list refreshes only
-    when an admin asks for it."""
+    """Admin-only. Re-fetch the QB company's active Income accounts (for invoice
+    item mapping) PLUS the Expense/COGS and Accounts-Payable accounts (for the
+    payout vendor-bill mapping), caching all three on the connection row.
+    Deliberately button-driven (no background sync): the chart of accounts is
+    near-static, so the lists refresh only when an admin asks."""
     client_id, client_secret = qbo_sync.creds()
     try:
         conn = await quickbooks.load_connection(db)
-        raw = await quickbooks.list_income_accounts(
-            conn, db, client_id=client_id, client_secret=client_secret
-        )
+        raw_income = await quickbooks.list_income_accounts(
+            conn, db, client_id=client_id, client_secret=client_secret)
+        raw_expense = await quickbooks.list_expense_accounts(
+            conn, db, client_id=client_id, client_secret=client_secret)
+        raw_ap = await quickbooks.list_ap_accounts(
+            conn, db, client_id=client_id, client_secret=client_secret)
     except quickbooks.QboNotConnected:
         return JSONResponse(status_code=409, content={"reason": "not_connected",
                             "error": "QuickBooks is not connected. Connect it in Settings."})
@@ -239,17 +248,32 @@ async def refresh_income_accounts(
     except quickbooks.QboApiError as e:
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
 
-    accounts = [
-        {"id": str(a.get("Id")), "name": a.get("Name") or ""}
-        for a in raw if a.get("Id") is not None
-    ]
+    def _norm(rows, with_type=False):
+        out = []
+        for a in rows:
+            if a.get("Id") is None:
+                continue
+            item = {"id": str(a.get("Id")), "name": a.get("Name") or ""}
+            if with_type:
+                item["type"] = a.get("AccountType") or ""
+            out.append(item)
+        return out
+
+    accounts = _norm(raw_income)
+    now = datetime.now(timezone.utc)
     conn.income_accounts = accounts
-    conn.income_accounts_updated_at = datetime.now(timezone.utc)
+    conn.income_accounts_updated_at = now
+    conn.expense_accounts = _norm(raw_expense, with_type=True)
+    conn.ap_accounts = _norm(raw_ap, with_type=True)
+    conn.expense_accounts_updated_at = now
     await db.flush()
     return {
         "ok": True,
         "incomeAccounts": accounts,
-        "incomeAccountsUpdatedAt": conn.income_accounts_updated_at.isoformat(),
+        "incomeAccountsUpdatedAt": now.isoformat(),
+        "expenseAccounts": conn.expense_accounts,
+        "apAccounts": conn.ap_accounts,
+        "expenseAccountsUpdatedAt": now.isoformat(),
     }
 
 
@@ -327,6 +351,221 @@ async def delete_invoice_route(
                             "error": "QuickBooks connection expired. Reconnect it in Settings."})
     except quickbooks.QboApiError as e:
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+
+
+# ── Export crew payouts as vendor bills ──────────────────────────────────────
+
+class PayoutExportRequest(BaseModel):
+    periodStart: str
+    periodEnd: str
+    contactIds: list[int] | None = None   # None/empty = all crew with a payout
+
+
+async def _resolve_period(db, period_start, period_end):
+    """Validate that (period_start, period_end) is exactly a pay period derived
+    from Settings, and return its {start,end,index,pay_day,label}. Returns
+    (None, message) if the pay period isn't configured or the range doesn't line
+    up — the money always posts on real pay-period boundaries, never an ad-hoc
+    window, and this catches client/server config drift."""
+    anchor = await qbo_sync._settings_get(db, "payPeriodAnchor")
+    if not anchor:
+        return None, "Set the pay-period start date in Settings before exporting payouts."
+    length = await qbo_sync._settings_get(db, "payPeriodLengthDays") or 14
+    offset = await qbo_sync._settings_get(db, "payPeriodPayDayOffsetDays") or 0
+    bounds = payouts.pay_period_bounds(anchor, length, period_start)
+    if bounds is None:
+        return None, "Invalid pay-period configuration — check the anchor date in Settings."
+    if bounds["start"] != period_start or bounds["end"] != period_end:
+        return None, "The selected range isn't a pay period — use the This/Last Pay Period presets."
+    return {
+        "start": bounds["start"], "end": bounds["end"], "index": bounds["index"],
+        "pay_day": payouts.pay_period_pay_day(bounds["end"], offset),
+        "label": payouts.pay_period_label(bounds["start"], bounds["end"]),
+    }, None
+
+
+def _account_status(account_id, cache):
+    """('unset'|'unknown'|'invalid'|'ok', name). 'unknown' = cache empty/stale so
+    we can't verify; 'invalid' = cache known but the id isn't a valid account."""
+    if not account_id:
+        return "unset", None
+    if not cache:
+        return "unknown", None
+    for a in cache:
+        if str(a.get("id")) == str(account_id):
+            return "ok", a.get("name")
+    return "invalid", None
+
+
+def _period_out(period):
+    return {"start": period["start"], "end": period["end"], "index": period["index"],
+            "payDay": period["pay_day"], "label": period["label"]}
+
+
+@qbo_router.post("/payouts/preview")
+async def payout_preview_route(
+    body: PayoutExportRequest,
+    db: AsyncSession = Depends(get_db),
+    _admin: models.User = Depends(require_admin),
+):
+    """Admin-only, NO side effects. Re-derive the pay period's payouts from the
+    stored schedule snapshots (server truth), and return a per-crew bill preview
+    plus a validation report (global blocks/warnings + per-contact status) so the
+    export can be reviewed before anything is written to QuickBooks."""
+    period, perr = await _resolve_period(db, body.periodStart, body.periodEnd)
+    if period is None:
+        return JSONResponse(status_code=400, content={"reason": "bad_period", "error": perr})
+
+    drafts = await payouts.load_payout_drafts(db, period["start"], period["end"])
+    services = (await db.execute(select(models.Service))).scalars().all()
+    accounts = await qbo_payouts.resolve_payout_accounts(db, services)
+    conn = (await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))).scalar_one_or_none()
+
+    connected = conn is not None
+    expense_cache = (conn.expense_accounts if conn else None) or []
+    ap_cache = (conn.ap_accounts if conn else None) or []
+
+    blocks, warnings = [], []
+    if not connected:
+        blocks.append("QuickBooks is not connected — connect it in Settings.")
+    else:
+        refresh_exp = quickbooks._aware(conn.refresh_token_expires_at)
+        if refresh_exp is not None and refresh_exp <= datetime.now(timezone.utc):
+            blocks.append("QuickBooks connection expired — reconnect it in Settings.")
+    exp_status, _ = _account_status(accounts["default_expense"], expense_cache)
+    if exp_status == "unset":
+        blocks.append("Set a default payout expense account in Settings.")
+    elif exp_status == "invalid":
+        blocks.append("The default payout expense account isn't a valid QuickBooks expense account — pick another in Settings.")
+    elif exp_status == "unknown":
+        warnings.append("Couldn't verify the default expense account — refresh the account list in Settings.")
+    if accounts["ap"]:
+        ap_status, _ = _account_status(accounts["ap"], ap_cache)
+        if ap_status == "invalid":
+            blocks.append("The configured Accounts-Payable account isn't valid — pick another in Settings.")
+    anchor = await qbo_sync._settings_get(db, "payPeriodAnchor")
+    if anchor and anchor > period["end"]:
+        warnings.append("The pay-period start date is after this period — check the pay-period settings.")
+
+    existing_bills = {}
+    for pb in (await db.execute(select(models.PayoutBill).where(
+            models.PayoutBill.period_start == period["start"],
+            models.PayoutBill.period_end == period["end"]))).scalars().all():
+        existing_bills[pb.contact_id] = pb
+    ledger = {}
+    for ln in (await db.execute(select(models.PayoutBillLine))).scalars().all():
+        ledger.setdefault(ln.contact_id, {})[(ln.project_id, ln.date)] = ln
+
+    contacts_out = []
+    for d in drafts:
+        cid = d["contact_id"]
+        row = d["contact"].get("row")
+        card = {
+            "contactId": cid, "name": d["name"], "pendingCount": len(d["pending"]),
+            "vendorStatus": "linked" if (row is not None and getattr(row, "qb_vendor_id", None)) else "new",
+        }
+        cwarn = []
+        if d["pending"]:
+            cwarn.append(f"{len(d['pending'])} day(s) not signed off — excluded.")
+        try:
+            plan = qbo_payouts.plan_bill(cid, d, period, accounts)
+        except qbo_payouts.PayoutNotBillable as e:
+            card.update({"blocked": True, "reason": str(e), "total": 0.0, "lineCount": 0,
+                         "days": [], "billStatus": "blocked", "existingBill": None, "warnings": cwarn})
+            contacts_out.append(card)
+            continue
+
+        pb = existing_bills.get(cid)
+        owned = ledger.get(cid, {})
+        dup = sorted({day["date"] for day in plan["billable"]
+                      if (day["project_id"], day["date"]) in owned
+                      and (pb is None or owned[(day["project_id"], day["date"])].payout_bill_id != pb.id)})
+        days_out = [{"date": day["date"], "projectName": day["project_name"],
+                     "tier": day["tier"], "amount": day["payable"]} for day in plan["billable"]]
+        if dup:
+            card.update({"blocked": True, "reason": "already billed on another pay period: " + ", ".join(dup),
+                         "total": plan["total"], "lineCount": len(plan["lines"]), "days": days_out,
+                         "billStatus": "blocked", "existingBill": None, "warnings": cwarn})
+            contacts_out.append(card)
+            continue
+
+        if pb is None or not pb.qb_bill_id:
+            bill_status = "new"
+        elif pb.qb_sync_status == "error":
+            bill_status = "error"
+        elif pb.line_signature == plan["signature"]:
+            bill_status = "up_to_date"
+        else:
+            bill_status = "needs_update"
+        card.update({
+            "blocked": False, "reason": None, "total": plan["total"],
+            "lineCount": len(plan["lines"]), "days": days_out, "billStatus": bill_status,
+            "existingBill": ({"docNumber": pb.doc_number, "qbBillId": pb.qb_bill_id,
+                              "syncedAt": pb.qb_synced_at.isoformat() if pb.qb_synced_at else None,
+                              "amount": pb.amount, "status": pb.qb_sync_status} if pb else None),
+            "warnings": cwarn,
+        })
+        contacts_out.append(card)
+
+    grand = payouts.js_round2(sum(c["total"] for c in contacts_out if not c.get("blocked")))
+    return {
+        "period": _period_out(period), "connected": connected,
+        "environment": conn.environment if conn else None,
+        "expenseAccountConfigured": bool(accounts["default_expense"]),
+        "apAccountConfigured": bool(accounts["ap"]),
+        "blocks": blocks, "warnings": warnings,
+        "contacts": contacts_out, "grandTotal": grand,
+    }
+
+
+@qbo_router.post("/payouts/push")
+async def payout_push_route(
+    body: PayoutExportRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Admin-only. Create/update the selected crew members' vendor bills for the
+    pay period. Re-derives the money server-side (never trusts the client), pushes
+    each contact in isolation (one failure doesn't abort the rest), and returns a
+    per-contact result. QuickBooks errors are captured per contact and returned;
+    only a lost/expired CONNECTION aborts the whole batch (409)."""
+    period, perr = await _resolve_period(db, body.periodStart, body.periodEnd)
+    if period is None:
+        return JSONResponse(status_code=400, content={"reason": "bad_period", "error": perr})
+
+    services = (await db.execute(select(models.Service))).scalars().all()
+    accounts = await qbo_payouts.resolve_payout_accounts(db, services)
+    if not accounts["default_expense"]:
+        return JSONResponse(status_code=400, content={"reason": "no_expense_account",
+                            "error": "Set a default payout expense account in Settings before exporting."})
+
+    drafts = await payouts.load_payout_drafts(db, period["start"], period["end"])
+    by_id = {d["contact_id"]: d for d in drafts}
+    selected = body.contactIds if body.contactIds else list(by_id.keys())
+
+    results = []
+    try:
+        for cid in selected:
+            d = by_id.get(cid)
+            if d is None:
+                results.append({"contactId": cid, "action": "skipped", "reason": "no payout in this period"})
+                continue
+            contact = d["contact"].get("row")
+            if contact is None:
+                results.append({"contactId": cid, "action": "skipped", "reason": "crew member not found"})
+                continue
+            try:
+                results.append(await qbo_payouts.push_payout_bill(db, contact, d, period, accounts, user=admin))
+            except qbo_payouts.PayoutNotBillable as e:
+                results.append({"contactId": cid, "action": "skipped", "reason": str(e)})
+    except quickbooks.QboNotConnected:
+        return JSONResponse(status_code=409, content={"reason": "not_connected",
+                            "error": "QuickBooks is not connected. Connect it in Settings."})
+    except quickbooks.QboReconnectRequired:
+        return JSONResponse(status_code=409, content={"reason": "reconnect",
+                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+
+    return {"ok": True, "connected": True, "period": _period_out(period), "results": results}
 
 
 # ── Compute a quote's sales tax via a temporary estimate ──────────────────────

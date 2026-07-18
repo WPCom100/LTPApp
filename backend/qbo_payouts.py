@@ -214,6 +214,27 @@ def _line_signature(doc_no, period, lines) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
+def plan_bill(contact_id, draft, period, accounts) -> dict:
+    """Pure: turn a payout draft into the bill's billable days, total, lines,
+    DocNumber, and line-signature — or raise PayoutNotBillable. Shared by the
+    preview (report what would post) and push (what actually posts) so the two
+    can never disagree."""
+    billable = [d for d in draft["days"] if int(round(d["payable"] * 100)) != 0]
+    if not billable:
+        raise PayoutNotBillable("no signed, non-zero payout days in this period")
+    total = js_round2(sum(d["payable"] for d in billable))
+    if total <= 0:
+        raise PayoutNotBillable(
+            f"period nets ${total:.2f} (deductions exceed pay) — settle manually or issue a Vendor Credit"
+        )
+    lines = build_bill_lines(billable, accounts)
+    if not lines:
+        raise PayoutNotBillable("no billable bill lines after account resolution")
+    doc_no = doc_number(contact_id, period.get("index"))
+    return {"billable": billable, "total": total, "lines": lines,
+            "doc_number": doc_no, "signature": _line_signature(doc_no, period, lines)}
+
+
 # ── Persistence helpers ──────────────────────────────────────────────────────
 
 async def _find_or_create_payout_bill(db, contact_id, period):
@@ -323,23 +344,11 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
         client_id, client_secret = creds()
     conn = await quickbooks.load_connection(db)
 
-    # Billable = signed, non-zero days. Guard a net-negative period.
-    billable = [d for d in draft["days"] if int(round(d["payable"] * 100)) != 0]
-    if not billable:
-        raise PayoutNotBillable("no signed, non-zero payout days in this period")
-    total = js_round2(sum(d["payable"] for d in billable))
-    if total <= 0:
-        raise PayoutNotBillable(
-            f"period nets ${total:.2f} (deductions exceed pay) — settle manually or issue a Vendor Credit"
-        )
+    plan = plan_bill(contact.id, draft, period, accounts)   # raises PayoutNotBillable
+    billable, total, lines = plan["billable"], plan["total"], plan["lines"]
+    doc_no, sig = plan["doc_number"], plan["signature"]
 
-    lines = build_bill_lines(billable, accounts)
-    if not lines:
-        raise PayoutNotBillable("no billable bill lines after account resolution")
-
-    doc_no = doc_number(contact.id, period.get("index"))
     pb = await _find_or_create_payout_bill(db, contact.id, period)
-    sig = _line_signature(doc_no, period, lines)
 
     # Unchanged + already synced -> skip the QuickBooks round-trip entirely.
     if pb.qb_bill_id and pb.qb_sync_status == "synced" and pb.line_signature == sig:
