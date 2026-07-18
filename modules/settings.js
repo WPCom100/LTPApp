@@ -256,6 +256,18 @@
       if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal + " (not in list — update the account list)" });
       return opts;
     }
+    // Generic account-select options (expense / AP), same defensive shape.
+    function acctOptions(accounts, currentVal, defaultLabel) {
+      accounts = accounts || [];
+      var opts = [{ value: "", label: defaultLabel }];
+      var seen = false;
+      accounts.forEach(function(a) {
+        if (String(a.id) === String(currentVal || "")) seen = true;
+        opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
+      });
+      if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal + " (not in list — update the account list)" });
+      return opts;
+    }
     function disconnectQbo() {
       setDlg({ title: "Disconnect QuickBooks",
         message: "Disconnect QuickBooks? Invoices already pushed stay in QuickBooks, but you won't be able to push or update invoices until you reconnect.",
@@ -705,6 +717,40 @@
           h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
             qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
             h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))
+      ),
+
+      // ── Crew Payouts & Pay Periods ──────────────────────────────────────────
+      // Drives the Payouts tab's pay-period presets and the QuickBooks vendor-bill
+      // export (one bill per crew member per period). Pay-period fields show
+      // regardless of the QuickBooks connection; the account mapping needs it.
+      h(AccordionSection, { title: "Crew Payouts & Pay Periods" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+          "Set your payroll cycle and where crew payouts post in QuickBooks. The Payouts tab groups pay into these periods, and Export to QuickBooks creates one vendor bill per person per period."),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
+          h(window.LTPInput, { label: "Pay period start (anchor)", type: "date",
+            value: draft.payPeriodAnchor || "", onChange: function(v) { set("payPeriodAnchor", v || null); } }),
+          h(window.LTPInput, { label: "Period length (days)", type: "number",
+            value: draft.payPeriodLengthDays == null ? 14 : draft.payPeriodLengthDays,
+            onChange: function(v) { set("payPeriodLengthDays", Number(v) || 14); } }),
+          h(window.LTPInput, { label: "Pay day offset (days after end)", type: "number",
+            value: draft.payPeriodPayDayOffsetDays == null ? 0 : draft.payPeriodPayDayOffsetDays,
+            onChange: function(v) { set("payPeriodPayDayOffsetDays", Math.max(0, Number(v) || 0)); } })),
+        h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 8, lineHeight: 1.5 } },
+          "Any known cycle start works — periods repeat every N days from it. Example: 2026-07-06, 14, 5 → the Jul 6–19 period is paid Fri Jul 24."),
+        qbo && qbo.connected
+          ? h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
+              h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Vendor Bill Accounts"),
+              h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+                "Which QuickBooks accounts a payout bill posts to. Individual roles can override the expense account in the labor rate card (Quotes → Services). Update the account list from the QuickBooks section above."),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                h(window.LTPSelect, { label: "Default Expense Account", value: draft.qboPayoutExpenseAccountId || "",
+                  onChange: function(v) { set("qboPayoutExpenseAccountId", v || null); },
+                  options: acctOptions(qbo.expenseAccounts, draft.qboPayoutExpenseAccountId, "Choose an expense account") }),
+                h(window.LTPSelect, { label: "Accounts Payable Account", value: draft.qboPayoutApAccountId || "",
+                  onChange: function(v) { set("qboPayoutApAccountId", v || null); },
+                  options: acctOptions(qbo.apAccounts, draft.qboPayoutApAccountId, "QuickBooks default A/P account") })))
+          : h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 14, fontStyle: "italic" } },
+              "Connect QuickBooks above to map the payout expense and Accounts-Payable accounts.")
       ),
 
       // ── Email Templates ────────────────────────────────────────────────────

@@ -28,6 +28,26 @@
     return opts;
   }
 
+  // Options for the per-service QuickBooks EXPENSE-account override — where a
+  // crew payout for this role posts on its vendor bill. Blank follows the
+  // Settings default (qboPayoutExpenseAccountId). Mirrors qbAccountOptions.
+  function qbExpenseOptions(currentVal, settings, qbo) {
+    var accounts = (qbo && qbo.expenseAccounts) || [];
+    function nameOf(id) {
+      for (var i = 0; i < accounts.length; i++) if (String(accounts[i].id) === String(id)) return accounts[i].name || ("Account #" + id);
+      return "Account #" + id;
+    }
+    var mapped = (settings && settings.qboPayoutExpenseAccountId) || null;
+    var opts = [{ value: "", label: mapped ? "Default — " + nameOf(mapped) : "Default expense account" }];
+    var seen = false;
+    accounts.forEach(function(a) {
+      if (String(a.id) === String(currentVal || "")) seen = true;
+      opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
+    });
+    if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal });
+    return opts;
+  }
+
   function ServiceForm({ initial, onSave, onCancel, onDelete, settings, qbo }) {
     var [role,        setRole]        = useState(initial ? initial.role        : "");
     var [description, setDescription] = useState(initial ? initial.description : "");
@@ -36,6 +56,7 @@
     var [dayCost,     setDayCost]     = useState(initial ? initial.dayCost     : 0);
     var [notes,       setNotes]       = useState(initial ? initial.notes       : "");
     var [qbAccount,   setQbAccount]   = useState(initial ? (initial.qbIncomeAccountId || "") : "");
+    var [qbExpense,   setQbExpense]   = useState(initial ? (initial.qbExpenseAccountId || "") : "");
 
     function submit() {
       if (!role.trim() || !description.trim()) return;
@@ -43,6 +64,7 @@
         role: role.trim(), description: description.trim(), department: department,
         dayRate: Number(dayRate) || 0, dayCost: Number(dayCost) || 0, notes: notes,
         qbIncomeAccountId: qbAccount || null,
+        qbExpenseAccountId: qbExpense || null,
       });
     }
 
@@ -69,7 +91,11 @@
           h(window.LTPSelect, { label: "QuickBooks Income Account", value: qbAccount, onChange: setQbAccount,
             options: qbAccountOptions(qbAccount, settings, qbo) }),
           h("div", { style: { fontSize: "10px", color: B.textMut, lineHeight: 1.5, paddingBottom: 6 } },
-            "Where this service's revenue posts in QuickBooks. Applies from the next invoice push.")),
+            "Where this service's revenue posts in QuickBooks. Applies from the next invoice push."),
+          h(window.LTPSelect, { label: "QuickBooks Expense Account (Payouts)", value: qbExpense, onChange: setQbExpense,
+            options: qbExpenseOptions(qbExpense, settings, qbo) }),
+          h("div", { style: { fontSize: "10px", color: B.textMut, lineHeight: 1.5, paddingBottom: 6 } },
+            "Where a crew payout for this role posts on its vendor bill. Applies from the next payout export.")),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, placeholder: "Optional" }),
         h("div", { style: { display: "flex", gap: 8, justifyContent: initial ? "space-between" : "flex-end", alignItems: "center" } },
           // Edit mode only: delete lives here (in the item's details), matching

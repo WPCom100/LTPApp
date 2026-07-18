@@ -42,7 +42,7 @@ _HIDDEN_COLS = {"created_at", "updated_at"}
 _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
     "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
-    "qb_tax_signature", "qb_customer_id", "qb_item_id",
+    "qb_tax_signature", "qb_customer_id", "qb_vendor_id", "qb_item_id",
     # Last-confirmed income account of the backing QB item (same column name +
     # semantics on services AND products) — written only by the sync engine's
     # re-point path. Its sibling `qb_income_account_id` is deliberately NOT

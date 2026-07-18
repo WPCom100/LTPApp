@@ -1485,9 +1485,169 @@
   // snapshots existed show as "not locked" with a live figure and a Lock button.
   function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-  function PayoutsTab({ projects, setProjects, contacts, services }) {
+  // ── QuickBooks payout export — review + push modal ─────────────────────────
+  // Loads the server's preview (no side effects), shows a per-person bill review
+  // with a validation checklist, and pushes the selected bills. All money comes
+  // from the server (re-derived from signed snapshots) — this UI never sends
+  // amounts. Mirrors the invoice sendToQuickBooks fetch/toast pattern.
+  function PayoutExportModal({ range, onClose }) {
+    var [state, setState] = useState({ loading: true, error: null, data: null });
+    var [selected, setSelected] = useState({});
+    var [pushing, setPushing] = useState(false);
+    var [results, setResults] = useState(null);
+
+    function loadPreview() {
+      setState({ loading: true, error: null, data: null });
+      setResults(null);
+      fetch("/api/qbo/payouts/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          if (resp.status !== 200) { setState({ loading: false, error: (resp.body && resp.body.error) || ("HTTP " + resp.status), data: null }); return; }
+          var data = resp.body;
+          var sel = {};
+          (data.contacts || []).forEach(function(c) { if (!c.blocked && c.billStatus !== "up_to_date") sel[c.contactId] = true; });
+          setSelected(sel);
+          setState({ loading: false, error: null, data: data });
+        })
+        .catch(function(e) { setState({ loading: false, error: "Network or server error: " + String(e.message || e), data: null }); });
+    }
+    React.useEffect(loadPreview, [range.start, range.end]);
+
+    var data = state.data;
+    var hasBlocks = !!(data && data.blocks && data.blocks.length);
+    var selectedIds = Object.keys(selected).filter(function(k) { return selected[k]; }).map(Number);
+
+    function toggle(cid) { setSelected(function(prev) { var n = Object.assign({}, prev); if (n[cid]) delete n[cid]; else n[cid] = true; return n; }); }
+
+    function doPush() {
+      if (!selectedIds.length || pushing) return;
+      setPushing(true);
+      fetch("/api/qbo/payouts/push", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end, contactIds: selectedIds }) })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          setPushing(false);
+          if (resp.status !== 200) {
+            var d = resp.body || {};
+            if (resp.status === 409 && (d.reason === "reconnect" || d.reason === "not_connected"))
+              window.LTP_toast(d.reason === "reconnect" ? "Reconnect QuickBooks" : "QuickBooks not connected", { message: d.error, variant: "warn" });
+            else window.LTP_toast("Export failed", { message: d.error || ("HTTP " + resp.status), variant: "error" });
+            return;
+          }
+          var res = (resp.body && resp.body.results) || [];
+          var byId = {}; res.forEach(function(x) { byId[x.contactId] = x; });
+          setResults(byId);
+          var posted = res.filter(function(x) { return x.action === "created" || x.action === "updated"; }).length;
+          var errs = res.filter(function(x) { return x.action === "error"; }).length;
+          var skipped = res.filter(function(x) { return x.action === "skipped"; }).length;
+          window.LTP_toast(errs ? "Export finished with errors" : "Payouts exported to QuickBooks", {
+            message: posted + " bill" + (posted === 1 ? "" : "s") + " posted"
+              + (skipped ? ", " + skipped + " skipped" : "") + (errs ? ", " + errs + " failed" : ""),
+            variant: errs ? "error" : "success" });
+          loadPreview();   // refresh statuses (created/updated -> up to date)
+        })
+        .catch(function(e) { setPushing(false); window.LTP_toast("Export failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
+    }
+
+    var STATUS = {
+      "new": { label: "New", color: B.info }, needs_update: { label: "Needs update", color: B.warn },
+      up_to_date: { label: "Up to date", color: B.success }, error: { label: "Error", color: B.danger },
+      blocked: { label: "Blocked", color: B.danger },
+    };
+    var RESULT = {
+      created: { label: "Created", color: B.success }, updated: { label: "Updated", color: B.success },
+      unchanged: { label: "No change", color: B.textMut }, skipped: { label: "Skipped", color: B.warn },
+      error: { label: "Failed", color: B.danger },
+    };
+    function pill(text, color) {
+      return h("span", { style: { fontSize: "9px", fontWeight: 700, color: color, background: color + "18",
+        border: "1px solid " + color + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" } }, text);
+    }
+
+    var body;
+    if (state.loading) {
+      body = h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: "20px 0" } }, "Loading payout preview…");
+    } else if (state.error) {
+      body = h("div", null,
+        h("div", { style: { background: B.danger + "12", border: "1px solid " + B.danger + "33", borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: B.danger, marginBottom: 12 } }, state.error),
+        h(window.Btn, { small: true, variant: "ghost", onClick: loadPreview }, "Retry"));
+    } else {
+      var contacts = data.contacts || [];
+      var billable = contacts.filter(function(c) { return !c.blocked; });
+      body = h("div", null,
+        // Period + pay day.
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 12 } },
+          h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, data.period.label),
+          h("div", { style: { fontSize: "11px", color: B.textMut } }, "Pay day: " + fmt(data.period.payDay)
+            + (data.environment ? "  ·  " + data.environment : ""))),
+        // Global blocks (must fix before pushing) + warnings.
+        (data.blocks || []).map(function(bmsg, i) {
+          return h("div", { key: "blk" + i, style: { background: B.danger + "12", border: "1px solid " + B.danger + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 8, lineHeight: 1.5 } }, "⛔ " + bmsg);
+        }),
+        (data.warnings || []).map(function(wmsg, i) {
+          return h("div", { key: "wrn" + i, style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginBottom: 8, lineHeight: 1.5 } }, "⚠ " + wmsg);
+        }),
+        contacts.length === 0 && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: "12px 0" } },
+          "No signed-off payouts in this pay period. Sign off crew days first."),
+        // Per-person rows.
+        contacts.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 4 } },
+          contacts.map(function(c) {
+            var r = results && results[c.contactId];
+            var st = STATUS[c.billStatus] || STATUS["new"];
+            var checkable = !c.blocked;
+            return h("div", { key: c.contactId, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px" } },
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                h("input", { type: "checkbox", checked: !!selected[c.contactId], disabled: !checkable || pushing,
+                  onChange: function() { toggle(c.contactId); }, style: { cursor: checkable ? "pointer" : "not-allowed", width: 15, height: 15 } }),
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, c.name),
+                    c.vendorStatus === "new" && pill("New vendor", B.info),
+                    r ? pill((RESULT[r.action] || { label: r.action }).label, (RESULT[r.action] || { color: B.textMut }).color) : pill(st.label, st.color)),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                    c.blocked ? c.reason
+                      : (c.lineCount + " line" + (c.lineCount === 1 ? "" : "s")
+                         + (c.existingBill && c.existingBill.docNumber ? "  ·  " + c.existingBill.docNumber : "")))),
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: c.blocked ? B.textMut : B.accent } }, fmtMoney(c.total))),
+              // Per-contact warnings + push error detail.
+              ((c.warnings && c.warnings.length) || (r && r.action === "error")) && h("div", { style: { marginTop: 6, paddingLeft: 25 } },
+                (c.warnings || []).map(function(w, wi) { return h("div", { key: "cw" + wi, style: { fontSize: "10px", color: B.warn } }, "⚠ " + w); }),
+                r && r.action === "error" && h("div", { style: { fontSize: "10px", color: B.danger } }, "⛔ " + (r.error || "failed"))));
+          })),
+        // Totals.
+        contacts.length > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 12, paddingTop: 10, borderTop: "1px solid " + B.border, fontSize: "12px" } },
+          h("span", { style: { color: B.textMut } }, billable.length + " billable · " + selectedIds.length + " selected"),
+          h("span", { style: { fontWeight: 700, color: B.text } }, "Period total: " + fmtMoney(data.grandTotal))));
+    }
+
+    return h(window.LTPModal, { title: "Export payouts to QuickBooks", onClose: onClose, wide: true },
+      body,
+      h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", marginTop: 16 } },
+        hasBlocks && h("span", { style: { fontSize: "10px", color: B.danger, marginRight: "auto" } }, "Resolve the blockers above before exporting."),
+        h(window.Btn, { variant: "ghost", onClick: onClose }, "Close"),
+        h(window.Btn, { onClick: doPush, disabled: state.loading || !!state.error || hasBlocks || !selectedIds.length || pushing },
+          pushing ? "Exporting…" : "Export " + selectedIds.length + " bill" + (selectedIds.length === 1 ? "" : "s"))));
+  }
+
+  function PayoutsTab({ projects, setProjects, contacts, services, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+
+    // ── Pay-period config (bi-weekly payroll cycle) ──────────────────────────
+    // Anchor + length come from Settings; when unset, the pay-period presets
+    // hide and the tab falls back to the week/month presets. The period range
+    // is computed by the same helpers the backend mirrors (theme.js::LTP_payPeriod*).
+    var payAnchor = settings && settings.payPeriodAnchor;
+    var payLen = (settings && settings.payPeriodLengthDays) || 14;
+    var payOffset = (settings && settings.payPeriodPayDayOffsetDays) || 0;
+    var curPeriod = window.LTP_payPeriodBounds(payAnchor, payLen, todayISO());
+    var payConfigured = !!curPeriod;
+    function periodRange(idx) {
+      var pp = window.LTP_payPeriodForIndex(payAnchor, payLen, idx);
+      return pp ? { start: pp.start, end: pp.end } : null;
+    }
+
     function rangeFor(preset) {
       var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
       if (preset === "month") {
@@ -1497,9 +1657,22 @@
       var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
       return { start: iso(mon), end: iso(sun) };
     }
-    var [preset, setPreset] = useState("week");
-    var [range, setRange] = useState(function() { return rangeFor("week"); });
-    function pickPreset(p) { setPreset(p); setRange(rangeFor(p)); }
+    var [preset, setPreset] = useState(payConfigured ? "period" : "week");
+    var [periodIndex, setPeriodIndex] = useState(payConfigured ? curPeriod.index : 0);
+    var [range, setRange] = useState(function() { return payConfigured ? periodRange(curPeriod.index) : rangeFor("week"); });
+    function pickPreset(p) {
+      // "period" = this cycle; "lastperiod" = previous cycle. Both live under the
+      // "period" preset (the navigator drives the index); other presets are date-window.
+      if (p === "period" || p === "lastperiod") {
+        var i = (curPeriod ? curPeriod.index : 0) - (p === "lastperiod" ? 1 : 0);
+        setPreset("period"); setPeriodIndex(i); setRange(periodRange(i) || rangeFor("week"));
+      } else { setPreset(p); setRange(rangeFor(p)); }
+    }
+    function shiftPeriod(delta) {
+      var i = periodIndex + delta;
+      var r = periodRange(i); if (!r) return;
+      setPreset("period"); setPeriodIndex(i); setRange(r);
+    }
 
     var data = useMemo(function() {
       return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
@@ -1511,6 +1684,8 @@
     var [adjustDlg, setAdjustDlg] = useState(null);  // { row, shifts, actuals }
     var [noShowDlg, setNoShowDlg] = useState(null);  // row awaiting no-show confirm
     var [adjPayDlg, setAdjPayDlg] = useState(null);  // { row, list, label, amount } — pay adjustments
+    var [exportDlg, setExportDlg] = useState(null);  // QuickBooks payout export modal (truthy = open)
+    var canExport = isAdmin && qbo && qbo.connected;
 
     // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
     function savePayAdjustments(row, list) {
@@ -1684,6 +1859,21 @@
       return h("button", { key: key, onClick: function() { pickPreset(key); },
         style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
+    // Pay-period presets: "period" (this cycle) / "lastperiod" (previous). Active
+    // highlight tracks the navigator index, not a distinct preset value.
+    var payPeriodBtn = function(key, label) {
+      var active = preset === "period" && curPeriod && (key === "period" ? periodIndex === curPeriod.index : periodIndex === curPeriod.index - 1);
+      return h("button", { key: key, onClick: function() { pickPreset(key); },
+        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+    };
+    // ◀ [period label · pay day] ▶ — shown only when a cycle is configured and a
+    // pay-period preset is active (not for week/month/custom).
+    var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+      h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
+      h("div", null,
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Pay Period: " + window.LTP_payPeriodLabel(range.start, range.end)),
+        h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
+      h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
 
     var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
     var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
@@ -1694,18 +1884,24 @@
       isMobile
       ? h("div", { style: { marginBottom: 14 } },
           h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+            payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
             presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
             h("div", { style: { flex: 1 } }),
+            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
             h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
           h("div", { style: { display: "flex", gap: 8 } },
             h("div", { style: { flex: 1 } }, fromInput),
             h("div", { style: { flex: 1 } }, toInput)))
       : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+          payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
           presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
           h("div", { style: { width: 130 } }, fromInput),
           h("div", { style: { width: 130 } }, toInput),
           h("div", { style: { flex: 1 } }),
+          canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
           h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+
+      periodNav,
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
       h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
@@ -1825,6 +2021,9 @@
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setNoShowDlg(null); } }, "Cancel"),
           h(window.Btn, { variant: "danger", onClick: function() { doNoShow(noShowDlg); } }, "Mark No-show"))),
+
+      // QuickBooks payout export (review + push)
+      exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
 
       // Adjust-day sign-off
       adjustDlg && (function() {
@@ -2139,7 +2338,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
-  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route }) {
+  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route, isAdmin, qbo }) {
     // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
     // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
     //   labor            → assignments (default)
@@ -2198,7 +2397,7 @@
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
-      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services })
+      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services, settings: settings, isAdmin: isAdmin, qbo: qbo })
     );
   };
 })();

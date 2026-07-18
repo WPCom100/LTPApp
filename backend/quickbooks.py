@@ -499,6 +499,63 @@ async def list_income_accounts(conn, db, *, client_id, client_secret, httpx_clie
     )
 
 
+# ── Vendor + Bill helpers (accounts-payable side; mirror customer/invoice) ───
+
+async def create_vendor(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    return await _request(conn, db, "POST", "vendor", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
+async def get_vendor(conn, db, vendor_id, *, client_id, client_secret, httpx_client=None) -> dict:
+    data = await _request(conn, db, "GET", f"vendor/{vendor_id}", client_id=client_id,
+                          client_secret=client_secret, httpx_client=httpx_client)
+    return data.get("Vendor", {}) or {}
+
+
+async def update_vendor(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    """Update a vendor. Pass sparse=True + Id + SyncToken to patch supplied fields."""
+    return await _request(conn, db, "POST", "vendor", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
+async def create_bill(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    return await _request(conn, db, "POST", "bill", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
+async def update_bill(conn, db, payload, *, client_id, client_secret, httpx_client=None) -> dict:
+    """Full update (sparse=false expected in payload). Requires Id + SyncToken."""
+    return await _request(conn, db, "POST", "bill", client_id=client_id,
+                          client_secret=client_secret, json=payload, httpx_client=httpx_client)
+
+
+async def get_bill(conn, db, bill_id, *, client_id, client_secret, httpx_client=None) -> dict:
+    data = await _request(conn, db, "GET", f"bill/{bill_id}", client_id=client_id,
+                          client_secret=client_secret, httpx_client=httpx_client)
+    return data.get("Bill", {}) or {}
+
+
+async def list_expense_accounts(conn, db, *, client_id, client_secret, httpx_client=None) -> list[dict]:
+    """Postable accounts a crew-payout bill line may expense to. Includes the
+    common labor buckets — Expense, Other Expense, and Cost of Goods Sold."""
+    return await query(
+        conn, db,
+        "SELECT Id, Name, AccountType FROM Account WHERE AccountType IN "
+        "('Expense', 'Other Expense', 'Cost of Goods Sold') AND Active = true",
+        client_id=client_id, client_secret=client_secret, httpx_client=httpx_client,
+    )
+
+
+async def list_ap_accounts(conn, db, *, client_id, client_secret, httpx_client=None) -> list[dict]:
+    """Accounts-Payable accounts a bill's APAccountRef may point at (multi-AP
+    companies). Omitting APAccountRef posts to the company's default AP account."""
+    return await query(
+        conn, db,
+        "SELECT Id, Name, AccountType FROM Account WHERE AccountType = 'Accounts Payable' AND Active = true",
+        client_id=client_id, client_secret=client_secret, httpx_client=httpx_client,
+    )
+
+
 async def revoke(conn, db, *, client_id, client_secret, httpx_client=None) -> bool:
     """Best-effort revoke of the refresh token at Intuit on disconnect. Returns
     True on success; never raises (disconnect should always proceed locally)."""
