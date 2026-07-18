@@ -624,6 +624,39 @@ def test_notify_missing_project_without_snapshot_is_404():
     assert r.status_code == 404
 
 
+def test_notify_schedule_change_renders_old_and_new():
+    """A crewScheduleChanged notice carries prev* on each shift, and the email
+    spells out old → new (the current time plus an "Updated from …" line) so the
+    crew see exactly what moved."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "sc-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": 999999, "template": "crewScheduleChanged",
+                              "projectName": "Moved Gala",
+                              "shifts": [{"roleLabel": "A1 — Audio", "date": "2026-07-02",
+                                          "shiftTitle": "Load-in", "startTime": "11:00", "endTime": "16:00",
+                                          "prevDate": "2026-07-01", "prevStartTime": "08:00", "prevEndTime": "14:00"}]},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    body = captured["html_body"]
+    assert "shift times changed" in captured["subject"]
+    assert "11:00 AM" in body and "4:00 PM" in body       # the new time (current card)
+    assert "Updated from" in body                          # the change line renders
+    assert "8:00 AM" in body and "2:00 PM" in body         # the previous time
+
+
 def test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen():
     """Producer removes the shifts a pending request covers → the save hook
     auto-withdraws it; the crew link reports withdrawn and accept is refused."""
@@ -857,6 +890,7 @@ def main() -> int:
         test_notify_rejects_unknown_template,
         test_notify_with_snapshot_shifts_works_without_live_project,
         test_notify_missing_project_without_snapshot_is_404,
+        test_notify_schedule_change_renders_old_and_new,
         test_removing_all_positions_auto_withdraws_and_shows_withdrawn_screen,
         test_partial_removal_trims_request_but_stays_answerable,
         test_project_delete_auto_withdraws_request,

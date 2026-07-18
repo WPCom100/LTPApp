@@ -59,6 +59,7 @@ P_ROUNDTRIP = 7950  # internal flag round-trips through CRUD
 P_LIST = 7951       # internal project appears in the normal list
 P_SEND = 7952       # crew request sends against the manual shift
 P_ACCEPT = 7953     # public payload + accept
+P_EDIT = 7954       # editing a manual shift's time preserves the crew request
 
 _ADMIN_TOK = "manual-shift-session"
 _client = None
@@ -224,12 +225,47 @@ def test_public_payload_and_accept_for_a_manual_shift():
     assert _pos_status(_project(client, tok, P_ACCEPT), "wa1") == "accepted"
 
 
+def test_editing_manual_shift_time_preserves_request():
+    """The manual-shift edit flow (modules/labor.js updateManualShift) changes only
+    the shift's scalar time/date fields and leaves positions (ids/crew/status)
+    intact. So a crew request sent against the shift SURVIVES a time/date edit:
+    crew_integrity keys request ownership on position id + crewId, both stable
+    across a time edit — the request is neither trimmed nor auto-withdrawn."""
+    client, tok = _setup()
+    _create_manual_shift(client, tok, P_EDIT, [_pos("we1", WH_CREW)])
+    send = client.post("/api/crew-requests/send",
+                       json={"projectId": P_EDIT, "contactId": WH_CREW},
+                       cookies={"ltp_session": tok})
+    assert send.status_code == 200, send.text
+    req_id = send.json()["id"]
+    assert _pos_status(_project(client, tok, P_EDIT), "we1") == "requested"
+
+    # Edit: move the times AND the date, keeping the position id + crew (positions
+    # array untouched) — exactly the patch updateManualShift applies.
+    proj = _project(client, tok, P_EDIT)
+    day = proj["schedule"][0]
+    day["time"], day["endTime"] = "10:00", "18:00"
+    day["date"], day["endDate"] = "2026-09-02", "2026-09-02"
+    proj["startDate"], proj["endDate"] = "2026-09-02", "2026-09-02"
+    r = client.put(f"/api/projects/{P_EDIT}", json=proj, cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+
+    proj2 = _project(client, tok, P_EDIT)
+    assert proj2["schedule"][0]["time"] == "10:00" and proj2["schedule"][0]["date"] == "2026-09-02"
+    assert _pos_status(proj2, "we1") == "requested"        # not trimmed/withdrawn
+    listed = client.get(f"/api/crew-requests?projectId={P_EDIT}", cookies={"ltp_session": tok}).json()
+    mine = [x for x in listed if x["id"] == req_id]
+    assert mine and mine[0]["status"] == "pending", mine   # request survives intact
+    assert mine[0]["positionIds"] == ["we1"], mine
+
+
 def main() -> int:
     tests = [
         test_internal_flag_round_trips_through_crud,
         test_manual_shift_is_returned_by_the_normal_project_list,
         test_crew_request_sends_against_a_manual_shift,
         test_public_payload_and_accept_for_a_manual_shift,
+        test_editing_manual_shift_time_preserves_request,
     ]
     failed = 0
     try:

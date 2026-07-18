@@ -177,6 +177,18 @@ window.LTP_DATA_SETTINGS = {
       subject: "Update: {{projectName}} — crew request withdrawn",
       body: "Hi {{crewName}},\n\nWe've withdrawn our crew request for {{projectName}} — no response is needed on the following shifts:\n\n{{shifts}}\n\nThank you for your time, and we'll keep you in mind for future projects.\n\n{{signature}}"
     },
+    crewScheduleChanged: {
+      label: "Schedule Change",
+      cc: "",
+      // Sent when a shift a crew member is committed to (requested / accepted /
+      // confirmed) has its call/wrap time or date MOVED. Project-level +
+      // {{shifts}} (the notify tray groups per person), and each shift card
+      // spells out the change — the new details with an "Updated from …" line
+      // showing the prior time/date. The backend fallback in
+      // routes/crew.py::_NOTIFY_FALLBACKS must match this body byte-for-byte.
+      subject: "Schedule Update: {{projectName}} — shift times changed",
+      body: "Hi {{crewName}},\n\nThe schedule for {{projectName}} has been updated. Please review your revised shift details below — the previous time is noted on each shift that moved:\n\n{{shifts}}\n\nIf the new schedule doesn't work for you, just reply to this email and let us know.\n\n{{signature}}"
+    },
   },
 };
 
@@ -200,4 +212,5 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
+  crewScheduleChanged: ["companyName", "crewName", "projectName", "shifts", "signature"],
 };

@@ -136,12 +136,18 @@
     // so the email still renders. Then persist.
     function save() {
       if (project.id) {
+        // Two kinds of crew notice come out of a save: crew pulled off a shift
+        // (removed/reassigned) and crew whose still-held shift was MOVED. Both
+        // park into the notify tray, grouped per person, for the producer to
+        // send or decline. Snapshot here (the draft is about to persist).
         var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, services);
-        removed.forEach(function(g) {
+        var changed = window.LTP_diffChangedShifts(cleanRef.current.schedule, draft.schedule, contacts, services);
+        removed.concat(changed).forEach(function(g) {
           window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: project.id, projectName: project.name || "", template: g.template, shifts: g.shifts });
         });
-        if (removed.length) {
-          var people = {}; removed.forEach(function(g) { people[g.crewId] = true; });
+        if (removed.length || changed.length) {
+          var people = {};
+          removed.concat(changed).forEach(function(g) { people[g.crewId] = true; });
           var n = Object.keys(people).length;
           window.LTP_toast("Added to notify tray", { message: n + " crew member" + (n !== 1 ? "s" : "") + " queued — review and send from the tray (bottom-left).", variant: "info" });
         }

@@ -432,6 +432,11 @@
                 var itemPositions = s.positions || [];
                 // Person-slot per position on this shift (drives the # selector).
                 var itemSlots = window.LTP_effectiveSlots(itemPositions);
+                // Crew already committed to this shift (requested/accepted/confirmed)
+                // — editing its date/times re-notifies them (queued on save).
+                var committedCrew = itemPositions.filter(function(p) {
+                  return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
+                });
 
                 return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
                   // Item header: title + times + delete. On mobile the title
@@ -463,6 +468,11 @@
                       !isMobile && h("button", { onClick: function() { removeItem(s.id); }, style: { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "\u00d7")
                     )
                   ),
+                  // Heads-up when this shift has crew already committed — editing
+                  // its date/times will queue them to be re-notified on save.
+                  committedCrew.length > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "3px 8px", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 } },
+                    h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
+                    h("span", null, committedCrew.length + " committed crew member" + (committedCrew.length > 1 ? "s" : "") + " on this shift — changing its date or times will queue a re-notification when you save.")),
                   // Item breaks
                   h("div", { style: { display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", marginBottom: itemPositions.length > 0 ? 4 : 0 } },
                     itemBreaks.map(function(brk) {

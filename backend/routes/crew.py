@@ -162,6 +162,12 @@ def _coerce_shifts(raw) -> list:
             "date": str(s.get("date") or "")[:40],
             "startTime": str(s.get("startTime") or "")[:20],
             "endTime": str(s.get("endTime") or "")[:20],
+            # Previous date/time — set only by a schedule-change notice so the
+            # card can render "Updated from …". Absent (empty) for every other
+            # notify template, which renders exactly as before.
+            "prevDate": str(s.get("prevDate") or "")[:40],
+            "prevStartTime": str(s.get("prevStartTime") or "")[:20],
+            "prevEndTime": str(s.get("prevEndTime") or "")[:20],
         })
     return out
 
@@ -241,11 +247,19 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
         title = escape(s.get("shiftTitle") or "")
         line_dt = ('<div style="font-size:12px;color:#7a838c;margin-top:3px">' + when_time + '</div>') if when_time else ""
         line_title = ('<div style="font-size:12px;font-weight:600;color:#9aa3ab;margin-top:2px">' + title + '</div>') if title else ""
+        # "Updated from …" — a schedule-change notice carries the prior date/time
+        # (prev*); when it actually differs from the current one, spell out what
+        # moved so the crew see old → new. Every other notify template leaves
+        # prev* empty, so this line never renders for them.
+        prev_when = _fmt_iso_date(s.get("prevDate")) if s.get("prevDate") else ""
+        prev_rng = " – ".join([x for x in (_fmt_hhmm(s.get("prevStartTime")), _fmt_hhmm(s.get("prevEndTime"))) if x])
+        prev_dt = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (prev_when, prev_rng) if x])
+        line_prev = ('<div style="font-size:11px;color:#b26a00;margin-top:3px">Updated from:&nbsp;' + prev_dt + '</div>') if (prev_dt and prev_dt != when_time) else ""
         rows.append(
             '<tr><td style="padding:11px 14px;border:1px solid #eceef0;border-left:3px solid ' + accent + ';'
             'background-color:#ffffff;border-radius:6px">'
             '<div style="font-size:14px;font-weight:bold;color:#233038">' + escape(s.get("roleLabel") or "Crew") + '</div>'
-            + line_dt + line_title +
+            + line_dt + line_prev + line_title +
             '</td></tr><tr><td style="font-size:0;line-height:0;padding:0">&nbsp;</td></tr>'
         )
     if not rows:
@@ -351,7 +365,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
 # from a representative position, so the shipped template bodies AND their
 # Settings previews stay valid without a redesign.
-_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn"}
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged"}
 
 # Server-side fallbacks for the removal templates, used when the workspace hasn't
 # saved that template to the DB yet (load_settings reads the DB, which doesn't
@@ -384,6 +398,14 @@ _NOTIFY_FALLBACKS = {
                  "shifts:\n\n{{shifts}}\n\nWe appreciate your willingness to work "
                  "with us and will absolutely keep you in mind for upcoming "
                  "opportunities.\n\n{{signature}}"),
+    },
+    "crewScheduleChanged": {
+        "subject": "Schedule Update: {{projectName}} — shift times changed",
+        "body": ("Hi {{crewName}},\n\nThe schedule for {{projectName}} has been "
+                 "updated. Please review your revised shift details below — the "
+                 "previous time is noted on each shift that moved:\n\n{{shifts}}\n\n"
+                 "If the new schedule doesn't work for you, just reply to this "
+                 "email and let us know.\n\n{{signature}}"),
     },
 }
 

@@ -21,7 +21,7 @@
   var LS_KEY = "ltp_crew_outbox";
 
   // template → short human label for the tray row + summary toast.
-  var TYPE_LABEL = { crewWithdrawn: "withdrawn", crewNotSelected: "released", crewCancelled: "cancelled" };
+  var TYPE_LABEL = { crewWithdrawn: "withdrawn", crewNotSelected: "released", crewCancelled: "cancelled", crewScheduleChanged: "schedule change" };
 
   function loadEntries() {
     try {
