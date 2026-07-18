@@ -186,6 +186,36 @@ def test_day_status_reports_paid():
     assert days[key]["status"] in ("paid", "paid_changed") and days[key]["docNumber"] == "PAY-26-14"
 
 
+def test_notify_edit_stamps_paid_bill():
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06", qboPayoutExpenseAccountId="80")
+    proj_id = crew_id + 1
+    from backend.database import async_session
+
+    async def seed_bill():
+        async with async_session() as db:
+            pb = models.PayoutBill(contact_id=crew_id, period_start="2026-07-06", period_end="2026-07-19",
+                                   doc_number="PAY-26-14", qb_bill_id="B1", qb_sync_status="synced",
+                                   amount=600.0, qb_paid_at=datetime.now(timezone.utc))
+            db.add(pb)
+            await db.flush()
+            db.add(models.PayoutBillLine(payout_bill_id=pb.id, contact_id=crew_id, project_id=proj_id,
+                                         date="2026-07-08", amount=600.0))
+            await db.commit()
+            return pb.id
+
+    pb_id = asyncio.run(seed_bill())
+    r = client.post("/api/qbo/payouts/notify-edit",
+                    json={"contactId": crew_id, "projectId": proj_id, "date": "2026-07-08", "where": "schedule"},
+                    cookies={"ltp_session": admin})
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+    async def check():
+        async with async_session() as db:
+            pb = await db.get(models.PayoutBill, pb_id)
+            return [a.get("type") for a in (pb.activity or [])]
+    assert "qbo_payout_edited_after_paid" in asyncio.run(check())
+
+
 # ── Account refresh now caches Expense + AP; status returns them ─────────────
 
 def test_accounts_refresh_caches_expense_and_ap():

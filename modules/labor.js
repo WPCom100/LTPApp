@@ -1694,6 +1694,20 @@
     React.useEffect(loadDayStatus, [range.start, range.end, qbo && qbo.connected]);
     function dayStatusOf(r) { return dayStatus[r.crewId + "|" + r.projectId + "|" + r.date] || null; }
 
+    // Paid-day edit guard: any action that would change a day already PAID in
+    // QuickBooks is gated behind a warn+confirm; confirming records the override
+    // (which web-pushes admins). See /api/qbo/payouts/notify-edit.
+    var [paidGuard, setPaidGuard] = useState(null);   // { row, ds, run } while confirming
+    function notifyPaidEdit(r) {
+      fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
+    }
+    function guardPaid(r, proceed) {
+      var ds = dayStatusOf(r);
+      if (ds && ds.paid) setPaidGuard({ row: r, ds: ds, run: proceed });
+      else proceed();
+    }
+
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
     // ── Day-of sign-off ──────────────────────────────────────────────────────
@@ -1986,16 +2000,16 @@
                         ? h(React.Fragment, null,
                             chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
                               "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
+                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
                             !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
-                            (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
+                            (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
                               style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                            canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
-                            canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
-                            canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
+                            canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
+                            canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
+                            canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                      sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
+                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
@@ -2053,6 +2067,16 @@
 
       // QuickBooks payout export (review + push)
       exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
+
+      // Paid-day edit guard (warn + confirm; confirming records the override).
+      paidGuard && h(window.LTPModal, { title: "Edit a paid day?", onClose: function() { setPaidGuard(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
+          crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was already paid in QuickBooks"
+          + (paidGuard.ds && paidGuard.ds.docNumber ? " (bill " + paidGuard.ds.docNumber + ")" : "")
+          + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?"),
+        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setPaidGuard(null); } }, "Cancel"),
+          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
 
       // Adjust-day sign-off
       adjustDlg && (function() {

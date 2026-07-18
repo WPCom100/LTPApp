@@ -34,7 +34,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks
+from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
 
@@ -660,6 +660,52 @@ async def payout_day_status_route(
             "docNumber": b.doc_number, "qbBillId": b.qb_bill_id,
         }
     return {"days": days}
+
+
+class PayoutEditNotice(BaseModel):
+    contactId: int
+    projectId: int | None = None
+    date: str
+    where: str | None = None   # "payouts" | "schedule"
+
+
+@qbo_router.post("/payouts/notify-edit")
+async def payout_notify_edit_route(
+    body: PayoutEditNotice,
+    db: AsyncSession = Depends(get_db),
+    user: models.User = Depends(require_session),
+):
+    """Record + broadcast that a producer changed a day that's already been PAID
+    in QuickBooks (an override confirmed in the Payouts tab or Schedule Builder).
+    Stamps the paid bill's activity and web-pushes admins. Best-effort."""
+    cr = (await db.execute(select(models.Contact).where(models.Contact.id == body.contactId))).scalar_one_or_none()
+    name = ((cr.first_name or "") + " " + (cr.last_name or "")).strip() if cr else "A crew member"
+
+    q = select(models.PayoutBillLine).where(
+        models.PayoutBillLine.contact_id == body.contactId, models.PayoutBillLine.date == body.date)
+    if body.projectId is not None:
+        q = q.where(models.PayoutBillLine.project_id == body.projectId)
+    ln = (await db.execute(q)).scalars().first()
+    pb = None
+    if ln is not None:
+        pb = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == ln.payout_bill_id))).scalar_one_or_none()
+
+    doc = pb.doc_number if pb else None
+    where = "the schedule" if body.where == "schedule" else "a payout"
+    msg = (f"{name} · {body.date}" + (f" ({doc})" if doc else "")
+           + f" was changed in {where} after being paid in QuickBooks")
+    if pb is not None:
+        qbo_payouts._stamp(pb, user, "qbo_payout_edited_after_paid",
+                           f"Paid payout edited: {name} · {body.date}",
+                           [{"cat": "Edited in", "detail": where},
+                            {"cat": "By", "detail": (user.name or user.email or "")}])
+        await db.flush()
+    try:
+        await webpush.notify_entity(db, "payout", (pb.id if pb else 0),
+                                    "Paid payout edited", msg, "/#/labor/payouts")
+    except Exception as e:  # pragma: no cover - best-effort
+        print(f"[LTP] webpush: paid-edit notify failed: {e}", flush=True)
+    return {"ok": True}
 
 
 # ── Compute a quote's sales tax via a temporary estimate ──────────────────────
