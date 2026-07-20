@@ -355,6 +355,54 @@ def test_floor_ignores_new_unknown_and_unassigned():
            ci.enforce_status_floor(None, incoming) == 0 and ci.enforce_status_floor(stored, None) == 0)
 
 
+# ── enforce_pay_snapshot (the non-admin payout-tamper guard) ─────────────────
+
+def _pay_schedule(positions):
+    """[(id, workDict, adjList)] → a one-day schedule JSON blob carrying the
+    frozen payout snapshot fields the export bills."""
+    return [{"id": "day-0", "date": "2026-07-01", "title": "Day 0",
+             "positions": [{"id": i, "crewId": 5, "status": "confirmed", "work": w, "adj": a}
+                           for (i, w, a) in positions]}]
+
+
+def test_pay_snapshot_reverts_tampered_total():
+    print("test_pay_snapshot_reverts_tampered_total")
+    stored = _pay_schedule([("p1", {"pay": {"total": 600.0}}, [{"label": "gear", "amount": 20.0}])])
+    # A non-admin PUT inflates the billed total and rewrites an adjustment.
+    incoming = _pay_schedule([("p1", {"pay": {"total": 9999.0}}, [{"label": "bonus", "amount": 5000.0}])])
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("both work and adj reverted", fixed == 2, f"fixed={fixed}")
+    pos = incoming[0]["positions"][0]
+    _check("total restored", pos["work"]["pay"]["total"] == 600.0, str(pos["work"]))
+    _check("adj restored", pos["adj"] == [{"label": "gear", "amount": 20.0}], str(pos["adj"]))
+
+
+def test_pay_snapshot_allows_non_pay_edits():
+    print("test_pay_snapshot_allows_non_pay_edits")
+    # A member's ordinary save echoes the snapshot it loaded → no-op; other
+    # fields (times/status) it may have changed are left entirely alone here.
+    stored = _pay_schedule([("p1", {"pay": {"total": 600.0}}, [])])
+    incoming = _pay_schedule([("p1", {"pay": {"total": 600.0}}, [])])
+    incoming[0]["time"] = "08:00"   # a legitimate schedule edit rides alongside
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("unchanged snapshot is a no-op", fixed == 0, f"fixed={fixed}")
+    _check("schedule edit preserved", incoming[0]["time"] == "08:00")
+
+
+def test_pay_snapshot_strips_introduced_snapshot():
+    print("test_pay_snapshot_strips_introduced_snapshot")
+    # A non-admin can't INTRODUCE a snapshot on a new position (empty stored side,
+    # as on create, or a brand-new position id on update).
+    fixed = ci.enforce_pay_snapshot([], _pay_schedule([("pNEW", {"pay": {"total": 800.0}}, [{"label": "x", "amount": 9.0}])]))
+    _check("introduced snapshot stripped (create)", fixed == 2, f"fixed={fixed}")
+    incoming = _pay_schedule([("pNEW", {"pay": {"total": 800.0}}, None)])
+    ci.enforce_pay_snapshot(_pay_schedule([("p1", {"pay": {"total": 600.0}}, [])]), incoming)
+    pos = incoming[0]["positions"][0]
+    _check("work stripped from new position", "work" not in pos, str(pos))
+    _check("None/empty schedules are safe",
+           ci.enforce_pay_snapshot(None, None) == 0)
+
+
 # ── Real-DB integration ──────────────────────────────────────────────────────
 
 async def _reset_schema():

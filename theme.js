@@ -867,6 +867,98 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
     driftCount: driftCount, unlockedCount: unlockedCount };
 };
 
+// ── Pay periods (bi-weekly payroll cycles) ───────────────────────────────────
+//
+// A pay period is a fixed-length window (default 14 days) that tiles the calendar
+// from a configured anchor date. All arithmetic is whole-UTC-day math so no
+// wall-clock/DST term ever enters — every date maps to exactly one integer-indexed
+// period (dates before the anchor get negative indices; there are no gaps). Inputs
+// and outputs are date-only ISO strings "YYYY-MM-DD".
+//
+// The Python mirror is backend/payouts.py (pay_period_index / pay_period_bounds) —
+// the two MUST agree; tests/fixtures/payout_periods.json locks them together.
+//
+// Helpers return null (never throw) on a missing/invalid anchor or date so callers
+// can fall back to the week/month presets.
+
+// Whole days between the UNIX epoch and an ISO date, in UTC. Returns null for a
+// malformed or overflow-normalized date (e.g. "2026-02-31").
+function _ppEpochDays(iso) {
+  if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  var p = iso.split("-");
+  var y = parseInt(p[0], 10), m = parseInt(p[1], 10), d = parseInt(p[2], 10);
+  if (!(m >= 1 && m <= 12) || !(d >= 1 && d <= 31)) return null;
+  var t = Date.UTC(y, m - 1, d);
+  if (isNaN(t)) return null;
+  var back = new Date(t);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== m - 1 || back.getUTCDate() !== d) return null;
+  return Math.floor(t / 86400000);
+}
+function _ppISO(days) {
+  var dt = new Date(days * 86400000);
+  return dt.getUTCFullYear() + "-" + String(dt.getUTCMonth() + 1).padStart(2, "0") + "-" + String(dt.getUTCDate()).padStart(2, "0");
+}
+function _ppLen(lengthDays) {
+  var n = parseInt(lengthDays, 10);
+  return (n >= 1 && n <= 31) ? n : 14;   // guard/default to bi-weekly
+}
+
+// Integer index of the period containing `dateISO` (0 = the anchor's own period).
+window.LTP_payPeriodIndex = function(anchorISO, lengthDays, dateISO) {
+  var a = _ppEpochDays(anchorISO), d = _ppEpochDays(dateISO);
+  if (a === null || d === null) return null;
+  return Math.floor((d - a) / _ppLen(lengthDays));
+};
+
+// { index, start, end } for a given period index (end inclusive = start + len - 1).
+window.LTP_payPeriodForIndex = function(anchorISO, lengthDays, index) {
+  var a = _ppEpochDays(anchorISO);
+  if (a === null || typeof index !== "number" || isNaN(index)) return null;
+  var len = _ppLen(lengthDays);
+  var startDays = a + index * len;
+  return { index: index, start: _ppISO(startDays), end: _ppISO(startDays + len - 1) };
+};
+
+// The period { index, start, end } containing `asOfISO`.
+window.LTP_payPeriodBounds = function(anchorISO, lengthDays, asOfISO) {
+  var idx = window.LTP_payPeriodIndex(anchorISO, lengthDays, asOfISO);
+  if (idx === null) return null;
+  return window.LTP_payPeriodForIndex(anchorISO, lengthDays, idx);
+};
+
+// The pay date for a period: its end date plus `offsetDays` (e.g. period ends
+// Sunday, offset 5 → the following Friday).
+window.LTP_payPeriodPayDay = function(endISO, offsetDays) {
+  var e = _ppEpochDays(endISO);
+  if (e === null) return null;
+  var off = parseInt(offsetDays, 10);
+  if (isNaN(off) || off < 0) off = 0;
+  return _ppISO(e + off);
+};
+
+// Human label for a period, e.g. "July 6th, 2026 – July 19th, 2026".
+window.LTP_payPeriodLabel = function(startISO, endISO) {
+  if (!startISO || !endISO) return "";
+  return window.LTP_formatDate(startISO) + " – " + window.LTP_formatDate(endISO);
+};
+
+// { year, year2, number } for a period index — 'number' is the 1-based ordinal
+// of this period within its start date's calendar year (period #1 = first period
+// starting that year; resets each January). Drives the "PAY-26-14" bill number
+// and the navigator's "Period 14 · 2026" label. Python mirror:
+// backend/payouts.py::pay_period_number_in_year.
+window.LTP_payPeriodNumberInYear = function(anchorISO, lengthDays, index) {
+  var pp = window.LTP_payPeriodForIndex(anchorISO, lengthDays, index);
+  if (!pp) return null;
+  var aDays = _ppEpochDays(anchorISO);
+  var year = new Date(_ppEpochDays(pp.start) * 86400000).getUTCFullYear();
+  var len = _ppLen(lengthDays);
+  var idxJan1 = Math.floor((_ppEpochDays(year + "-01-01") - aDays) / len);
+  var startJan1Year = new Date((aDays + idxJan1 * len) * 86400000).getUTCFullYear();
+  var firstIdx = (startJan1Year === year) ? idxJan1 : idxJan1 + 1;
+  return { year: year, year2: year % 100, number: index - firstIdx + 1 };
+};
+
 // Per-PERSON meal-break fix. Given ONE person's shifts (each { time, endTime,
 // breaks, positionId }), return the individual unpaid breaks needed to clear
 // THEIR meal penalties — each tagged with the positionId (shift) it attaches

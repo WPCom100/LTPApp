@@ -1485,9 +1485,185 @@
   // snapshots existed show as "not locked" with a live figure and a Lock button.
   function fmtMoney(n) { return "$" + Number(n || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 
-  function PayoutsTab({ projects, setProjects, contacts, services }) {
+  // ── QuickBooks payout export — review + push modal ─────────────────────────
+  // Loads the server's preview (no side effects), shows a per-person bill review
+  // with a validation checklist, and pushes the selected bills. All money comes
+  // from the server (re-derived from signed snapshots) — this UI never sends
+  // amounts. Mirrors the invoice sendToQuickBooks fetch/toast pattern.
+  function PayoutExportModal({ range, onClose }) {
+    var [state, setState] = useState({ loading: true, error: null, data: null });
+    var [selected, setSelected] = useState({});
+    var [pushing, setPushing] = useState(false);
+    var [results, setResults] = useState(null);
+
+    // keepResults: quiet post-push refresh — update the underlying statuses
+    // WITHOUT the loading flash or nulling the per-person Created/Updated/Failed
+    // pills (which the push just set). A normal (re)load resets everything.
+    function loadPreview(keepResults) {
+      if (!keepResults) { setState({ loading: true, error: null, data: null }); setResults(null); }
+      fetch("/api/qbo/payouts/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          if (resp.status !== 200) { if (!keepResults) setState({ loading: false, error: (resp.body && resp.body.error) || ("HTTP " + resp.status), data: null }); return; }
+          var data = resp.body;
+          if (!keepResults) {
+            var sel = {};
+            (data.contacts || []).forEach(function(c) { if (!c.blocked && c.billStatus !== "up_to_date") sel[c.contactId] = true; });
+            setSelected(sel);
+          }
+          setState({ loading: false, error: null, data: data });
+        })
+        .catch(function(e) { if (!keepResults) setState({ loading: false, error: "Network or server error: " + String(e.message || e), data: null }); });
+    }
+    React.useEffect(function() { loadPreview(); }, [range.start, range.end]);
+
+    var data = state.data;
+    var hasBlocks = !!(data && data.blocks && data.blocks.length);
+    var selectedIds = Object.keys(selected).filter(function(k) { return selected[k]; }).map(Number);
+
+    function toggle(cid) { setSelected(function(prev) { var n = Object.assign({}, prev); if (n[cid]) delete n[cid]; else n[cid] = true; return n; }); }
+
+    function doPush() {
+      if (!selectedIds.length || pushing) return;
+      setPushing(true);
+      fetch("/api/qbo/payouts/push", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end, contactIds: selectedIds }) })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          setPushing(false);
+          if (resp.status !== 200) {
+            var d = resp.body || {};
+            if (resp.status === 409 && (d.reason === "reconnect" || d.reason === "not_connected"))
+              window.LTP_toast(d.reason === "reconnect" ? "Reconnect QuickBooks" : "QuickBooks not connected", { message: d.error, variant: "warn" });
+            else window.LTP_toast("Export failed", { message: d.error || ("HTTP " + resp.status), variant: "error" });
+            return;
+          }
+          var res = (resp.body && resp.body.results) || [];
+          var byId = {}; res.forEach(function(x) { byId[x.contactId] = x; });
+          setResults(byId);
+          var posted = res.filter(function(x) { return x.action === "created" || x.action === "updated"; }).length;
+          var failed = res.filter(function(x) { return x.action === "error"; });
+          var errs = failed.length;
+          var skipped = res.filter(function(x) { return x.action === "skipped"; }).length;
+          if (errs) {
+            // Clear error toast with a sample message; the full per-bill list is in
+            // Settings → Error Log (QuickBooks Faults), fed from /api/qbo/status.
+            var firstErr = (failed[0] && failed[0].error) ? (" — " + failed[0].error) : "";
+            window.LTP_toast("Export finished with errors", {
+              message: errs + " bill" + (errs === 1 ? "" : "s") + " failed"
+                + (posted ? ", " + posted + " posted" : "") + (skipped ? ", " + skipped + " skipped" : "")
+                + firstErr + (errs > 1 ? " · see Settings → Error Log" : ""),
+              variant: "error" });
+          } else {
+            window.LTP_toast("Payouts exported to QuickBooks", {
+              message: posted + " bill" + (posted === 1 ? "" : "s") + " posted" + (skipped ? ", " + skipped + " skipped" : ""),
+              variant: "success" });
+          }
+          loadPreview(true);   // refresh statuses but KEEP the per-person result pills visible
+        })
+        .catch(function(e) { setPushing(false); window.LTP_toast("Export failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
+    }
+
+    var STATUS = {
+      "new": { label: "New", color: B.info }, needs_update: { label: "Needs update", color: B.warn },
+      up_to_date: { label: "Up to date", color: B.success }, error: { label: "Error", color: B.danger },
+      paid: { label: "Paid", color: B.success }, paid_changed: { label: "Paid · changed", color: B.danger },
+      blocked: { label: "Blocked", color: B.danger },
+    };
+    var RESULT = {
+      created: { label: "Created", color: B.success }, updated: { label: "Updated", color: B.success },
+      unchanged: { label: "No change", color: B.textMut }, skipped: { label: "Skipped", color: B.warn },
+      error: { label: "Failed", color: B.danger },
+    };
+    function pill(text, color) {
+      return h("span", { style: { fontSize: "9px", fontWeight: 700, color: color, background: color + "18",
+        border: "1px solid " + color + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" } }, text);
+    }
+
+    var body;
+    if (state.loading) {
+      body = h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: "20px 0" } }, "Loading payout preview…");
+    } else if (state.error) {
+      body = h("div", null,
+        h("div", { style: { background: B.danger + "12", border: "1px solid " + B.danger + "33", borderRadius: "6px", padding: "10px 12px", fontSize: "12px", color: B.danger, marginBottom: 12 } }, state.error),
+        h(window.Btn, { small: true, variant: "ghost", onClick: loadPreview }, "Retry"));
+    } else {
+      var contacts = data.contacts || [];
+      var billable = contacts.filter(function(c) { return !c.blocked; });
+      body = h("div", null,
+        // Period + pay day.
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8, marginBottom: 12 } },
+          h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, data.period.label),
+          h("div", { style: { fontSize: "11px", color: B.textMut } }, "Pay day: " + fmt(data.period.payDay)
+            + (data.environment ? "  ·  " + data.environment : ""))),
+        // Global blocks (must fix before pushing) + warnings.
+        (data.blocks || []).map(function(bmsg, i) {
+          return h("div", { key: "blk" + i, style: { background: B.danger + "12", border: "1px solid " + B.danger + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 8, lineHeight: 1.5 } }, "⛔ " + bmsg);
+        }),
+        (data.warnings || []).map(function(wmsg, i) {
+          return h("div", { key: "wrn" + i, style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginBottom: 8, lineHeight: 1.5 } }, "⚠ " + wmsg);
+        }),
+        contacts.length === 0 && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: "12px 0" } },
+          "No signed-off payouts in this pay period. Sign off crew days first."),
+        // Per-person rows.
+        contacts.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginTop: 4 } },
+          contacts.map(function(c) {
+            var r = results && results[c.contactId];
+            var st = STATUS[c.billStatus] || STATUS["new"];
+            var checkable = !c.blocked;
+            return h("div", { key: c.contactId, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px" } },
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                h("input", { type: "checkbox", checked: !!selected[c.contactId], disabled: !checkable || pushing,
+                  onChange: function() { toggle(c.contactId); }, style: { cursor: checkable ? "pointer" : "not-allowed", width: 15, height: 15 } }),
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, c.name),
+                    c.vendorStatus === "new" && pill("New vendor", B.info),
+                    r ? pill((RESULT[r.action] || { label: r.action }).label, (RESULT[r.action] || { color: B.textMut }).color) : pill(st.label, st.color)),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
+                    c.blocked ? c.reason
+                      : (c.lineCount + " line" + (c.lineCount === 1 ? "" : "s")
+                         + (c.existingBill && c.existingBill.docNumber ? "  ·  " + c.existingBill.docNumber : "")))),
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: c.blocked ? B.textMut : B.accent } }, fmtMoney(c.total))),
+              // Per-contact warnings + push error detail.
+              ((c.warnings && c.warnings.length) || (r && r.action === "error")) && h("div", { style: { marginTop: 6, paddingLeft: 25 } },
+                (c.warnings || []).map(function(w, wi) { return h("div", { key: "cw" + wi, style: { fontSize: "10px", color: B.warn } }, "⚠ " + w); }),
+                r && r.action === "error" && h("div", { style: { fontSize: "10px", color: B.danger } }, "⛔ " + (r.error || "failed"))));
+          })),
+        // Totals.
+        contacts.length > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 12, paddingTop: 10, borderTop: "1px solid " + B.border, fontSize: "12px" } },
+          h("span", { style: { color: B.textMut } }, billable.length + " billable · " + selectedIds.length + " selected"),
+          h("span", { style: { fontWeight: 700, color: B.text } }, "Period total: " + fmtMoney(data.grandTotal))));
+    }
+
+    return h(window.LTPModal, { title: "Export payouts to QuickBooks", onClose: onClose, wide: true },
+      body,
+      h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center", marginTop: 16 } },
+        hasBlocks && h("span", { style: { fontSize: "10px", color: B.danger, marginRight: "auto" } }, "Resolve the blockers above before exporting."),
+        h(window.Btn, { variant: "ghost", onClick: onClose }, "Close"),
+        h(window.Btn, { onClick: doPush, disabled: state.loading || !!state.error || hasBlocks || !selectedIds.length || pushing },
+          pushing ? "Exporting…" : "Export " + selectedIds.length + " bill" + (selectedIds.length === 1 ? "" : "s"))));
+  }
+
+  function PayoutsTab({ projects, setProjects, contacts, services, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+
+    // ── Pay-period config (bi-weekly payroll cycle) ──────────────────────────
+    // Anchor + length come from Settings; when unset, the pay-period presets
+    // hide and the tab falls back to the week/month presets. The period range
+    // is computed by the same helpers the backend mirrors (theme.js::LTP_payPeriod*).
+    var payAnchor = settings && settings.payPeriodAnchor;
+    var payLen = (settings && settings.payPeriodLengthDays) || 14;
+    var payOffset = (settings && settings.payPeriodPayDayOffsetDays) || 0;
+    var curPeriod = window.LTP_payPeriodBounds(payAnchor, payLen, todayISO());
+    var payConfigured = !!curPeriod;
+    function periodRange(idx) {
+      var pp = window.LTP_payPeriodForIndex(payAnchor, payLen, idx);
+      return pp ? { start: pp.start, end: pp.end } : null;
+    }
+
     function rangeFor(preset) {
       var d = new Date(todayISO() + "T12:00:00"); // noon: immune to DST/tz edges
       if (preset === "month") {
@@ -1497,13 +1673,69 @@
       var sun = new Date(mon); sun.setDate(mon.getDate() + 6);
       return { start: iso(mon), end: iso(sun) };
     }
-    var [preset, setPreset] = useState("week");
-    var [range, setRange] = useState(function() { return rangeFor("week"); });
-    function pickPreset(p) { setPreset(p); setRange(rangeFor(p)); }
+    var [preset, setPreset] = useState(payConfigured ? "period" : "week");
+    var [periodIndex, setPeriodIndex] = useState(payConfigured ? curPeriod.index : 0);
+    var [range, setRange] = useState(function() { return payConfigured ? periodRange(curPeriod.index) : rangeFor("week"); });
+    function pickPreset(p) {
+      // "period" = this cycle; "lastperiod" = previous cycle. Both live under the
+      // "period" preset (the navigator drives the index); other presets are date-window.
+      if (p === "period" || p === "lastperiod") {
+        var i = (curPeriod ? curPeriod.index : 0) - (p === "lastperiod" ? 1 : 0);
+        setPreset("period"); setPeriodIndex(i); setRange(periodRange(i) || rangeFor("week"));
+      } else { setPreset(p); setRange(rangeFor(p)); }
+    }
+    function shiftPeriod(delta) {
+      var i = periodIndex + delta;
+      var r = periodRange(i); if (!r) return;
+      setPreset("period"); setPeriodIndex(i); setRange(r);
+    }
 
     var data = useMemo(function() {
       return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
     }, [projects, contacts, services, range.start, range.end]);
+
+    // Per-shift QuickBooks export/paid status, keyed "crewId|projectId|date".
+    // Fetched from the server (ledger + bill payment state) whenever the range
+    // changes; drives the per-row status pill AND the paid-day edit guard.
+    var [dayStatus, setDayStatus] = useState({});
+    // Whether the day-status map reflects a successful fetch. On a fetch error we
+    // can't tell which days are paid, so the guard must fail CLOSED (warn) rather
+    // than silently letting a paid day be re-priced with no notification.
+    var [dayStatusErr, setDayStatusErr] = useState(false);
+    var dsSeq = React.useRef(0);
+    function loadDayStatus() {
+      if (!qbo || !qbo.connected) { setDayStatus({}); setDayStatusErr(false); return; }
+      var seq = ++dsSeq.current;   // stale-response guard: only the newest wins
+      fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
+        .then(function(r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
+        .then(function(b) { if (seq !== dsSeq.current) return; setDayStatus((b && b.days) || {}); setDayStatusErr(false); })
+        .catch(function() { if (seq !== dsSeq.current) return; setDayStatus({}); setDayStatusErr(true); });
+    }
+    React.useEffect(loadDayStatus, [range.start, range.end, qbo && qbo.connected]);
+    function dayStatusOf(r) { return dayStatus[r.crewId + "|" + r.projectId + "|" + r.date] || null; }
+
+    // Paid-day edit guard: any action that would change a day already PAID in
+    // QuickBooks is gated behind a warn+confirm; confirming records the override
+    // (which web-pushes admins). See /api/qbo/payouts/notify-edit.
+    var [paidGuard, setPaidGuard] = useState(null);   // { row, ds, run } while confirming
+    function notifyPaidEdit(r) {
+      fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
+    }
+    function guardPaid(r, proceed) {
+      // Payout pay-writes (sign-off, lock, adjust, no-show, undo) are admin-only —
+      // the amount is billed verbatim to QuickBooks, and the server reverts a
+      // non-admin's snapshot change (backend/crew_integrity.py::enforce_pay_snapshot),
+      // so surface a clear message here instead of a silent revert on reload.
+      if (!isAdmin) { window.LTP_toast("Admins only", { message: "Only an admin can sign off, lock, or adjust payouts.", variant: "error" }); return; }
+      var ds = dayStatusOf(r);
+      if (ds && ds.paid) { setPaidGuard({ row: r, ds: ds, run: proceed }); return; }
+      // Fail closed: QuickBooks is connected but we couldn't load paid status, so
+      // this day MIGHT be paid — warn before repricing rather than proceeding blind.
+      if (dayStatusErr && qbo && qbo.connected) { setPaidGuard({ row: r, ds: null, unverified: true, run: proceed }); return; }
+      proceed();
+    }
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
@@ -1511,6 +1743,8 @@
     var [adjustDlg, setAdjustDlg] = useState(null);  // { row, shifts, actuals }
     var [noShowDlg, setNoShowDlg] = useState(null);  // row awaiting no-show confirm
     var [adjPayDlg, setAdjPayDlg] = useState(null);  // { row, list, label, amount } — pay adjustments
+    var [exportDlg, setExportDlg] = useState(null);  // QuickBooks payout export modal (truthy = open)
+    var canExport = isAdmin && qbo && qbo.connected;
 
     // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
     function savePayAdjustments(row, list) {
@@ -1684,6 +1918,23 @@
       return h("button", { key: key, onClick: function() { pickPreset(key); },
         style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
     };
+    // Pay-period presets: "period" (this cycle) / "lastperiod" (previous). Active
+    // highlight tracks the navigator index, not a distinct preset value.
+    var payPeriodBtn = function(key, label) {
+      var active = preset === "period" && curPeriod && (key === "period" ? periodIndex === curPeriod.index : periodIndex === curPeriod.index - 1);
+      return h("button", { key: key, onClick: function() { pickPreset(key); },
+        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+    };
+    // ◀ [period label · pay day] ▶ — shown only when a cycle is configured and a
+    // pay-period preset is active (not for week/month/custom).
+    var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+      h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
+      h("div", null,
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
+          (function() { var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex); return n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : ""; })()
+          + window.LTP_payPeriodLabel(range.start, range.end)),
+        h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
+      h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
 
     var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
     var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
@@ -1694,18 +1945,24 @@
       isMobile
       ? h("div", { style: { marginBottom: 14 } },
           h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+            payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
             presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
             h("div", { style: { flex: 1 } }),
+            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
             h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
           h("div", { style: { display: "flex", gap: 8 } },
             h("div", { style: { flex: 1 } }, fromInput),
             h("div", { style: { flex: 1 } }, toInput)))
       : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
+          payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
           presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
           h("div", { style: { width: 130 } }, fromInput),
           h("div", { style: { width: 130 } }, toInput),
           h("div", { style: { flex: 1 } }),
+          canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
           h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
+
+      periodNav,
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
       h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
@@ -1755,22 +2012,33 @@
                     // Chips + sign-off buttons: a wrapped second line on mobile,
                     // inline on desktop (display:contents leaves the row unchanged).
                     h("div", { style: isMobile ? { order: 3, flexBasis: "100%", display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", marginTop: 2 } : { display: "contents" } },
+                      (function() {
+                        var ds = dayStatusOf(r);
+                        if (!ds) return null;
+                        var S = {
+                          exported: { t: "QB ✓", c: B.info, title: "Exported to QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
+                          needs_reexport: { t: "QB ↻", c: B.warn, title: "Exported, then changed — re-export to update QuickBooks" },
+                          paid: { t: "QB paid", c: B.success, title: "Paid in QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
+                          paid_changed: { t: "QB paid ⚠", c: B.danger, title: "Paid in QuickBooks, but this day changed after payment" },
+                        }[ds.status];
+                        return S ? chip(S.c, S.t, S.title) : null;
+                      })(),
                       minApplied && chip(B.warn, "min rate", "Includes this crew member's negotiated minimum day rate."),
                       allMargin && chip(B.success, "margin"),
                       r.signed
                         ? h(React.Fragment, null,
                             chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
                               "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { undoSign(r); }, null, "Undo the sign-off — the day returns to pending."))
+                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
                             !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
-                            (!r.locked || r.drift) && h("button", { onClick: function() { lockRow(r); },
+                            (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
                               style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                            canSign && sBtn("✓ Worked", function() { markWorked(r); }, B.success, "Sign off: worked as scheduled."),
-                            canSign && sBtn("Adjust…", function() { openAdjust(r); }, null, "Sign off with actual times / dropped shifts."),
-                            canSign && sBtn("No-show", function() { setNoShowDlg(r); }, null, "Sign off: didn't work — pays $0."),
+                            canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
+                            canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
+                            canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                      sBtn("$±", function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }, null,
+                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
@@ -1825,6 +2093,21 @@
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setNoShowDlg(null); } }, "Cancel"),
           h(window.Btn, { variant: "danger", onClick: function() { doNoShow(noShowDlg); } }, "Mark No-show"))),
+
+      // QuickBooks payout export (review + push)
+      exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
+
+      // Paid-day edit guard (warn + confirm; confirming records the override).
+      paidGuard && h(window.LTPModal, { title: paidGuard.unverified ? "Paid status unknown" : "Edit a paid day?", onClose: function() { setPaidGuard(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
+          paidGuard.unverified
+            ? (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + ": couldn't check whether this day has been paid in QuickBooks. If it has, editing it here won't update the paid bill. Continue anyway?")
+            : (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was already paid in QuickBooks"
+               + (paidGuard.ds && paidGuard.ds.docNumber ? " (bill " + paidGuard.ds.docNumber + ")" : "")
+               + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?")),
+        h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setPaidGuard(null); } }, "Cancel"),
+          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); if (!g.unverified) notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
 
       // Adjust-day sign-off
       adjustDlg && (function() {
@@ -2139,7 +2422,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
-  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route }) {
+  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route, isAdmin, qbo }) {
     // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
     // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
     //   labor            → assignments (default)
@@ -2198,7 +2481,7 @@
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
-      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services })
+      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services, settings: settings, isAdmin: isAdmin, qbo: qbo })
     );
   };
 })();

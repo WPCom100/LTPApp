@@ -42,7 +42,7 @@ _HIDDEN_COLS = {"created_at", "updated_at"}
 _READONLY_COLS = {
     "qb_invoice_id", "qb_sync_token", "qb_sync_status", "qb_synced_at",
     "qb_last_error", "qb_tax_total", "qb_total_amt", "qb_synced_signature",
-    "qb_tax_signature", "qb_customer_id", "qb_item_id",
+    "qb_tax_signature", "qb_customer_id", "qb_vendor_id", "qb_item_id",
     # Last-confirmed income account of the backing QB item (same column name +
     # semantics on services AND products) — written only by the sync engine's
     # re-point path. Its sibling `qb_income_account_id` is deliberately NOT
@@ -195,6 +195,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             data = _stamp_activity(data, user)
         mapped = _dict_to_row(data, model_cls)
         await _validate_fks(mapped, model_cls, db)
+        # Payroll integrity: a non-admin can't introduce a frozen pay snapshot on a
+        # brand-new project either — strip any `work`/`adj` off incoming positions
+        # (stored side is empty on create). See the update path for the rationale.
+        if model_cls is models.Project and user.role != "admin" and isinstance(mapped.get("schedule"), list):
+            stripped = crew_integrity.enforce_pay_snapshot([], mapped["schedule"])
+            if stripped:
+                print(f"[LTP] payout-integrity: project create by non-admin user "
+                      f"id={user.id} ({user.email}) carried {stripped} pay-snapshot "
+                      f"value(s) — stripped", flush=True)
         row = model_cls(**mapped)
         # share_token is the PUBLIC client-view credential and is server-
         # authoritative: any client-supplied value was already stripped by
@@ -247,6 +256,17 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             if floored:
                 print(f"[LTP] crew-integrity: project {item_id} save carried "
                       f"{floored} stale position-status downgrade(s) — restored", flush=True)
+            # Payroll integrity: the payout export bills `work.pay` verbatim, so a
+            # non-admin must not create or alter a day's frozen pay snapshot/adjust-
+            # ments (they'd be billed on an admin's later push). Restore them from
+            # the stored row before applying the write (backend/crew_integrity.py
+            # ::enforce_pay_snapshot). Admins pass through untouched.
+            if user.role != "admin":
+                reverted = crew_integrity.enforce_pay_snapshot(row.schedule, mapped["schedule"])
+                if reverted:
+                    print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
+                          f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
+                          f"change(s) — reverted", flush=True)
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)
