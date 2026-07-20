@@ -1703,6 +1703,11 @@
         credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
     }
     function guardPaid(r, proceed) {
+      // Payout pay-writes (sign-off, lock, adjust, no-show, undo) are admin-only —
+      // the amount is billed verbatim to QuickBooks, and the server reverts a
+      // non-admin's snapshot change (backend/crew_integrity.py::enforce_pay_snapshot),
+      // so surface a clear message here instead of a silent revert on reload.
+      if (!isAdmin) { window.LTP_toast("Admins only", { message: "Only an admin can sign off, lock, or adjust payouts.", variant: "error" }); return; }
       var ds = dayStatusOf(r);
       if (ds && ds.paid) setPaidGuard({ row: r, ds: ds, run: proceed });
       else proceed();

@@ -25,7 +25,8 @@ Security notes:
     failure activity stamp commits with the request transaction.
 """
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date as _date, datetime, timedelta, timezone
 
 from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -381,6 +382,28 @@ class PayoutExportRequest(BaseModel):
     contactIds: list[int] | None = None   # None/empty = all crew with a payout
 
 
+# Strictest possible day-status window: a payout run bills bi-weekly, and even a
+# long multi-period project spans well under a year. Bounding the caller-supplied
+# range (day-status accepts an arbitrary project date span, so it can't go through
+# _resolve_period) caps the O(periods × projects) re-derivation and blocks the
+# "0000-01-01 … 9999-12-31" scrape/DoS an authenticated caller could otherwise send.
+_DAY_STATUS_MAX_SPAN_DAYS = 400
+
+_ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _iso_date_or_none(s):
+    """Parse a strict YYYY-MM-DD string to a date, or None if malformed. Rejects
+    junk (slashes, times, out-of-range) before it can reach a query, a push body,
+    or a notification string."""
+    if not isinstance(s, str) or not _ISO_DATE_RE.match(s):
+        return None
+    try:
+        return _date.fromisoformat(s)
+    except ValueError:
+        return None
+
+
 async def _resolve_period(db, period_start, period_end):
     """Validate that (period_start, period_end) is exactly a pay period derived
     from Settings, and return its {start,end,index,pay_day,label}. Returns
@@ -612,7 +635,22 @@ async def payout_day_status_route(
     for every day that's been exported (i.e. is in the bill ledger) within the
     requested date range. status ∈ exported | needs_reexport | paid | paid_changed
     (a day absent from the map is simply not exported). Staleness is computed per
-    overlapping bill by re-deriving its period and comparing the live signature."""
+    overlapping bill by re-deriving its period and comparing the live signature.
+
+    The range is caller-supplied (a project's date span, so it can't be forced
+    onto a single pay period) — but it is strictly validated and span-bounded so a
+    signed-in user can't hand in "0000-01-01 … 9999-12-31" to scrape the whole
+    ledger or force an unbounded re-derivation (see _DAY_STATUS_MAX_SPAN_DAYS)."""
+    d_start, d_end = _iso_date_or_none(body.periodStart), _iso_date_or_none(body.periodEnd)
+    if d_start is None or d_end is None:
+        return JSONResponse(status_code=400, content={"reason": "bad_range",
+                            "error": "periodStart/periodEnd must be YYYY-MM-DD dates."})
+    if d_end < d_start:
+        return JSONResponse(status_code=400, content={"reason": "bad_range",
+                            "error": "periodEnd is before periodStart."})
+    if (d_end - d_start).days > _DAY_STATUS_MAX_SPAN_DAYS:
+        return JSONResponse(status_code=400, content={"reason": "range_too_wide",
+                            "error": f"Date range exceeds {_DAY_STATUS_MAX_SPAN_DAYS} days."})
     start, end = body.periodStart, body.periodEnd
     lines = (await db.execute(select(models.PayoutBillLine).where(
         models.PayoutBillLine.date >= start, models.PayoutBillLine.date <= end))).scalars().all()
@@ -623,9 +661,13 @@ async def payout_day_status_route(
     bills = {b.id: b for b in (await db.execute(
         select(models.PayoutBill).where(models.PayoutBill.id.in_(bill_ids)))).scalars().all()}
 
-    # Live signature per bill (for drift detection), computed once per distinct period.
+    # Live signature per bill (for drift detection), computed once per distinct
+    # period. Projects + crew are loaded ONCE here and re-derived in memory per
+    # period — never re-queried per period (the old N+1 that made a wide range a
+    # DoS). The bounded span above caps how many distinct periods this can be.
     services = (await db.execute(select(models.Service))).scalars().all()
     accounts = await qbo_payouts.resolve_payout_accounts(db, services)
+    projects_snapshot, crew_snapshot = await payouts.load_projects_and_crew(db)
     live_sig = {}
     periods = {}
     for b in bills.values():
@@ -634,7 +676,8 @@ async def payout_day_status_route(
         period, _ = await _resolve_period(db, ps, pe)
         if period is None:
             continue  # config drifted — leave live_sig unset (treated as fresh)
-        drafts = {d["contact_id"]: d for d in await payouts.load_payout_drafts(db, ps, pe)}
+        drafts = {d["contact_id"]: d for d in
+                  payouts.derive_payout_drafts(projects_snapshot, crew_snapshot, ps, pe)}
         for b in blist:
             d = drafts.get(b.contact_id)
             if d is None:
@@ -677,9 +720,17 @@ async def payout_notify_edit_route(
 ):
     """Record + broadcast that a producer changed a day that's already been PAID
     in QuickBooks (an override confirmed in the Payouts tab or Schedule Builder).
-    Stamps the paid bill's activity and web-pushes admins. Best-effort."""
-    cr = (await db.execute(select(models.Contact).where(models.Contact.id == body.contactId))).scalar_one_or_none()
-    name = ((cr.first_name or "") + " " + (cr.last_name or "")).strip() if cr else "A crew member"
+    Stamps the paid bill's activity and web-pushes admins. Best-effort.
+
+    Session-gated (schedule edits are member-accessible) but deliberately inert
+    unless the (contact, date[, project]) resolves to a bill line whose bill is
+    actually PAID — so a signed-in caller can't use it to storm admins with
+    push notifications, forge "edited after paid" entries onto unpaid/nonexistent
+    bills, or inject text (the date is format-validated and the message is built
+    entirely from server-side values)."""
+    if _iso_date_or_none(body.date) is None:
+        return JSONResponse(status_code=400, content={"reason": "bad_date",
+                            "error": "date must be a YYYY-MM-DD string."})
 
     q = select(models.PayoutBillLine).where(
         models.PayoutBillLine.contact_id == body.contactId, models.PayoutBillLine.date == body.date)
@@ -690,22 +741,29 @@ async def payout_notify_edit_route(
     if ln is not None:
         pb = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == ln.payout_bill_id))).scalar_one_or_none()
 
-    doc = pb.doc_number if pb else None
+    # Only a genuinely PAID bill is an override worth recording/notifying. Anything
+    # else (no ledger line, or an unpaid bill) is a no-op — nothing is stamped and
+    # no push is sent, which closes the storm / forgery / entity-0 push vectors.
+    if pb is None or pb.qb_paid_at is None:
+        return {"ok": True, "notified": False}
+
+    cr = (await db.execute(select(models.Contact).where(models.Contact.id == body.contactId))).scalar_one_or_none()
+    name = ((cr.first_name or "") + " " + (cr.last_name or "")).strip() if cr else "A crew member"
+    doc = pb.doc_number
     where = "the schedule" if body.where == "schedule" else "a payout"
     msg = (f"{name} · {body.date}" + (f" ({doc})" if doc else "")
            + f" was changed in {where} after being paid in QuickBooks")
-    if pb is not None:
-        qbo_payouts._stamp(pb, user, "qbo_payout_edited_after_paid",
-                           f"Paid payout edited: {name} · {body.date}",
-                           [{"cat": "Edited in", "detail": where},
-                            {"cat": "By", "detail": (user.name or user.email or "")}])
-        await db.flush()
+    qbo_payouts._stamp(pb, user, "qbo_payout_edited_after_paid",
+                       f"Paid payout edited: {name} · {body.date}",
+                       [{"cat": "Edited in", "detail": where},
+                        {"cat": "By", "detail": (user.name or user.email or "")}])
+    await db.flush()
     try:
-        await webpush.notify_entity(db, "payout", (pb.id if pb else 0),
+        await webpush.notify_entity(db, "payout", pb.id,
                                     "Paid payout edited", msg, "/#/labor/payouts")
     except Exception as e:  # pragma: no cover - best-effort
         print(f"[LTP] webpush: paid-edit notify failed: {e}", flush=True)
-    return {"ok": True}
+    return {"ok": True, "notified": True}
 
 
 # ── Compute a quote's sales tax via a temporary estimate ──────────────────────

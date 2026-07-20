@@ -289,6 +289,60 @@ def enforce_status_floor(stored_schedule, incoming_schedule) -> int:
     return fixed
 
 
+def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
+    """Payroll-integrity guard for NON-ADMIN project writes.
+
+    A position's frozen payout snapshot — ``work`` (the signed-off pay object the
+    QuickBooks payout export bills *verbatim*, `work.pay.total`) and ``adj`` (the
+    itemized pay adjustments) — is money that flows straight onto a Vendor Bill.
+    Only admins may create or change it. But the frontend PUTs its whole in-memory
+    project row, so a non-admin's ordinary schedule save carries these sub-objects
+    too, and nothing else re-derives them server-side (the export trusts the stored
+    snapshot). Without this guard any signed-in member could raise ``work.pay.total``
+    on a confirmed day and have an admin's later export bill the inflated amount —
+    the amount-reconciliation check can't catch it because QuickBooks derives its
+    total from the same tampered lines.
+
+    So for a non-admin write we restore each incoming position's ``work``/``adj`` to
+    the stored value (matched by position id), and strip them from positions that
+    don't exist in the stored row (a non-admin can't *introduce* a snapshot either).
+    Legitimate member edits — times, roles, assignments, statuses, breaks — are
+    untouched, and because a member's save echoes the snapshot it loaded, an
+    unchanged snapshot restores to itself (a no-op). Admin writes never call this.
+
+    Mutates ``incoming_schedule`` in place; returns the number of positions whose
+    ``work`` or ``adj`` was restored/stripped (for audit logging). Pure function of
+    the two JSON blobs — no DB access."""
+    stored = {}
+    for shift in (stored_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        for pos in (shift.get("positions") or []):
+            if isinstance(pos, dict) and pos.get("id") is not None:
+                stored[pos["id"]] = (pos.get("work"), pos.get("adj"))
+    fixed = 0
+    for shift in (incoming_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        for pos in (shift.get("positions") or []):
+            if not isinstance(pos, dict):
+                continue
+            prev_work, prev_adj = stored.get(pos.get("id"), (None, None))
+            if pos.get("work") != prev_work:
+                if prev_work is None:
+                    pos.pop("work", None)
+                else:
+                    pos["work"] = prev_work
+                fixed += 1
+            if pos.get("adj") != prev_adj:
+                if prev_adj is None:
+                    pos.pop("adj", None)
+                else:
+                    pos["adj"] = prev_adj
+                fixed += 1
+    return fixed
+
+
 async def reconcile_all(db: AsyncSession) -> int:
     """Sweep every active request, batching project loads. Heals ongoing drift
     and backfills requests orphaned before this engine existed (the first
