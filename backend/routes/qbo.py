@@ -32,7 +32,7 @@ from authlib.integrations.starlette_client import OAuthError
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
@@ -199,6 +199,11 @@ async def status(
                models.PayoutBill.qb_total_amt.isnot(None),
                func.abs(models.PayoutBill.qb_total_amt - models.PayoutBill.amount) > 0.01)
     )
+    # Recent payout vendor-bill FAULTS (sync errors + amount mismatches) for the
+    # Settings → Error Log "QuickBooks Faults" panel. Payout bills aren't loaded
+    # client-side (unlike invoices/quotes, which are activity-scanned there), so
+    # surface their faults through /status instead.
+    payout_errors = await _collect_payout_faults(db)
 
     realm = conn.realm_id or ""
     masked_realm = ("…" + realm[-4:]) if len(realm) > 4 else realm
@@ -227,6 +232,9 @@ async def status(
         "paidBills": int(paid_bills or 0),
         "unpaidBills": int(unpaid_bills or 0),
         "amountMismatchCount": int(mismatch_bills or 0),
+        # Per-bill faults for the Error Log (same shape as the invoice/quote QB
+        # faults collected client-side): {context, message, errorDetail, date, time}.
+        "payoutErrors": payout_errors,
         # Admin-refreshed Income account list (feeds the mapping dropdowns in
         # Settings and the per-item pickers). [] until the first refresh.
         "incomeAccounts": conn.income_accounts or [],
@@ -428,6 +436,45 @@ async def _resolve_period(db, period_start, period_end):
         "year": numbering.get("year"), "year2": numbering.get("year2"),
         "number": numbering.get("number"),
     }, None
+
+
+_PAYOUT_FAULT_TYPES = ("qbo_payout_failed", "qbo_payout_mismatch")
+
+
+def _payout_fault(pb, name):
+    """Shape one PayoutBill's most-recent fault into the Error-Log fault record
+    the frontend already renders: {context, message, errorDetail, date, time}.
+    message is the human summary from the activity stamp; errorDetail is the raw
+    sanitized QuickBooks message (qb_last_error)."""
+    entries = [a for a in (pb.activity or []) if isinstance(a, dict) and a.get("type") in _PAYOUT_FAULT_TYPES]
+    a = entries[-1] if entries else {}
+    label = pb.doc_number or ("bill " + str(pb.id))
+    return {
+        "context": (name + " · " + label) if name else label,
+        "message": a.get("message") or pb.qb_last_error or "Payout bill error",
+        "errorDetail": pb.qb_last_error or "",
+        "date": a.get("date") or "",
+        "time": a.get("time") or "",
+    }
+
+
+async def _collect_payout_faults(db, limit=20):
+    """Recent payout vendor bills that are in `error` OR carry an amount mismatch,
+    newest first, as Error-Log fault records with the crew member's name."""
+    bills = (await db.execute(
+        select(models.PayoutBill).where(or_(
+            models.PayoutBill.qb_sync_status == "error",
+            and_(models.PayoutBill.qb_total_amt.isnot(None),
+                 func.abs(models.PayoutBill.qb_total_amt - models.PayoutBill.amount) > 0.01),
+        )).order_by(models.PayoutBill.updated_at.desc()).limit(limit)
+    )).scalars().all()
+    if not bills:
+        return []
+    cids = {b.contact_id for b in bills}
+    names = {}
+    for c in (await db.execute(select(models.Contact).where(models.Contact.id.in_(cids)))).scalars().all():
+        names[c.id] = ((c.first_name or "") + " " + (c.last_name or "")).strip()
+    return [_payout_fault(b, names.get(b.contact_id, "")) for b in bills]
 
 
 def _account_status(account_id, cache):

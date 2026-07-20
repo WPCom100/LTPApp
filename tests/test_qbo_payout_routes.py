@@ -280,6 +280,41 @@ def test_notify_edit_noop_on_unpaid_bill():
     assert "qbo_payout_edited_after_paid" not in asyncio.run(check_no_stamp())
 
 
+def test_status_reports_payout_faults():
+    # A payout bill in `error` and one with an amount mismatch both surface in
+    # /status.payoutErrors (the Settings → Error Log QuickBooks Faults feed).
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06")
+    from backend.database import async_session
+
+    async def seed():
+        async with async_session() as db:
+            if await db.get(models.QboConnection, 1) is None:
+                db.add(models.QboConnection(
+                    id=1, realm_id="9999999999", environment="sandbox",
+                    access_token_enc=crypto.encrypt_token("a"), refresh_token_enc=crypto.encrypt_token("r"),
+                    access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+            db.add(models.PayoutBill(
+                contact_id=crew_id, period_start="2026-07-06", period_end="2026-07-19",
+                doc_number="PAY-26-14", qb_sync_status="error", amount=600.0,
+                qb_last_error="QuickBooks Fault: boom",
+                activity=[{"type": "qbo_payout_failed", "message": "QuickBooks payout bill failed",
+                           "date": "2026-07-20", "time": "10:00"}]))
+            db.add(models.PayoutBill(
+                contact_id=crew_id, period_start="2026-06-22", period_end="2026-07-05",
+                doc_number="PAY-26-13", qb_sync_status="synced", amount=600.0, qb_total_amt=650.0,
+                qb_last_error="QuickBooks total $650.00 ≠ computed $600.00"))
+            await db.commit()
+
+    asyncio.run(seed())
+    s = client.get("/api/qbo/status", cookies={"ltp_session": admin}).json()
+    pe = s.get("payoutErrors") or []
+    assert len(pe) == 2, pe
+    ctxs = " ".join(p["context"] for p in pe)
+    assert "PAY-26-14" in ctxs and "PAY-26-13" in ctxs
+    assert any("boom" in (p.get("errorDetail") or "") for p in pe)
+    assert s["amountMismatchCount"] == 1
+
+
 # ── Account refresh now caches Expense + AP; status returns them ─────────────
 
 def test_accounts_refresh_caches_expense_and_ap():

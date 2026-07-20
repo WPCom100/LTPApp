@@ -1543,12 +1543,23 @@
           var byId = {}; res.forEach(function(x) { byId[x.contactId] = x; });
           setResults(byId);
           var posted = res.filter(function(x) { return x.action === "created" || x.action === "updated"; }).length;
-          var errs = res.filter(function(x) { return x.action === "error"; }).length;
+          var failed = res.filter(function(x) { return x.action === "error"; });
+          var errs = failed.length;
           var skipped = res.filter(function(x) { return x.action === "skipped"; }).length;
-          window.LTP_toast(errs ? "Export finished with errors" : "Payouts exported to QuickBooks", {
-            message: posted + " bill" + (posted === 1 ? "" : "s") + " posted"
-              + (skipped ? ", " + skipped + " skipped" : "") + (errs ? ", " + errs + " failed" : ""),
-            variant: errs ? "error" : "success" });
+          if (errs) {
+            // Clear error toast with a sample message; the full per-bill list is in
+            // Settings → Error Log (QuickBooks Faults), fed from /api/qbo/status.
+            var firstErr = (failed[0] && failed[0].error) ? (" — " + failed[0].error) : "";
+            window.LTP_toast("Export finished with errors", {
+              message: errs + " bill" + (errs === 1 ? "" : "s") + " failed"
+                + (posted ? ", " + posted + " posted" : "") + (skipped ? ", " + skipped + " skipped" : "")
+                + firstErr + (errs > 1 ? " · see Settings → Error Log" : ""),
+              variant: "error" });
+          } else {
+            window.LTP_toast("Payouts exported to QuickBooks", {
+              message: posted + " bill" + (posted === 1 ? "" : "s") + " posted" + (skipped ? ", " + skipped + " skipped" : ""),
+              variant: "success" });
+          }
           loadPreview(true);   // refresh statuses but KEEP the per-person result pills visible
         })
         .catch(function(e) { setPushing(false); window.LTP_toast("Export failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
