@@ -234,17 +234,15 @@ async def refresh_if_needed(
     # freshness below and usually skips the network refresh entirely.
     async with _get_refresh_lock():
         # A refresh may have completed (in this process) while we waited for the
-        # lock. If the row on disk now carries a not-yet-expired access token,
-        # adopt it and skip the network call — this is the common self-heal when
-        # two pollers align. Best-effort: a re-read failure just falls through to
-        # the normal refresh path.
-        adopted = await _adopt_if_fresh(db, force)
-        if adopted is not None:
-            conn.access_token_enc = adopted[0]
-            conn.access_token_expires_at = adopted[1]
-            conn.refresh_token_enc = adopted[2]
+        # lock. Re-read THIS row from the DB — db.refresh() forces a fresh SELECT,
+        # bypassing the session's identity-map cache that would otherwise return
+        # our own stale copy — and if it now carries a still-valid access token,
+        # adopt it and skip the network call. The common self-heal when two callers
+        # align: the loser adopts the winner's already-committed token instead of
+        # spending the (now-dead) rotating refresh token.
+        if await _adopt_if_fresh(conn, db, force):
             try:
-                return crypto.decrypt_token(adopted[0])
+                return crypto.decrypt_token(conn.access_token_enc)
             except InvalidToken:
                 pass  # unreadable — fall through and refresh for real
 
@@ -259,17 +257,16 @@ async def refresh_if_needed(
             resp = await httpx_client.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers, timeout=15.0)
 
         if resp.status_code == 400:
-            # invalid_grant. Before treating this as a real revocation, check
-            # whether another caller rotated the token out from under us
-            # (concurrent refresh): if the row's stored refresh token no longer
-            # matches the one we just spent, THIS 400 is a benign race — recover
-            # with the freshly-rotated token instead of dropping the connection.
-            recovered = await _recover_after_rotation(db, refresh_token)
+            # invalid_grant. Before treating this as a real revocation, re-read the
+            # row FRESH: if its stored refresh token no longer matches the one we
+            # just spent, another caller rotated it (concurrent refresh) and THIS
+            # 400 is a benign race — recover with the freshly-persisted token
+            # instead of dropping the connection. (conn is refreshed in place.)
+            recovered = await _recover_after_rotation(conn, db, refresh_token)
             if recovered is not None:
-                conn.access_token_enc, conn.access_token_expires_at, conn.refresh_token_enc = recovered[1:]
                 print("[LTP] qbo: refresh 400 raced a concurrent rotation; "
                       "recovered with the freshly-persisted token", flush=True)
-                return recovered[0]
+                return recovered
             # A genuine invalid_grant — refresh token expired/revoked or
             # credentials changed. Log a truncated snippet server-side for ops;
             # never put the raw provider body in the exception message, which is
@@ -280,51 +277,46 @@ async def refresh_if_needed(
         return await _persist_refresh(conn, db, resp, now)
 
 
-async def _adopt_if_fresh(db: AsyncSession, force: bool):
-    """Re-read the singleton connection row; if it now holds a still-valid access
-    token (another caller refreshed while we waited for the lock), return
-    (access_enc, expires_at, refresh_enc). Otherwise None. Never raises."""
+async def _adopt_if_fresh(conn: models.QboConnection, db: AsyncSession, force: bool) -> bool:
+    """Re-read the caller's connection row FRESH from the DB (db.refresh forces a
+    SELECT, bypassing the identity-map cache that would return our own stale copy)
+    and report whether it now holds a still-valid access token — i.e. another
+    caller refreshed while we waited for the lock. Mutates `conn` in place with the
+    fresh values. Never raises (a best-effort re-read failure just says "not
+    fresh", and the caller refreshes for real)."""
     if force:
-        return None
+        return False
     try:
-        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
-        row = r.scalar_one_or_none()
+        await db.refresh(conn)
     except Exception:  # pragma: no cover - re-read is best-effort
-        return None
-    if row is None:
-        return None
-    exp = _aware(row.access_token_expires_at)
-    if exp is not None and exp > datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SECONDS):
-        return (row.access_token_enc, row.access_token_expires_at, row.refresh_token_enc)
-    return None
+        return False
+    exp = _aware(conn.access_token_expires_at)
+    return exp is not None and exp > datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SECONDS)
 
 
-async def _recover_after_rotation(db: AsyncSession, spent_refresh_token: str):
-    """After a refresh 400, re-read the row: if its stored refresh token differs
-    from the one we spent, another caller successfully rotated it. Return
-    (access_token_plain, access_enc, expires_at, refresh_enc) to recover, or None
-    when the token is unchanged (a real invalid_grant). Never raises."""
+async def _recover_after_rotation(conn: models.QboConnection, db: AsyncSession, spent_refresh_token: str):
+    """After a refresh 400, re-read the row FRESH (db.refresh, in place): if its
+    stored refresh token differs from the one we spent, another caller rotated it
+    and committed — return the recovered access-token plaintext. Return None when
+    the token is unchanged (a genuine invalid_grant) so the caller drops. Never
+    raises."""
     try:
-        r = await db.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
-        row = r.scalar_one_or_none()
-        if row is None:
-            return None
-        current_refresh = crypto.decrypt_token(row.refresh_token_enc)
+        await db.refresh(conn)
+        current_refresh = crypto.decrypt_token(conn.refresh_token_enc)
         if current_refresh == spent_refresh_token:
             return None  # nobody else rotated — the 400 is real
-        exp = _aware(row.access_token_expires_at)
+        exp = _aware(conn.access_token_expires_at)
         if exp is None or exp <= datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SECONDS):
             return None  # rotated but already stale again — let caller drop/reconnect
-        return (crypto.decrypt_token(row.access_token_enc),
-                row.access_token_enc, row.access_token_expires_at, row.refresh_token_enc)
+        return crypto.decrypt_token(conn.access_token_enc)
     except Exception:  # pragma: no cover - recovery is best-effort
         return None
 
 
 async def _persist_refresh(conn: models.QboConnection, db: AsyncSession, resp, now: datetime) -> str:
-    """Handle a token-endpoint response that isn't a 400. Persists the rotated
-    tokens on success; raises QboApiError on a non-200. Extracted so the locked
-    refresh body stays readable."""
+    """Handle a token-endpoint response that isn't a 400. Persists + COMMITS the
+    rotated tokens on success; raises QboApiError on a non-200. Extracted so the
+    locked refresh body stays readable."""
     if resp.status_code != 200:
         # Network blip / 5xx — surface so caller can decide. Don't drop the
         # connection; the refresh may succeed next time.
@@ -337,58 +329,29 @@ async def _persist_refresh(conn: models.QboConnection, db: AsyncSession, resp, n
     if not new_access:
         raise QboApiError(200, "QuickBooks token refresh returned no access token.")
 
-    access_enc = crypto.encrypt_token(new_access)
+    conn.access_token_enc = crypto.encrypt_token(new_access)
     expires_in = int(data.get("expires_in", 3600))
-    access_expires_at = now + timedelta(seconds=expires_in)
-    conn.access_token_enc = access_enc
-    conn.access_token_expires_at = access_expires_at
-    refresh_enc = None
-    refresh_expires_at = None
+    conn.access_token_expires_at = now + timedelta(seconds=expires_in)
     rotated_refresh = data.get("refresh_token")
     if rotated_refresh:
         # Intuit rotates the refresh token aggressively; persist immediately or
         # the next refresh fails.
-        refresh_enc = crypto.encrypt_token(rotated_refresh)
-        conn.refresh_token_enc = refresh_enc
+        conn.refresh_token_enc = crypto.encrypt_token(rotated_refresh)
         rt_expires_in = data.get("x_refresh_token_expires_in")
         if rt_expires_in:
             try:
-                refresh_expires_at = now + timedelta(seconds=int(rt_expires_in))
-                conn.refresh_token_expires_at = refresh_expires_at
+                conn.refresh_token_expires_at = now + timedelta(seconds=int(rt_expires_in))
             except (TypeError, ValueError):
                 pass
-    await db.flush()
-    # Durably persist the rotation in its OWN short transaction (not the caller's,
-    # which may hold unrelated pending work and only commit much later). This makes
-    # the rotated token visible to a concurrent caller that lost the refresh race,
-    # so its _recover_after_rotation re-read succeeds instead of dropping the
-    # connection. Best-effort — a failure here just falls back to the caller's own
-    # eventual commit.
-    await _commit_rotation_out_of_band(access_enc, access_expires_at, refresh_enc, refresh_expires_at)
+    # COMMIT the rotation on the caller's own session (not a second session — that
+    # self-deadlocks against this session's own row lock) while still holding the
+    # refresh lock, so the rotated token is durable and visible to a concurrent
+    # loser BEFORE the lock releases. The loser's _adopt_if_fresh then adopts it
+    # instead of spending the dead refresh token. Committing the caller's pending
+    # work here is safe and desirable: a rotated token must never be lost to a
+    # later rollback (Intuit already invalidated the old one).
+    await db.commit()
     return new_access
-
-
-async def _commit_rotation_out_of_band(access_enc, access_expires_at, refresh_enc, refresh_expires_at) -> None:
-    """Persist a freshly rotated token to the singleton row in an independent
-    session/transaction so it's committed and cross-session-visible right away.
-    No-op (swallowed) when there's no connection row or the DB isn't reachable —
-    the caller's session still carries the same values as a fallback."""
-    try:
-        from backend.database import async_session
-        async with async_session() as s2:
-            r = await s2.execute(select(models.QboConnection).where(models.QboConnection.id == 1))
-            row = r.scalar_one_or_none()
-            if row is None:
-                return
-            row.access_token_enc = access_enc
-            row.access_token_expires_at = access_expires_at
-            if refresh_enc is not None:
-                row.refresh_token_enc = refresh_enc
-                if refresh_expires_at is not None:
-                    row.refresh_token_expires_at = refresh_expires_at
-            await s2.commit()
-    except Exception as e:  # pragma: no cover - durability persist is best-effort
-        print(f"[LTP] qbo: out-of-band token persist skipped: {e}", flush=True)
 
 
 async def _drop_connection(conn: models.QboConnection, db: AsyncSession) -> None:

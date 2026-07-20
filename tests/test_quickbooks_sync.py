@@ -128,10 +128,13 @@ async def test_refresh_basic_auth_and_rotation():
         "expires_in": 3600, "x_refresh_token_expires_in": 8726400,
     })
     client = MagicMock(); client.post = AsyncMock(return_value=resp)
-    db = MagicMock(); db.flush = AsyncMock()
+    # db.refresh (re-read) leaves the transient conn expired -> not adopted; db.commit
+    # persists the rotation durably on the caller's own session.
+    db = MagicMock(); db.flush = AsyncMock(); db.refresh = AsyncMock(); db.commit = AsyncMock()
 
     out = await quickbooks.refresh_if_needed(conn, db, client_id="cid", client_secret="csec", httpx_client=client)
     _check("returns new access token", out == "new-access")
+    _check("committed the rotation", db.commit.await_count == 1)
     _check("hit Intuit once", client.post.await_count == 1)
     # Intuit authenticates the client via HTTP Basic auth, not body params.
     _, kwargs = client.post.call_args
@@ -149,7 +152,8 @@ async def test_refresh_invalid_grant_drops_connection():
     conn = _make_conn(fresh=False)
     resp = MagicMock(); resp.status_code = 400; resp.text = '{"error":"invalid_grant"}'
     client = MagicMock(); client.post = AsyncMock(return_value=resp)
-    db = MagicMock(); db.flush = AsyncMock(); db.delete = AsyncMock()
+    # db.refresh re-reads the same (unchanged) refresh token -> genuine invalid_grant -> drop.
+    db = MagicMock(); db.flush = AsyncMock(); db.delete = AsyncMock(); db.refresh = AsyncMock()
 
     raised = False
     try:
@@ -184,14 +188,17 @@ async def _mem_session_with_conn(*, refresh_plain, access_fresh):
 
 async def test_refresh_adopts_freshly_rotated_token():
     print("test_refresh_adopts_freshly_rotated_token")
-    # Another caller already refreshed: the row holds a fresh access token.
+    # Another caller already refreshed: the committed row holds a fresh access
+    # token, and _adopt_if_fresh re-reads it (db.refresh) instead of the stale
+    # identity-map copy.
     Session, eng = await _mem_session_with_conn(refresh_plain="RT1", access_fresh=True)
     try:
         async with Session() as db:
-            adopted = await quickbooks._adopt_if_fresh(db, force=False)
-            _check("adopts the freshly-persisted token", adopted is not None)
+            conn = await quickbooks.load_connection(db)
+            _check("adopts the freshly-persisted token",
+                   await quickbooks._adopt_if_fresh(conn, db, force=False) is True)
             _check("force=True skips adoption",
-                   await quickbooks._adopt_if_fresh(db, force=True) is None)
+                   await quickbooks._adopt_if_fresh(conn, db, force=True) is False)
     finally:
         await eng.dispose()
 
@@ -203,10 +210,11 @@ async def test_recover_after_rotation_detects_race():
     Session, eng = await _mem_session_with_conn(refresh_plain="RT1", access_fresh=True)
     try:
         async with Session() as db:
-            rec = await quickbooks._recover_after_rotation(db, "RT0")
-            _check("recovers on a concurrent rotation", rec is not None and rec[0] == "access-new")
+            conn = await quickbooks.load_connection(db)
+            rec = await quickbooks._recover_after_rotation(conn, db, "RT0")
+            _check("recovers on a concurrent rotation", rec == "access-new")
             # Same token we spent -> genuine invalid_grant, no recovery.
-            same = await quickbooks._recover_after_rotation(db, "RT1")
+            same = await quickbooks._recover_after_rotation(conn, db, "RT1")
             _check("no recovery when token unchanged", same is None)
     finally:
         await eng.dispose()
@@ -215,7 +223,7 @@ async def test_recover_after_rotation_detects_race():
 async def test_request_retries_on_401():
     print("test_request_retries_on_401")
     conn = _make_conn(fresh=True)
-    db = MagicMock(); db.flush = AsyncMock()
+    db = MagicMock(); db.flush = AsyncMock(); db.commit = AsyncMock()  # forced refresh commits
 
     resp401 = MagicMock(); resp401.status_code = 401; resp401.headers = {}
     resp200 = MagicMock(); resp200.status_code = 200
