@@ -82,6 +82,11 @@ def do_run_migrations(connection) -> None:
         target_metadata=target_metadata,
         compare_type=True,
         render_as_batch=is_sqlite,
+        # Commit each migration in its own transaction so a partially-applied
+        # multi-migration deploy leaves alembic_version at the LAST fully-applied
+        # revision (the next boot resumes from there) instead of rolling the whole
+        # batch back. Our migrations are additive + idempotent, so a resume is safe.
+        transaction_per_migration=True,
     )
     with context.begin_transaction():
         context.run_migrations()

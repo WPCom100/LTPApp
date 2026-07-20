@@ -269,6 +269,13 @@ def build_bill_lines(billable, accounts) -> list[dict]:
             primary = accounts["default_expense"]
             if not primary:
                 raise PayoutNotBillable("no default expense account for an adjustment-only day")
+            # Defensive: this branch assumed work_total_cents == 0, but never checked
+            # it. If a day's units all filtered to $0 while its rounded total didn't,
+            # post the residual to the default account so the lines still sum EXACTLY
+            # to `payable` instead of silently under-posting by that amount.
+            if work_total_cents != 0:
+                lines.append({"account_id": primary, "amount": round(work_total_cents / 100.0, 2),
+                              "description": _work_line_desc(day, "")})
 
         for adj in adjustments:
             c = int(round(_f(adj.get("amount")) * 100))

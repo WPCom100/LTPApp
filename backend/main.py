@@ -24,12 +24,27 @@ from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, falling back to `default` (with a warning) on a
+    missing/blank/non-numeric value. A bare int(os.environ[...]) at import time
+    turns a typo like `2h` into a ValueError that crash-loops the container on
+    every boot — before the app object even exists — so parse defensively."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        print(f"[LTP] config: {name}={raw!r} is not an integer; using default {default}", flush=True)
+        return default
+
+
 # ── Session sweeper ────────────────────────────────────────────────────────
 # Expired sessions are filtered out at auth check-time but never deleted, so
 # the table grows unbounded. This background task wakes hourly, deletes any
 # row past expires_at, and logs the count if non-zero. Hourly is plenty for
 # any realistic scale; tune via LTP_SESSION_SWEEP_INTERVAL_SECONDS.
-SESSION_SWEEP_INTERVAL = int(os.environ.get("LTP_SESSION_SWEEP_INTERVAL_SECONDS", "3600"))
+SESSION_SWEEP_INTERVAL = _env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600)
 
 
 async def _sweep_expired_sessions_once() -> int:
@@ -72,7 +87,7 @@ async def _session_sweeper_loop():
 # Sender = the admin who connected QuickBooks; if their Gmail is unavailable the
 # receipt is cached and retried next cycle. See backend/qbo_receipts.py. Tune
 # the cadence via LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS (default 2 hours).
-QBO_RECEIPT_POLL_INTERVAL = int(os.environ.get("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", str(2 * 3600)))
+QBO_RECEIPT_POLL_INTERVAL = _env_int("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", 2 * 3600)
 
 
 async def _qbo_receipt_poll_loop():
@@ -103,7 +118,7 @@ async def _qbo_receipt_poll_loop():
 # paid, a bill's days are protected from re-pricing and it stops being polled.
 # See backend/qbo_bill_poll.py. Cadence: LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS
 # (default 2 hours).
-QBO_PAYOUT_POLL_INTERVAL = int(os.environ.get("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", str(2 * 3600)))
+QBO_PAYOUT_POLL_INTERVAL = _env_int("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", 2 * 3600)
 
 # Start the payout poller slightly after the receipt poller so their (per-cycle)
 # token-refresh windows don't align — the refresh itself is serialized + race-safe
@@ -180,7 +195,7 @@ app = FastAPI(title="LTP Business Suite", version="2.0.0", lifespan=lifespan)
 # 10 MB is intentionally generous for the app's data model (quotes/invoices
 # with hundreds of line items, settings with embedded logos). Tune via
 # LTP_MAX_PAYLOAD_BYTES env var if needed; we log the value at startup.
-MAX_PAYLOAD_BYTES = int(os.environ.get("LTP_MAX_PAYLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_PAYLOAD_BYTES = _env_int("LTP_MAX_PAYLOAD_BYTES", 10 * 1024 * 1024)
 
 
 class PayloadSizeLimitMiddleware:

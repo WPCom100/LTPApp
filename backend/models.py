@@ -805,6 +805,10 @@ class PayoutBill(Base):
     qb_total_amt = Column(Float, nullable=True)
     qb_balance = Column(Float, nullable=True)
     qb_paid_at = Column(DateTime(timezone=True), nullable=True)
+    # When the bill-payment poller last GOT this bill from QuickBooks. The poller
+    # checks least-recently-checked first (NULLs — never checked — win), so a large
+    # persistent unpaid backlog can never starve a newer bill behind it.
+    qb_last_checked_at = Column(DateTime(timezone=True), nullable=True)
     activity = Column(JSON, nullable=True)              # append-only stamps (created/updated/failed/paid)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

@@ -47,13 +47,18 @@ async def _contact_name(db, contact_id) -> str:
 
 async def _candidate_bills(db: AsyncSession) -> list[models.PayoutBill]:
     """Bills to check this cycle: linked to QuickBooks, synced, not yet paid.
-    A paid bill (qb_paid_at set) drops out — polling stops for it."""
+    A paid bill (qb_paid_at set) drops out — polling stops for it.
+
+    Ordered least-recently-checked first (never-checked NULLs win), so a large
+    persistent unpaid backlog can't starve a newer bill's payment detection
+    behind the same oldest N every cycle."""
     result = await db.execute(
         select(models.PayoutBill).where(
             models.PayoutBill.qb_bill_id.isnot(None),
             models.PayoutBill.qb_sync_status == "synced",
             models.PayoutBill.qb_paid_at.is_(None),
-        ).order_by(models.PayoutBill.id).limit(_MAX_BILLS_PER_CYCLE + 1)
+        ).order_by(models.PayoutBill.qb_last_checked_at.asc().nullsfirst(),
+                   models.PayoutBill.id).limit(_MAX_BILLS_PER_CYCLE + 1)
     )
     return list(result.scalars().all())
 
@@ -62,6 +67,7 @@ async def _process_bill(db, conn, pb, *, client_id, client_secret) -> str:
     """GET the bill's QB Balance; mark paid when it reaches 0. Returns
     'open' | 'paid'. Writes qb_balance/qb_total_amt every cycle as a snapshot."""
     qb_bill = await quickbooks.get_bill(conn, db, pb.qb_bill_id, client_id=client_id, client_secret=client_secret)
+    pb.qb_last_checked_at = datetime.now(timezone.utc)   # fairness ordering (see _candidate_bills)
     balance = qb_bill.get("Balance")
     total_amt = qb_bill.get("TotalAmt")
     if balance is not None:
