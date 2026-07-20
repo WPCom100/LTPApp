@@ -167,6 +167,10 @@ async def test_poll_isolates_deleted_bill_and_continues():
         async with Session() as db:
             paid = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == 2))).scalar_one()
             assert paid.qb_paid_at is not None
+            # The deleted bill must be AGED (last-checked stamped) so it rotates to
+            # the back of the LRU order instead of monopolizing the front forever.
+            dead = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == 1))).scalar_one()
+            assert dead.qb_last_checked_at is not None
 
 
 async def test_candidates_least_recently_checked_first():

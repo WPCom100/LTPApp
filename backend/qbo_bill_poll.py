@@ -155,6 +155,14 @@ async def run_bill_poll() -> dict:
                           f"({e.status}), skipping: {e.safe_message}", flush=True)
                     summary["skippedBills"] = summary.get("skippedBills", 0) + 1
                     qb_ok = True
+                    # Stamp last-checked so a permanently-dead bill AGES to the back
+                    # of the LRU order instead of monopolizing the nullsfirst front
+                    # slot every cycle (which, en masse, would re-starve live bills).
+                    # The rollback above expired pb, so re-load it to write the stamp.
+                    stale = await db.get(models.PayoutBill, bill_id)
+                    if stale is not None:
+                        stale.qb_last_checked_at = datetime.now(timezone.utc)
+                        await db.commit()
                     continue
                 # Auth (401/403) or a post-retry 5xx/429 — treat as connection-level.
                 print(f"[LTP] qbo-bill-poll: aborting cycle on QuickBooks error: {e}", flush=True)
