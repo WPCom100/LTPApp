@@ -160,6 +160,58 @@ async def test_refresh_invalid_grant_drops_connection():
     _check("dropped the connection row", db.delete.await_count == 1)
 
 
+async def _mem_session_with_conn(*, refresh_plain, access_fresh):
+    """Fresh in-memory DB with a single seeded QboConnection (id=1). Returns
+    (Session, engine) — caller disposes the engine."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+    from backend.database import Base
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool,
+                              connect_args={"check_same_thread": False})
+    async with eng.begin() as c:
+        await c.run_sync(Base.metadata.create_all)
+    Session = async_sessionmaker(eng, expire_on_commit=False)
+    async with Session() as db:
+        db.add(models.QboConnection(
+            id=1, realm_id="9999999999", environment="sandbox",
+            access_token_enc=crypto.encrypt_token("access-new"),
+            refresh_token_enc=crypto.encrypt_token(refresh_plain),
+            access_token_expires_at=datetime.now(timezone.utc) + (
+                timedelta(hours=1) if access_fresh else timedelta(minutes=-5))))
+        await db.commit()
+    return Session, eng
+
+
+async def test_refresh_adopts_freshly_rotated_token():
+    print("test_refresh_adopts_freshly_rotated_token")
+    # Another caller already refreshed: the row holds a fresh access token.
+    Session, eng = await _mem_session_with_conn(refresh_plain="RT1", access_fresh=True)
+    try:
+        async with Session() as db:
+            adopted = await quickbooks._adopt_if_fresh(db, force=False)
+            _check("adopts the freshly-persisted token", adopted is not None)
+            _check("force=True skips adoption",
+                   await quickbooks._adopt_if_fresh(db, force=True) is None)
+    finally:
+        await eng.dispose()
+
+
+async def test_recover_after_rotation_detects_race():
+    print("test_recover_after_rotation_detects_race")
+    # The row's refresh token was rotated to RT1 (+ fresh access) by another
+    # caller; we spent RT0 and got a 400 -> recover instead of dropping.
+    Session, eng = await _mem_session_with_conn(refresh_plain="RT1", access_fresh=True)
+    try:
+        async with Session() as db:
+            rec = await quickbooks._recover_after_rotation(db, "RT0")
+            _check("recovers on a concurrent rotation", rec is not None and rec[0] == "access-new")
+            # Same token we spent -> genuine invalid_grant, no recovery.
+            same = await quickbooks._recover_after_rotation(db, "RT1")
+            _check("no recovery when token unchanged", same is None)
+    finally:
+        await eng.dispose()
+
+
 async def test_request_retries_on_401():
     print("test_request_retries_on_401")
     conn = _make_conn(fresh=True)

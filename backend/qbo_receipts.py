@@ -505,9 +505,17 @@ async def run_receipt_poll() -> dict:
             invoices = invoices[:_MAX_INVOICES_PER_CYCLE]
             print(f"[LTP] qbo-receipts: candidate set capped at {_MAX_INVOICES_PER_CYCLE}; "
                   "remaining invoices handled next cycle", flush=True)
+        # Capture ids up front: a per-invoice rollback expires every ORM object in
+        # the session, so re-load each invoice freshly (awaited db.get, greenlet-
+        # safe) instead of touching an expired instance from the list.
+        invoice_ids = [inv.id for inv in invoices]
 
         aborted = False
-        for invoice in invoices:
+        qb_ok = False  # at least one QB round-trip succeeded this cycle (health proof)
+        for invoice_id in invoice_ids:
+            invoice = await db.get(models.Invoice, invoice_id)
+            if invoice is None:
+                continue
             summary["checked"] += 1
             try:
                 outcome = await _process_invoice(
@@ -522,25 +530,43 @@ async def run_receipt_poll() -> dict:
                 if outcome in ("sent", "pending", "failed"):
                     summary[outcome] += 1
                 await db.commit()
-            except (quickbooks.QboReconnectRequired, quickbooks.QboApiError) as e:
-                # A QB-side error (auth/transport) aborts the whole cycle — the
-                # connection or API is unhealthy, so the rest will fail too.
+                qb_ok = True
+            except quickbooks.QboReconnectRequired as e:
+                # Connection/auth-level — nothing works until an admin reconnects.
                 await db.rollback()
+                print(f"[LTP] qbo-receipts: aborting cycle on reconnect-required: {e}", flush=True)
+                summary["qbo_error"] = getattr(e, "safe_message", str(e))
+                await quickbooks.record_connection_error(db, summary["qbo_error"])
+                aborted = True
+                break
+            except quickbooks.QboApiError as e:
+                await db.rollback()
+                if e.status in (400, 404):
+                    # Object-level fault (e.g. the invoice was deleted in QBO): the
+                    # connection is fine, so skip THIS invoice and keep polling the
+                    # rest instead of wedging every higher-id candidate.
+                    print(f"[LTP] qbo-receipts: invoice {invoice_id} object-level QB "
+                          f"error ({e.status}), skipping: {e.safe_message}", flush=True)
+                    summary["skippedInvoices"] = summary.get("skippedInvoices", 0) + 1
+                    qb_ok = True
+                    continue
+                # Auth (401/403) or a post-retry 5xx/429 — treat as connection-level.
                 print(f"[LTP] qbo-receipts: aborting cycle on QuickBooks error: {e}", flush=True)
                 # Snapshot it on the connection row (in a fresh commit, after the
                 # rollback above) so it surfaces in Settings → Error Log rather
                 # than only in the server logs.
-                summary["qbo_error"] = getattr(e, "safe_message", str(e))
+                summary["qbo_error"] = e.safe_message
                 await quickbooks.record_connection_error(db, summary["qbo_error"])
                 aborted = True
                 break
             except Exception as e:  # pragma: no cover - isolate one bad invoice
                 await db.rollback()
-                print(f"[LTP] qbo-receipts: invoice {invoice.id} failed (continuing): {e}", flush=True)
+                print(f"[LTP] qbo-receipts: invoice {invoice_id} failed (continuing): {e}", flush=True)
 
-        # A cycle that reached QuickBooks without an auth/API abort means the
-        # connection is healthy — retire any stale error so the Error Log clears.
-        if not aborted:
+        # Only retire the shared last_error when THIS cycle actually completed a
+        # QuickBooks round-trip — an empty candidate set is no evidence of health
+        # and must not wipe an error the payout poller just recorded (M1).
+        if not aborted and qb_ok:
             await quickbooks.clear_connection_error(db)
 
     return summary

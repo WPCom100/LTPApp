@@ -105,11 +105,22 @@ async def _qbo_receipt_poll_loop():
 # (default 2 hours).
 QBO_PAYOUT_POLL_INTERVAL = int(os.environ.get("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", str(2 * 3600)))
 
+# Start the payout poller slightly after the receipt poller so their (per-cycle)
+# token-refresh windows don't align — the refresh itself is serialized + race-safe
+# in quickbooks.refresh_if_needed, but staggering keeps the two loops from
+# colliding on it every cycle in the first place. Small vs. the 2h cadence.
+QBO_PAYOUT_POLL_STARTUP_STAGGER = min(60, max(0, QBO_PAYOUT_POLL_INTERVAL // 4))
+
 
 async def _qbo_payout_poll_loop():
     """Long-running background task: one bill-payment poll cycle per iteration,
     then sleep. Per-bill failures are isolated inside run_bill_poll; a transient
     blip here is caught + logged so the poller survives to the next interval."""
+    if QBO_PAYOUT_POLL_STARTUP_STAGGER:
+        try:
+            await asyncio.sleep(QBO_PAYOUT_POLL_STARTUP_STAGGER)
+        except asyncio.CancelledError:
+            raise
     while True:
         try:
             summary = await qbo_bill_poll.run_bill_poll()

@@ -113,26 +113,58 @@ async def run_bill_poll() -> dict:
             bills = bills[:_MAX_BILLS_PER_CYCLE]
             print(f"[LTP] qbo-bill-poll: candidate set capped at {_MAX_BILLS_PER_CYCLE}; "
                   "remaining bills handled next cycle", flush=True)
+        # Capture ids up front: a per-bill rollback expires every ORM object in
+        # the session, so we re-load each bill freshly (an awaited db.get, which
+        # is greenlet-safe) rather than touching an expired instance from the list.
+        bill_ids = [pb.id for pb in bills]
 
         aborted = False
-        for pb in bills:
+        qb_ok = False  # at least one QB round-trip succeeded this cycle (health proof)
+        for bill_id in bill_ids:
+            pb = await db.get(models.PayoutBill, bill_id)
+            if pb is None or pb.qb_paid_at is not None or not pb.qb_bill_id:
+                continue  # paid/removed since we listed candidates — skip
             summary["checked"] += 1
             try:
                 if await _process_bill(db, conn, pb, client_id=client_id, client_secret=client_secret) == "paid":
                     summary["paid"] += 1
                 await db.commit()
-            except (quickbooks.QboReconnectRequired, quickbooks.QboApiError) as e:
+                qb_ok = True
+            except quickbooks.QboReconnectRequired as e:
+                # Connection/auth-level — nothing works until an admin reconnects.
                 await db.rollback()
-                print(f"[LTP] qbo-bill-poll: aborting cycle on QuickBooks error: {e}", flush=True)
+                print(f"[LTP] qbo-bill-poll: aborting cycle on reconnect-required: {e}", flush=True)
                 summary["qbo_error"] = getattr(e, "safe_message", str(e))
+                await quickbooks.record_connection_error(db, summary["qbo_error"])
+                aborted = True
+                break
+            except quickbooks.QboApiError as e:
+                await db.rollback()
+                if e.status in (400, 404):
+                    # Object-level fault (the bill was deleted/voided in QBO, or a
+                    # transient per-object error): the CONNECTION is fine (we got a
+                    # real response, not an auth failure), so skip THIS bill and
+                    # keep polling the rest instead of wedging every higher-id bill.
+                    print(f"[LTP] qbo-bill-poll: bill {bill_id} object-level QB error "
+                          f"({e.status}), skipping: {e.safe_message}", flush=True)
+                    summary["skippedBills"] = summary.get("skippedBills", 0) + 1
+                    qb_ok = True
+                    continue
+                # Auth (401/403) or a post-retry 5xx/429 — treat as connection-level.
+                print(f"[LTP] qbo-bill-poll: aborting cycle on QuickBooks error: {e}", flush=True)
+                summary["qbo_error"] = e.safe_message
                 await quickbooks.record_connection_error(db, summary["qbo_error"])
                 aborted = True
                 break
             except Exception as e:  # pragma: no cover - isolate one bad bill
                 await db.rollback()
-                print(f"[LTP] qbo-bill-poll: bill {pb.id} failed (continuing): {e}", flush=True)
+                print(f"[LTP] qbo-bill-poll: bill {bill_id} failed (continuing): {e}", flush=True)
 
-        if not aborted:
+        # Only declare the connection healthy (clearing the shared last_error the
+        # receipt poller may have just set) when THIS cycle actually completed a
+        # QuickBooks round-trip. An empty candidate set makes no QB call and is no
+        # evidence of health, so it must not wipe a real error (M1).
+        if not aborted and qb_ok:
             await quickbooks.clear_connection_error(db)
 
     return summary

@@ -135,6 +135,52 @@ async def test_poll_aborts_and_records_on_api_error():
         assert names["clear_connection_error"].await_count == 0   # aborted -> not cleared
 
 
+async def test_poll_isolates_deleted_bill_and_continues():
+    # A bill deleted in QuickBooks (get_bill -> 404 object fault) must NOT abort
+    # the cycle: the poller skips it and still detects the next bill's payment.
+    async with _engine() as eng:
+        Session = async_sessionmaker(eng, expire_on_commit=False)
+        async with Session() as db:
+            db.add(models.Contact(id=5, first_name="Alex", last_name="Crew", is_crew=True))
+            db.add(models.PayoutBill(
+                id=1, contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
+                doc_number="PAY-26-14", qb_bill_id="GONE", qb_sync_status="synced", amount=600.0))
+            db.add(models.PayoutBill(
+                id=2, contact_id=5, period_start="2026-06-22", period_end="2026-07-05",
+                doc_number="PAY-26-13", qb_bill_id="B2", qb_sync_status="synced", amount=800.0))
+            await db.commit()
+
+        async def get_bill(conn, db, bill_id, **kw):
+            if bill_id == "GONE":
+                raise quickbooks.QboApiError(404, '{"Fault":{"Error":[{"Message":"Object Not Found","code":"610"}]}}', "610")
+            return {"Id": bill_id, "Balance": 0, "TotalAmt": 800.0}
+
+        with _patch_qb(AsyncMock(side_effect=get_bill), Session) as names:
+            summary = await qbo_bill_poll.run_bill_poll()
+        # The deleted bill (id 1, lower) was skipped; the newer bill (id 2) was
+        # still checked and marked paid — no cycle abort.
+        assert summary.get("skippedBills") == 1
+        assert summary["paid"] == 1
+        assert "qbo_error" not in summary
+        assert names["record_connection_error"].await_count == 0
+        assert names["clear_connection_error"].await_count == 1   # healthy round-trip happened
+        async with Session() as db:
+            paid = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == 2))).scalar_one()
+            assert paid.qb_paid_at is not None
+
+
+async def test_poll_no_candidates_does_not_clear_error():
+    # An empty candidate set makes no QB call, so it must NOT clear a shared
+    # connection error the receipt poller may have just recorded (M1).
+    async with _engine() as eng:
+        Session = async_sessionmaker(eng, expire_on_commit=False)
+        await _seed_bill(Session, paid=True)   # already paid -> not a candidate
+        with _patch_qb(AsyncMock(), Session) as names:
+            summary = await qbo_bill_poll.run_bill_poll()
+        assert summary["checked"] == 0
+        assert names["clear_connection_error"].await_count == 0
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
