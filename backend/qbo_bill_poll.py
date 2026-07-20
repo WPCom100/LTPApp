@@ -127,6 +127,16 @@ async def run_bill_poll() -> dict:
         aborted = False
         qb_ok = False  # at least one QB round-trip succeeded this cycle (health proof)
         for bill_id in bill_ids:
+            # Re-load conn each iteration too: a per-item rollback (the object-fault
+            # skip below, or the generic handler) expires EVERY ORM object in the
+            # session including conn, and _process_bill -> refresh_if_needed reads
+            # conn's token fields on the next QB call — an expired attribute there
+            # raises MissingGreenlet and would silently drop the rest of the cycle.
+            # load_connection re-populates it (and is what the tests patch).
+            try:
+                conn = await quickbooks.load_connection(db)
+            except quickbooks.QboNotConnected:
+                break  # connection dropped mid-cycle — nothing more to poll
             pb = await db.get(models.PayoutBill, bill_id)
             if pb is None or pb.qb_paid_at is not None or not pb.qb_bill_id:
                 continue  # paid/removed since we listed candidates — skip

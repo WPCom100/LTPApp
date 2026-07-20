@@ -513,6 +513,14 @@ async def run_receipt_poll() -> dict:
         aborted = False
         qb_ok = False  # at least one QB round-trip succeeded this cycle (health proof)
         for invoice_id in invoice_ids:
+            # Re-load conn each iteration: a per-invoice rollback expires every ORM
+            # object including conn, and _process_invoice -> refresh_if_needed reads
+            # conn's token fields on the next QB call — an expired attribute there
+            # raises MissingGreenlet and would silently drop the rest of the cycle.
+            try:
+                conn = await quickbooks.load_connection(db)
+            except quickbooks.QboNotConnected:
+                break  # connection dropped mid-cycle
             invoice = await db.get(models.Invoice, invoice_id)
             if invoice is None:
                 continue

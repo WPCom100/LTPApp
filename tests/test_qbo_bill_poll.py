@@ -9,7 +9,7 @@ import contextlib
 import inspect
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -26,8 +26,10 @@ from sqlalchemy import select                                    # noqa: E402
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 from sqlalchemy.pool import StaticPool                           # noqa: E402
 
-from backend import models, qbo_bill_poll, quickbooks           # noqa: E402
+from backend import crypto, models, qbo_bill_poll, quickbooks   # noqa: E402
 from backend.database import Base                                # noqa: E402
+
+_REAL_LOAD_CONNECTION = quickbooks.load_connection              # captured before any patch
 
 
 @contextlib.asynccontextmanager
@@ -205,6 +207,43 @@ async def test_poll_stamps_last_checked():
         async with Session() as db:
             pb = (await db.execute(select(models.PayoutBill))).scalar_one()
             assert pb.qb_last_checked_at is not None   # stamped even though still unpaid
+
+
+async def test_poll_survives_conn_expiry_after_object_fault():
+    # Regression: a 404 on bill #1 rolls back and EXPIRES the shared ORM conn; the
+    # per-iteration reload must repopulate it so bill #2's refresh (which reads
+    # conn's token fields) doesn't hit MissingGreenlet and drop the rest of the
+    # cycle. Uses the REAL load_connection + a real ORM conn (a rollback only
+    # expires a session-managed object), and a get_bill that touches conn exactly
+    # as refresh_if_needed does.
+    async with _engine() as eng:
+        Session = async_sessionmaker(eng, expire_on_commit=False)
+        async with Session() as db:
+            db.add(models.Contact(id=5, first_name="Alex", last_name="Crew", is_crew=True))
+            db.add(models.QboConnection(
+                id=1, realm_id="1", environment="sandbox",
+                access_token_enc=crypto.encrypt_token("acc"),
+                refresh_token_enc=crypto.encrypt_token("ref"),
+                access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+            db.add(models.PayoutBill(id=1, contact_id=5, period_start="2026-07-06", period_end="2026-07-19",
+                                     doc_number="PAY-26-14", qb_bill_id="GONE", qb_sync_status="synced", amount=1.0))
+            db.add(models.PayoutBill(id=2, contact_id=5, period_start="2026-06-22", period_end="2026-07-05",
+                                     doc_number="PAY-26-13", qb_bill_id="B2", qb_sync_status="synced", amount=1.0))
+            await db.commit()
+
+        async def get_bill(conn, db_, bill_id, **kw):
+            _ = conn.refresh_token_enc   # same access refresh_if_needed makes; expired conn -> MissingGreenlet
+            if bill_id == "GONE":
+                raise quickbooks.QboApiError(404, '{"Fault":{"Error":[{"code":"610"}]}}', "610")
+            return {"Id": bill_id, "Balance": 0, "TotalAmt": 1.0}
+
+        with _patch_qb(AsyncMock(side_effect=get_bill), Session):
+            quickbooks.load_connection = _REAL_LOAD_CONNECTION   # real conn, not the SimpleNamespace stub
+            summary = await qbo_bill_poll.run_bill_poll()
+        assert summary.get("skippedBills") == 1 and summary["paid"] == 1, summary
+        async with Session() as db:
+            b2 = (await db.execute(select(models.PayoutBill).where(models.PayoutBill.id == 2))).scalar_one()
+            assert b2.qb_paid_at is not None   # processed despite bill #1's rollback expiring conn
 
 
 async def test_poll_no_candidates_does_not_clear_error():
