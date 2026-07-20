@@ -362,6 +362,71 @@ async def test_paid_bill_unchanged_is_noop_not_blocked():
         assert m["create_bill"].await_count == 1 and m["update_bill"].await_count == 0
 
 
+async def test_adopt_refuses_paid_bill():
+    # qb_bill_id is null locally, but the DocNumber+VendorRef pre-query finds a
+    # bill that's already PAID in QuickBooks (Balance 0, TotalAmt>0). Adopt must
+    # refuse to overwrite it and record the paid state instead.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        with _patch(query=AsyncMock(return_value=[{"Id": "B9", "SyncToken": "4", "Balance": 0, "TotalAmt": 600.0}]),
+                    update_bill=AsyncMock()) as m:
+            raised = False
+            try:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable as e:
+                raised = True
+                assert "already paid" in str(e).lower()
+            assert raised
+            assert m["update_bill"].await_count == 0        # never overwrote the paid bill
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert pb.qb_bill_id == "B9" and pb.qb_paid_at is not None   # discovery recorded
+
+
+async def test_recovery_6140_refuses_paid_bill():
+    # Pre-query misses, create races into 6140, and the recovery re-query finds a
+    # bill that's already PAID -> refuse rather than overwrite via the 6140 path.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        query = AsyncMock(side_effect=[[], [{"Id": "B7", "SyncToken": "2", "Balance": 0, "TotalAmt": 600.0}]])
+        with _patch(query=query,
+                    create_bill=AsyncMock(side_effect=_fault("6140", "Duplicate Document Number")),
+                    update_bill=AsyncMock()) as m:
+            raised = False
+            try:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable:
+                raised = True
+            assert raised
+            assert m["update_bill"].await_count == 0
+
+
+async def test_ledger_conflict_isolated_not_batch_500():
+    # A concurrent push inserted the same (contact, project, date) ledger row under
+    # a DIFFERENT bill AFTER our pre-check passed. The ledger insert now violates
+    # the unique constraint — which must surface as a clean per-contact "error"
+    # (savepoint-isolated), NOT an IntegrityError that escapes and 500s the batch.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        other = models.PayoutBill(contact_id=5, period_start="2026-06-22", period_end="2026-07-05",
+                                  period_index=0, doc_number="PAY-26-13")
+        db.add(other)
+        await db.flush()
+        db.add(models.PayoutBillLine(payout_bill_id=other.id, contact_id=5, project_id=10,
+                                     date="2026-07-08", amount=600.0))
+        await db.flush()
+        # Emulate the check-then-act race by neutralizing the pre-check (the
+        # conflicting row "appeared" after it ran).
+        saved = qbo_payouts._assert_not_double_billed
+        qbo_payouts._assert_not_double_billed = AsyncMock()
+        try:
+            with _patch():
+                res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            assert res["ok"] is False and res["action"] == "error"
+            assert "conflict" in res["error"].lower()
+        finally:
+            qbo_payouts._assert_not_double_billed = saved
+
+
 async def test_ap_account_included_when_configured():
     async with _db() as db:
         c = await _seed_contact(db)

@@ -36,6 +36,45 @@ class PayoutNotBillable(QboError):
     account). The route reports it as a per-contact skip, not an error."""
 
 
+# "Paid in full" epsilon — QB balances are currency; match the bill poller so a
+# bill reads paid in exactly the same places.
+_PAID_EPSILON = 0.01
+
+
+def _num(x) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _bill_is_paid(qb_bill: dict) -> bool:
+    """A QuickBooks Bill dict is paid-in-full when it carries a Balance that has
+    dropped to ~0 against a positive TotalAmt. A bill with no Balance field (e.g.
+    a lean adopt query that didn't select it) is treated as NOT paid."""
+    return (qb_bill.get("Balance") is not None
+            and _num(qb_bill.get("Balance")) <= _PAID_EPSILON
+            and _num(qb_bill.get("TotalAmt")) > 0)
+
+
+def _adopt_paid_and_refuse(pb, qb_bill):
+    """An existing QB bill we were about to overwrite turned out to be already
+    PAID. Adopt its id + paid state onto our row (so the poller/guard/day-status
+    all agree and future pushes short-circuit) and refuse the overwrite — a paid
+    accounts-payable record must never be silently re-priced. Raises
+    PayoutNotBillable; the route reports a per-contact skip."""
+    if qb_bill.get("Id"):
+        pb.qb_bill_id = str(qb_bill["Id"])
+    pb.qb_paid_at = datetime.now(timezone.utc)
+    pb.qb_balance = _num(qb_bill.get("Balance"))
+    pb.qb_total_amt = _num(qb_bill.get("TotalAmt"))
+    _stamp(pb, None, "qbo_payout_paid",
+           f"Vendor bill already paid in QuickBooks ({pb.doc_number or pb.qb_bill_id or '?'})",
+           [{"cat": "Balance", "detail": "$0.00 — Paid in full"},
+            {"cat": "Amount", "detail": f"${pb.qb_total_amt:,.2f}"}])
+    raise PayoutNotBillable("QuickBooks bill is already paid — changes were not overwritten")
+
+
 # ── Account resolution ───────────────────────────────────────────────────────
 
 async def resolve_payout_accounts(db, services) -> dict:
@@ -341,11 +380,13 @@ def _stamp(pb, user, etype, message, changes):
                            message=message, now=datetime.now(timezone.utc), changes=changes)
 
 
-async def _create_bill_with_recovery(conn, db, payload, vendor_id, *, client_id, client_secret) -> dict:
+async def _create_bill_with_recovery(conn, db, payload, vendor_id, *, pb=None, client_id, client_secret) -> dict:
     """Create the bill, recovering from 6140 duplicate-DocNumber (adopt by
     DocNumber -> update) and DocNumber-not-allowed (retry without it). The
     DocNumber (PAY-{yy}-{n}) is shared across vendors, so the adopt-query scopes
-    by VendorRef to find THIS vendor's bill."""
+    by VendorRef to find THIS vendor's bill. When the duplicate we adopt is
+    already PAID in QuickBooks, refuse to overwrite it (needs `pb` to record the
+    paid state) exactly like the pre-query adopt path."""
     try:
         resp = await quickbooks.create_bill(conn, db, payload, client_id=client_id, client_secret=client_secret)
         return resp.get("Bill") or {}
@@ -354,11 +395,13 @@ async def _create_bill_with_recovery(conn, db, payload, vendor_id, *, client_id,
         if e.fault_code == "6140" or "duplicate document number" in body:
             existing = await quickbooks.query(
                 conn, db,
-                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(payload.get('DocNumber', ''))}'"
+                f"SELECT * FROM Bill WHERE DocNumber = '{escape_query_value(payload.get('DocNumber', ''))}'"
                 f" AND VendorRef = '{escape_query_value(str(vendor_id))}'",
                 client_id=client_id, client_secret=client_secret,
             )
             if existing:
+                if pb is not None and _bill_is_paid(existing[0]):
+                    _adopt_paid_and_refuse(pb, existing[0])   # raises PayoutNotBillable
                 payload["Id"] = str(existing[0].get("Id"))
                 payload["SyncToken"] = str(existing[0].get("SyncToken", "0"))
                 payload["sparse"] = False
@@ -423,6 +466,17 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
 
     await _assert_not_double_billed(db, contact.id, pb.id, billable)
 
+    # TOCTOU with the bill poller: it flips qb_paid_at in its OWN session/commit,
+    # so pb.qb_paid_at above may be a stale snapshot. Re-read it right before the
+    # write for an existing bill; if it's now paid, refuse rather than overwrite a
+    # settled A/P record.
+    if pb.qb_bill_id is not None:
+        fresh_paid = await db.scalar(
+            select(models.PayoutBill.qb_paid_at).where(models.PayoutBill.id == pb.id))
+        if fresh_paid is not None:
+            pb.qb_paid_at = fresh_paid
+            raise PayoutNotBillable("already paid in QuickBooks — changes were not pushed")
+
     vendor_id = await find_or_create_vendor(conn, db, contact, client_id=client_id, client_secret=client_secret)
     payload = build_bill_payload(vendor_id, lines, accounts, period, doc_no)
 
@@ -430,13 +484,18 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
         if pb.qb_bill_id is None:
             # Adopt an orphaned bill by DocNumber (don't depend on a 6140 firing —
             # QB's duplicate-bill-number check is a preference that may be off).
+            # SELECT * so we can see its Balance/TotalAmt and refuse to overwrite a
+            # bill that's already been PAID in QuickBooks (the local row lost its
+            # qb_bill_id, so the qb_paid_at guard above couldn't catch it).
             existing = await quickbooks.query(
                 conn, db,
-                f"SELECT Id, SyncToken FROM Bill WHERE DocNumber = '{escape_query_value(doc_no)}'"
+                f"SELECT * FROM Bill WHERE DocNumber = '{escape_query_value(doc_no)}'"
                 f" AND VendorRef = '{escape_query_value(str(vendor_id))}'",
                 client_id=client_id, client_secret=client_secret,
             )
             if existing:
+                if _bill_is_paid(existing[0]):
+                    _adopt_paid_and_refuse(pb, existing[0])   # raises PayoutNotBillable
                 payload["Id"] = str(existing[0].get("Id"))
                 payload["SyncToken"] = str(existing[0].get("SyncToken", "0"))
                 payload["sparse"] = False
@@ -445,7 +504,7 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
                 action = "updated"
             else:
                 resp_bill = await _create_bill_with_recovery(
-                    conn, db, payload, vendor_id, client_id=client_id, client_secret=client_secret)
+                    conn, db, payload, vendor_id, pb=pb, client_id=client_id, client_secret=client_secret)
                 action = "created"
         else:
             payload["Id"] = pb.qb_bill_id
@@ -477,7 +536,25 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
         _stamp(pb, user, "qbo_payout_mismatch", "QuickBooks bill total differs from the computed payout",
                [{"cat": "QuickBooks total", "detail": f"${pb.qb_total_amt:.2f}"},
                 {"cat": "Computed", "detail": f"${total:.2f}"}])
-    await _replace_ledger(db, pb, contact.id, billable)
+    # Write the double-pay ledger in a SAVEPOINT: a concurrent identical/overlapping
+    # push that slipped past _assert_not_double_billed hits the (contact, project,
+    # date) unique constraint here. Rolling back just the savepoint (not the whole
+    # session) turns that into a clean per-contact "error" result instead of an
+    # IntegrityError that escapes the route and 500s the ENTIRE export batch. The
+    # QB bill just written is NOT orphaned — pb.qb_bill_id already points at it, so
+    # a later retry reconciles via the known-id path; we mark the row "error" (not
+    # "synced") so the unchanged-short-circuit can't skip the ledger next time.
+    try:
+        async with db.begin_nested():
+            await _replace_ledger(db, pb, contact.id, billable)
+    except IntegrityError:
+        pb.qb_sync_status = "error"
+        pb.qb_last_error = "double-pay ledger conflict — a day here is already billed on another push"
+        _stamp(pb, user, "qbo_payout_failed",
+               f"Payout ledger conflict for {period.get('label') or period['end']}",
+               [{"cat": "Error", "detail": pb.qb_last_error}])
+        await db.flush()
+        return {"ok": False, "action": "error", "contactId": contact.id, "error": pb.qb_last_error}
     _stamp(pb, user, "qbo_payout_synced",
            f"Payout bill {action} for {period.get('label') or period['end']} — ${total:.2f}",
            [{"cat": "QB Bill Id", "detail": pb.qb_bill_id or "?"},
