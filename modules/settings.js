@@ -731,7 +731,9 @@
             value: draft.payPeriodAnchor || "", onChange: function(v) { set("payPeriodAnchor", v || null); } }),
           h(window.LTPInput, { label: "Period length (days)", type: "number",
             value: draft.payPeriodLengthDays == null ? 14 : draft.payPeriodLengthDays,
-            onChange: function(v) { set("payPeriodLengthDays", Number(v) || 14); } }),
+            // Clamp to the range the pay-period helpers actually honor (1..31, else
+            // they fall back to 14) so the stored value can't disagree with behavior.
+            onChange: function(v) { set("payPeriodLengthDays", Math.max(1, Math.min(31, Number(v) || 14))); } }),
           h(window.LTPInput, { label: "Pay day offset (days after end)", type: "number",
             value: draft.payPeriodPayDayOffsetDays == null ? 0 : draft.payPeriodPayDayOffsetDays,
             onChange: function(v) { set("payPeriodPayDayOffsetDays", Math.max(0, Number(v) || 0)); } })),
