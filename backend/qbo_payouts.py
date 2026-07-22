@@ -17,6 +17,7 @@ one pay period onto a QuickBooks Vendor Bill and pushes it idempotently:
 The money never comes from the client — the route re-derives it from the frozen
 schedule snapshots (backend/payouts.py) before calling push_payout_bill.
 """
+import asyncio
 import hashlib
 from datetime import datetime, timezone
 
@@ -100,12 +101,23 @@ async def resolve_payout_accounts(db, services) -> dict:
 
 # ── Vendor find-or-create ────────────────────────────────────────────────────
 
+def _vendor_display_name(contact) -> str:
+    """The QB Vendor DisplayName for a crew Contact: "First Last" with ALL runs of
+    whitespace collapsed to a single space (str.split() also folds tabs and
+    non-breaking spaces). This is critical for de-duplication — the find query
+    matches DisplayName exactly, so a stray double/trailing/non-breaking space in
+    a contact's name would otherwise miss a cleanly-typed QB vendor and create a
+    look-alike duplicate."""
+    full = " ".join(f"{contact.first_name or ''} {contact.last_name or ''}".split())
+    email = " ".join((getattr(contact, "email", "") or "").split())
+    return _safe_name(full or email or f"Crew {contact.id}", 100)
+
+
 def _vendor_fields(contact) -> tuple[str, dict]:
     """(display_name, fields) for a QB Vendor from a crew Contact. DisplayName is
     added only on create (kept out of `fields`) so a sparse update can't trip a
     6240 rename conflict — same discipline as _customer_fields."""
-    full = f"{contact.first_name or ''} {contact.last_name or ''}".strip()
-    display = _safe_name(full or (contact.email or "") or f"Crew {contact.id}", 100)
+    display = _vendor_display_name(contact)
     fields = {
         "GivenName": (contact.first_name or "")[:100],
         "FamilyName": (contact.last_name or "")[:100],
@@ -129,12 +141,51 @@ async def _query_vendor_id(conn, db, display_name, *, client_id, client_secret) 
     return str(found[0].get("Id")) if found else None
 
 
+async def _query_vendor_id_by_email(conn, db, email, *, client_id, client_secret) -> str | None:
+    """Best-effort second-chance match by email, so a name-formatting difference
+    (the usual cause of look-alike duplicate vendors) doesn't spawn a new vendor
+    when one with this email already exists. Swallows a query error (some QBO
+    accounts don't allow filtering Vendor on PrimaryEmailAddr) and just returns
+    None — no worse than not having the fallback."""
+    email = (email or "").strip()
+    if not email:
+        return None
+    try:
+        found = await quickbooks.query(
+            conn, db,
+            f"SELECT Id FROM Vendor WHERE PrimaryEmailAddr = '{escape_query_value(email)}'",
+            client_id=client_id, client_secret=client_secret,
+        )
+        return str(found[0].get("Id")) if found else None
+    except QboApiError as e:  # pragma: no cover - depends on QBO account query support
+        print(f"[LTP] qbo: vendor email-match skipped ({e.safe_message})", flush=True)
+        return None
+
+
+# One find-or-create in flight per (event loop, contact) so two concurrent pushes
+# for the same crew member serialize: the first creates the vendor in QuickBooks,
+# and the second's find query then SEES it (QBO applies the create immediately)
+# and adopts it, instead of both querying "none" and racing two creates past
+# QBO's non-transactional uniqueness check.
+_vendor_locks: dict = {}
+
+
+def _vendor_lock(contact_id) -> asyncio.Lock:
+    key = (asyncio.get_running_loop(), contact_id)
+    lock = _vendor_locks.get(key)
+    if lock is None:
+        lock = _vendor_locks[key] = asyncio.Lock()
+    return lock
+
+
 async def find_or_create_vendor(conn, db, contact, *, client_id, client_secret) -> str:
     """Resolve a crew Contact to a QB Vendor id, caching it on contact.qb_vendor_id.
-    On a 6240 duplicate-name fault the name may be owned by a Customer/Employee
-    (QB enforces DisplayName uniqueness across all name-list entities), so we
-    re-query Vendor and, if the name is not a vendor, retry with a disambiguated
-    '{name} (Crew {id})'."""
+    Matches an existing vendor by (whitespace-normalized) DisplayName, then by
+    email, before creating one — so a name-formatting quirk doesn't duplicate a
+    vendor that's already in QuickBooks. On a 6240 duplicate-name fault the name
+    may be owned by a Customer/Employee (QB enforces DisplayName uniqueness across
+    all name-list entities), so we re-query Vendor and, if the name is not a
+    vendor, retry with a disambiguated '{name} (Crew {id})'."""
     display, fields = _vendor_fields(contact)
 
     if contact.qb_vendor_id:
@@ -155,26 +206,30 @@ async def find_or_create_vendor(conn, db, contact, *, client_id, client_secret) 
             print(f"[LTP] qbo: vendor sync skipped for {contact.qb_vendor_id} ({e.safe_message})", flush=True)
         return contact.qb_vendor_id
 
-    qb_id = await _query_vendor_id(conn, db, display, client_id=client_id, client_secret=client_secret)
-    if qb_id is None:
-        payload = dict(fields)
-        payload["DisplayName"] = display
-        try:
-            resp = await quickbooks.create_vendor(conn, db, payload, client_id=client_id, client_secret=client_secret)
-            qb_id = str((resp.get("Vendor") or {}).get("Id"))
-        except QboApiError as e:
-            if e.fault_code != "6240":
-                raise
-            # Name taken — adopt if it's already a Vendor, else disambiguate.
-            qb_id = await _query_vendor_id(conn, db, display, client_id=client_id, client_secret=client_secret)
-            if qb_id is None:
-                payload["DisplayName"] = _safe_name(f"{display} (Crew {contact.id})", 100)
+    async with _vendor_lock(contact.id):
+        qb_id = await _query_vendor_id(conn, db, display, client_id=client_id, client_secret=client_secret)
+        if qb_id is None:
+            qb_id = await _query_vendor_id_by_email(
+                conn, db, getattr(contact, "email", ""), client_id=client_id, client_secret=client_secret)
+        if qb_id is None:
+            payload = dict(fields)
+            payload["DisplayName"] = display
+            try:
                 resp = await quickbooks.create_vendor(conn, db, payload, client_id=client_id, client_secret=client_secret)
                 qb_id = str((resp.get("Vendor") or {}).get("Id"))
+            except QboApiError as e:
+                if e.fault_code != "6240":
+                    raise
+                # Name taken — adopt if it's already a Vendor, else disambiguate.
+                qb_id = await _query_vendor_id(conn, db, display, client_id=client_id, client_secret=client_secret)
+                if qb_id is None:
+                    payload["DisplayName"] = _safe_name(f"{display} (Crew {contact.id})", 100)
+                    resp = await quickbooks.create_vendor(conn, db, payload, client_id=client_id, client_secret=client_secret)
+                    qb_id = str((resp.get("Vendor") or {}).get("Id"))
 
-    contact.qb_vendor_id = qb_id
-    await db.flush()
-    return qb_id
+        contact.qb_vendor_id = qb_id
+        await db.flush()
+        return qb_id
 
 
 # ── Bill payload ─────────────────────────────────────────────────────────────

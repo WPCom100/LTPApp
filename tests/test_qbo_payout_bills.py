@@ -217,6 +217,64 @@ async def test_vendor_6240_disambiguates():
         assert "(Crew 5)" in create_vendor.await_args.args[2]["DisplayName"]
 
 
+async def test_vendor_name_whitespace_normalized_adopts_existing():
+    # A stray double/trailing space in the contact name must NOT miss a cleanly
+    # named QB vendor and create a look-alike duplicate — the find query uses the
+    # whitespace-normalized name. (This is the "Charles Seals" duplicate.)
+    async with _db() as db:
+        c = models.Contact(id=71, first_name="Charles ", last_name="Seals", is_crew=True, email="")
+        db.add(c)
+        await db.flush()
+        seen = {}
+
+        async def query(conn, db_, sql, **kw):
+            seen.setdefault("sqls", []).append(sql)
+            return [{"Id": "V9"}] if "DisplayName = 'Charles Seals'" in sql else []
+
+        with _patch(query=AsyncMock(side_effect=query), create_vendor=AsyncMock()) as m:
+            vid = await qbo_payouts.find_or_create_vendor(SimpleNamespace(), db, c, client_id="x", client_secret="y")
+        assert vid == "V9"                          # adopted the existing vendor
+        assert m["create_vendor"].await_count == 0  # no duplicate created
+        assert any("DisplayName = 'Charles Seals'" in s for s in seen["sqls"])  # queried the normalized name
+
+
+async def test_vendor_email_fallback_adopts_existing():
+    # Name query misses (e.g. QB vendor named differently), but a vendor with the
+    # same email exists -> adopt it instead of creating a duplicate.
+    async with _db() as db:
+        c = models.Contact(id=72, first_name="Bob", last_name="Roadie", is_crew=True, email="bob@crew.com")
+        db.add(c)
+        await db.flush()
+
+        async def query(conn, db_, sql, **kw):
+            if "PrimaryEmailAddr = 'bob@crew.com'" in sql:
+                return [{"Id": "VE"}]
+            return []  # name query misses
+
+        with _patch(query=AsyncMock(side_effect=query), create_vendor=AsyncMock()) as m:
+            vid = await qbo_payouts.find_or_create_vendor(SimpleNamespace(), db, c, client_id="x", client_secret="y")
+        assert vid == "VE" and m["create_vendor"].await_count == 0
+
+
+async def test_vendor_email_fallback_error_is_swallowed():
+    # If the QBO account rejects filtering Vendor by email, the fallback is a no-op
+    # and we still create (no worse than before, and the push isn't aborted).
+    async with _db() as db:
+        c = models.Contact(id=73, first_name="Cara", last_name="Grip", is_crew=True, email="cara@crew.com")
+        db.add(c)
+        await db.flush()
+
+        async def query(conn, db_, sql, **kw):
+            if "PrimaryEmailAddr" in sql:
+                raise QboApiError(400, '{"Fault":{"Error":[{"Message":"unsupported filter"}]}}', None)
+            return []  # name misses
+
+        with _patch(query=AsyncMock(side_effect=query),
+                    create_vendor=AsyncMock(return_value={"Vendor": {"Id": "VC"}})) as m:
+            vid = await qbo_payouts.find_or_create_vendor(SimpleNamespace(), db, c, client_id="x", client_secret="y")
+        assert vid == "VC" and m["create_vendor"].await_count == 1
+
+
 async def test_double_pay_guard_blocks_second_period():
     async with _db() as db:
         c = await _seed_contact(db)
