@@ -168,6 +168,9 @@ function LTPSignedInApp(props) {
   window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
   window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
   window.LTP_TAX_RATE = settings.taxRate || 0;
+  // Resolved fee quick-pick names for the Add-Item → Fees tab (edited in
+  // Quotes → Fees). Recomputed each render so edits flow to the pickers.
+  window.LTP_FEE_QUICKNAMES = window.LTP_feeQuickNames(settings);
 
   // Rebuild tag/badge colors from settings
   window.LTP_TAG_COLORS = settings.tagColors || {};
@@ -372,7 +375,7 @@ function LTPSignedInApp(props) {
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
-        settings: settings, isAdmin: isAdmin, qbo: qboStatus,
+        settings: settings, setSettings: setSettings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "invoices":  return h(window.LTPErrorBoundary, { name: "Invoices" }, h(window.InvoicesView, {
         invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
