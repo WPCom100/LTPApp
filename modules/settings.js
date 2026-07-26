@@ -208,6 +208,33 @@
       setIsDirty(true);
     }
 
+    // Queue a profile-photo re-pull for a user. Fires IMMEDIATELY (own POST,
+    // not deferred to the page Save) — it doesn't touch title/phone/role, so it
+    // shouldn't ride the Save/Discard flow. We only merge the returned
+    // photoRefreshRequested flag into local state (into BOTH users and the clean
+    // snapshot) so any unsaved title/phone/role edits on that row are preserved
+    // and no spurious dirty diff is introduced. The actual re-download happens
+    // server-side on that user's next sign-in (the stored Google URL may be the
+    // stale one, so we can't reliably re-pull now).
+    function repullPhoto(userId) {
+      fetch("/api/users/" + userId + "/refresh-photo", { method: "POST", credentials: "include" })
+        .then(function(r) {
+          if (!r.ok) return r.json().then(function(err) { throw new Error(err.detail && err.detail.reason ? err.detail.reason : "HTTP " + r.status); });
+          return r.json();
+        })
+        .then(function(saved) {
+          var mergeFlag = function(u) { return u.id === userId ? Object.assign({}, u, { photoRefreshRequested: true }) : u; };
+          setUsers(function(prev) { return Array.isArray(prev) ? prev.map(mergeFlag) : prev; });
+          if (Array.isArray(usersCleanRef.current)) usersCleanRef.current = usersCleanRef.current.map(mergeFlag);
+          if (window.LTP_toast) window.LTP_toast("Photo re-pull queued", {
+            message: (saved.name || saved.email || "This user") + "'s photo will refresh on their next sign-in.",
+            variant: "success" });
+        })
+        .catch(function(e) {
+          if (window.LTP_toast) window.LTP_toast("Couldn't queue photo re-pull", { message: String(e.message || e), variant: "error" });
+        });
+    }
+
     function loadQbo() {
       fetch("/api/qbo/status", { credentials: "include" })
         .then(function(r) { return r.ok ? r.json() : null; })
@@ -631,7 +658,21 @@
                 h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 } },
                   h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
                   h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
-                  u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
+                  u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected"),
+                  // Re-pull the Google profile photo. The app caches the image
+                  // so a rotted/rate-limited Google URL stops breaking the
+                  // avatar; this queues a fresh download on the user's next
+                  // sign-in. Link-style button, kept next to the photo it acts on.
+                  h("button", {
+                    onClick: function() { if (!u.photoRefreshRequested) repullPhoto(u.id); },
+                    disabled: !!u.photoRefreshRequested,
+                    title: u.photoRefreshRequested
+                      ? "Queued — this photo will refresh on the user's next sign-in"
+                      : "Re-download this user's Google profile photo on their next sign-in",
+                    style: { alignSelf: "flex-start", marginTop: 3, background: "transparent", border: "none",
+                      padding: 0, color: u.photoRefreshRequested ? B.textMut : B.accent, fontSize: "9px",
+                      fontFamily: "inherit", cursor: u.photoRefreshRequested ? "default" : "pointer", textAlign: "left" } },
+                    u.photoRefreshRequested ? "↻ Photo re-pull queued" : "↻ Re-pull photo")
                 )
               ),
               // Title (editable — joins the page's Save/Discard flow)

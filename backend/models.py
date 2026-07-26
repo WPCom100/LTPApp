@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey, LargeBinary, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, Float, Text, DateTime, JSON, ForeignKey, LargeBinary, UniqueConstraint, false
+from sqlalchemy.orm import deferred
 from sqlalchemy.sql import func
 from backend.database import Base
 
@@ -562,7 +563,24 @@ class User(Base):
     google_sub = Column(String(100), unique=True, nullable=False, index=True)  # Google's `sub` claim
     email = Column(String(255), unique=True, nullable=False, index=True)
     name = Column(String(255), nullable=False, default="")
+    # `picture_url` is Google's lh*.googleusercontent.com URL, refreshed each
+    # login. Those URLs rot / rate-limit when hotlinked, so we ALSO cache the
+    # image bytes in the columns below and serve our own stable copy (see
+    # cached_photo_path + GET /api/users/photo/{token}). picture_url is kept as
+    # the fetch source + a fallback until the first cache succeeds.
     picture_url = Column(Text, default="")
+    # Cached avatar. photo_data is deferred() so the (potentially tens-of-KB)
+    # bytes are NOT loaded by the many ordinary `select(User)` queries — only the
+    # photo-serve route explicitly undefers it. photo_token is the opaque public
+    # id in the serve URL (so avatars aren't enumerable by user id, and emails
+    # don't embed internal ids). photo_updated_at doubles as the `?v=` cache-
+    # buster so a re-pull invalidates client/email caches. photo_refresh_requested
+    # is the admin "re-pull on next sign-in" flag (Team Members settings).
+    photo_token = Column(String(64), unique=True, index=True, nullable=True)
+    photo_data = deferred(Column(LargeBinary, nullable=True))
+    photo_content_type = Column(String(64), nullable=True)
+    photo_updated_at = Column(DateTime(timezone=True), nullable=True)
+    photo_refresh_requested = Column(Boolean, nullable=False, server_default=false(), default=False)
     role = Column(String(20), default="member", nullable=False)                # {member, admin}
     last_login = Column(DateTime(timezone=True), nullable=True)
     # Gmail OAuth token cache (Fernet ciphertext for the two token columns)
@@ -577,6 +595,16 @@ class User(Base):
     title = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def cached_photo_path(self) -> str | None:
+        """Relative URL for this user's app-served cached avatar, or None when
+        nothing is cached yet (caller falls back to picture_url). The
+        photo_updated_at timestamp is folded in as `?v=` so a re-pull busts any
+        client/email image cache. Reads only light columns — never touches the
+        deferred photo_data blob."""
+        if self.photo_token and self.photo_updated_at:
+            return f"/api/users/photo/{self.photo_token}?v={int(self.photo_updated_at.timestamp())}"
+        return None
 
 
 class EmailRecipient(Base):

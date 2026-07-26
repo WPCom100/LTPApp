@@ -159,9 +159,10 @@ function LTPSignedInApp(props) {
   window.LTP_SENDER_NAME = props.authUser.name || "";
   window.LTP_SENDER_TITLE = props.authUser.title || "";
   window.LTP_SENDER_PHONE = props.authUser.phone || "";
-  // Google-hosted profile photo (lh*.googleusercontent.com) — feeds
-  // {{userPhoto}} in the signature template, falling back to the LTP
-  // logo when this is empty (rare for Google OAuth users).
+  // Profile photo — feeds {{userPhoto}} in the signature template, falling
+  // back to the LTP logo when empty. This is the app-cached avatar path
+  // (/api/users/photo/{token}) once cached, else the raw Google URL; /auth/me
+  // resolves which. Caching means a rotted Google URL stops breaking it.
   window.LTP_SENDER_PHOTO = props.authUser.pictureUrl || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;

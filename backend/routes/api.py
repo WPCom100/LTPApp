@@ -1,8 +1,10 @@
 import secrets
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+from sqlalchemy.orm import undefer
 from backend.database import get_db
 from backend import crew_integrity, models
 from backend.auth_deps import require_session, require_admin
@@ -410,7 +412,12 @@ def _user_dict(u: models.User) -> dict:
         "id": u.id,
         "email": u.email,
         "name": u.name,
-        "pictureUrl": u.picture_url,
+        # App-cached avatar when available (stable, self-hosted), else the
+        # Google URL until the first cache lands on that user's next sign-in.
+        "pictureUrl": u.cached_photo_path() or (u.picture_url or ""),
+        # Whether a re-pull has already been queued (so the UI can show
+        # "queued" instead of letting an admin click twice).
+        "photoRefreshRequested": bool(u.photo_refresh_requested),
         "role": u.role,
         "title": u.title or "",
         "phone": u.phone or "",
@@ -480,6 +487,58 @@ async def update_user(
         await db.flush()
         await db.refresh(target)
     return _user_dict(target)
+
+
+@router.post("/users/{user_id}/refresh-photo", dependencies=[Depends(require_admin)])
+async def refresh_user_photo(user_id: int, db: AsyncSession = Depends(get_db)):
+    """Admin-only. Queue a re-pull of this user's Google profile photo on their
+    NEXT sign-in.
+
+    Why next sign-in and not now: the photo we'd re-fetch comes from the user's
+    Google `picture` URL, and that stored URL may itself be the stale/rotted one
+    (that's usually why the avatar broke). Only a fresh OAuth login hands us a
+    working URL, so we set a flag and let the callback do the download. Returns
+    the updated user dict (photoRefreshRequested=True) so the UI reflects the
+    queued state without a reload."""
+    result = await db.execute(select(models.User).where(models.User.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail=f"user {user_id} not found")
+    target.photo_refresh_requested = True
+    await db.flush()
+    await db.refresh(target)
+    return _user_dict(target)
+
+
+# ── Public avatar serving (no session) ────────────────────────────────────
+# Separate router WITHOUT the session dependency: the same URL is embedded in
+# outbound email signatures, so external recipients' mail clients must be able
+# to load it. Mounted in main.py alongside the other public token routes.
+public_router = APIRouter(prefix="/api", tags=["users-public"])
+
+
+@public_router.get("/users/photo/{photo_token}")
+async def get_user_photo(photo_token: str, db: AsyncSession = Depends(get_db)):
+    """Serve a user's app-cached avatar bytes by opaque token. Public by design
+    (see the router comment). The token is unguessable and the payload is a
+    non-sensitive profile picture. 404 when the token is unknown or nothing is
+    cached yet. photo_data is deferred on the model, so we undefer it here — the
+    ONLY place the blob is loaded."""
+    result = await db.execute(
+        select(models.User)
+        .options(undefer(models.User.photo_data))
+        .where(models.User.photo_token == photo_token)
+    )
+    user = result.scalar_one_or_none()
+    if user is None or not user.photo_data:
+        raise HTTPException(status_code=404, detail="photo not found")
+    return Response(
+        content=user.photo_data,
+        media_type=user.photo_content_type or "image/jpeg",
+        # The URL carries a ?v=<photo_updated_at> cache-buster, so a re-pull
+        # changes the URL — safe to cache the bytes hard.
+        headers={"Cache-Control": "public, max-age=86400, immutable"},
+    )
 
 
 # ── Bulk sync (one-shot localStorage → server migration) ─────────────────

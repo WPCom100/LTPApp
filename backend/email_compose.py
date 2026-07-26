@@ -225,7 +225,7 @@ def _render_signature(
     # pre-dates the OAuth scope grant could be photo-less). We escape
     # picture_url too even though it's controlled by Google; an attacker
     # who managed to inject HTML there would still be neutered.
-    photo_url = (user.picture_url or "").strip() or _photo_fallback_url()
+    photo_url = _signature_photo_url(user)
     return (
         template
         .replace("{{userPhoto}}", escape(photo_url))
@@ -253,6 +253,20 @@ _AVATAR_ASSET_PATH = "/assets/logos/ltp-avatar.png"
 
 def _photo_fallback_url() -> str:
     return (_app_origin() or "") + _AVATAR_ASSET_PATH
+
+
+def _signature_photo_url(user: models.User) -> str:
+    """Absolute URL for the sender's signature avatar, in priority order:
+      1. the app-cached copy (stable, self-hosted) — the fix for rotted Google
+         URLs; served from GET /api/users/photo/{token},
+      2. the raw Google picture_url (until the first cache lands), then
+      3. the self-hosted LTP avatar fallback.
+    Absolute because email clients can't resolve a relative src (empty origin in
+    local dev degrades the same way the masthead does)."""
+    cached = user.cached_photo_path()
+    if cached:
+        return (_app_origin() or "") + cached
+    return (user.picture_url or "").strip() or _photo_fallback_url()
 
 
 # Server-side fallback signature — must stay byte-identical to the

@@ -51,6 +51,10 @@ _RULES = [
     # longest-prefix matcher treats "/api/crew-requests" as a separate path
     # ("/api/crew" only matches "/api/crew" or "/api/crew/...").
     ("/api/crew",         60),
+    # Public, UNAUTHENTICATED avatar bytes (embedded in email signatures). The
+    # token is unguessable and each hit serves small cached bytes, so a generous
+    # bucket — one email render can load several avatars, and pages fan out too.
+    ("/api/users/photo",  120),
     ("/pdf",              30),
     # Authenticated but sensitive. Per-IP backstop on top of the recipient cap
     # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.

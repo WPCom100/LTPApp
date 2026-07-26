@@ -174,11 +174,23 @@ can spot users in this state from the Team Members section of Settings —
 a "Gmail not connected" warning shows below their email.
 
 The signature template ships with a `{{userPhoto}}` placeholder that
-resolves to each sender's Google profile picture at send time. Users
-who somehow lack a profile picture (rare for Google OAuth) get the LTP
-logo as a fallback. The Team Members section in Settings shows each
-user's photo as a small circular avatar so admins can verify what each
-team member's signature will display.
+resolves to each sender's Google profile picture. Users who somehow lack
+a profile picture (rare for Google OAuth) get the LTP logo as a fallback.
+The Team Members section in Settings shows each user's photo as a small
+circular avatar so admins can verify what each team member's signature
+will display.
+
+Profile photos are **cached in the app**, not hotlinked from Google.
+Google's `lh*.googleusercontent.com` URLs rot and rate-limit when embedded
+elsewhere, which made avatars silently stop rendering. On sign-in the app
+downloads the photo bytes once and serves its own stable copy from
+`GET /api/users/photo/{token}` (public — the same URL is embedded in
+outbound email signatures, so recipients' mail clients must be able to
+load it). Existing users' photos are cached automatically on their next
+sign-in. If a photo is stale, an admin can click **Re-pull photo** on that
+person's row in Team Members; the fresh image is pulled on their next
+sign-in (a fresh login is required because the stored Google URL may itself
+be the expired one).
 
 ### Deliverability (landing in spam?)
 
