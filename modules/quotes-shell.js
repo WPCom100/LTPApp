@@ -7,6 +7,7 @@
 //   #/quotes/:id            full-screen builder for existing quote
 //   #/quotes/products       products management tab
 //   #/quotes/services       services management tab
+//   #/quotes/fees           fees management tab (misc billable line items)
 (function() {
   var h = React.createElement;
   var B = window.LTP_THEME;
@@ -14,6 +15,7 @@
 
   window.QuotesView = function({ companies, contacts, projects, setProjects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
+                                  fees, setFees,
                                   equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
@@ -26,6 +28,7 @@
     var activeTab =
       sub === "products" ? "products" :
       sub === "services" ? "services" :
+      sub === "fees"     ? "fees"     :
       "quotes";
 
     // Determine if we're in the builder
@@ -39,6 +42,7 @@
         { key: "quotes",   label: "Quotes",   path: "quotes"          },
         { key: "products", label: "Products", path: "quotes/products" },
         { key: "services", label: "Services", path: "quotes/services" },
+        { key: "fees",     label: "Fees",     path: "quotes/fees"     },
       ];
       return h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18 } },
         tabs.map(function(t) {
@@ -62,6 +66,7 @@
         getNextQuoteId: getNextQuoteId,
         products:   products,
         services:   services,
+        fees:       fees,
         equipment:  equipment,
         allocations: allocations,
         companies:  companies,
@@ -93,6 +98,11 @@
 
       activeTab === "services" && h(window.QuotesServices, {
         services: services, setServices: setServices, projects: projects, quotes: quotes,
+        settings: settings, qbo: qbo,
+      }),
+
+      activeTab === "fees" && h(window.QuotesFees, {
+        fees: fees, setFees: setFees, quotes: quotes, invoices: invoices,
         settings: settings, qbo: qbo,
       })
     );
