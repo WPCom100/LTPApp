@@ -1,7 +1,7 @@
 """fees catalog table
 
 Revision ID: f8a9b0c1d2e3
-Revises: e1f2a3b4c5d6
+Revises: f2a3b4c5d6e7
 Create Date: 2026-07-26 12:00:00.000000
 
 Adds the `fees` table — a catalog of miscellaneous billable line items that
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f8a9b0c1d2e3'
-down_revision: Union[str, None] = 'e1f2a3b4c5d6'
+down_revision: Union[str, None] = 'f2a3b4c5d6e7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
