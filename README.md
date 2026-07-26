@@ -180,6 +180,15 @@ logo as a fallback. The Team Members section in Settings shows each
 user's photo as a small circular avatar so admins can verify what each
 team member's signature will display.
 
+### Deliverability (landing in spam?)
+
+Mail is sent through the **Gmail API as the signed-in user**, so inbox-vs-spam
+is decided by your **domain's email authentication** (SPF/DKIM/DMARC) and sender
+reputation — not by app code. If emails land in some recipients' spam folders,
+the usual fix is enabling **domain-aligned DKIM** in the Google Admin console
+plus a correct SPF/DMARC record. See **[docs/EMAIL_DELIVERABILITY.md](docs/EMAIL_DELIVERABILITY.md)**
+for the step-by-step fix and how to diagnose it with *Show original*.
+
 ## QuickBooks Online integration
 
 The app pushes generated invoices to a QuickBooks Online company so the books
