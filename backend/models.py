@@ -181,12 +181,17 @@ class Quote(Base):
     global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
     sections = Column(JSON, default=list)               # list[{id: str, label: str, items: list[QuoteLineItem]}]
                                                         # QuoteLineItem = {
-                                                        #   id: str, type: "equipment"|"service"|"product"|"note",
+                                                        #   id: str, type: "equipment"|"service"|"product"|"fee"|"note",
                                                         #   name: str, qty: float, unitPrice: float, adjustedPrice: float|null,
                                                         #   rateType: "day"|"halfDay"|"hourly"|"ot"  (services only),
                                                         #   productVariantId: str|null  (products only — chosen pricing variant),
+                                                        #   feeId: int|null  (fees only — catalog row, null = custom/ad-hoc fee),
                                                         #   deliveredQty: float, invoicedQty: float,
                                                         #   equipmentId|serviceId|productId: int|null }
+                                                        # Fees ("fee") are misc billable lines (Lodging, Meals, Travel,
+                                                        # Consultation, Project Prep). Their price varies per project, so a
+                                                        # fee line edits `unitPrice` DIRECTLY and never sets `adjustedPrice`
+                                                        # — a fee is never counted as a line-item price adjustment.
     notes = Column(Text, default="")                    # free-form text shown on the printed quote
     activity = Column(JSON, default=list)               # list[{id: str, date: str, time: str, type: str, user: str, message: str, changes: list[{cat, detail}]|null}]
     # Remembered email recipients for the send modal: {"to": [email...], "cc":
@@ -240,9 +245,11 @@ class Invoice(Base):
     global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
     sections = Column(JSON, default=list)               # list[{id, label, items: list[InvoiceLineItem]}]
                                                         # InvoiceLineItem = {id, type, name, qty, unitPrice, adjustedPrice,
-                                                        #                    rateType, productVariantId,
+                                                        #                    rateType, productVariantId, feeId,
                                                         #                    serviceId|equipmentId|productId,
                                                         #                    sourceItemId: str}  (source = quote line id)
+                                                        # See Quote.sections for the "fee" line type (edits unitPrice
+                                                        # directly, never adjustedPrice).
     notes = Column(Text, default="")
     payments = Column(JSON, default=list)               # list[{id: str, date: str, amount: float, method: str, reference: str, notes: str}]
     activity = Column(JSON, default=list)               # same shape as Quote.activity
@@ -370,6 +377,40 @@ class Product(Base):
     # (see _READONLY_COLS in backend/routes/api.py) — written by the sync engine
     # when it creates or re-points the QB item; a mismatch with the resolved
     # desired account triggers a re-point on the next push (backend/qbo_sync.py).
+    qb_income_account_synced = Column(String(32), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Fee(Base):
+    """A miscellaneous billable line that is NOT equipment, a service, or a
+    product — e.g. Lodging, Meal Expenses, Travel (air / ground / mileage),
+    Consultation, Project Prep. Used as quote/invoice line items via
+    `type: "fee"` (carrying `feeId` = this row's id).
+
+    Unlike Product/Service catalog lines, `unit_price` here is only a DEFAULT
+    amount. Fee prices vary per project, so the quote/invoice line edits its own
+    `unitPrice` directly and NEVER sets `adjustedPrice` — a fee is therefore
+    never counted as a line-item price adjustment (subtotal == adjusted for the
+    fee). The catalog row still supplies the default amount, category, unit, and
+    QuickBooks item/income-account mapping. A `feeId: null` line is a one-off
+    "custom" fee typed straight into the builder with no catalog row."""
+    __tablename__ = "fees"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    category = Column(String(100), default="")           # e.g. "Travel", "Lodging", "Production"
+    unit = Column(String(50), default="flat")            # billing unit: "flat", "night", "day", "mile", "trip", "hour"
+    unit_price = Column(Float, default=0)                # DEFAULT amount (per-project price is edited on the line)
+    cost = Column(Float, default=0)                      # our cost when the fee is a pass-through (for margin)
+    notes = Column(Text, default="")
+    qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
+    # Income account override for the QB item backing this fee. null = use the
+    # mapped default (settings.qboFeeIncomeAccountId, falling back to
+    # settings.qboIncomeAccountId). USER-EDITABLE (same semantics as Product).
+    qb_income_account_id = Column(String(32), nullable=True)
+    # Last-confirmed income account of the backing QB item. SERVER-AUTHORITATIVE
+    # (see _READONLY_COLS in backend/routes/api.py) — written by the sync engine.
     qb_income_account_synced = Column(String(32), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

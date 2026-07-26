@@ -9,6 +9,7 @@
   var fmt = window.LTP_formatDate;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
+  var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (matches the quote builder)
 
   function net30(fromDate) {
     var d = new Date(fromDate || Date.now());
@@ -183,10 +184,13 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ADD ITEM PICKER (simplified from quotes)
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvAddItemPicker({ onAdd, onClose, equipment, products, services }) {
+  function InvAddItemPicker({ onAdd, onClose, equipment, products, services, fees }) {
     var isMobile = window.LTP_useIsMobile();
     var [tab, setTab] = useState("equipment");
     var [search, setSearch] = useState("");
+    // Custom (ad-hoc) fee entry — a fee with no catalog row (feeId null).
+    var [feeName, setFeeName] = useState("");
+    var [feeAmount, setFeeAmount] = useState("");
     // Product id whose pricing-variant chooser popup is open (null = none).
     var [variantFor, setVariantFor] = useState(null);
     var q = search.trim().toLowerCase();
@@ -198,10 +202,26 @@
       });
     }
 
+    // Fee add helpers. Fee lines carry the catalog default amount as unitPrice;
+    // the price is then edited DIRECTLY on the line (adjustedPrice stays null),
+    // so a fee never registers as a line adjustment. Custom fees have feeId null.
+    function addFee(f) {
+      onAdd({ id: genId("item"), type: "fee", feeId: f.id, name: f.name, category: f.category || "", unit: f.unit || "flat", qty: 1,
+              unitPrice: Number(f.unitPrice) || 0, adjustedPrice: null, cost: Number(f.cost) || 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
+    }
+    function addCustomFee() {
+      var nm = feeName.trim();
+      if (!nm) return;
+      onAdd({ id: genId("item"), type: "fee", feeId: null, name: nm, category: "", unit: "flat", qty: 1,
+              unitPrice: Number(feeAmount) || 0, adjustedPrice: null, cost: 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
+      setFeeName(""); setFeeAmount("");
+    }
+
     var tabs = [
       { id: "equipment", label: "Equipment" },
       { id: "product",   label: "Products"  },
       { id: "service",   label: "Services"  },
+      { id: "fee",       label: "Fees"      },
       { id: "note",      label: "Note"      },
     ];
 
@@ -312,6 +332,43 @@
           }))
       ),
 
+      tab === "fee" && h("div", null,
+        // Custom (ad-hoc) fee \u2014 name + amount, with common-fee quick fills.
+        h("div", { style: { background: B.bg, border: "1px solid " + FEE_COLOR + "44", borderRadius: "6px", padding: 10, marginBottom: 12 } },
+          h("div", { style: { fontSize: "10px", fontWeight: 700, color: FEE_COLOR, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Custom Fee"),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
+            h("input", { type: "text", value: feeName, onChange: function(e) { setFeeName(e.target.value); },
+              onKeyDown: function(e) { if (e.key === "Enter") addCustomFee(); }, placeholder: "Fee description (e.g. Lodging \u2014 2 nights)",
+              style: { flex: 1, minWidth: isMobile ? "100%" : 180, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none" } }),
+            h("input", { type: "number", inputMode: "decimal", step: "0.01", value: feeAmount, onChange: function(e) { setFeeAmount(e.target.value); },
+              onKeyDown: function(e) { if (e.key === "Enter") addCustomFee(); }, placeholder: "$ amount",
+              style: { width: isMobile ? "100%" : 110, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
+            h("button", { onClick: addCustomFee, disabled: !feeName.trim(),
+              style: { background: feeName.trim() ? B.accent : B.raised, border: "none", borderRadius: "6px", color: feeName.trim() ? B.btnInk : B.textMut, cursor: feeName.trim() ? "pointer" : "default", fontSize: "12px", fontWeight: 700, padding: "8px 14px", whiteSpace: "nowrap", flexShrink: 0 } }, "Add")),
+          h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
+            ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"].map(function(sug) {
+              return h("button", { key: sug, onClick: function() { setFeeName(sug); },
+                style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "12px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "3px 10px" } }, "+ " + sug);
+            }))),
+        // Catalog fees
+        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search saved fees\u2026",
+          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
+        h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 320px)" : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+          (fees || []).length === 0
+            ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "10px 2px" } }, "No saved fees yet. Add reusable fees in Quotes \u2192 Fees, or type a custom fee above.")
+            : filterList(fees || [], ["name", "category"]).slice(0, 60).map(function(f) {
+                return h("div", { key: f.id, onClick: function() { addFee(f); },
+                  style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
+                  onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
+                  onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+                  h("span", { style: { fontSize: "9px", fontWeight: 700, color: FEE_COLOR, background: FEE_COLOR + "22", border: "1px solid " + FEE_COLOR + "44", padding: "2px 5px", borderRadius: "3px", flexShrink: 0 } }, "FEE"),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, f.name),
+                    h("div", { style: { fontSize: "10px", color: B.textMut } }, (f.category || "Uncategorized") + (f.unit && f.unit !== "flat" ? " \u00b7 per " + f.unit : ""))),
+                  h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + (f.unitPrice || 0)));
+              }))
+      ),
+
       tab === "note" && h("div", null,
         h("textarea", { id: "_inv_note", placeholder: "Enter note text\u2026", rows: 3,
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "vertical", marginBottom: 10 } }),
@@ -326,7 +383,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, customerTaxable }) {
+  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
     if (item.type === "note") {
       return h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
@@ -337,11 +394,12 @@
       );
     }
 
-    var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : "SV";
-    var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : B.warn;
+    var isFee = item.type === "fee";
+    var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
+    var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
     var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
-    var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : "qty";
+    var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
     // Product lookup for the pricing-variant selector (products with variants).
     var prodData = item.type === "product" && item.productId ? (products || []).find(function(pr) { return pr.id === item.productId; }) : null;
@@ -397,10 +455,16 @@
           h("div", null, h("div", { style: lbl }, qtyLabel),
             h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0,
               onChange: function(e) { onUpdate(sectionId, item.id, { qty: Math.max(0, Number(e.target.value) || 0) }); }, style: fld })),
-          h("div", null, h("div", { style: lbl }, "adj price"),
-            h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP,
-              onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
-              style: Object.assign({}, fld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) }))),
+          // Fees edit the PRICE directly (unitPrice) — it varies per project and
+          // is never a discount, so no adjustedPrice / strike-through.
+          isFee
+            ? h("div", null, h("div", { style: lbl }, "price ($)"),
+                h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00",
+                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); }, style: fld }))
+            : h("div", null, h("div", { style: lbl }, "adj price"),
+                h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP,
+                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
+                  style: Object.assign({}, fld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) }))),
         // Unit · tax · total footer.
         h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, paddingTop: 8, borderTop: "1px solid " + B.border } },
           h("div", { style: { fontSize: "12px", color: B.textMut } },
@@ -461,20 +525,31 @@
               style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" } })
           : h("div", { style: { fontSize: "11px", color: B.text, textAlign: "center", padding: "3px 0" } }, item.qty)
       ),
-      // Unit price
-      h("div", { style: { width: 75 } },
-        h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
-        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
-      ),
-      // Adjusted price
-      h("div", { style: { width: 75 } },
-        h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
-        isDraft
-          ? h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: String(unitP),
-              onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
-              style: { width: "100%", background: B.bg, border: "1px solid " + (adjusted ? B.accent : B.border), borderRadius: "3px", padding: "3px 6px", color: adjusted ? B.accent : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
-          : h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
-      ),
+      // Price cell. Fees edit their PRICE directly here (unitPrice) \u2014 it varies
+      // per project and is not a discount, so there's no separate adjusted cell.
+      isFee
+        ? h("div", { style: { width: 75 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "price"),
+            isDraft
+              ? h("input", { type: "number", value: item.unitPrice != null ? item.unitPrice : "", min: 0, step: "any",
+                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); },
+                  style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
+              : h("div", { style: { fontSize: "11px", color: B.text, textAlign: "right", padding: "3px 6px" } }, "$" + unitP))
+        : h("div", { style: { width: 75 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
+            h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
+          ),
+      // Adjusted price \u2014 not shown for fees (empty spacer keeps total aligned).
+      isFee
+        ? h("div", { style: { width: 75 } })
+        : h("div", { style: { width: 75 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
+            isDraft
+              ? h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: String(unitP),
+                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
+                  style: { width: "100%", background: B.bg, border: "1px solid " + (adjusted ? B.accent : B.border), borderRadius: "3px", padding: "3px 6px", color: adjusted ? B.accent : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
+              : h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
+          ),
       // Total
       h("div", { style: { width: 85, textAlign: "right" } },
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
@@ -500,7 +575,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
                             companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
-                            equipment, products, services, settings, isAdmin, qbo }) {
+                            equipment, products, services, fees, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
     function emptyInvoice() {
@@ -1735,7 +1810,7 @@
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
                 sec.items.length === 0 && h("div", { style: { padding: 14, textAlign: "center", color: B.textMut, fontSize: "11px", fontStyle: "italic", background: B.surface, borderRadius: "4px", border: "1px dashed " + B.border } }, "No items yet."),
                 sec.items.map(function(it) {
-                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, products: products, equipment: equipment, customerTaxable: customerTaxable });
+                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },
@@ -1926,7 +2001,7 @@
 
       // Item picker
       pickerForSection && h(InvAddItemPicker, {
-        equipment: equipment, products: products, services: services,
+        equipment: equipment, products: products, services: services, fees: fees,
         onAdd: function(item) { addItemToSection(pickerForSection, item); },
         onClose: function() { setPickerForSection(null); }
       }),
@@ -2135,7 +2210,7 @@
         companies: props.companies, setCompanies: props.setCompanies,
         contacts: props.contacts, setContacts: props.setContacts, projects: props.projects,
         quotes: props.quotes, setQuotes: props.setQuotes,
-        equipment: props.equipment, products: props.products, services: props.services,
+        equipment: props.equipment, products: props.products, services: props.services, fees: props.fees,
         settings: props.settings, isAdmin: props.isAdmin, qbo: props.qbo,
       });
     }

@@ -184,6 +184,13 @@ def _build_rules():
             "unitPrice": _nonneg_number,
             "cost":      _nonneg_number,
         },
+        models.Fee: {
+            "name":      _str_max(255),
+            "category":  _str_max(100),
+            "unit":      _str_max(50),
+            "unitPrice": _nonneg_number,
+            "cost":      _nonneg_number,
+        },
         models.Service: {
             "role":        _str_max(20),
             "description": _str_max(255),

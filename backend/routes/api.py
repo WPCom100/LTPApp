@@ -302,6 +302,7 @@ _crud_routes(router, "invoices",    models.Invoice,   has_activity=True)
 _crud_routes(router, "equipment",   models.Equipment, has_activity=False)
 _crud_routes(router, "products",    models.Product,   has_activity=False)
 _crud_routes(router, "services",    models.Service,   has_activity=False)
+_crud_routes(router, "fees",        models.Fee,       has_activity=False)
 _crud_routes(router, "allocations", models.Allocation, has_activity=False)
 _crud_routes(router, "containers",  models.Container, has_activity=False)
 _crud_routes(router, "kits",        models.Kit,       has_activity=False)
@@ -477,6 +478,7 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
         "equipment":   models.Equipment,
         "products":    models.Product,
         "services":    models.Service,
+        "fees":        models.Fee,
         "allocations": models.Allocation,
         "containers":  models.Container,
         "kits":        models.Kit,

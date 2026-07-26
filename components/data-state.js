@@ -19,7 +19,7 @@
   // Keys backed by /api/{key} as an array of {id, ...} rows
   var ENTITY_KEYS = {
     companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
-    equipment: 1, products: 1, services: 1,
+    equipment: 1, products: 1, services: 1, fees: 1,
     allocations: 1, containers: 1, kits: 1,
   };
 

@@ -22,6 +22,7 @@
   var fmt = window.LTP_formatDate;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
+  var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (violet — distinct from EQ/PR/SV)
 
   // QuickBooks tax change-signature: a compact fingerprint of everything that
   // affects the QB-computed sales tax for a quote (line amounts + per-line
@@ -173,13 +174,16 @@
     return rt === "threeDay" ? "3-Day" : rt === "week" ? "Week" : "Month";
   }
 
-  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, allocations, quoteDates }) {
+  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, fees, allocations, quoteDates }) {
     var isMobile = window.LTP_useIsMobile();
     // Rate is always auto-calculated from dates — never manually selected
     var autoRate = quoteDates ? calcRateType(quoteDates.start, quoteDates.end) : "threeDay";
     var [tab, setTab]       = useState("equipment");
     var [search, setSearch] = useState("");
     var [noteText, setNoteText] = useState("");
+    // Custom (ad-hoc) fee entry — a fee with no catalog row (feeId null).
+    var [feeName, setFeeName]   = useState("");
+    var [feeAmount, setFeeAmount] = useState("");
     // Product id whose pricing-variant chooser popup is open (null = none).
     var [variantFor, setVariantFor] = useState(null);
     // Per-equipment qty state in the picker: { equipmentId: number }
@@ -191,10 +195,12 @@
     var sectionEquipIds = {};
     var sectionProductIds = {};
     var sectionServiceIds = {};
+    var sectionFeeIds = {};
     (sectionItems || []).forEach(function(it) {
       if (it.type === "equipment" && it.equipmentId) sectionEquipIds[it.equipmentId] = true;
       if (it.type === "product"   && it.productId)   sectionProductIds[it.productId] = true;
       if (it.type === "service"   && it.serviceId)   sectionServiceIds[it.serviceId] = true;
+      if (it.type === "fee"       && it.feeId)       sectionFeeIds[it.feeId] = true;
     });
 
     // Total quoted qty per equipment across ALL sections of this quote
@@ -270,6 +276,28 @@
         cost: s.dayCost || 0, notes: "", taxable: true,
       });
     }
+    // Fee lines carry the catalog default amount as their unitPrice; the price
+    // is then edited DIRECTLY on the line per project (adjustedPrice stays null,
+    // so a fee never registers as a line adjustment). qty defaults to 1.
+    function addFee(f) {
+      onAdd({
+        id: genId("item"), type: "fee",
+        feeId: f.id, name: f.name, category: f.category || "", unit: f.unit || "flat", qty: 1,
+        unitPrice: Number(f.unitPrice) || 0, adjustedPrice: null,
+        cost: Number(f.cost) || 0, notes: "", taxable: true,
+      });
+    }
+    function addCustomFee() {
+      var nm = feeName.trim();
+      if (!nm) return;
+      onAdd({
+        id: genId("item"), type: "fee",
+        feeId: null, name: nm, category: "", unit: "flat", qty: 1,
+        unitPrice: Number(feeAmount) || 0, adjustedPrice: null,
+        cost: 0, notes: "", taxable: true,
+      });
+      setFeeName(""); setFeeAmount("");
+    }
     function addNote() {
       if (!noteText.trim()) return;
       onAdd({ id: genId("item"), type: "note", text: noteText.trim() });
@@ -280,6 +308,7 @@
       { k: "equipment", l: "Equipment" },
       { k: "product",   l: "Products"  },
       { k: "service",   l: "Services"  },
+      { k: "fee",       l: "Fees"      },
       { k: "note",      l: "Note"      },
     ];
 
@@ -436,6 +465,49 @@
         )
       ),
 
+      // Fees tab — catalog fees (search + one-click add) plus a custom fee
+      // entry for one-offs. Fee prices are edited on the line afterward.
+      tab === "fee" && h("div", null,
+        // Custom (ad-hoc) fee — name + amount, with common-fee quick fills.
+        h("div", { style: { background: B.bg, border: "1px solid " + FEE_COLOR + "44", borderRadius: "6px", padding: 10, marginBottom: 12 } },
+          h("div", { style: { fontSize: "10px", fontWeight: 700, color: FEE_COLOR, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Custom Fee"),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
+            h("input", { type: "text", value: feeName, onChange: function(e) { setFeeName(e.target.value); },
+              onKeyDown: function(e) { if (e.key === "Enter") addCustomFee(); }, placeholder: "Fee description (e.g. Lodging — 2 nights)",
+              style: { flex: 1, minWidth: isMobile ? "100%" : 180, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none" } }),
+            h("input", { type: "number", inputMode: "decimal", step: "0.01", value: feeAmount, onChange: function(e) { setFeeAmount(e.target.value); },
+              onKeyDown: function(e) { if (e.key === "Enter") addCustomFee(); }, placeholder: "$ amount",
+              style: { width: isMobile ? "100%" : 110, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
+            h("button", { onClick: addCustomFee, disabled: !feeName.trim(),
+              style: { background: feeName.trim() ? B.accent : B.raised, border: "none", borderRadius: "6px", color: feeName.trim() ? B.btnInk : B.textMut, cursor: feeName.trim() ? "pointer" : "default", fontSize: "12px", fontWeight: 700, padding: "8px 14px", whiteSpace: "nowrap", flexShrink: 0 } }, "Add")),
+          h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
+            ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"].map(function(sug) {
+              return h("button", { key: sug, onClick: function() { setFeeName(sug); },
+                style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "12px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "3px 10px" } }, "+ " + sug);
+            }))),
+        // Catalog fees
+        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search saved fees…",
+          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
+        h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 320px)" : 300, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+          (fees || []).length === 0
+            ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "10px 2px" } }, "No saved fees yet. Add reusable fees (Lodging, Travel, Consultation…) in Quotes → Fees, or type a custom fee above.")
+            : filterList(fees, ["name", "category"]).slice(0, 80).map(function(f) {
+                var inSection = !!sectionFeeIds[f.id];
+                return h("div", { key: f.id, onClick: function() { addFee(f); },
+                  style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
+                  onMouseOver: function(e) { if (!inSection) e.currentTarget.style.borderColor = B.accent; },
+                  onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; } },
+                  h("span", { style: { fontSize: "9px", fontWeight: 700, color: FEE_COLOR, background: FEE_COLOR + "22", border: "1px solid " + FEE_COLOR + "44", padding: "2px 5px", borderRadius: "3px", flexShrink: 0 } }, "FEE"),
+                  h("div", { style: { flex: 1, minWidth: 0 } },
+                    h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, f.name),
+                    h("div", { style: { fontSize: "10px", color: B.textMut } }, (f.category || "Uncategorized") + (f.unit && f.unit !== "flat" ? " · per " + f.unit : ""))
+                  ),
+                  h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + (f.unitPrice || 0))
+                );
+              })
+        )
+      ),
+
       // Note tab
       tab === "note" && h("div", null,
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6 } }, "Notes appear as line items on the quote but have no price."),
@@ -452,7 +524,7 @@
   //   LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, onMove, services, products, equipment, customerTaxable }) {
+  function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, onMove, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
     if (item.type === "note") {
       return h("div", {
@@ -470,12 +542,13 @@
       );
     }
 
-    // Equipment / product / service row
-    var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : "SV";
-    var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : B.warn;
+    // Equipment / product / service / fee row
+    var isFee = item.type === "fee";
+    var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
+    var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
     var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
-    var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : "qty";
+    var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var isAccepted = quoteStatus === "accepted";
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
 
@@ -549,9 +622,16 @@
           h("div", null, h("div", { style: qlbl }, qtyLabel),
             isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, item.qty)
                      : h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0, onChange: function(e) { onUpdate(sectionId, item.id, { qty: Number(e.target.value) || 0 }); }, style: qfld })),
-          h("div", null, h("div", { style: qlbl }, "adj price"),
-            isLocked ? h("div", { style: { fontSize: "15px", color: adjusted ? B.accent : B.textMut, padding: "6px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—")
-                     : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, qfld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) })),
+          // Fees edit the PRICE directly (unitPrice) — it varies per project and
+          // is never a discount, so no adjustedPrice / strike-through. Every
+          // other type keeps the catalog unit price + an adjustedPrice override.
+          isFee
+            ? h("div", null, h("div", { style: qlbl }, "price ($)"),
+                isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, "$" + unitP)
+                         : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00", onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); }, style: qfld }))
+            : h("div", null, h("div", { style: qlbl }, "adj price"),
+                isLocked ? h("div", { style: { fontSize: "15px", color: adjusted ? B.accent : B.textMut, padding: "6px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—")
+                         : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, qfld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) })),
           isAccepted && h("div", null, h("div", { style: Object.assign({}, qlbl, { color: delivQty >= qty && qty > 0 ? B.success : B.textMut }) }, "delivered"),
             h("input", { type: "number", inputMode: "numeric", value: delivQty, min: 0, max: qty, onChange: function(e) { var v = Math.min(qty, Math.max(0, Number(e.target.value) || 0)); onUpdate(sectionId, item.id, { deliveredQty: v }); }, style: Object.assign({}, qfld, { borderColor: delivQty >= qty && qty > 0 ? B.success : B.border }) })),
           isAccepted && invQty > 0 && h("div", null, h("div", { style: qlbl }, "invoiced"),
@@ -638,24 +718,37 @@
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "inv\u2019d"),
         h("div", { style: { fontSize: "11px", color: invQty >= qty ? B.success : B.info, fontWeight: 600, padding: "3px 0" } }, invQty + "/" + qty)
       ),
-      // Unit price — locked when accepted/converted
-      h("div", { style: { width: 80 } },
-        h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
-        h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
-      ),
+      // Price cell. Fees edit their PRICE directly here (unitPrice) — it varies
+      // per project and is not a discount, so there is no separate adjusted
+      // cell. Every other type shows the catalog unit price (struck if adjusted).
+      isFee
+        ? h("div", { style: { width: 80 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "price"),
+            isLocked
+              ? h("div", { style: { fontSize: "11px", color: B.text, textAlign: "right", padding: "3px 6px" } }, "$" + unitP)
+              : h("input", { type: "number", value: item.unitPrice != null ? item.unitPrice : "", min: 0, step: "any",
+                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); },
+                  style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } }))
+        : h("div", { style: { width: 80 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "unit"),
+            h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
+          ),
       // Adjusted price — locked when accepted/converted
-      h("div", { style: { width: 80 } },
-        h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
-        isLocked
-          ? h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
-          : h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "",
-              placeholder: String(unitP),
-              onChange: function(e) {
-                var v = e.target.value;
-                onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) });
-              },
-              style: { width: "100%", background: B.bg, border: "1px solid " + (adjusted ? B.accent : B.border), borderRadius: "3px", padding: "3px 6px", color: adjusted ? B.accent : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
-      ),
+      // Not shown for fees (an empty spacer keeps the total column aligned).
+      isFee
+        ? h("div", { style: { width: 80 } })
+        : h("div", { style: { width: 80 } },
+            h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
+            isLocked
+              ? h("div", { style: { fontSize: "11px", color: adjusted ? B.accent : B.textMut, textAlign: "right", padding: "3px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "\u2014")
+              : h("input", { type: "number", value: item.adjustedPrice != null ? item.adjustedPrice : "",
+                  placeholder: String(unitP),
+                  onChange: function(e) {
+                    var v = e.target.value;
+                    onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) });
+                  },
+                  style: { width: "100%", background: B.bg, border: "1px solid " + (adjusted ? B.accent : B.border), borderRadius: "3px", padding: "3px 6px", color: adjusted ? B.accent : B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "right" } })
+          ),
       // Line total
       h("div", { style: { width: 90, textAlign: "right" } },
         h("div", { style: { fontSize: "9px", color: B.textMut } }, "total"),
@@ -681,7 +774,7 @@
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           onItemDragStart, onItemDrop, onSectionDragStart, onSectionDragOver, onSectionDrop,
                           sectionIndex, sectionCount, onSectionMove,
-                          sectionSubtotal, sectionMargin, services, products, equipment, customerTaxable }) {
+                          sectionSubtotal, sectionMargin, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
@@ -760,7 +853,7 @@
           return h(LineItemRow, { key: it.id, item: it, sectionId: section.id, quoteStatus: quoteStatus,
             onUpdate: function(sid, iid, patch) { onItemUpdate(sid, iid, patch); },
             onDelete: onItemDelete, onMove: onItemMove,
-            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment, customerTaxable: customerTaxable });
+            onDragStart: onItemDragStart, onDrop: onItemDrop, services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
         })
       ),
 
@@ -1015,7 +1108,7 @@
   }
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, fees, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
@@ -2179,7 +2272,7 @@
             sectionIndex: secIdx, sectionCount: draft.sections.length, onSectionMove: moveSection,
             quoteDates: quoteDates, quoteStatus: draft.status,
             sectionSubtotal: t.subtotal, sectionMargin: t.margin,
-            services: services, products: products, equipment: equipment, customerTaxable: customerTaxable,
+            services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
             onDelete: deleteSection,
@@ -2385,7 +2478,7 @@
           sectionLabel: (pickerSec || {}).label || "",
           sectionItems: pickerSec ? pickerSec.items : [],
           allSections: draft.sections,
-          equipment: equipment, products: products, services: services,
+          equipment: equipment, products: products, services: services, fees: fees,
           allocations: allocations,
           quoteDates: pickerDates,
           onAdd: function(item) { addItemToSection(pickerForSection, item); },
