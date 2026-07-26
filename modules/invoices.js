@@ -1712,19 +1712,24 @@
                     // yet leaves the select empty \u2014 the \uff0b on the label is the
                     // way out, and what it creates is linked to the company so
                     // it lands in this list.
-                    h(window.LTPSelect, { label: "Primary Contact",
-                      value: draft.clientContactId || "",
-                      onChange: function(v) { patchDraft({ clientContactId: v ? Number(v) : null }); },
-                      options: [{ value: "", label: "(none)" }].concat(
-                        window.LTP_HELPERS.contactSelectOptions(
-                          selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : [],
-                          draft.clientContactId, contacts)),
-                      labelAction: h(window.LTPEntityQuickAction, {
-                        kind: "contact", id: draft.clientContactId || null,
-                        prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
-                        onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
-                      })
-                    })
+                    // Tier 1 is this company's contacts; everyone else sits behind
+                    // an "Other contacts" click. Mirrors the quote builder.
+                    (function() {
+                      var tiers = window.LTP_HELPERS.contactPickerTiers(
+                        selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : [],
+                        draft.clientContactId, contacts, [{ value: "", label: "(none)" }]);
+                      return h(window.LTPSearchSelect, { label: "Primary Contact",
+                        value: draft.clientContactId || "",
+                        onChange: function(v) { patchDraft({ clientContactId: v === "" ? null : Number(v) }); },
+                        searchPlaceholder: "Search contacts\u2026",
+                        options: tiers.options, moreOptions: tiers.moreOptions, moreLabel: tiers.moreLabel,
+                        labelAction: h(window.LTPEntityQuickAction, {
+                          kind: "contact", id: draft.clientContactId || null,
+                          prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
+                          onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
+                        })
+                      });
+                    })()
                   ),
 
                   // Contact mode

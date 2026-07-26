@@ -202,6 +202,53 @@ chip is what the old "(no project — use custom name)" option did. It still
 filters to the document's company, still hides internal manual-shift projects
 and completed ones, and still warns on a company mismatch.
 
+## Searchable dropdowns
+
+Dropdowns whose list **grows** are type-to-search fields rather than native
+`<select>`s (`window.LTPSearchSelect`, `components/search-dropdown.js`).
+Clicking one opens the full list immediately — you never have to type to browse
+— with the search box focused so you can type straight away. `↑`/`↓` move,
+`Enter` picks, `Esc` cancels without changing anything.
+
+Converted: **crew** pickers (schedule editor, Assignments, Manual Shift),
+**role / rate-card** pickers, the Assignments **project filter**, **Primary
+Contact** on quotes and invoices, and **Link to Meeting** on project notes. The
+company / contact / project chip fields already worked this way and now also
+show their list on focus instead of waiting for a keystroke.
+
+**Left as native dropdowns, deliberately:**
+
+| | Why |
+|---|---|
+| Status, Category, Unit, Department, Type, Payment Method, Net terms | Frozen lists of 3–10. Typing to narrow four options is slower, not faster. |
+| QuickBooks income / expense accounts (Settings and the per-item overrides) | Seeing every account at once is the point of those fields. |
+| Rate type and pricing variant inside quote/invoice line rows | A popover fights the row layout and horizontal scrolling. |
+| Person-slot `#1 / #2` | Positional, not a list you search. |
+
+If you add a picker, the test is whether the list grows with the business. It
+should not be searchable just for visual consistency.
+
+### Crew pickers: role-matched first, everyone else behind a click
+
+A crew dropdown lists **only crew tagged with the role being filled**. Everyone
+else is behind an **"Other crew (N) — not tagged for this role"** row you have
+to click, so a name match from another department can't bury the people who are
+actually qualified. Each row shows the person's roles and department underneath.
+
+**Crew is picked, never authored.** These fields have no inline-create — a crew
+member is a roster entry, not something you invent from a schedule row. Adding
+`createKind` to a crew picker would be a bug; `tests/test_pickers.js` asserts
+the authorable set stays company / contact / project.
+
+Whoever is **currently assigned** always appears in the first tier, flagged
+(`— inactive`, or `— not tagged for this role`) when they'd otherwise be
+filtered out. This fixes a quiet data bug: a native `<select>` whose value
+matches none of its options renders its *first* option, so a position held by a
+crew member who had since gone inactive displayed "Crew…" — indistinguishable
+from unassigned — while the booking was still live. The same fix applies to
+**Primary Contact**, which likewise shows the selected person even when the
+narrowed list excludes them, with "Other contacts" as the escape hatch.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that

@@ -22,6 +22,13 @@
   var B = window.LTP_THEME, h = React.createElement, useState = React.useState;
   var fmt = window.LTP_formatDate;
 
+  // Focusing a field now shows the list straight away (it used to stay hidden
+  // until you typed, which made an empty result indistinguishable from a broken
+  // box). Browsing is capped — a few hundred companies shouldn't all render on
+  // focus — and typing narrows past the cap.
+  var BROWSE_CAP = 50;
+  function capped(list) { return list.length > BROWSE_CAP ? list.slice(0, BROWSE_CAP) : list; }
+
   // Shared dropdown shell so all four fields drop their results in the same
   // box, and so the create row always sits at the bottom in the same place.
   function dropdown(children, maxHeight) {
@@ -80,8 +87,8 @@
       ),
       h("div", { style: { position: "relative" } },
         h("input", { type: "text", value: query, placeholder: "Search...", onChange: function(e) { setQuery(e.target.value); }, onFocus: function() { setFocused(true); }, onBlur: function() { setTimeout(function() { setFocused(false); }, 200); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", width: "100%" } }),
-        (showCreate || (focused && query.length > 0 && filtered.length > 0)) && dropdown(
-          filtered.map(function(item) { var id = item.id, isSel = selectedIds.includes(id); return h("div", { key: id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { if (isSel) onChange(selectedIds.filter(function(x) { return x !== id; })); else onChange(selectedIds.concat([id])); setQuery(""); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: isSel ? B.accent : B.text, background: isSel ? B.accentMuted : "transparent", borderBottom: "1px solid " + B.border } }, (isSel ? "✓ " : "") + getName(item)); })
+        (focused && (filtered.length > 0 || showCreate)) && dropdown(
+          capped(filtered).map(function(item) { var id = item.id, isSel = selectedIds.includes(id); return h("div", { key: id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { if (isSel) onChange(selectedIds.filter(function(x) { return x !== id; })); else onChange(selectedIds.concat([id])); setQuery(""); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: isSel ? B.accent : B.text, background: isSel ? B.accentMuted : "transparent", borderBottom: "1px solid " + B.border } }, (isSel ? "✓ " : "") + getName(item)); })
             .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0)))
       )
     );
@@ -115,8 +122,8 @@
             kind: createKind, id: (allowEdit && selCompany) ? selCompany.id : null,
             prefill: createPrefill, onSaved: onCreated })
         ),
-        (showCreate || (focused && !selCompany && query.length > 0 && filtered.length > 0)) && dropdown(
-          filtered.map(function(c) { return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setCompId(c.id); setQuery(""); setFocused(false); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } }, c.name); })
+        (focused && !selCompany && (filtered.length > 0 || showCreate)) && dropdown(
+          capped(filtered).map(function(c) { return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setCompId(c.id); setQuery(""); setFocused(false); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } }, c.name); })
             .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0)), 150)
       )
     );
@@ -160,8 +167,8 @@
             kind: createKind, id: (allowEdit && selContact) ? selContact.id : null,
             prefill: createPrefill, onSaved: onCreated })
         ),
-        (showCreate || (focused && !selContact && query.length > 0 && filtered.length > 0)) && dropdown(
-          filtered.map(function(c) { return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setContactId(c.id); setQuery(""); setFocused(false); },
+        (focused && !selContact && (filtered.length > 0 || showCreate)) && dropdown(
+          capped(filtered).map(function(c) { return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setContactId(c.id); setQuery(""); setFocused(false); },
             style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } },
             h("div", { style: { fontWeight: 600 } }, fullName(c)),
             c.role && h("div", { style: { fontSize: "10px", color: B.textMut } }, c.role + (c.email ? " · " + c.email : ""))
@@ -216,8 +223,8 @@
             kind: createKind, id: (allowEdit && selProject) ? selProject.id : null,
             prefill: createPrefill, onSaved: onCreated })
         ),
-        (showCreate || (focused && !selProject && query.length > 0 && filtered.length > 0)) && dropdown(
-          filtered.map(function(p) {
+        (focused && !selProject && (filtered.length > 0 || showCreate)) && dropdown(
+          capped(filtered).map(function(p) {
             var cn = compName(p);
             return h("div", { key: p.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setProjectId(p.id); setQuery(""); setFocused(false); },
               style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } },

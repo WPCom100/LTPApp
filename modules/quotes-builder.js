@@ -2213,17 +2213,24 @@
                 // nothing to pick \u2014 the \uff0b on the label is the way out. A
                 // contact added here is linked to the company so it lands in
                 // this very list.
-                h(window.LTPSelect, { label: "Primary Contact",
-                  value: draft.clientContactId || "",
-                  onChange: function(v) { patchDraft({ clientContactId: v ? Number(v) : null }); },
-                  options: [{ value: "", label: "(none)" }].concat(
-                    window.LTP_HELPERS.contactSelectOptions(projectContacts, draft.clientContactId, contacts)),
-                  labelAction: h(window.LTPEntityQuickAction, {
-                    kind: "contact", id: draft.clientContactId || null,
-                    prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
-                    onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
-                  })
-                })
+                // Tier 1 is this client's / project's contacts; everyone else is
+                // behind an "Other contacts" click, so a client whose contact was
+                // never linked is still reachable instead of unpickable.
+                (function() {
+                  var tiers = window.LTP_HELPERS.contactPickerTiers(
+                    projectContacts, draft.clientContactId, contacts, [{ value: "", label: "(none)" }]);
+                  return h(window.LTPSearchSelect, { label: "Primary Contact",
+                    value: draft.clientContactId || "",
+                    onChange: function(v) { patchDraft({ clientContactId: v === "" ? null : Number(v) }); },
+                    searchPlaceholder: "Search contacts\u2026",
+                    options: tiers.options, moreOptions: tiers.moreOptions, moreLabel: tiers.moreLabel,
+                    labelAction: h(window.LTPEntityQuickAction, {
+                      kind: "contact", id: draft.clientContactId || null,
+                      prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
+                      onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
+                    })
+                  });
+                })()
               ),
 
               // Contact mode

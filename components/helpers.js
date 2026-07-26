@@ -49,5 +49,33 @@
     return opts.concat([{ value: sel.id, label: H.contactName(sel) + " — not on this list" }]);
   };
 
+  // Two-tier options for a "Primary Contact" picker, in the shape
+  // window.LTPSearchSelect wants: { options, moreOptions, moreLabel }.
+  //
+  // Tier 1 is the contacts attached to this client (or project); tier 2 is
+  // everyone else, behind a deliberate click — the same pattern the crew
+  // pickers use, and for the same reason: a name match from an unrelated client
+  // shouldn't bury the handful of people who belong to this one. Without the
+  // second tier, a client whose contact was never linked is simply unpickable,
+  // which is the state the old narrowed <select> left you in.
+  //
+  // Crew are excluded from tier 2: they're staff, not people to bill.
+  H.contactPickerTiers = function (candidates, selectedId, allContacts, leading) {
+    var primary = H.contactSelectOptions(candidates, selectedId, allContacts);
+    var taken = {};
+    primary.forEach(function (o) { taken[o.value] = 1; });
+    var rest = (allContacts || [])
+      .filter(function (c) { return !taken[c.id] && !c.isCrew; })
+      .map(function (c) {
+        return { value: c.id, label: H.contactName(c), sublabel: c.role || c.email || undefined };
+      })
+      .sort(function (a, b) { return a.label.localeCompare(b.label); });
+    return {
+      options: (leading || []).concat(primary),
+      moreOptions: rest.length ? rest : null,
+      moreLabel: rest.length ? "Other contacts (" + rest.length + ") — not linked to this client" : null,
+    };
+  };
+
   window.LTP_HELPERS = H;
 })();
