@@ -123,6 +123,7 @@ function LTPSignedInApp(props) {
   var [quotes,   setQuotes,   quotesReady]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
   var [products, setProducts, productsReady] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
   var [services, setServices, servicesReady] = usePersistentState("services", window.LTP_DATA_SERVICES);
+  var [fees,     setFees,     feesReady]     = usePersistentState("fees",     window.LTP_DATA_FEES);
   // Invoices
   var [invoices, setInvoices, invoicesReady] = usePersistentState("invoices", window.LTP_DATA_INVOICES);
   // Settings
@@ -130,7 +131,7 @@ function LTPSignedInApp(props) {
 
   var allReady = companiesReady && contactsReady && projectsReady
               && equipmentReady && allocationsReady && containersReady && kitsReady
-              && quotesReady && productsReady && servicesReady
+              && quotesReady && productsReady && servicesReady && feesReady
               && invoicesReady && settingsReady;
 
   var isAdmin = props.authUser.role === "admin";
@@ -315,6 +316,15 @@ function LTPSignedInApp(props) {
       }
     });
 
+    // Fees \u2014 misc billable catalog (Lodging, Travel, Consultation, \u2026)
+    (fees || []).forEach(function(f) {
+      var hay = (f.name + " " + (f.category || "")).toLowerCase();
+      if (hay.indexOf(q) !== -1) {
+        results.push({ type: "Fee", label: f.name, sub: (f.category ? f.category + " \u00b7 " : "") + "$" + (f.unitPrice || 0) + (f.unit && f.unit !== "flat" ? "/" + f.unit : ""), module: "quotes",
+          action: function() { nav("quotes/fees"); setSearchOpen(false); setGlobalSearch(""); } });
+      }
+    });
+
     // Invoices
     (invoices || []).forEach(function(inv) {
       var ref = window.LTP_INVOICE_REF(inv);
@@ -337,7 +347,7 @@ function LTPSignedInApp(props) {
     });
 
     setSearchResults(results.slice(0, 12));
-  }, [globalSearch, companies, contacts, projects, quotes, equipment, products, services, invoices]);
+  }, [globalSearch, companies, contacts, projects, quotes, equipment, products, services, fees, invoices]);
 
   function renderModule() {
     switch (activeModule) {
@@ -357,6 +367,7 @@ function LTPSignedInApp(props) {
         quotes: quotes,     setQuotes: setQuotes,
         products: products, setProducts: setProducts,
         services: services, setServices: setServices,
+        fees: fees,         setFees: setFees,
         equipment: equipment, allocations: allocations,
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
@@ -367,7 +378,7 @@ function LTPSignedInApp(props) {
         invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
         companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects,
         quotes: quotes, setQuotes: setQuotes, route: route,
-        equipment: equipment, products: products, services: services, allocations: allocations,
+        equipment: equipment, products: products, services: services, fees: fees, allocations: allocations,
         settings: settings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "labor":     return h(window.LTPErrorBoundary, { name: "Labor" }, h(window.LaborView, {
@@ -383,7 +394,7 @@ function LTPSignedInApp(props) {
     }
   }
 
-  var typeColors = { Company: B.accent, Contact: B.success, Project: B.info, Invoice: B.warn, Quote: B.warn, Equipment: B.textSec, Product: B.success, Service: B.info, Crew: B.info };
+  var typeColors = { Company: B.accent, Contact: B.success, Project: B.info, Invoice: B.warn, Quote: B.warn, Equipment: B.textSec, Product: B.success, Service: B.info, Fee: "#B794F6", Crew: B.info };
 
   // Detect when we're in the full-screen quote builder — hides topbar to maximize space
   var isQuoteBuilder = (route.module === "quotes" && (route.id !== null || route.action === "new"))
@@ -469,13 +480,16 @@ function LTPSignedInApp(props) {
               { path: "quotes", label: "Quotes"   },
               { path: "quotes/products", label: "Products" },
               { path: "quotes/services", label: "Services" },
+              { path: "quotes/fees",     label: "Fees"     },
             ];
             quotesSubs.forEach(function(sub) {
               var subActive = sub.path === "quotes"
-                ? (route.module === "quotes" && (!route.sub || route.sub !== "products" && route.sub !== "services"))
+                ? (route.module === "quotes" && (!route.sub || route.sub !== "products" && route.sub !== "services" && route.sub !== "fees"))
                 : sub.path === "quotes/products"
                   ? (route.module === "quotes" && route.sub === "products")
-                  : (route.module === "quotes" && route.sub === "services");
+                  : sub.path === "quotes/services"
+                    ? (route.module === "quotes" && route.sub === "services")
+                    : (route.module === "quotes" && route.sub === "fees");
               rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
@@ -602,6 +616,7 @@ var LTP_MODULE_SUBS = {
     { path: "quotes",          label: "Quotes"   },
     { path: "quotes/products", label: "Products" },
     { path: "quotes/services", label: "Services" },
+    { path: "quotes/fees",     label: "Fees"     },
   ],
   labor: [
     { path: "labor/assignments", label: "Assignments"     },

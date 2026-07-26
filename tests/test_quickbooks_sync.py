@@ -343,6 +343,25 @@ async def test_payload_lines_and_tax():
     _check("not recalled (status sent) → empty PrivateNote", payload["PrivateNote"] == "")
 
 
+async def test_payload_fee_line():
+    print("test_payload_fee_line")
+    # A custom fee (feeId None) and a catalog fee both bill as ordinary sales
+    # lines. Fees edit unitPrice directly (adjustedPrice stays null), so the
+    # billed amount is unitPrice * qty with no adjustment applied.
+    inv = _fake_invoice(sections=[{"id": "s1", "items": [
+        {"type": "fee", "feeId": None, "name": "Lodging — 2 nights", "qty": 2, "unitPrice": 180, "adjustedPrice": None, "taxable": False},
+        {"type": "fee", "feeId": 5, "name": "Consultation", "qty": 3, "unitPrice": 150, "adjustedPrice": None, "taxable": True},
+    ]}])
+    payload = await _build(inv)
+    sales = [l for l in payload["Line"] if l["DetailType"] == "SalesItemLineDetail"]
+    _check("both fee lines billed", len(sales) == 2)
+    _check("custom fee amount = price*qty (no adjustment)", sales[0]["Amount"] == 360)
+    _check("catalog fee amount = price*qty", sales[1]["Amount"] == 450)
+    _check("fee resolves an item ref", sales[0]["SalesItemLineDetail"]["ItemRef"]["value"] == "ITEM-fee")
+    _check("exempt fee → NON tax code", sales[0]["SalesItemLineDetail"]["TaxCodeRef"]["value"] == "NON")
+    _check("taxable fee → TAX code", sales[1]["SalesItemLineDetail"]["TaxCodeRef"]["value"] == "TAX")
+
+
 async def test_payload_recall_note():
     print("test_payload_recall_note")
     payload = await _build(_fake_invoice(status="draft", sent_date="2026-06-21"))
@@ -510,6 +529,9 @@ async def test_income_account_resolution():
     settings["qboEquipmentIncomeAccountId"] = "77"
     _check("equipment (rentals) mapping honored",
            await qbo_sync._desired_income_account_id(None, "equipment", None) == "77")
+    settings["qboFeeIncomeAccountId"] = "88"
+    _check("fee mapping honored",
+           await qbo_sync._desired_income_account_id(None, "fee", None) == "88")
     settings.clear()
     _check("None when nothing configured",
            await qbo_sync._desired_income_account_id(None, "product", None) is None)

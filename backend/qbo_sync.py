@@ -103,6 +103,7 @@ _TYPE_ACCOUNT_KEYS = {
     "service": "qboServiceIncomeAccountId",
     "product": "qboProductIncomeAccountId",
     "equipment": "qboEquipmentIncomeAccountId",
+    "fee": "qboFeeIncomeAccountId",
 }
 
 
@@ -418,8 +419,9 @@ async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repo
 
 async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, repoints=None) -> str:
     """QB Item id for a sales line. Equipment → the generic rental item.
-    Product/Service → their own item (matched on the catalog row's qb_item_id
-    cache, else by name). Free-typed lines fall back to the line name.
+    Product/Service/Fee → their own item (matched on the catalog row's
+    qb_item_id cache, else by name). Free-typed lines — including custom fees
+    with no `feeId` — fall back to the line name.
 
     Also keeps the item's income account aligned with the app's mapping: when
     the resolved desired account differs from the row's qb_income_account_synced
@@ -448,6 +450,11 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
         catalog_row = r.scalar_one_or_none()
         if catalog_row and not name:
             name = f"{catalog_row.role} — {catalog_row.description}".strip()
+    elif ltype == "fee" and line.get("feeId"):
+        r = await db.execute(select(models.Fee).where(models.Fee.id == line["feeId"]))
+        catalog_row = r.scalar_one_or_none()
+        if catalog_row and not name:
+            name = catalog_row.name
 
     desired = await _desired_income_account_id(db, ltype, catalog_row)
 

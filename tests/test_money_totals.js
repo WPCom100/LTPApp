@@ -72,6 +72,16 @@ q = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 8.25 };
 near("Q6b qbTaxTotal applied", QT(q).tax, 8.25); near("Q6b total with QB tax", QT(q).total, 108.25);
 eq("Q7 quote ref Q-YYYY-NNN", QREF({ id: 3, createdDate: "2026-02-09" }), "Q-2026-003");
 eq("Q8 note rows skipped", (function () { window.LTP_TAX_RATE = 0; return QT({ sections: items([line({ type: "note", unitPrice: 500 }), line({ unitPrice: 25 })]) }).subtotal; })(), 25);
+// Fees are ordinary priced lines that edit unitPrice directly and never set
+// adjustedPrice — so a fee's subtotal == its adjusted (no line-adjustment delta),
+// and it sums alongside other line types.
+window.LTP_TAX_RATE = 0;
+let qf = { sections: items([line({ type: "fee", unitPrice: 250, qty: 2 }), line({ type: "service", unitPrice: 100, qty: 1 })]) };
+near("Q9 fee sums into subtotal", QT(qf).subtotal, 600);
+near("Q9 fee never creates adjustment delta (adjusted == subtotal)", QT(qf).adjusted, 600);
+near("Q9 fee cost defaults 0", QT(qf).cost, 0);
+let invf = { sections: items([line({ type: "fee", unitPrice: 250, qty: 2 }), line({ type: "note", unitPrice: 999 })]) };
+near("Q10 invoice totals count fee, skip note", IT(invf).subtotal, 500);
 
 // ── isOverdue / displayStatus ────────────────────────────────────────────────
 const today = window.LTP_todayISO();
