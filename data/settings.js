@@ -47,6 +47,10 @@ window.LTP_DATA_SETTINGS = {
   crewRoleOptions: ["L1", "L2", "L3", "LD", "A1", "A2", "A3", "V1", "V2", "SH", "SM", "F1", "F2", "RIG", "PM", "TD", "PA"],
   crewDepartmentOptions: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"],
 
+  // Fee quick-picks — one-tap names that pre-fill a CUSTOM fee's description in
+  // the quote/invoice Add-Item → Fees tab. Editable from Quotes → Fees.
+  feeQuickNames: ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"],
+
   // Business Defaults
   defaultPaymentTerms: 30,        // Net 30
   taxRate: 0,                     // percentage

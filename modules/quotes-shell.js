@@ -16,7 +16,7 @@
   window.QuotesView = function({ companies, contacts, projects, setProjects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
                                   fees, setFees,
-                                  equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+                                  equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, setSettings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
     // ── Route-derived state ────────────────────────────────────────────────────
@@ -103,7 +103,7 @@
 
       activeTab === "fees" && h(window.QuotesFees, {
         fees: fees, setFees: setFees, quotes: quotes, invoices: invoices,
-        settings: settings, qbo: qbo,
+        settings: settings, setSettings: setSettings, isAdmin: isAdmin, qbo: qbo,
       })
     );
   };

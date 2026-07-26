@@ -1784,6 +1784,28 @@ window.LTP_QUOTE_REF = function(q) {
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
 };
 
+// Fee quick-pick names — the one-tap "custom fee" name suggestions in the
+// quote/invoice Add-Item → Fees tab. Sourced from settings.feeQuickNames
+// (editable in Quotes → Fees), falling back to a sensible default only when the
+// setting is absent. Returns a normalized list: trimmed, non-empty, and
+// de-duplicated case-insensitively, with authored order preserved. An
+// explicitly-empty list stays empty (the user removed every quick-pick).
+window.LTP_FEE_QUICKNAMES_DEFAULT = ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"];
+window.LTP_feeQuickNames = function(settings) {
+  var raw = settings && settings.feeQuickNames;
+  if (!Array.isArray(raw)) raw = window.LTP_FEE_QUICKNAMES_DEFAULT;
+  var seen = {}, out = [];
+  raw.forEach(function(n) {
+    var s = (n == null ? "" : String(n)).trim();
+    if (!s) return;
+    var k = s.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = true;
+    out.push(s);
+  });
+  return out;
+};
+
 // Gather activity entries of a given fault type across invoices and quotes for
 // the Settings Error Log. Backend paths stamp typed activity entries on their
 // entity — `email_failed` (auto-receipt poller + manual sends) and
