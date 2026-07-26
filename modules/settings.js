@@ -19,7 +19,14 @@
     var openState = useState(props.defaultOpen != null ? props.defaultOpen : !isMobile);
     var open = openState[0], setOpen = openState[1];
     if (!isMobile) {
-      return h("div", { style: sectionStyle }, h("div", { style: sectionTitle }, props.title), kids);
+      // break-inside:avoid keeps a card from splitting across the desktop
+      // two-column masonry (a harmless no-op when the page is a single
+      // column, i.e. narrow desktop and the full-width sections below).
+      var cardStyle = Object.assign({}, sectionStyle, {
+        breakInside: "avoid",
+        WebkitColumnBreakInside: "avoid",
+      });
+      return h("div", { style: cardStyle }, h("div", { style: sectionTitle }, props.title), kids);
     }
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", marginBottom: 12, overflow: "hidden" } },
       h("button", { onClick: function() { setOpen(!open); }, className: "ltp-tap",
@@ -122,6 +129,11 @@
 
   window.SettingsView = function({ settings, setSettings, invoices, quotes }) {
     var isMobile = window.LTP_useIsMobile();
+    // Wide-desktop two-column layout. Below this width — tablets, split
+    // windows, and smaller laptops (especially with the sidebar open) — the
+    // page stays the original single centered column; only genuinely wide
+    // screens get the denser two-column masonry that cuts the scrolling.
+    var isWide = window.LTP_useMediaQuery("(min-width: 1200px)");
     var [draft, setDraft] = useState(Object.assign({}, settings));
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
     // a save+nav from flashing a bogus "unsaved changes" prompt.
@@ -359,7 +371,7 @@
     var qboConnError = (qbo && qbo.lastError)
       ? { message: qbo.lastError, at: qbo.lastErrorAt } : null;
 
-    return h("div", { style: { maxWidth: 800, margin: "0 auto" } },
+    return h("div", { style: { maxWidth: isWide ? 1400 : 800, margin: "0 auto" } },
       // Header
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Company Settings"),
@@ -368,6 +380,15 @@
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
           isDirty && h(window.Btn, { small: true, onClick: save }, "Save Settings"))
       ),
+
+      // Compact settings sections. On a wide desktop these short cards flow
+      // into a balanced two-column masonry (columnCount:2) so they take up
+      // half the vertical space; each card sets break-inside:avoid so it
+      // never splits across the gap. On mobile / narrow desktop the wrapper
+      // is a plain block and the cards stack in order. The taller, wider
+      // sections (Team Members, QuickBooks, the HTML-editor panels, …) are
+      // rendered full-width below this wrapper where they have room to breathe.
+      h("div", { style: isWide ? { columnCount: 2, columnGap: 16 } : null },
 
       // ── Company Info ───────────────────────────────────────────────────────
       h(AccordionSection, { title: "Company Information", defaultOpen: true },
@@ -437,45 +458,6 @@
             )
           )
         )
-      ),
-
-      // ── Tag & Badge Colors ─────────────────────────────────────────────────
-      h(AccordionSection, { title: "Tag & Badge Colors" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Customize colors for departments, statuses, and categories. Changes apply immediately across the app."),
-        function() {
-          var tc = draft.tagColors || {};
-          function setTagColor(key, val) {
-            var updated = Object.assign({}, tc);
-            updated[key] = val;
-            set("tagColors", updated);
-          }
-          var groups = [
-            { label: "Departments", keys: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"] },
-            { label: "Document Status", keys: ["draft", "sent", "accepted", "declined", "paid", "partial", "overdue", "converted", "invoiced"] },
-            { label: "Crew Status", keys: ["open", "requested", "confirmed"] },
-            { label: "CRM", keys: ["active", "inactive", "client", "vendor", "prospect"] },
-            { label: "Project Categories", keys: ["rental", "labor", "service", "full-production"] },
-          ];
-          return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
-            groups.map(function(g) {
-              return h("div", { key: g.label },
-                h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, g.label),
-                h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-                  g.keys.map(function(k) {
-                    var color = tc[k] || "#666666";
-                    return h("div", { key: k, style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 8px" } },
-                      h("input", { type: "color", value: color, onChange: function(e) { setTagColor(k, e.target.value); },
-                        style: { width: 20, height: 20, border: "none", padding: 0, cursor: "pointer", background: "transparent", borderRadius: "3px" } }),
-                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: color } }, k),
-                      h("span", { style: { background: color + "1F", color: color, border: "1px solid " + color + "59", padding: "1px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, textTransform: "uppercase" } }, k)
-                    );
-                  })
-                )
-              );
-            })
-          );
-        }()
       ),
 
       // ── Crew Options ──────────────────────────────────────────────────────
@@ -568,6 +550,150 @@
           h(window.LTPInput, { label: "Reply-To Email", value: draft.emailReplyTo || "", onChange: function(v) { set("emailReplyTo", v); }, type: "email",
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } })
         )
+      ),
+
+      // ── QuickBooks Online ──────────────────────────────────────────────────
+      // Company-wide accounting connection (admin-managed). Tokens live
+      // encrypted server-side; this panel only ever sees booleans + masked
+      // metadata. See backend/routes/qbo.py.
+      h(AccordionSection, { title: "QuickBooks Online" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 12, lineHeight: 1.5 } },
+          "Connect your QuickBooks Online company to push generated invoices. Customers and products/services are created in QuickBooks automatically if they're missing, and QuickBooks calculates sales tax. The connection is company-wide."),
+        qbo === null && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Checking connection…"),
+        qbo && qbo.configured === false && h("div", { style: { background: B.warn + "10", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginBottom: 10 } },
+          "QuickBooks credentials are not configured on the server. Set QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REDIRECT_URI and QBO_ENVIRONMENT, then redeploy."),
+        qbo && !qbo.connected && h("button", { onClick: connectQbo, disabled: qbo.configured === false,
+          style: { background: qbo.configured === false ? B.raised : "#2CA01C", border: "1px solid " + (qbo.configured === false ? B.border : "#2CA01C"), borderRadius: "6px", padding: "8px 16px", color: qbo.configured === false ? B.textMut : "#fff", fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: qbo.configured === false ? "not-allowed" : "pointer" } }, "Connect QuickBooks"),
+        qbo && qbo.connected && h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "12px 14px" } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
+            h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: qbo.needsReconnect ? B.warn : B.success, display: "inline-block" } }),
+            h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, qbo.needsReconnect ? "Reconnect required" : "Connected"),
+            h("span", { style: { fontSize: "9px", fontWeight: 700, color: qbo.environment === "production" ? B.success : B.warn, background: (qbo.environment === "production" ? B.success : B.warn) + "18", border: "1px solid " + (qbo.environment === "production" ? B.success : B.warn) + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.05em" } }, qbo.environment || "sandbox")),
+          h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.6 } },
+            h("div", null, "Company (realm): ", h("span", { style: { color: B.textSec } }, qbo.realmMasked || "—")),
+            qbo.connectedBy && h("div", null, "Connected by ", h("span", { style: { color: B.textSec } }, qbo.connectedBy), qbo.connectedAt ? " on " + qbo.connectedAt.substring(0, 10) : ""),
+            qbo.refreshTokenExpiresAt && h("div", null, "Authorization valid until ", h("span", { style: { color: B.textSec } }, qbo.refreshTokenExpiresAt.substring(0, 10))),
+            // Auto-receipts: emailed from the connector's Gmail when QuickBooks marks an invoice paid.
+            h("div", { style: { marginTop: 6 } }, "Payment receipts: ",
+              h("span", { style: { color: B.textSec } },
+                "auto-sent" + (qbo.connectedBy ? " from " + qbo.connectedBy + "'s Gmail" : "") + " when QuickBooks marks an invoice paid"))),
+          // Warn when receipts are queued but the sender's Gmail is disconnected — they'll
+          // send automatically once it's reconnected (no action needed beyond reconnecting Gmail).
+          qbo.pendingReceipts > 0 && h("div", { style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginTop: 10, lineHeight: 1.5 } },
+            qbo.pendingReceipts + " payment receipt" + (qbo.pendingReceipts === 1 ? " is" : "s are") + " waiting to send"
+            + (qbo.senderGmailConnected ? " and will go out on the next sync." : ". Reconnect " + (qbo.connectedBy || "the connector") + "'s Google sign-in (gmail.send) to release them.")),
+          // ── Income account mapping ─────────────────────────────────────────
+          // Which QuickBooks income account each kind of line item posts to.
+          // Values are settings keys (saved with the page's Save button);
+          // the selectable list is the admin-refreshed cache from /status.
+          h("div", { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid " + B.border } },
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Income Accounts"),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+              "Choose which QuickBooks income account services, products, and equipment rentals post to. Individual services and products can override this in their edit forms. Changes take effect the next time an invoice is pushed — QuickBooks history stays put unless an old invoice is re-pushed."),
+            h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" } },
+              h(window.Btn, { small: true, variant: "ghost", onClick: refreshAccounts, disabled: refreshingAccounts }, refreshingAccounts ? "Updating…" : "Update Account List"),
+              h("span", { style: { fontSize: "10px", color: B.textMut } },
+                (qbo.incomeAccounts && qbo.incomeAccounts.length > 0)
+                  ? qbo.incomeAccounts.length + " income account" + (qbo.incomeAccounts.length === 1 ? "" : "s")
+                    + (qbo.incomeAccountsUpdatedAt ? " · updated " + qbo.incomeAccountsUpdatedAt.substring(0, 10) : "")
+                  : "No account list loaded yet — update it to fill the dropdowns.")),
+            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+              h(window.LTPSelect, { label: "Services (Labor)", value: draft.qboServiceIncomeAccountId || "",
+                onChange: function(v) { set("qboServiceIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboServiceIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Products", value: draft.qboProductIncomeAccountId || "",
+                onChange: function(v) { set("qboProductIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboProductIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Equipment Rentals", value: draft.qboEquipmentIncomeAccountId || "",
+                onChange: function(v) { set("qboEquipmentIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboEquipmentIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Fees (Lodging, Travel, …)", value: draft.qboFeeIncomeAccountId || "",
+                onChange: function(v) { set("qboFeeIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboFeeIncomeAccountId, "Use default income account") }),
+              h(window.LTPSelect, { label: "Default Income Account", value: draft.qboIncomeAccountId || "",
+                onChange: function(v) { set("qboIncomeAccountId", v || null); },
+                options: incomeAccountOptions(draft.qboIncomeAccountId, "Auto — first income account in QuickBooks") }))),
+          h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
+            qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
+            h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))
+      ),
+
+      // ── Crew Payouts & Pay Periods ──────────────────────────────────────────
+      // Drives the Payouts tab's pay-period presets and the QuickBooks vendor-bill
+      // export (one bill per crew member per period). Pay-period fields show
+      // regardless of the QuickBooks connection; the account mapping needs it.
+      h(AccordionSection, { title: "Crew Payouts & Pay Periods" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+          "Set your payroll cycle and where crew payouts post in QuickBooks. The Payouts tab groups pay into these periods, and Export to QuickBooks creates one vendor bill per person per period."),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
+          h(window.LTPInput, { label: "Pay period start (anchor)", type: "date",
+            value: draft.payPeriodAnchor || "", onChange: function(v) { set("payPeriodAnchor", v || null); } }),
+          h(window.LTPInput, { label: "Period length (days)", type: "number",
+            value: draft.payPeriodLengthDays == null ? 14 : draft.payPeriodLengthDays,
+            // Clamp to the range the pay-period helpers actually honor (1..31, else
+            // they fall back to 14) so the stored value can't disagree with behavior.
+            onChange: function(v) { set("payPeriodLengthDays", Math.max(1, Math.min(31, Number(v) || 14))); } }),
+          h(window.LTPInput, { label: "Pay day offset (days after end)", type: "number",
+            value: draft.payPeriodPayDayOffsetDays == null ? 0 : draft.payPeriodPayDayOffsetDays,
+            onChange: function(v) { set("payPeriodPayDayOffsetDays", Math.max(0, Number(v) || 0)); } })),
+        h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 8, lineHeight: 1.5 } },
+          "Any known cycle start works — periods repeat every N days from it. Example: 2026-07-06, 14, 5 → the Jul 6–19 period is paid Fri Jul 24."),
+        qbo && qbo.connected
+          ? h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
+              h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Vendor Bill Accounts"),
+              h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+                "Which QuickBooks accounts a payout bill posts to. Individual roles can override the expense account in the labor rate card (Quotes → Services). Update the account list from the QuickBooks section above."),
+              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+                h(window.LTPSelect, { label: "Default Expense Account", value: draft.qboPayoutExpenseAccountId || "",
+                  onChange: function(v) { set("qboPayoutExpenseAccountId", v || null); },
+                  options: acctOptions(qbo.expenseAccounts, draft.qboPayoutExpenseAccountId, "Choose an expense account") }),
+                h(window.LTPSelect, { label: "Accounts Payable Account", value: draft.qboPayoutApAccountId || "",
+                  onChange: function(v) { set("qboPayoutApAccountId", v || null); },
+                  options: acctOptions(qbo.apAccounts, draft.qboPayoutApAccountId, "QuickBooks default A/P account") })))
+          : h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 14, fontStyle: "italic" } },
+              "Connect QuickBooks above to map the payout expense and Accounts-Payable accounts.")
+      ),
+      ),  // ← end of the two-column compact wrapper
+
+      // ── Tag & Badge Colors ─────────────────────────────────────────────────
+      // Full-width: the color chips wrap across the whole page (shorter and
+      // tidier than squeezed into one masonry column).
+      h(AccordionSection, { title: "Tag & Badge Colors" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+          "Customize colors for departments, statuses, and categories. Changes apply immediately across the app."),
+        function() {
+          var tc = draft.tagColors || {};
+          function setTagColor(key, val) {
+            var updated = Object.assign({}, tc);
+            updated[key] = val;
+            set("tagColors", updated);
+          }
+          var groups = [
+            { label: "Departments", keys: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"] },
+            { label: "Document Status", keys: ["draft", "sent", "accepted", "declined", "paid", "partial", "overdue", "converted", "invoiced"] },
+            { label: "Crew Status", keys: ["open", "requested", "confirmed"] },
+            { label: "CRM", keys: ["active", "inactive", "client", "vendor", "prospect"] },
+            { label: "Project Categories", keys: ["rental", "labor", "service", "full-production"] },
+          ];
+          return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+            groups.map(function(g) {
+              return h("div", { key: g.label },
+                h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, g.label),
+                h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+                  g.keys.map(function(k) {
+                    var color = tc[k] || "#666666";
+                    return h("div", { key: k, style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 8px" } },
+                      h("input", { type: "color", value: color, onChange: function(e) { setTagColor(k, e.target.value); },
+                        style: { width: 20, height: 20, border: "none", padding: 0, cursor: "pointer", background: "transparent", borderRadius: "3px" } }),
+                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: color } }, k),
+                      h("span", { style: { background: color + "1F", color: color, border: "1px solid " + color + "59", padding: "1px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, textTransform: "uppercase" } }, k)
+                    );
+                  })
+                )
+              );
+            })
+          );
+        }()
       ),
 
       // ── Email Signature Template ───────────────────────────────────────────
@@ -698,108 +824,6 @@
             );
           })
         )
-      ),
-
-      // ── QuickBooks Online ──────────────────────────────────────────────────
-      // Company-wide accounting connection (admin-managed). Tokens live
-      // encrypted server-side; this panel only ever sees booleans + masked
-      // metadata. See backend/routes/qbo.py.
-      h(AccordionSection, { title: "QuickBooks Online" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 12, lineHeight: 1.5 } },
-          "Connect your QuickBooks Online company to push generated invoices. Customers and products/services are created in QuickBooks automatically if they're missing, and QuickBooks calculates sales tax. The connection is company-wide."),
-        qbo === null && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "Checking connection…"),
-        qbo && qbo.configured === false && h("div", { style: { background: B.warn + "10", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginBottom: 10 } },
-          "QuickBooks credentials are not configured on the server. Set QBO_CLIENT_ID, QBO_CLIENT_SECRET, QBO_REDIRECT_URI and QBO_ENVIRONMENT, then redeploy."),
-        qbo && !qbo.connected && h("button", { onClick: connectQbo, disabled: qbo.configured === false,
-          style: { background: qbo.configured === false ? B.raised : "#2CA01C", border: "1px solid " + (qbo.configured === false ? B.border : "#2CA01C"), borderRadius: "6px", padding: "8px 16px", color: qbo.configured === false ? B.textMut : "#fff", fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: qbo.configured === false ? "not-allowed" : "pointer" } }, "Connect QuickBooks"),
-        qbo && qbo.connected && h("div", { style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "12px 14px" } },
-          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 8 } },
-            h("span", { style: { width: 8, height: 8, borderRadius: "50%", background: qbo.needsReconnect ? B.warn : B.success, display: "inline-block" } }),
-            h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, qbo.needsReconnect ? "Reconnect required" : "Connected"),
-            h("span", { style: { fontSize: "9px", fontWeight: 700, color: qbo.environment === "production" ? B.success : B.warn, background: (qbo.environment === "production" ? B.success : B.warn) + "18", border: "1px solid " + (qbo.environment === "production" ? B.success : B.warn) + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.05em" } }, qbo.environment || "sandbox")),
-          h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.6 } },
-            h("div", null, "Company (realm): ", h("span", { style: { color: B.textSec } }, qbo.realmMasked || "—")),
-            qbo.connectedBy && h("div", null, "Connected by ", h("span", { style: { color: B.textSec } }, qbo.connectedBy), qbo.connectedAt ? " on " + qbo.connectedAt.substring(0, 10) : ""),
-            qbo.refreshTokenExpiresAt && h("div", null, "Authorization valid until ", h("span", { style: { color: B.textSec } }, qbo.refreshTokenExpiresAt.substring(0, 10))),
-            // Auto-receipts: emailed from the connector's Gmail when QuickBooks marks an invoice paid.
-            h("div", { style: { marginTop: 6 } }, "Payment receipts: ",
-              h("span", { style: { color: B.textSec } },
-                "auto-sent" + (qbo.connectedBy ? " from " + qbo.connectedBy + "'s Gmail" : "") + " when QuickBooks marks an invoice paid"))),
-          // Warn when receipts are queued but the sender's Gmail is disconnected — they'll
-          // send automatically once it's reconnected (no action needed beyond reconnecting Gmail).
-          qbo.pendingReceipts > 0 && h("div", { style: { background: B.warn + "12", border: "1px solid " + B.warn + "33", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.warn, marginTop: 10, lineHeight: 1.5 } },
-            qbo.pendingReceipts + " payment receipt" + (qbo.pendingReceipts === 1 ? " is" : "s are") + " waiting to send"
-            + (qbo.senderGmailConnected ? " and will go out on the next sync." : ". Reconnect " + (qbo.connectedBy || "the connector") + "'s Google sign-in (gmail.send) to release them.")),
-          // ── Income account mapping ─────────────────────────────────────────
-          // Which QuickBooks income account each kind of line item posts to.
-          // Values are settings keys (saved with the page's Save button);
-          // the selectable list is the admin-refreshed cache from /status.
-          h("div", { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid " + B.border } },
-            h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Income Accounts"),
-            h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
-              "Choose which QuickBooks income account services, products, and equipment rentals post to. Individual services and products can override this in their edit forms. Changes take effect the next time an invoice is pushed — QuickBooks history stays put unless an old invoice is re-pushed."),
-            h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" } },
-              h(window.Btn, { small: true, variant: "ghost", onClick: refreshAccounts, disabled: refreshingAccounts }, refreshingAccounts ? "Updating…" : "Update Account List"),
-              h("span", { style: { fontSize: "10px", color: B.textMut } },
-                (qbo.incomeAccounts && qbo.incomeAccounts.length > 0)
-                  ? qbo.incomeAccounts.length + " income account" + (qbo.incomeAccounts.length === 1 ? "" : "s")
-                    + (qbo.incomeAccountsUpdatedAt ? " · updated " + qbo.incomeAccountsUpdatedAt.substring(0, 10) : "")
-                  : "No account list loaded yet — update it to fill the dropdowns.")),
-            h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-              h(window.LTPSelect, { label: "Services (Labor)", value: draft.qboServiceIncomeAccountId || "",
-                onChange: function(v) { set("qboServiceIncomeAccountId", v || null); },
-                options: incomeAccountOptions(draft.qboServiceIncomeAccountId, "Use default income account") }),
-              h(window.LTPSelect, { label: "Products", value: draft.qboProductIncomeAccountId || "",
-                onChange: function(v) { set("qboProductIncomeAccountId", v || null); },
-                options: incomeAccountOptions(draft.qboProductIncomeAccountId, "Use default income account") }),
-              h(window.LTPSelect, { label: "Equipment Rentals", value: draft.qboEquipmentIncomeAccountId || "",
-                onChange: function(v) { set("qboEquipmentIncomeAccountId", v || null); },
-                options: incomeAccountOptions(draft.qboEquipmentIncomeAccountId, "Use default income account") }),
-              h(window.LTPSelect, { label: "Fees (Lodging, Travel, …)", value: draft.qboFeeIncomeAccountId || "",
-                onChange: function(v) { set("qboFeeIncomeAccountId", v || null); },
-                options: incomeAccountOptions(draft.qboFeeIncomeAccountId, "Use default income account") }),
-              h(window.LTPSelect, { label: "Default Income Account", value: draft.qboIncomeAccountId || "",
-                onChange: function(v) { set("qboIncomeAccountId", v || null); },
-                options: incomeAccountOptions(draft.qboIncomeAccountId, "Auto — first income account in QuickBooks") }))),
-          h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
-            qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
-            h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))
-      ),
-
-      // ── Crew Payouts & Pay Periods ──────────────────────────────────────────
-      // Drives the Payouts tab's pay-period presets and the QuickBooks vendor-bill
-      // export (one bill per crew member per period). Pay-period fields show
-      // regardless of the QuickBooks connection; the account mapping needs it.
-      h(AccordionSection, { title: "Crew Payouts & Pay Periods" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Set your payroll cycle and where crew payouts post in QuickBooks. The Payouts tab groups pay into these periods, and Export to QuickBooks creates one vendor bill per person per period."),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
-          h(window.LTPInput, { label: "Pay period start (anchor)", type: "date",
-            value: draft.payPeriodAnchor || "", onChange: function(v) { set("payPeriodAnchor", v || null); } }),
-          h(window.LTPInput, { label: "Period length (days)", type: "number",
-            value: draft.payPeriodLengthDays == null ? 14 : draft.payPeriodLengthDays,
-            // Clamp to the range the pay-period helpers actually honor (1..31, else
-            // they fall back to 14) so the stored value can't disagree with behavior.
-            onChange: function(v) { set("payPeriodLengthDays", Math.max(1, Math.min(31, Number(v) || 14))); } }),
-          h(window.LTPInput, { label: "Pay day offset (days after end)", type: "number",
-            value: draft.payPeriodPayDayOffsetDays == null ? 0 : draft.payPeriodPayDayOffsetDays,
-            onChange: function(v) { set("payPeriodPayDayOffsetDays", Math.max(0, Number(v) || 0)); } })),
-        h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 8, lineHeight: 1.5 } },
-          "Any known cycle start works — periods repeat every N days from it. Example: 2026-07-06, 14, 5 → the Jul 6–19 period is paid Fri Jul 24."),
-        qbo && qbo.connected
-          ? h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
-              h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Vendor Bill Accounts"),
-              h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
-                "Which QuickBooks accounts a payout bill posts to. Individual roles can override the expense account in the labor rate card (Quotes → Services). Update the account list from the QuickBooks section above."),
-              h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-                h(window.LTPSelect, { label: "Default Expense Account", value: draft.qboPayoutExpenseAccountId || "",
-                  onChange: function(v) { set("qboPayoutExpenseAccountId", v || null); },
-                  options: acctOptions(qbo.expenseAccounts, draft.qboPayoutExpenseAccountId, "Choose an expense account") }),
-                h(window.LTPSelect, { label: "Accounts Payable Account", value: draft.qboPayoutApAccountId || "",
-                  onChange: function(v) { set("qboPayoutApAccountId", v || null); },
-                  options: acctOptions(qbo.apAccounts, draft.qboPayoutApAccountId, "QuickBooks default A/P account") })))
-          : h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 14, fontStyle: "italic" } },
-              "Connect QuickBooks above to map the payout expense and Accounts-Payable accounts.")
       ),
 
       // ── Email Templates ────────────────────────────────────────────────────
