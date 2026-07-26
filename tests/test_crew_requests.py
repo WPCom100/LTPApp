@@ -576,10 +576,11 @@ def test_notify_sends_named_template_email():
     assert "/#/crew/" not in captured["html_body"]
 
 
-def test_notify_confirmed_includes_add_to_calendar():
-    """A crewConfirmed notify carries an 'Add to Calendar' button — a Google
-    Calendar template link whose event window is the confirmed shift's date +
-    call/wrap times (floating, timezone-less). Still no Accept/Decline link."""
+def test_notify_confirmed_add_to_calendar_links_to_call_sheet():
+    """A crewConfirmed notify with a token carries a single 'Click here to add to
+    calendar' button that routes the crew back to their call sheet (where the
+    per-shift calendar buttons live) — NOT per-shift Google Calendar links in the
+    email itself."""
     import backend.gmail as gmailmod
     client, tok = _setup()
     captured = {}
@@ -587,6 +588,37 @@ def test_notify_confirmed_includes_add_to_calendar():
     async def fake_send(**kw):
         captured.update(kw)
         return {"id": "cal-1"}
+
+    crew_token = "verifyconfirmtoken0000000000000000"
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": P_NOTIFY, "template": "crewConfirmed",
+                              "positionIds": ["p14a"], "token": crew_token},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    html = captured["html_body"]
+    assert "Click here to add to calendar" in html
+    # The button links back to the crew call sheet for this token.
+    assert "/#/crew/" + crew_token in html
+    # The per-shift Google Calendar links now live only on the web page.
+    assert "calendar.google.com" not in html
+
+
+def test_notify_confirmed_without_token_has_no_broken_calendar_link():
+    """No token → no calendar button (rather than a broken link); the email still
+    sends fine."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "cal-2"}
 
     orig = gmailmod.send
     gmailmod.send = fake_send
@@ -599,12 +631,29 @@ def test_notify_confirmed_includes_add_to_calendar():
     assert r.status_code == 200, r.text
     assert r.json()["emailStatus"]["emailed"] is True
     html = captured["html_body"]
-    assert "Add to your calendar" in html
-    assert "calendar.google.com/calendar/render" in html
-    # s14 is date 2026-07-30, call 10:00, wrap 14:00 (see _shift fixture).
-    assert "20260730T100000" in html and "20260730T140000" in html
-    # Informational — carries NO Accept/Decline crew link.
+    assert "Click here to add to calendar" not in html
     assert "/#/crew/" not in html
+
+
+def test_crew_shifts_payload_carries_role_and_note():
+    """The crew payload/shift builder exposes the bare role acronym (for the
+    calendar event title) and the producer's per-shift note, and the email shift
+    card renders the note."""
+    from backend.routes import crew as crewmod
+
+    class _P:
+        pass
+    proj = _P()
+    proj.schedule = [{
+        "id": "s", "title": "Main Show", "date": "2026-08-01", "time": "08:00", "endTime": "17:00",
+        "positions": [{"id": "p1", "serviceId": None, "role": "A1", "crewId": 1,
+                       "status": "confirmed", "note": "Parking is on 4th St. Gate code 4821."}],
+    }]
+    shifts = crewmod._crew_shifts(proj, ["p1"], {})
+    assert shifts and shifts[0]["role"] == "A1"
+    assert shifts[0]["note"] == "Parking is on 4th St. Gate code 4821."
+    html = crewmod._crew_shifts_html(shifts, "#EF5822")
+    assert "Parking is on 4th St. Gate code 4821." in html
 
 
 def test_notify_rejects_unknown_template():
@@ -918,7 +967,9 @@ def main() -> int:
         test_resend_pending_reemails_same_token,
         test_resend_non_pending_is_409,
         test_notify_sends_named_template_email,
-        test_notify_confirmed_includes_add_to_calendar,
+        test_notify_confirmed_add_to_calendar_links_to_call_sheet,
+        test_notify_confirmed_without_token_has_no_broken_calendar_link,
+        test_crew_shifts_payload_carries_role_and_note,
         test_notify_rejects_unknown_template,
         test_notify_with_snapshot_shifts_works_without_live_project,
         test_notify_missing_project_without_snapshot_is_404,

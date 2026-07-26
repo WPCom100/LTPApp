@@ -1063,6 +1063,9 @@ window.LTP_crewNotify = function(contactId, projectId, template, opts) {
   var payload = { contactId: contactId, projectId: projectId, template: template };
   if (opts.shifts) { payload.shifts = opts.shifts; if (opts.projectName) payload.projectName = opts.projectName; }
   else { payload.positionIds = opts.positionIds || []; }
+  // The crew-request token lets the confirmation email link back to the crew
+  // call sheet (where the "Add to Calendar" buttons live).
+  if (opts.token) payload.token = opts.token;
   return fetch("/api/crew-requests/notify", {
     method: "POST", credentials: "include",
     headers: { "Content-Type": "application/json" },
