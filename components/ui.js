@@ -9,18 +9,22 @@
   // viewport crossing the breakpoint; components branch inline styles / choose
   // card-vs-table / agenda-vs-grid on it. Desktop ( > 600px ) → false.
   window.LTP_MOBILE_QUERY = "(max-width: 600px)";
-  window.LTP_useIsMobile = function() {
+  // Generic matchMedia hook: returns whether `query` currently matches and
+  // re-renders when it crosses. LTP_useIsMobile is the mobile-width
+  // specialization; other views pass their own query (e.g. a wide-desktop
+  // breakpoint) to branch layout on viewport size.
+  window.LTP_useMediaQuery = function(query) {
     var useEffect = React.useEffect;
     function read() {
-      try { return window.matchMedia(window.LTP_MOBILE_QUERY).matches; }
+      try { return window.matchMedia(query).matches; }
       catch (e) { return false; }
     }
     var pair = useState(read);
-    var isMobile = pair[0], setIsMobile = pair[1];
+    var matches = pair[0], setMatches = pair[1];
     useEffect(function() {
       var m;
-      try { m = window.matchMedia(window.LTP_MOBILE_QUERY); } catch (e) { return; }
-      function onChange() { setIsMobile(m.matches); }
+      try { m = window.matchMedia(query); } catch (e) { return; }
+      function onChange() { setMatches(m.matches); }
       // addEventListener is the modern API; addListener is the Safari < 14
       // fallback (older iOS still in the field for a home-screen PWA).
       if (m.addEventListener) m.addEventListener("change", onChange);
@@ -30,9 +34,10 @@
         if (m.removeEventListener) m.removeEventListener("change", onChange);
         else if (m.removeListener) m.removeListener(onChange);
       };
-    }, []);
-    return isMobile;
+    }, [query]);
+    return matches;
   };
+  window.LTP_useIsMobile = function() { return window.LTP_useMediaQuery(window.LTP_MOBILE_QUERY); };
 
   window.Badge = function({ status }) {
     var c = SC[status] || SC.draft;
