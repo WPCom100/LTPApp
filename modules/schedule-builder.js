@@ -68,13 +68,16 @@
     // override (web-pushes admins). See /api/qbo/payouts/day-status + notify-edit.
     var [paidDays, setPaidDays] = useState({});
     var [paidWarn, setPaidWarn] = useState(null);   // [{crewId, date, ds}] while confirming
+    var paidSeq = React.useRef(0);
     useEffect(function() {
       var dates = (project.schedule || []).map(function(s) { return s.date; }).filter(Boolean).sort();
       if (!dates.length) { setPaidDays({}); return; }
+      var seq = ++paidSeq.current;   // ignore a slower earlier project's late response
       fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ periodStart: dates[0], periodEnd: dates[dates.length - 1] }) })
         .then(function(r) { return r.ok ? r.json() : { days: {} }; })
         .then(function(b) {
+          if (seq !== paidSeq.current) return;
           var days = (b && b.days) || {}, mine = {};
           Object.keys(days).forEach(function(k) {
             var parts = k.split("|");   // crewId|projectId|date
@@ -82,11 +85,21 @@
           });
           setPaidDays(mine);
         })
-        .catch(function() { setPaidDays({}); });
+        .catch(function() { if (seq === paidSeq.current) setPaidDays({}); });
     }, [project.id]);
 
-    // Payout-relevant fingerprint of each (crewId, date): shift times, breaks,
-    // and the crew's positions (role/service/status). A change here reprices pay.
+    // Serialize a break list to a stable string: unpaid-break time/type changes
+    // reprice pay (unpaid minutes are deducted from paid hours), so the fingerprint
+    // must include each break's start:end:type, not just the count.
+    function _serBreaks(breaks) {
+      return (breaks || []).map(function(b) {
+        return (b.startTime || "") + ":" + (b.endTime || "") + ":" + (b.type || "");
+      }).sort().join("|");
+    }
+    // Payout-relevant fingerprint of each (crewId, date): shift times, the
+    // crew-wide breaks AND the position's individual breaks, and the crew's
+    // positions (role/service/status). A change to any of these reprices pay, so
+    // all of them must be in the signature or the paid-day guard misses the edit.
     function _paidSig(schedule) {
       var m = {};
       (schedule || []).forEach(function(s) {
@@ -94,7 +107,8 @@
         (s.positions || []).forEach(function(p) {
           if (p.crewId == null) return;
           var key = p.crewId + "|" + s.date;
-          (m[key] = m[key] || []).push([s.time, s.endTime, p.serviceId, p.role, p.status, (s.breaks || []).length].join(","));
+          (m[key] = m[key] || []).push([s.time, s.endTime, p.serviceId, p.role, p.status,
+            _serBreaks(s.breaks), _serBreaks(p.breaks)].join(","));
         });
       });
       Object.keys(m).forEach(function(k) { m[k].sort(); });

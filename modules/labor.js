@@ -1496,23 +1496,27 @@
     var [pushing, setPushing] = useState(false);
     var [results, setResults] = useState(null);
 
-    function loadPreview() {
-      setState({ loading: true, error: null, data: null });
-      setResults(null);
+    // keepResults: quiet post-push refresh — update the underlying statuses
+    // WITHOUT the loading flash or nulling the per-person Created/Updated/Failed
+    // pills (which the push just set). A normal (re)load resets everything.
+    function loadPreview(keepResults) {
+      if (!keepResults) { setState({ loading: true, error: null, data: null }); setResults(null); }
       fetch("/api/qbo/payouts/preview", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
         .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
         .then(function(resp) {
-          if (resp.status !== 200) { setState({ loading: false, error: (resp.body && resp.body.error) || ("HTTP " + resp.status), data: null }); return; }
+          if (resp.status !== 200) { if (!keepResults) setState({ loading: false, error: (resp.body && resp.body.error) || ("HTTP " + resp.status), data: null }); return; }
           var data = resp.body;
-          var sel = {};
-          (data.contacts || []).forEach(function(c) { if (!c.blocked && c.billStatus !== "up_to_date") sel[c.contactId] = true; });
-          setSelected(sel);
+          if (!keepResults) {
+            var sel = {};
+            (data.contacts || []).forEach(function(c) { if (!c.blocked && c.billStatus !== "up_to_date") sel[c.contactId] = true; });
+            setSelected(sel);
+          }
           setState({ loading: false, error: null, data: data });
         })
-        .catch(function(e) { setState({ loading: false, error: "Network or server error: " + String(e.message || e), data: null }); });
+        .catch(function(e) { if (!keepResults) setState({ loading: false, error: "Network or server error: " + String(e.message || e), data: null }); });
     }
-    React.useEffect(loadPreview, [range.start, range.end]);
+    React.useEffect(function() { loadPreview(); }, [range.start, range.end]);
 
     var data = state.data;
     var hasBlocks = !!(data && data.blocks && data.blocks.length);
@@ -1539,13 +1543,24 @@
           var byId = {}; res.forEach(function(x) { byId[x.contactId] = x; });
           setResults(byId);
           var posted = res.filter(function(x) { return x.action === "created" || x.action === "updated"; }).length;
-          var errs = res.filter(function(x) { return x.action === "error"; }).length;
+          var failed = res.filter(function(x) { return x.action === "error"; });
+          var errs = failed.length;
           var skipped = res.filter(function(x) { return x.action === "skipped"; }).length;
-          window.LTP_toast(errs ? "Export finished with errors" : "Payouts exported to QuickBooks", {
-            message: posted + " bill" + (posted === 1 ? "" : "s") + " posted"
-              + (skipped ? ", " + skipped + " skipped" : "") + (errs ? ", " + errs + " failed" : ""),
-            variant: errs ? "error" : "success" });
-          loadPreview();   // refresh statuses (created/updated -> up to date)
+          if (errs) {
+            // Clear error toast with a sample message; the full per-bill list is in
+            // Settings → Error Log (QuickBooks Faults), fed from /api/qbo/status.
+            var firstErr = (failed[0] && failed[0].error) ? (" — " + failed[0].error) : "";
+            window.LTP_toast("Export finished with errors", {
+              message: errs + " bill" + (errs === 1 ? "" : "s") + " failed"
+                + (posted ? ", " + posted + " posted" : "") + (skipped ? ", " + skipped + " skipped" : "")
+                + firstErr + (errs > 1 ? " · see Settings → Error Log" : ""),
+              variant: "error" });
+          } else {
+            window.LTP_toast("Payouts exported to QuickBooks", {
+              message: posted + " bill" + (posted === 1 ? "" : "s") + " posted" + (skipped ? ", " + skipped + " skipped" : ""),
+              variant: "success" });
+          }
+          loadPreview(true);   // refresh statuses but KEEP the per-person result pills visible
         })
         .catch(function(e) { setPushing(false); window.LTP_toast("Export failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
     }
@@ -1683,13 +1698,19 @@
     // Fetched from the server (ledger + bill payment state) whenever the range
     // changes; drives the per-row status pill AND the paid-day edit guard.
     var [dayStatus, setDayStatus] = useState({});
+    // Whether the day-status map reflects a successful fetch. On a fetch error we
+    // can't tell which days are paid, so the guard must fail CLOSED (warn) rather
+    // than silently letting a paid day be re-priced with no notification.
+    var [dayStatusErr, setDayStatusErr] = useState(false);
+    var dsSeq = React.useRef(0);
     function loadDayStatus() {
-      if (!qbo || !qbo.connected) { setDayStatus({}); return; }
+      if (!qbo || !qbo.connected) { setDayStatus({}); setDayStatusErr(false); return; }
+      var seq = ++dsSeq.current;   // stale-response guard: only the newest wins
       fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ periodStart: range.start, periodEnd: range.end }) })
-        .then(function(r) { return r.ok ? r.json() : { days: {} }; })
-        .then(function(b) { setDayStatus((b && b.days) || {}); })
-        .catch(function() { setDayStatus({}); });
+        .then(function(r) { if (!r.ok) throw new Error("http " + r.status); return r.json(); })
+        .then(function(b) { if (seq !== dsSeq.current) return; setDayStatus((b && b.days) || {}); setDayStatusErr(false); })
+        .catch(function() { if (seq !== dsSeq.current) return; setDayStatus({}); setDayStatusErr(true); });
     }
     React.useEffect(loadDayStatus, [range.start, range.end, qbo && qbo.connected]);
     function dayStatusOf(r) { return dayStatus[r.crewId + "|" + r.projectId + "|" + r.date] || null; }
@@ -1703,9 +1724,17 @@
         credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
     }
     function guardPaid(r, proceed) {
+      // Payout pay-writes (sign-off, lock, adjust, no-show, undo) are admin-only —
+      // the amount is billed verbatim to QuickBooks, and the server reverts a
+      // non-admin's snapshot change (backend/crew_integrity.py::enforce_pay_snapshot),
+      // so surface a clear message here instead of a silent revert on reload.
+      if (!isAdmin) { window.LTP_toast("Admins only", { message: "Only an admin can sign off, lock, or adjust payouts.", variant: "error" }); return; }
       var ds = dayStatusOf(r);
-      if (ds && ds.paid) setPaidGuard({ row: r, ds: ds, run: proceed });
-      else proceed();
+      if (ds && ds.paid) { setPaidGuard({ row: r, ds: ds, run: proceed }); return; }
+      // Fail closed: QuickBooks is connected but we couldn't load paid status, so
+      // this day MIGHT be paid — warn before repricing rather than proceeding blind.
+      if (dayStatusErr && qbo && qbo.connected) { setPaidGuard({ row: r, ds: null, unverified: true, run: proceed }); return; }
+      proceed();
     }
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
@@ -2069,14 +2098,16 @@
       exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
 
       // Paid-day edit guard (warn + confirm; confirming records the override).
-      paidGuard && h(window.LTPModal, { title: "Edit a paid day?", onClose: function() { setPaidGuard(null); } },
+      paidGuard && h(window.LTPModal, { title: paidGuard.unverified ? "Paid status unknown" : "Edit a paid day?", onClose: function() { setPaidGuard(null); } },
         h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
-          crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was already paid in QuickBooks"
-          + (paidGuard.ds && paidGuard.ds.docNumber ? " (bill " + paidGuard.ds.docNumber + ")" : "")
-          + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?"),
+          paidGuard.unverified
+            ? (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + ": couldn't check whether this day has been paid in QuickBooks. If it has, editing it here won't update the paid bill. Continue anyway?")
+            : (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was already paid in QuickBooks"
+               + (paidGuard.ds && paidGuard.ds.docNumber ? " (bill " + paidGuard.ds.docNumber + ")" : "")
+               + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?")),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setPaidGuard(null); } }, "Cancel"),
-          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
+          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); if (!g.unverified) notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
 
       // Adjust-day sign-off
       adjustDlg && (function() {
