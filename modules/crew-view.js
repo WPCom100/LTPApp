@@ -147,6 +147,11 @@
           subTitle && h("span", { style: { fontSize: "13px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
           s.department && h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
       : null;
+    // Producer's per-shift note (parking, gate code, wardrobe, …) — its own
+    // accent-edged line under the call so it reads as an instruction.
+    var noteRow = (s.note && String(s.note).trim())
+      ? h("div", { style: { marginTop: 10, padding: "8px 12px", background: INSET, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "13px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, s.note)
+      : null;
 
     return h("div", {
       key: s.positionId || i,
@@ -163,7 +168,8 @@
         // position title — its own full-width line below the timeframe, so a long
         // role can run the whole width instead of fighting the time column.
         h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: hasTimeframe ? 6 : 0 } }, (s.roleLabel || "Crew")),
-        subMeta)
+        subMeta,
+        noteRow)
     );
   }
 
@@ -182,12 +188,17 @@
 
   function calUrlFor(s, projectName, location) {
     if (!window.LTP_gcalUrl) return null;
-    var title = [projectName, s.roleLabel].filter(function(x) { return x; }).join(" — ");
-    var details = [
+    // Event title: "LTP - <position acronym> - <project>" (e.g. "LTP - A1 - Sunset Gala").
+    var acronym = s.role || s.roleLabel || "Crew";
+    var title = "LTP - " + acronym + " - " + (projectName || "Project");
+    var base = [
       s.startTime ? "Call " + fmtTime(s.startTime) : "",
       s.endTime ? "Wrap " + fmtTime(s.endTime) : "",
       s.shiftTitle || "",
     ].filter(function(x) { return x; }).join("  ·  ");
+    // Shift note appended directly after the existing description.
+    var note = (s.note && String(s.note).trim()) ? String(s.note).trim() : "";
+    var details = note ? (base ? base + "\n\n" + note : note) : base;
     return window.LTP_gcalUrl({
       title: title, date: s.date, time: s.startTime || "",
       endTime: s.endTime || "", location: location || "", details: details,
@@ -467,12 +478,18 @@
           h("div", { style: { fontSize: "13px", color: TEXT, fontStyle: "italic", lineHeight: 1.55, marginTop: 6 } }, data.comment))
       : null;
 
+    // The confirmed banner (with the calendar buttons) is hoisted to the top of
+    // the sheet (replacing the greeting), so it must NOT also render down here.
+    var bannerNode = renderBanner(status, {
+      crewName: crewName, respondedAt: data.respondedAt, siteAddress: project.siteAddress,
+      isConfirmed: isConfirmed, shifts: shifts, projectName: project.name,
+    });
+
     var actionZone;
-    if (terminal) {
-      actionZone = h("div", { style: { marginTop: 40 } }, renderBanner(status, {
-        crewName: crewName, respondedAt: data.respondedAt, siteAddress: project.siteAddress,
-        isConfirmed: isConfirmed, shifts: shifts, projectName: project.name,
-      }));
+    if (isConfirmed) {
+      actionZone = null;                                   // shown at the top instead
+    } else if (terminal) {
+      actionZone = h("div", { style: { marginTop: 40 } }, bannerNode);
     } else {
       actionZone = h("div", { ref: actionRef, style: { marginTop: 40, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
         h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take these calls?"),
@@ -532,28 +549,34 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE_SOFT } }, "Crew Call Sheet"),
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: statusEyebrow.c } }, statusEyebrow.t)),
 
-        // Greeting cluster
-        crewName && h("div", { style: { fontSize: "16px", fontWeight: 600, color: WHITE, marginTop: 28 } }, "Hi " + crewName + ","),
-        intent && h("div", { style: { fontSize: "14px", color: MUTE, lineHeight: 1.5, marginTop: 6 } }, intent),
+        // Greeting cluster — once confirmed, the green confirmation box (with the
+        // calendar buttons) takes this slot at the top of the sheet instead.
+        isConfirmed
+          ? h("div", { style: { marginTop: 28 } }, bannerNode)
+          : h("div", null,
+              crewName && h("div", { style: { fontSize: "16px", fontWeight: 600, color: WHITE, marginTop: 28 } }, "Hi " + crewName + ","),
+              intent && h("div", { style: { fontSize: "14px", color: MUTE, lineHeight: 1.5, marginTop: 6 } }, intent)),
 
-        // Project marquee (greyed when withdrawn)
-        h("div", { style: { marginTop: 40 } },
-          h("div", { style: { fontSize: "30px", fontWeight: 800, color: withdrawn ? NEUTRAL : WHITE, letterSpacing: "-0.02em", lineHeight: 1.08, textTransform: "uppercase", overflowWrap: "break-word" } }, (project.name || "Project").toUpperCase()),
-          projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta),
-          // Job-site address — linked to a map so crew can navigate in one tap.
-          project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
-            style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
-            project.siteAddress),
+        // Project marquee (greyed when withdrawn) — text on the left, the in-frame
+        // map right-aligned and top-aligned with the project name (stacks on mobile).
+        h("div", { style: { marginTop: 40, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: "flex-start", justifyContent: "space-between", gap: isMobile ? 18 : 28 } },
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "30px", fontWeight: 800, color: withdrawn ? NEUTRAL : WHITE, letterSpacing: "-0.02em", lineHeight: 1.08, textTransform: "uppercase", overflowWrap: "break-word" } }, (project.name || "Project").toUpperCase()),
+            projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta),
+            // Job-site address — linked to a map so crew can navigate in one tap.
+            project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
+              style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
+              project.siteAddress)),
           // Small in-frame map with a pin at the job site. Keyless Google Maps
           // place embed (no API key) — the CSP allows www/maps.google.com in
           // frame-src (backend/main.py). Suppressed when withdrawn (no call to make).
-          project.siteAddress && !withdrawn && h("div", { style: { marginTop: 16, maxWidth: 520, borderRadius: 12, overflow: "hidden", border: "1px solid " + HAIR, background: INSET } },
+          project.siteAddress && !withdrawn && h("div", { style: { flexShrink: 0, width: isMobile ? "100%" : 320, maxWidth: "100%", borderRadius: 12, overflow: "hidden", border: "1px solid " + HAIR, background: INSET } },
             h("iframe", {
               title: "Map to " + project.siteAddress,
               src: "https://www.google.com/maps?q=" + encodeURIComponent(project.siteAddress) + "&z=15&output=embed",
-              width: "100%", height: 200, loading: "lazy", allowFullScreen: true,
+              width: "100%", height: isMobile ? 180 : 196, loading: "lazy", allowFullScreen: true,
               referrerPolicy: "no-referrer-when-downgrade",
-              style: { display: "block", width: "100%", height: 200, border: 0 },
+              style: { display: "block", width: "100%", height: isMobile ? 180 : 196, border: 0 },
             }))),
 
         // Shifts

@@ -58,7 +58,7 @@
             posId: p.id, role: p.role, serviceId: p.serviceId,
             slot: slots[p.id] || 1,
             dayRoleCount: (dayRoleCounts[s.date] || {})[p.serviceId] || 0,
-            crewId: p.crewId, status: p.status,
+            crewId: p.crewId, status: p.status, note: p.note || "",
             svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
             // Service-derived short role for at-a-glance displays (weekly grid).
             // Resolves live through the linked service so a renamed service is
@@ -85,6 +85,26 @@
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
             if (pos.id !== posId) return pos;
             return Object.assign({}, pos, patch);
+          })});
+        })});
+      });
+    });
+  }
+
+  // Write a per-shift note. Scope "one": just this position (posId). Scope "day":
+  // every position sharing the same schedule shift (schedItemId) — the "same time
+  // period" grouping from the schedule builder — so a producer can drop "parking
+  // is on 4th St" onto everyone on that call without retyping it per person.
+  // Persists through the same debounced projects PUT as any other schedule edit.
+  function writeShiftNote(setProjects, projectId, schedItemId, posId, note, applyToDay) {
+    setProjects(function(prev) {
+      return prev.map(function(p) {
+        if (p.id !== projectId) return p;
+        return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
+          if (s.id !== schedItemId) return s;
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+            if (!(applyToDay || pos.id === posId)) return pos;
+            return Object.assign({}, pos, { note: note });
           })});
         })});
       });
@@ -366,7 +386,6 @@
     var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");
     var [end, setEnd] = useState(editing ? (editShift.endTime || "18:00") : "18:00");
     var [location, setLocation] = useState(editing ? (editProject.siteAddress || "") : "");
-    var [notes, setNotes] = useState(editing ? (editProject.scheduleNotes || "") : "");
     // Position rows — each is a role (rate-card Service) + optional crew member.
     var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
     // Crew-wide meal breaks on the shift (same {id,startTime,endTime,type} shape
@@ -421,7 +440,7 @@
       if (editing) {
         // Roles/crew aren't touched here — only the shift's scalar fields + breaks.
         onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-          location: location.trim(), notes: notes.trim(), breaks: cleanBreaks });
+          location: location.trim(), breaks: cleanBreaks });
         return;
       }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
@@ -430,7 +449,7 @@
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
       onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-        location: location.trim(), notes: notes.trim(), breaks: cleanBreaks, positions: positions });
+        location: location.trim(), breaks: cleanBreaks, positions: positions });
     }
 
     var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
@@ -512,7 +531,7 @@
               }),
               h("div", null, h(window.Btn, { small: true, variant: "ghost", onClick: addRow }, "+ Add role"))
             ),
-        h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Optional notes for this shift" }),
+        h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Shift notes (parking, gate codes, etc.) are added per role on the Assignments tab after the shift is created."),
         err && h("div", { style: { fontSize: "11px", color: B.danger } }, err),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 } },
           h(window.Btn, { variant: "ghost", onClick: onClose }, "Cancel"),
@@ -535,7 +554,28 @@
     var [conflictWarn, setConflictWarn] = useState(null);
     var [showManualShift, setShowManualShift] = useState(false);
     var [editManualProject, setEditManualProject] = useState(null);
+    var [noteDlg, setNoteDlg] = useState(null);   // { pos, text, applyToDay, dayCount }
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
+
+    // Open the shift-note editor for a booking's representative position. dayCount
+    // = how many positions share this shift (drives the "apply to everyone on this
+    // day" option — only offered when there's more than one).
+    function openNoteDlg(pos) {
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
+      var dayCount = shift ? (shift.positions || []).length : 1;
+      setNoteDlg({ pos: pos, text: pos.note || "", applyToDay: false, dayCount: dayCount });
+    }
+    function saveNoteDlg() {
+      var d = noteDlg; if (!d) return;
+      var text = (d.text || "").trim();
+      writeShiftNote(setProjects, d.pos.projectId, d.pos.schedItemId, d.pos.posId, text, !!d.applyToDay);
+      setNoteDlg(null);
+      window.LTP_toast(text ? "Shift note saved" : "Shift note cleared", {
+        variant: "success",
+        message: d.applyToDay ? "Applied to everyone on this shift." : undefined,
+      });
+    }
 
     // Create a one-off manual shift: build an internal project (no client, no
     // schedule editor) and append it to the projects collection — data-state.js
@@ -575,7 +615,7 @@
         return (prev || []).map(function(p) {
           return p.id === proj.id ? Object.assign({}, p, {
             name: form.title, startDate: form.date, endDate: form.date,
-            siteAddress: form.location, scheduleNotes: form.notes, schedule: newSchedule,
+            siteAddress: form.location, schedule: newSchedule,
           }) : p;
         });
       });
@@ -1137,6 +1177,11 @@
                             h("button", { onClick: function() {
                               booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
                             }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign")),
+                          // Per-shift note — the crew see it under this call on the web
+                          // call sheet and in the request email. Highlighted once set.
+                          h("button", { onClick: function() { openNoteDlg(pos); }, title: pos.note ? "Edit shift note" : "Add a shift note (parking, gate code, wardrobe…)",
+                            style: { background: pos.note ? B.accent + "1c" : "transparent", border: "1px solid " + (pos.note ? B.accent + "66" : B.border), borderRadius: "3px", padding: "3px 8px", color: pos.note ? B.accent : B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+                            pos.note ? "✎ Note" : "+ Note"),
                           // Mobile: tap-to-call the assigned crew member straight from
                           // the booking row (field leads confirming a shift on-site).
                           isMobile && pos.crewId && (function() {
@@ -1160,6 +1205,27 @@
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
           h(window.Btn, { variant: "ghost", onClick: function() { setConflictWarn(null); } }, "Cancel"),
           h(window.Btn, { variant: "danger", onClick: conflictWarn.onConfirm }, "Assign Anyway"))
+      ),
+
+      // Shift-note editor. The note rides under this call on the crew web sheet
+      // and in the request email. "Apply to everyone on this shift" writes the
+      // same note onto every position sharing the schedule day (so a producer
+      // enters parking/gate instructions once instead of per person).
+      noteDlg && h(window.LTPModal, { title: "Shift Note", onClose: function() { setNoteDlg(null); } },
+        h("div", null,
+          h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6, lineHeight: 1.5 } },
+            (noteDlg.pos.svcName || "Crew") + (noteDlg.pos.date ? " · " + window.LTP_formatDate(noteDlg.pos.date) : "") + " · the crew see this under their call on the web and in their email."),
+          h("textarea", { value: noteDlg.text, autoFocus: true, maxLength: 1000,
+            onChange: function(e) { var v = e.target.value; setNoteDlg(function(d) { return Object.assign({}, d, { text: v }); }); },
+            placeholder: "e.g. Parking is on 4th St. Enter through the loading dock; gate code 4821.",
+            style: { width: "100%", minHeight: 96, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box" } }),
+          noteDlg.dayCount > 1 && h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: "12px", color: B.textSec, cursor: "pointer" } },
+            h("input", { type: "checkbox", checked: !!noteDlg.applyToDay,
+              onChange: function(e) { var v = e.target.checked; setNoteDlg(function(d) { return Object.assign({}, d, { applyToDay: v }); }); } }),
+            "Apply to everyone on this shift (" + noteDlg.dayCount + " position" + (noteDlg.dayCount === 1 ? "" : "s") + ")"),
+          h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setNoteDlg(null); } }, "Cancel"),
+            h(window.Btn, { onClick: saveNoteDlg }, "Save Note")))
       ),
 
       // Status change confirmation dialog. The notification itself is decided in
@@ -2304,7 +2370,7 @@
         });
       });
       if (notify) {
-        window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [] })
+        window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [], token: req.token })
           .then(function(res) {
             var es = (res.ok && res.body.emailStatus) || {};
             if (es.emailed) window.LTP_toast("Crew confirmed", { message: "Confirmation email sent to " + crewLabel(req.contactId) + ".", variant: "success" });
