@@ -184,10 +184,12 @@ team member's signature will display.
 
 Mail is sent through the **Gmail API as the signed-in user**, so inbox-vs-spam
 is decided by your **domain's email authentication** (SPF/DKIM/DMARC) and sender
-reputation — not by app code. If emails land in some recipients' spam folders,
-the usual fix is enabling **domain-aligned DKIM** in the Google Admin console
-plus a correct SPF/DMARC record. See **[docs/EMAIL_DELIVERABILITY.md](docs/EMAIL_DELIVERABILITY.md)**
-for the step-by-step fix and how to diagnose it with *Show original*.
+reputation — not by app code. As of the last check the domain's SPF/DKIM/DMARC
+all pass and align, so if mail still lands in some recipients' spam folders the
+lever is **sender reputation** (Google Postmaster Tools, Microsoft SNDS/JMRP,
+warm-up, "Not spam" engagement). See **[docs/EMAIL_DELIVERABILITY.md](docs/EMAIL_DELIVERABILITY.md)**
+for the diagnosis, what was fixed, and how to verify with *Show original* /
+mail-tester.
 
 ## QuickBooks Online integration
 

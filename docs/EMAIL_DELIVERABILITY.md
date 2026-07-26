@@ -15,23 +15,49 @@ of impact.
 
 ---
 
-## TL;DR — do these first
+## Verified status (mail-tester, July 2026)
 
-If you send from a **Google Workspace custom domain** (you do —
-`@luminarytechnology.productions`), the #1 cause of "some recipients' spam" is
-**missing or unaligned domain authentication**. Fix, in order:
+A mail-tester.com run on a real send scored **clean** and, importantly, ruled
+out the usual suspects:
 
-1. **Turn on DKIM in the Google Admin console** for your domain and publish the
-   DKIM DNS record. *(This is the most common miss and the most common fix.)*
-2. **Confirm SPF** includes Google (`v=spf1 include:_spf.google.com ~all`).
-3. **Publish a DMARC record** (start at `p=none` to monitor, then tighten).
-4. **Verify alignment** by reading **Show original** on a message you sent
-   (SPF **PASS**, DKIM **PASS**, DMARC **PASS**, all for *your* domain).
+- ✅ **SPF pass** — `v=spf1 include:_spf.google.com ~all` present and matched.
+- ✅ **DKIM valid AND aligned** to `luminarytechnology.productions`
+  (`DKIM_VALID_AU`) — this is the strong one; it means DKIM is properly enabled
+  in Workspace, not signing as `gappssmtp.com`.
+- ✅ **DMARC pass**, valid rDNS, correct MX.
+- ✅ **Not on any of 23 blocklists**; SpamAssassin content score **0.2** (clean).
 
-Do those four and the "some people" problem almost always disappears, because
-the receivers most likely to spam-file you (Microsoft 365 / Outlook, corporate
-Proofpoint / Mimecast, and increasingly Gmail itself) are exactly the ones that
-enforce authentication alignment.
+**So authentication is already done right** — don't go chasing DKIM/SPF/DMARC;
+they pass. Re-verify with *Show original* only if something changes. The
+remaining levers are the two below.
+
+## What the report flagged (and what we did)
+
+1. **Broken image in the signature (fixed in code).** The signature's fallback
+   avatar pointed at `www.luminarytechnology.productions/wp-content/uploads/
+   2024/07/LTP-Logo-Stacked.png`, which now **404s**. Every email from a sender
+   without a Google profile photo carried a broken image — unprofessional, and
+   a scored deliverability penalty (mail-tester: `1 broken link`). It's now a
+   **self-hosted** asset served by the app (`/assets/logos/ltp-avatar.png`,
+   returns 200) so it can't break when the marketing site reorganizes.
+
+2. **Low text-to-HTML ratio (~16% text) — soft signal.** mail-tester notes it
+   but SpamAssassin didn't penalize it. Keep body copy substantive (the
+   templates already do); avoid turning emails into one big image. See
+   *Content best practices* below.
+
+3. **No `List-Unsubscribe` header.** Only matters for *mass* mail; these are 1:1
+   transactional sends, so it's optional. See the note below if you add
+   newsletters.
+
+## So why does it still hit *some* spam folders?
+
+With authentication clean and content clean, the most likely remaining factor is
+**sender / domain reputation** — the domain is relatively young and low-volume,
+and reputation is built over time and *per receiver*. Microsoft/Outlook in
+particular runs its own reputation system (SmartScreen) that's independent of
+SPF/DKIM and of Gmail's. See *Sender reputation & sending habits* below — that's
+where to focus next.
 
 ---
 
@@ -65,7 +91,12 @@ always one of these:
 
 ---
 
-## The fix, step by step (Google Workspace)
+## Reference: domain authentication (Google Workspace)
+
+> **Your domain already passes all of this** (see *Verified status* above). Keep
+> this section as a re-check if you migrate DNS, change providers, or add a new
+> sending domain — misconfiguring it here is the classic way to *start* landing
+> in spam.
 
 ### 1. Enable DKIM (highest impact)
 
@@ -148,19 +179,37 @@ the domain doesn't match yours, that's your culprit.
 
 ---
 
-## Sender reputation & sending habits
+## Sender reputation & sending habits (focus here)
 
-Even with perfect auth, behavior matters:
+With authentication and content clean, **this is the lever that's left.** A young
+domain with low volume hasn't earned trust yet, and reputation is tracked
+*per receiver* — which is exactly why the same email inboxes for your Gmail
+contacts but spams for someone on Outlook.
 
-- **Warm up gradually.** Don't go from 0 to a 25-recipient blast on day one from
-  a fresh domain. Ramp volume over days/weeks.
-- **Keep complaint rate low.** Google's guidelines want spam complaints **below
-  0.1%** and effectively require staying under **0.3%**. One "Report spam" per
-  few hundred sends is enough to hurt you — only send to people expecting it.
+- **Register with the receivers' postmaster programs.** These show you how each
+  provider sees you and let you build/repair standing:
+  - **Google Postmaster Tools** (`postmaster.google.com`) — verify the domain;
+    watch reputation, spam rate, and auth pass rates.
+  - **Microsoft SNDS + JMRP** (`sendersupport.olc.protection.outlook.com`) —
+    Outlook/Hotmail/Office 365 use their own SmartScreen reputation, *separate*
+    from your DKIM/SPF/DMARC. If "some people" are on Outlook, this is likely
+    your gap. Enroll and, if needed, submit a sender-support/mitigation request.
+- **Ask early recipients to help train the filter.** For the clients whose spam
+  folder you're landing in: have them click **"Not spam"**, move the message to
+  the inbox, and **add the sender to their contacts**. A few positive
+  engagement signals per recipient domain move the needle fast on a young domain.
+- **Warm up gradually.** Don't jump from zero to 25-recipient blasts. Ramp
+  volume over days/weeks so receivers see a steady, human pattern.
+- **Keep complaint rate low.** Google wants spam complaints **below 0.1%** and
+  effectively requires **under 0.3%**. One "Report spam" per few hundred sends
+  hurts — only send to people expecting it.
 - **Send to valid addresses.** High bounce rates (typos, dead mailboxes) tank
-  reputation. The app already validates recipient syntax
-  (`backend/email_validate.py`), but that doesn't catch a well-formed address
-  that doesn't exist — double-check client addresses.
+  reputation. The app validates recipient *syntax*
+  (`backend/email_validate.py`), but that can't catch a well-formed address that
+  doesn't exist — double-check client addresses.
+- **Encourage replies / threading.** Real back-and-forth with a recipient is one
+  of the strongest positive signals; a client who has ever replied to you rarely
+  sees your later mail in spam.
 - **The 25-recipient cap** (`_MAX_RECIPIENTS_PER_SEND` in
   `backend/routes/email.py`) keeps any single send from looking like a bulk
   blast. Leave it in place.
@@ -189,12 +238,14 @@ Things to watch when editing templates in **Settings**:
   ALL-CAPS, excessive `!!!`, "FREE", "ACT NOW", walls of red bold text.
 - **Match link text to destination.** Don't label a button "View invoice" if it
   points somewhere unrelated — link/anchor mismatch is scored.
-- **Third-party images.** The default signature loads social icons from
-  `storage.googleapis.com/signaturesatori/…` and a logo from the public site.
-  If any of those URLs ever 404, recipients see broken images (looks spammy) —
-  prefer hosting signature assets on your own domain.
+- **Third-party images = broken-image risk.** The signature avatar fallback is
+  now self-hosted (fixed), but the default signature still loads social icons
+  from `storage.googleapis.com/signaturesatori/…`. Those currently return 200,
+  but any third-party asset that 404s later puts a broken image back in every
+  signature. When convenient, host the signature icons on your own domain too.
 - **Test after template edits.** Run an edited template through mail-tester
-  before sending it to real clients.
+  before sending it to real clients — and watch the "broken links" section, which
+  is what caught the 404 avatar.
 
 ---
 
@@ -212,7 +263,9 @@ Things to watch when editing templates in **Settings**:
 
 ## One-line summary
 
-You send as a Workspace user through Gmail's API, so **inbox placement is a DNS
-and reputation problem, not a code problem** — enable domain-aligned DKIM,
-confirm SPF, publish DMARC, and verify with *Show original*. The app's job is to
-produce a clean, well-authenticated message, which it does.
+Your authentication (SPF/DKIM/DMARC) is already correct and your content is
+clean, so **inbox placement is now a reputation problem, not a config or code
+problem.** We fixed the one concrete defect (a 404 signature image); the path
+from here is enrolling in Google Postmaster Tools + Microsoft SNDS/JMRP, warming
+up volume, and getting a few recipients to click "Not spam" / add you to
+contacts so your young domain earns trust per receiver.
