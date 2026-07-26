@@ -301,10 +301,11 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
     return drafts
 
 
-async def load_payout_drafts(db, start_iso, end_iso):
-    """Load projects + crew contacts from the DB and re-derive payout drafts.
-    The server is the source of truth for the schedule snapshots, so this always
-    reflects the persisted state — never a client-submitted amount."""
+async def load_projects_and_crew(db):
+    """Load all projects (id/name/schedule) + crew contacts keyed by id from the
+    DB. Split out from ``load_payout_drafts`` so a caller that re-derives several
+    periods (e.g. the day-status route) can load this ONCE and re-derive in
+    memory, instead of re-querying every project per period."""
     from sqlalchemy import select
     from . import models
 
@@ -324,4 +325,12 @@ async def load_payout_drafts(db, start_iso, end_iso):
             "crew_departments": getattr(c, "crew_departments", None) or [],
             "row": c,  # live ORM row — the biller caches qb_vendor_id back onto it
         }
+    return projects, contacts_by_id
+
+
+async def load_payout_drafts(db, start_iso, end_iso):
+    """Load projects + crew contacts from the DB and re-derive payout drafts.
+    The server is the source of truth for the schedule snapshots, so this always
+    reflects the persisted state — never a client-submitted amount."""
+    projects, contacts_by_id = await load_projects_and_crew(db)
     return derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso)

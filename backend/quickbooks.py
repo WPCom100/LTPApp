@@ -61,6 +61,28 @@ QBO_MINOR_VERSION = "70"
 # seconds of expiry rather than waiting for a 401 round-trip.
 _EXPIRY_BUFFER_SECONDS = 60
 
+# Serializes token refresh across every in-process caller (the receipt poller,
+# the bill poller, and admin routes all share this event loop). Intuit rotates
+# the refresh_token on every refresh and kills the old one immediately, so two
+# refreshes racing on the same stored token means the loser gets invalid_grant —
+# and, on a route, that dropped the whole connection. Holding this lock makes at
+# most one refresh in flight at a time; the loser then re-reads the row and finds
+# it already fresh instead of spending a dead token. (Single-process deployment;
+# a multi-worker setup would additionally need a DB advisory lock.)
+#
+# One lock per event loop: production runs a single loop (one lock), while the
+# test suite spins a fresh loop per async test — a single module-global
+# asyncio.Lock bound to the first loop would raise when reused under another.
+_refresh_locks: dict = {}
+
+
+def _get_refresh_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _refresh_locks.get(loop)
+    if lock is None:
+        lock = _refresh_locks[loop] = asyncio.Lock()
+    return lock
+
 
 class QboError(Exception):
     """Base class for QuickBooks-helper errors. Routes catch this hierarchy."""
@@ -207,24 +229,94 @@ async def refresh_if_needed(
             # it with one we can decrypt.
             print(f"[LTP] qbo: stored access token unreadable ({e}); refreshing", flush=True)
 
-    payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
-    # Intuit authenticates the client via HTTP Basic auth, not body params.
-    auth = (client_id, client_secret)
-    headers = {"Accept": "application/json"}
-    if httpx_client is None:
-        async with httpx.AsyncClient(timeout=15.0) as cli:
-            resp = await cli.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers)
-    else:
-        resp = await httpx_client.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers, timeout=15.0)
+    # Serialize the read-refresh-persist sequence so concurrent callers can't both
+    # spend the same rotating refresh token. Whoever loses the lock re-checks
+    # freshness below and usually skips the network refresh entirely.
+    async with _get_refresh_lock():
+        # A refresh may have completed (in this process) while we waited for the
+        # lock. Re-read THIS row from the DB — db.refresh() forces a fresh SELECT,
+        # bypassing the session's identity-map cache that would otherwise return
+        # our own stale copy — and if it now carries a still-valid access token,
+        # adopt it and skip the network call. The common self-heal when two callers
+        # align: the loser adopts the winner's already-committed token instead of
+        # spending the (now-dead) rotating refresh token.
+        if await _adopt_if_fresh(conn, db, force):
+            try:
+                return crypto.decrypt_token(conn.access_token_enc)
+            except InvalidToken:
+                pass  # unreadable — fall through and refresh for real
 
-    if resp.status_code == 400:
-        # invalid_grant — refresh token expired/revoked or credentials changed.
-        # Log a truncated snippet server-side for ops; never put the raw
-        # provider body in the exception message, which is reflected to the
-        # client by the routes (SECURITY_REVIEW.md H10).
-        print(f"[LTP] qbo: refresh rejected by Intuit: {resp.text[:200]}", flush=True)
-        await _drop_connection(conn, db)
-        raise QboReconnectRequired("Intuit refused the token refresh; reconnect required.")
+        payload = {"grant_type": "refresh_token", "refresh_token": refresh_token}
+        # Intuit authenticates the client via HTTP Basic auth, not body params.
+        auth = (client_id, client_secret)
+        headers = {"Accept": "application/json"}
+        if httpx_client is None:
+            async with httpx.AsyncClient(timeout=15.0) as cli:
+                resp = await cli.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers)
+        else:
+            resp = await httpx_client.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers, timeout=15.0)
+
+        if resp.status_code == 400:
+            # invalid_grant. Before treating this as a real revocation, re-read the
+            # row FRESH: if its stored refresh token no longer matches the one we
+            # just spent, another caller rotated it (concurrent refresh) and THIS
+            # 400 is a benign race — recover with the freshly-persisted token
+            # instead of dropping the connection. (conn is refreshed in place.)
+            recovered = await _recover_after_rotation(conn, db, refresh_token)
+            if recovered is not None:
+                print("[LTP] qbo: refresh 400 raced a concurrent rotation; "
+                      "recovered with the freshly-persisted token", flush=True)
+                return recovered
+            # A genuine invalid_grant — refresh token expired/revoked or
+            # credentials changed. Log a truncated snippet server-side for ops;
+            # never put the raw provider body in the exception message, which is
+            # reflected to the client by the routes (SECURITY_REVIEW.md H10).
+            print(f"[LTP] qbo: refresh rejected by Intuit: {resp.text[:200]}", flush=True)
+            await _drop_connection(conn, db)
+            raise QboReconnectRequired("Intuit refused the token refresh; reconnect required.")
+        return await _persist_refresh(conn, db, resp, now)
+
+
+async def _adopt_if_fresh(conn: models.QboConnection, db: AsyncSession, force: bool) -> bool:
+    """Re-read the caller's connection row FRESH from the DB (db.refresh forces a
+    SELECT, bypassing the identity-map cache that would return our own stale copy)
+    and report whether it now holds a still-valid access token — i.e. another
+    caller refreshed while we waited for the lock. Mutates `conn` in place with the
+    fresh values. Never raises (a best-effort re-read failure just says "not
+    fresh", and the caller refreshes for real)."""
+    if force:
+        return False
+    try:
+        await db.refresh(conn)
+    except Exception:  # pragma: no cover - re-read is best-effort
+        return False
+    exp = _aware(conn.access_token_expires_at)
+    return exp is not None and exp > datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SECONDS)
+
+
+async def _recover_after_rotation(conn: models.QboConnection, db: AsyncSession, spent_refresh_token: str):
+    """After a refresh 400, re-read the row FRESH (db.refresh, in place): if its
+    stored refresh token differs from the one we spent, another caller rotated it
+    and committed — return the recovered access-token plaintext. Return None when
+    the token is unchanged (a genuine invalid_grant) so the caller drops. Never
+    raises."""
+    try:
+        await db.refresh(conn)
+        current_refresh = crypto.decrypt_token(conn.refresh_token_enc)
+        if current_refresh == spent_refresh_token:
+            return None  # nobody else rotated — the 400 is real
+        exp = _aware(conn.access_token_expires_at)
+        if exp is None or exp <= datetime.now(timezone.utc) + timedelta(seconds=_EXPIRY_BUFFER_SECONDS):
+            return None  # rotated but already stale again — let caller drop/reconnect
+        return crypto.decrypt_token(conn.access_token_enc)
+    except Exception:  # pragma: no cover - recovery is best-effort
+        return None
+
+
+async def _persist_refresh(conn: models.QboConnection, db: AsyncSession, resp, now: datetime) -> str:
+    """Handle a token-endpoint response that isn't a 400. Persists + COMMITS the
+    rotated tokens on success; raises QboApiError on a non-200. Extracted so the
+    locked refresh body stays readable."""
     if resp.status_code != 200:
         # Network blip / 5xx — surface so caller can decide. Don't drop the
         # connection; the refresh may succeed next time.
@@ -251,7 +343,14 @@ async def refresh_if_needed(
                 conn.refresh_token_expires_at = now + timedelta(seconds=int(rt_expires_in))
             except (TypeError, ValueError):
                 pass
-    await db.flush()
+    # COMMIT the rotation on the caller's own session (not a second session — that
+    # self-deadlocks against this session's own row lock) while still holding the
+    # refresh lock, so the rotated token is durable and visible to a concurrent
+    # loser BEFORE the lock releases. The loser's _adopt_if_fresh then adopts it
+    # instead of spending the dead refresh token. Committing the caller's pending
+    # work here is safe and desirable: a rotated token must never be lost to a
+    # later rollback (Intuit already invalidated the old one).
+    await db.commit()
     return new_access
 
 

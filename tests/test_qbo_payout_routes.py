@@ -216,6 +216,105 @@ def test_notify_edit_stamps_paid_bill():
     assert "qbo_payout_edited_after_paid" in asyncio.run(check())
 
 
+def test_day_status_rejects_bad_range():
+    # A signed-in caller can't scrape/DoS via an unvalidated, unbounded range.
+    client, admin, member, _ = _setup(payPeriodAnchor="2026-07-06")
+    # Malformed date.
+    r = client.post("/api/qbo/payouts/day-status",
+                    json={"periodStart": "not-a-date", "periodEnd": "2026-07-19"},
+                    cookies={"ltp_session": member})
+    assert r.status_code == 400 and r.json()["reason"] == "bad_range"
+    # Reversed range.
+    r = client.post("/api/qbo/payouts/day-status",
+                    json={"periodStart": "2026-07-19", "periodEnd": "2026-07-06"},
+                    cookies={"ltp_session": member})
+    assert r.status_code == 400 and r.json()["reason"] == "bad_range"
+    # Absurdly wide range (the "0000-01-01 … 9999-12-31" scrape).
+    r = client.post("/api/qbo/payouts/day-status",
+                    json={"periodStart": "0001-01-01", "periodEnd": "9999-12-31"},
+                    cookies={"ltp_session": member})
+    assert r.status_code == 400 and r.json()["reason"] == "range_too_wide"
+
+
+def test_notify_edit_noop_on_unpaid_bill():
+    # notify-edit only stamps/pushes for a genuinely PAID bill line; an unpaid
+    # bill (or no ledger line at all) is a silent no-op — no forged activity,
+    # no push storm.
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06", qboPayoutExpenseAccountId="80")
+    proj_id = crew_id + 1
+    from backend.database import async_session
+
+    async def seed_unpaid():
+        async with async_session() as db:
+            pb = models.PayoutBill(contact_id=crew_id, period_start="2026-07-06", period_end="2026-07-19",
+                                   doc_number="PAY-26-14", qb_bill_id="B1", qb_sync_status="synced",
+                                   amount=600.0, qb_paid_at=None)   # NOT paid
+            db.add(pb)
+            await db.flush()
+            db.add(models.PayoutBillLine(payout_bill_id=pb.id, contact_id=crew_id, project_id=proj_id,
+                                         date="2026-07-08", amount=600.0))
+            await db.commit()
+            return pb.id
+
+    pb_id = asyncio.run(seed_unpaid())
+    # Unpaid bill line -> no-op.
+    r = client.post("/api/qbo/payouts/notify-edit",
+                    json={"contactId": crew_id, "projectId": proj_id, "date": "2026-07-08", "where": "schedule"},
+                    cookies={"ltp_session": admin})
+    assert r.status_code == 200 and r.json().get("notified") is False
+    # No ledger line at all (stranger picking a random contact/date) -> no-op.
+    r = client.post("/api/qbo/payouts/notify-edit",
+                    json={"contactId": crew_id, "date": "2020-01-01", "where": "payouts"},
+                    cookies={"ltp_session": admin})
+    assert r.status_code == 200 and r.json().get("notified") is False
+    # Malformed date -> 400 before any lookup.
+    r = client.post("/api/qbo/payouts/notify-edit",
+                    json={"contactId": crew_id, "date": "07/08/2026"},
+                    cookies={"ltp_session": admin})
+    assert r.status_code == 400 and r.json()["reason"] == "bad_date"
+
+    async def check_no_stamp():
+        async with async_session() as db:
+            pb = await db.get(models.PayoutBill, pb_id)
+            return [a.get("type") for a in (pb.activity or [])]
+    assert "qbo_payout_edited_after_paid" not in asyncio.run(check_no_stamp())
+
+
+def test_status_reports_payout_faults():
+    # A payout bill in `error` and one with an amount mismatch both surface in
+    # /status.payoutErrors (the Settings → Error Log QuickBooks Faults feed).
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06")
+    from backend.database import async_session
+
+    async def seed():
+        async with async_session() as db:
+            if await db.get(models.QboConnection, 1) is None:
+                db.add(models.QboConnection(
+                    id=1, realm_id="9999999999", environment="sandbox",
+                    access_token_enc=crypto.encrypt_token("a"), refresh_token_enc=crypto.encrypt_token("r"),
+                    access_token_expires_at=datetime.now(timezone.utc) + timedelta(hours=1)))
+            db.add(models.PayoutBill(
+                contact_id=crew_id, period_start="2026-07-06", period_end="2026-07-19",
+                doc_number="PAY-26-14", qb_sync_status="error", amount=600.0,
+                qb_last_error="QuickBooks Fault: boom",
+                activity=[{"type": "qbo_payout_failed", "message": "QuickBooks payout bill failed",
+                           "date": "2026-07-20", "time": "10:00"}]))
+            db.add(models.PayoutBill(
+                contact_id=crew_id, period_start="2026-06-22", period_end="2026-07-05",
+                doc_number="PAY-26-13", qb_sync_status="synced", amount=600.0, qb_total_amt=650.0,
+                qb_last_error="QuickBooks total $650.00 ≠ computed $600.00"))
+            await db.commit()
+
+    asyncio.run(seed())
+    s = client.get("/api/qbo/status", cookies={"ltp_session": admin}).json()
+    pe = s.get("payoutErrors") or []
+    assert len(pe) == 2, pe
+    ctxs = " ".join(p["context"] for p in pe)
+    assert "PAY-26-14" in ctxs and "PAY-26-13" in ctxs
+    assert any("boom" in (p.get("errorDetail") or "") for p in pe)
+    assert s["amountMismatchCount"] == 1
+
+
 # ── Account refresh now caches Expense + AP; status returns them ─────────────
 
 def test_accounts_refresh_caches_expense_and_ap():
