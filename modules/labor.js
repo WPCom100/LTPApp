@@ -236,13 +236,20 @@
                   }, style: { background: active ? window.LTP_deptColor(d) + "22" : B.bg, color: active ? window.LTP_deptColor(d) : B.textMut, border: "1px solid " + (active ? window.LTP_deptColor(d) + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, d);
                 })
               )),
-            // Roles — toggle tags. Options merge the Settings list with every
-            // role on the labor rate card and any custom roles already on this
-            // person, so a rate-card role like "A1 FUMC" is assignable here
-            // without first adding it in Settings.
+            // Roles — toggle tags, sourced from the labor rate card plus any
+            // role already saved on this person (see the builder below).
             function() {
-              var roleOptions = (settings.crewRoleOptions || ["L1", "L2", "L3", "A1", "A2", "V1", "RIG", "PM"]).slice();
+              // Role tags are sourced ONLY from the labor rate card (Quotes →
+              // Services) plus any role already saved on this person — never a
+              // hardcoded or Settings-curated list. This guarantees the form
+              // can't offer a role that isn't backed by a real service (or a
+              // one-off the user themselves typed on this crew member before).
+              // Rate-card roles come first, alphabetized for a stable order;
+              // then any legacy/custom role still on the person, so it stays
+              // visible and removable even if its service is gone.
+              var roleOptions = [];
               (services || []).forEach(function(s) { if (s.role && roleOptions.indexOf(s.role) === -1) roleOptions.push(s.role); });
+              roleOptions.sort();
               (f.crewRoles || []).forEach(function(r) { if (roleOptions.indexOf(r) === -1) roleOptions.push(r); });
               function addCustomRole() {
                 var v = customRole.trim();

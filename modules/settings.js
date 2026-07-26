@@ -120,7 +120,7 @@
         "Notifications are per-device — turn them on for each phone or tablet you want alerted. You’ll get a push when a crew member responds to a request."));
   }
 
-  window.SettingsView = function({ settings, setSettings, invoices, quotes }) {
+  window.SettingsView = function({ settings, setSettings, invoices, quotes, services }) {
     var isMobile = window.LTP_useIsMobile();
     var [draft, setDraft] = useState(Object.assign({}, settings));
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
@@ -481,35 +481,27 @@
       // ── Crew Options ──────────────────────────────────────────────────────
       h(AccordionSection, { title: "Crew Options" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Manage the available roles and departments for crew members. These appear as selectable tags on the crew form. Roles from the labor rate card (Quotes → Services) show up there automatically, and one-off custom roles can be typed directly on the crew form."),
+          "Crew roles come from your labor rate card (Quotes → Services): every role a crew member can be tagged with is backed by a real service, so nothing appears that you didn't create. One-off roles can still be typed directly on an individual crew member. Departments are managed here."),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
-          // Roles
+          // Roles \u2014 derived (read-only) from the labor rate card. This used to be
+          // a free-text list seeded with hardcoded codes; those surfaced on the
+          // crew form as roles nobody had entered and that linked to no service.
+          // Roles now have a single source of truth (the Services rate card), so
+          // this panel just mirrors it \u2014 add or rename a role by editing its service.
           h("div", null,
-            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Roles"),
-            h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 } },
-              (draft.crewRoleOptions || []).map(function(r, i) {
-                return h("span", { key: r, style: { display: "flex", alignItems: "center", gap: 4, background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, color: B.text } },
-                  r,
-                  h("button", { onClick: function() { set("crewRoleOptions", (draft.crewRoleOptions || []).filter(function(x) { return x !== r; })); },
-                    style: { background: "none", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: "0 0 0 4px", lineHeight: 1 } }, "\u00d7"));
-              })
-            ),
-            h("div", { style: { display: "flex", gap: 4 } },
-              h("input", { id: "newRole", placeholder: "New role\u2026",
-                style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none" },
-                onKeyDown: function(e) {
-                  if (e.key === "Enter" && e.target.value.trim()) {
-                    var v = e.target.value.trim().toUpperCase();
-                    if ((draft.crewRoleOptions || []).indexOf(v) === -1) set("crewRoleOptions", (draft.crewRoleOptions || []).concat([v]));
-                    e.target.value = "";
-                  }
-                } }),
-              h("button", { onClick: function() {
-                var inp = document.getElementById("newRole"); if (!inp || !inp.value.trim()) return;
-                var v = inp.value.trim().toUpperCase();
-                if ((draft.crewRoleOptions || []).indexOf(v) === -1) set("crewRoleOptions", (draft.crewRoleOptions || []).concat([v]));
-                inp.value = "";
-              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+"))),
+            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Roles \u00b7 from rate card"),
+            (function() {
+              var roles = Array.from(new Set((services || []).map(function(s) { return s.role; }).filter(Boolean))).sort();
+              if (roles.length === 0) {
+                return h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", lineHeight: 1.5 } },
+                  "No roles yet. Add services under Quotes \u2192 Services and they'll appear on the crew form automatically.");
+              }
+              return h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+                roles.map(function(r) {
+                  return h("span", { key: r, title: "Defined by a service on the labor rate card (Quotes \u2192 Services)",
+                    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, color: B.text } }, r);
+                }));
+            }())),
           // Departments
           h("div", null,
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Departments"),
