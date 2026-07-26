@@ -27,5 +27,27 @@
     return ((contact.firstName || "") + " " + (contact.lastName || "")).trim();
   };
 
+  // Options for a "Primary Contact" <select> whose candidate list is narrowed
+  // (to a project's contacts, or a company's).
+  //
+  // The narrowing can exclude a contact who is ALREADY selected — link a
+  // project that doesn't list them, or pick a contact then switch company. A
+  // native <select> whose value isn't among its options silently displays the
+  // first one, so the field would read "(none)" while the draft still carried
+  // that contact's id, and the quote would send addressed to someone the UI
+  // said wasn't chosen. Appending the selected contact keeps display and state
+  // honest; they're marked so it's clear why they're listed.
+  H.contactSelectOptions = function(candidates, selectedId, allContacts) {
+    var opts = (candidates || []).map(function(c) {
+      return { value: c.id, label: H.contactName(c) + (c.role ? " — " + c.role : "") };
+    });
+    if (selectedId == null) return opts;
+    var already = opts.some(function(o) { return o.value === selectedId; });
+    if (already) return opts;
+    var sel = H.findById(allContacts, selectedId);
+    if (!sel) return opts;
+    return opts.concat([{ value: sel.id, label: H.contactName(sel) + " — not on this list" }]);
+  };
+
   window.LTP_HELPERS = H;
 })();

@@ -145,6 +145,63 @@ shell exports.
 | `ANTHROPIC_API_KEY` | Optional | (none) | Enables label OCR in the barcode scan-import flow: when the barcode won't decode (glare/angle), the frame is sent to Claude to read the serial *printed* on the label. Unset = the feature hides itself entirely. **Secret — server-side only.** Get a key at console.anthropic.com; usage is roughly $2–3 per 1,000 fallback reads. |
 | `LTP_OCR_MODEL` | Optional | `claude-haiku-4-5-20251001` | Overrides the Claude model used for label OCR. Haiku is fast and cheap; only change if Anthropic deprecates the default. |
 
+## Inline add / edit on entity pickers
+
+Anywhere you pick a **company, contact, or project**, you can create or fix
+that record without leaving the page you're on — no abandoning a half-built
+quote to go to CRM and back.
+
+- **Create.** Type a name that doesn't match anything and the dropdown offers
+  **＋ Create "…" as a new company** (previously the dropdown just vanished on
+  zero matches, which read as a broken search box). There's also a **＋** at the
+  right edge of every such field. The form that opens is the same CRM form, so
+  there's one set of fields and one set of validation rules. What you typed is
+  carried in as the name, and the new record is selected the moment you save.
+- **Edit.** When something is selected, a **✎** opens that record's form
+  pre-filled — fix a company's billing address (which drives QuickBooks sales
+  tax) or a contact's email mid-quote, and the change lands on the record
+  everywhere.
+- **Context carries over.** A project created from a quote or invoice inherits
+  that document's company, its primary contact, and any custom dates. A contact
+  created from a **Primary Contact** field is linked to the document's company,
+  so it appears in that narrowed list immediately. A vendor created from a
+  rentals field is flagged `isVendor`.
+- **Nesting works.** Creating a project from a quote, then creating that
+  project's company from inside the project form, is fine — each form stacks
+  above the one that opened it.
+
+**Deleting is not offered here** — it stays in CRM, where the guided teardown
+reviews linked quotes, invoices, and crew assignments first.
+
+### Where it is (and deliberately isn't)
+
+| Surface | Field |
+|---|---|
+| Quote builder | Company · Primary Contact · Contact (individual) · Linked Project |
+| Invoice builder | Company · Primary Contact · Contact (individual) · Linked Project |
+| Project form | Company · Project Contacts |
+| Contact form | Link to Companies |
+| Meeting form | Attendees |
+| Rentals — equipment & scan import | Purchase Vendor (CRM) |
+
+**Not added, on purpose:** crew selection (schedule editor, assignments, manual
+shift) picks from a roster, not a record you author; statuses, categories,
+departments, units and payment terms are fixed lists; QuickBooks income/expense
+accounts are created in QuickBooks; and products, services, fees, equipment,
+kits and containers keep their existing catalog screens.
+
+If you add a new picker, pass `createKind` / `allowEdit` to it only when the
+user would be *naming a new record* rather than *choosing from a known set* —
+see the header comment in `components/entity-quick-form.js`.
+
+### Linked Project is now a search field
+
+The **Linked Project** picker on quotes and invoices was a native dropdown; it
+is now a type-to-search chip field matching the Company field. Clearing the
+chip is what the old "(no project — use custom name)" option did. It still
+filters to the document's company, still hides internal manual-shift projects
+and completed ones, and still warns on a company mismatch.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that

@@ -76,22 +76,26 @@
   };
 
   // ── Contact Form — add + edit ──────────────────────────────────────────────
-  window.CRMContactForm = function({ ctx, initial, onSave, onClose }) {
-    var [fn, setFn] = useState(initial ? initial.firstName : "");
-    var [ln, setLn] = useState(initial ? initial.lastName : "");
-    var [email, setEmail] = useState(initial ? initial.email : "");
-    var [phone, setPhone] = useState(initial ? initial.phone : "");
-    var [role, setRole] = useState(initial ? initial.role : "");
-    var [compIds, setCompIds] = useState(initial ? initial.companyIds : []);
+  // `prefill` / `modalZIndex`: see the note on window.CRMCompanyForm. Creating
+  // a contact from a quote's Primary Contact field arrives here prefilled with
+  // the typed name and the document's company already linked.
+  window.CRMContactForm = function({ ctx, initial, prefill, onSave, onClose, modalZIndex }) {
+    var seed = initial || prefill || {};
+    var [fn, setFn] = useState(seed.firstName || "");
+    var [ln, setLn] = useState(seed.lastName || "");
+    var [email, setEmail] = useState(seed.email || "");
+    var [phone, setPhone] = useState(seed.phone || "");
+    var [role, setRole] = useState(seed.role || "");
+    var [compIds, setCompIds] = useState(seed.companyIds || []);
     // Billing address — only relevant when this contact is invoiced directly
     // (client_type="contact"). Feeds the QuickBooks customer for sales tax.
-    var [cAddress, setCAddress] = useState(initial ? initial.address || "" : "");
-    var [cCity, setCCity] = useState(initial ? initial.city || "" : "");
-    var [cState, setCState] = useState(initial ? initial.state || "" : "");
-    var [cZip, setCZip] = useState(initial ? initial.zip || "" : "");
+    var [cAddress, setCAddress] = useState(seed.address || "");
+    var [cCity, setCCity] = useState(seed.city || "");
+    var [cState, setCState] = useState(seed.state || "");
+    var [cZip, setCZip] = useState(seed.zip || "");
     var [errors, setErrors] = useState({});
     function validate() { var e = {}; if (!fn.trim()) e.fn = 1; if (!ln.trim()) e.ln = 1; if (!email.trim()) e.email = 1; if (!phone.trim()) e.phone = 1; if (!role.trim()) e.role = 1; setErrors(e); return Object.keys(e).length === 0; }
-    return h(window.LTPModal, { title: initial ? "Edit Contact" : "Add Contact", onClose: onClose, disableBackdrop: true },
+    return h(window.LTPModal, { title: initial ? "Edit Contact" : "Add Contact", onClose: onClose, disableBackdrop: true, zIndex: modalZIndex },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPInput, { label: "First Name *", value: fn, onChange: setFn, placeholder: "First" }),
@@ -105,7 +109,8 @@
           onBlur: function() { if (phone) setPhone(window.LTP_formatPhone(phone)); } }),
         h(window.LTPInput, { label: "Role / Title *", value: role, onChange: setRole, placeholder: "e.g. Technical Director" }),
         (errors.email || errors.phone || errors.role) && h("div", { style: { fontSize: "10px", color: B.danger } }, "* All starred fields are required."),
-        h(window.SearchSelect, { label: "Link to Companies (optional)", items: ctx.companies, selectedIds: compIds, onChange: setCompIds, nameField: "name" }),
+        h(window.SearchSelect, { label: "Link to Companies (optional)", items: ctx.companies, selectedIds: compIds, onChange: setCompIds, nameField: "name",
+          createKind: "company", allowEdit: true }),
         // Billing address — for contacts invoiced directly. Feeds QuickBooks tax.
         h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 10 } },
           h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 } }, "Billing Address (for direct invoicing)"),

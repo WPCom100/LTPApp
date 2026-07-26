@@ -46,24 +46,30 @@
     );
   };
 
-  window.CRMCompanyForm = function({ ctx, initial, onSave, onClose }) {
-    var [name, setName] = useState(initial ? initial.name : "");
-    var [isClient, setIsClient] = useState(initial ? !!initial.isClient : true);
-    var [isVendor, setIsVendor] = useState(initial ? !!initial.isVendor : false);
-    var [status, setStatus] = useState(initial ? initial.status : "prospect");
-    var [address, setAddress] = useState(initial ? initial.address || "" : "");
-    var [website, setWebsite] = useState(initial ? initial.website || "" : "");
-    var [logo, setLogo] = useState(initial ? initial.logo || "" : "");
-    var [notes, setNotes] = useState(initial ? initial.notes || "" : "");
+  // `prefill` seeds a CREATE form (ignored when `initial` is set) so the inline
+  // add flow can carry over what the picker already knew — the name the user
+  // typed, or isVendor when adding from a rentals vendor field. `modalZIndex`
+  // lifts the dialog when it was opened from inside another modal. Both come
+  // from components/entity-quick-form.js.
+  window.CRMCompanyForm = function({ ctx, initial, prefill, onSave, onClose, modalZIndex }) {
+    var seed = initial || prefill || {};
+    var [name, setName] = useState(seed.name || "");
+    var [isClient, setIsClient] = useState(seed.isClient == null ? true : !!seed.isClient);
+    var [isVendor, setIsVendor] = useState(!!seed.isVendor);
+    var [status, setStatus] = useState(seed.status || "prospect");
+    var [address, setAddress] = useState(seed.address || "");
+    var [website, setWebsite] = useState(seed.website || "");
+    var [logo, setLogo] = useState(seed.logo || "");
+    var [notes, setNotes] = useState(seed.notes || "");
     // Billing city/state/zip + taxable feed the QuickBooks customer so Automated
     // Sales Tax can geocode the jurisdiction (see backend/qbo_sync.py).
-    var [city, setCity] = useState(initial ? initial.city || "" : "");
-    var [stateRegion, setStateRegion] = useState(initial ? initial.state || "" : "");
-    var [zip, setZip] = useState(initial ? initial.zip || "" : "");
-    var [taxable, setTaxable] = useState(initial ? !!initial.taxable : false);
+    var [city, setCity] = useState(seed.city || "");
+    var [stateRegion, setStateRegion] = useState(seed.state || "");
+    var [zip, setZip] = useState(seed.zip || "");
+    var [taxable, setTaxable] = useState(!!seed.taxable);
     var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? B.btnInk : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
 
-    return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true },
+    return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true, zIndex: modalZIndex },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h(window.LTPInput, { label: "Company Name *", value: name, onChange: setName, placeholder: "e.g. Dallas Theater Center" }),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },

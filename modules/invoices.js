@@ -1705,14 +1705,25 @@
                     h(window.CompanySearchField, {
                       label: "Company *", compId: draft.companyId,
                       setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
-                      companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); }
+                      companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); },
+                      createKind: "company", allowEdit: true
                     }),
+                    // Narrowed to this client's contacts, so a client with none
+                    // yet leaves the select empty \u2014 the \uff0b on the label is the
+                    // way out, and what it creates is linked to the company so
+                    // it lands in this list.
                     h(window.LTPSelect, { label: "Primary Contact",
                       value: draft.clientContactId || "",
                       onChange: function(v) { patchDraft({ clientContactId: v ? Number(v) : null }); },
                       options: [{ value: "", label: "(none)" }].concat(
-                        (selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : [])
-                          .map(function(c) { return { value: c.id, label: c.firstName + " " + c.lastName + (c.role ? " \u2014 " + c.role : "") }; }))
+                        window.LTP_HELPERS.contactSelectOptions(
+                          selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : [],
+                          draft.clientContactId, contacts)),
+                      labelAction: h(window.LTPEntityQuickAction, {
+                        kind: "contact", id: draft.clientContactId || null,
+                        prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
+                        onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
+                      })
                     })
                   ),
 
@@ -1721,16 +1732,31 @@
                     h(window.ContactSearchField, {
                       label: "Contact *", contactId: draft.clientContactId,
                       setContactId: function(id) { patchDraft({ clientContactId: id }); },
-                      contacts: contacts, placeholder: "Search all contacts\u2026"
+                      contacts: contacts, placeholder: "Search all contacts\u2026",
+                      createKind: "contact", allowEdit: true
                     })
                   ),
 
                   h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
-                    // Project picker — filtered by company
-                    h(window.LTPSelect, { label: "Linked Project",
-                      value: draft.projectId || "",
-                      onChange: function(v) {
-                        var pid = Number(v) || null;
+                    // Project picker — typeahead, filtered by company. Clearing
+                    // the chip is the old "(no project — use custom name)"
+                    // option; a project created here inherits this invoice's
+                    // company. Mirrors the quote builder's field.
+                    h(window.ProjectSearchField, { label: "Linked Project",
+                      projectId: draft.projectId || null,
+                      projects: projects, companies: companies,
+                      placeholder: "Search projects — or leave empty for a custom name",
+                      filter: function(p) {
+                        if (p.internal) return false;                   // manual shift, not invoiceable
+                        if (p.status === "completed" && p.id !== draft.projectId) return false;
+                        if (draft.clientType === "company" && draft.companyId && p.companyId !== draft.companyId) return false;
+                        return true;
+                      },
+                      createKind: "project", allowEdit: true,
+                      createPrefill: Object.assign({},
+                        draft.companyId ? { companyId: draft.companyId } : null,
+                        draft.clientContactId ? { contactIds: [draft.clientContactId] } : null),
+                      setProjectId: function(pid) {
                         if (pid && draft.companyId) {
                           var proj = projects.find(function(p) { return p.id === pid; });
                           if (proj && proj.companyId && proj.companyId !== draft.companyId) {
@@ -1740,11 +1766,7 @@
                           }
                         }
                         patchDraft({ projectId: pid });
-                      },
-                      options: [{ value: "", label: "(no project \u2014 use custom name)" }].concat(
-                        (draft.clientType === "company" && draft.companyId ? projects.filter(function(p) { return p.companyId === draft.companyId; }) : projects)
-                          .filter(function(p) { return !p.internal && (p.status !== "completed" || p.id === draft.projectId); })  // internal = manual shift, not invoiceable
-                          .map(function(p) { return { value: p.id, label: p.name + " \u00b7 " + fmt(p.startDate) }; }))
+                      }
                     }),
                     // Custom name when no project
                     !draft.projectId && h(window.LTPInput, {

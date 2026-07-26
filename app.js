@@ -580,7 +580,17 @@ function LTPSignedInApp(props) {
    isMobile && moreOpen && h(LTPMoreSheet, { route: route, isAdmin: isAdmin, nav: nav, onClose: function() { setMoreOpen(false); } }),
    isMobile && createOpen && h(LTPCreateSheet, { nav: nav, onClose: function() { setCreateOpen(false); } }),
    h(window.LTPErrorToasts),
-   h(window.LTPCrewOutbox)
+   h(window.LTPCrewOutbox),
+   // Inline "add / edit the record you're picking" forms. Mounted here because
+   // this is the only place that holds every entity setter — which is what lets
+   // a picker anywhere in the app create a company or project without those
+   // setters being threaded down to it (the quote builder never receives
+   // setCompanies; the invoice builder never receives setProjects).
+   h(window.LTPEntityFormHost, {
+     companies: companies, setCompanies: setCompanies,
+     contacts:  contacts,  setContacts:  setContacts,
+     projects:  projects,  setProjects:  setProjects,
+   })
   );
 }
 
