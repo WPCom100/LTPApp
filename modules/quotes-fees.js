@@ -7,7 +7,7 @@
 // quote/invoice line edits its own unitPrice directly and never uses
 // adjustedPrice. See backend/models.py::Fee.
 (function() {
-  var h = React.createElement, useState = React.useState;
+  var h = React.createElement, useState = React.useState, useRef = React.useRef;
   var B = window.LTP_THEME;
 
   var FEE = "#B794F6";  // fee accent (matches the FEE badge in the builder)
@@ -100,7 +100,47 @@
     );
   }
 
-  window.QuotesFees = function({ fees, setFees, quotes, invoices, settings, qbo }) {
+  // Editor for the "quick-add" fee names — the one-tap chips that pre-fill a
+  // CUSTOM fee's description in the quote/invoice Add-Item → Fees tab. Persists
+  // to settings.feeQuickNames (admin-only write), which the pickers read via
+  // window.LTP_FEE_QUICKNAMES. Local state is the editing surface; text edits
+  // commit on blur, add/remove commit immediately, so typing stays smooth and
+  // the whole app doesn't re-render on every keystroke.
+  function FeeQuickNamesEditor({ settings, setSettings }) {
+    var [names, setNames] = useState(function() { return window.LTP_feeQuickNames(settings); });
+    var namesRef = useRef(names);
+    namesRef.current = names;
+
+    function persist(list) {
+      var normalized = window.LTP_feeQuickNames({ feeQuickNames: list });
+      setSettings(function(prev) { return Object.assign({}, prev || {}, { feeQuickNames: normalized }); });
+    }
+    function patch(i, val) { var n = namesRef.current.slice(); n[i] = val; setNames(n); }
+    function addName() { setNames(namesRef.current.concat([""])); }   // blank row — commits on blur once typed
+    function removeName(i) { var n = namesRef.current.slice(); n.splice(i, 1); setNames(n); persist(n); }
+    function commitBlur() { persist(namesRef.current); }
+
+    return h("div", { style: { background: B.raised, border: "1px solid " + FEE + "44", borderRadius: "8px", padding: "12px 14px", marginBottom: 16 } },
+      h("div", { style: { fontSize: "10px", fontWeight: 700, color: FEE, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 } }, "Quick-Add Fee Names"),
+      h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.5, marginBottom: 10 } },
+        "One-tap names shown when adding a custom fee to a quote or invoice. These pre-fill the description only — they carry no price."),
+      h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+        names.map(function(nm, i) {
+          return h("div", { key: i, style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.bg, border: "1px solid " + B.border, borderRadius: "14px", padding: "3px 4px 3px 10px" } },
+            h("input", { value: nm, size: Math.max((nm || "").length, 6), placeholder: "name",
+              onChange: function(e) { patch(i, e.target.value); },
+              onBlur: commitBlur,
+              onKeyDown: function(e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } },
+              style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", outline: "none", minWidth: 40 } }),
+            h("button", { onClick: function() { removeName(i); }, "aria-label": "Remove " + (nm || "name"), title: "Remove",
+              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "15px", lineHeight: 1, padding: "0 4px" } }, "×"));
+        }),
+        h("button", { onClick: addName,
+          style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "14px", color: B.textSec, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: "5px 12px" } }, "+ Add name"))
+    );
+  }
+
+  window.QuotesFees = function({ fees, setFees, quotes, invoices, settings, setSettings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [catFilter, setCatFilter] = useState("all");
@@ -166,6 +206,10 @@
     }
 
     return h("div", null,
+      // Quick-add fee-name editor (admin-only — it writes app settings). The
+      // catalog list below is unaffected by whether this renders.
+      isAdmin && setSettings && h(FeeQuickNamesEditor, { settings: settings, setSettings: setSettings }),
+
       // Toolbar — category chips scroll horizontally on mobile; "+ Add" → FAB.
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },
         h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },

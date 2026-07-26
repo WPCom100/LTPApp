@@ -95,6 +95,16 @@ eq("S5 displayStatus paid", window.LTP_displayStatus({ status: "paid" }), "paid"
 eq("S6 displayStatus partial", window.LTP_displayStatus({ status: "sent", sections: items([line({ unitPrice: 100 })]), payments: [{ amount: 40 }] }), "partial");
 eq("S7 displayStatus overdue", window.LTP_displayStatus({ status: "sent", dueDate: past, sections: items([line({ unitPrice: 100 })]) }), "overdue");
 
+// ── Fee quick-pick names helper (editable in Quotes → Fees) ──────────────────
+const FQN = window.LTP_feeQuickNames;
+eq("F1 default list when unset", JSON.stringify(FQN({})), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT));
+eq("F2 default list when null settings", JSON.stringify(FQN(null)), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT));
+eq("F3 custom list passes through", JSON.stringify(FQN({ feeQuickNames: ["A", "B"] })), JSON.stringify(["A", "B"]));
+eq("F4 trims + drops blanks", JSON.stringify(FQN({ feeQuickNames: ["  Lodging  ", "", "   ", "Travel"] })), JSON.stringify(["Lodging", "Travel"]));
+eq("F5 de-dupes case-insensitively, keeps first form/order", JSON.stringify(FQN({ feeQuickNames: ["Travel", "travel", "Lodging"] })), JSON.stringify(["Travel", "Lodging"]));
+eq("F6 explicit empty list stays empty (no fallback)", JSON.stringify(FQN({ feeQuickNames: [] })), JSON.stringify([]));
+eq("F7 non-array falls back to default", JSON.stringify(FQN({ feeQuickNames: "Lodging" })), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT));
+
 console.log("money-totals suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

@@ -480,8 +480,9 @@
               style: { width: isMobile ? "100%" : 110, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
             h("button", { onClick: addCustomFee, disabled: !feeName.trim(),
               style: { background: feeName.trim() ? B.accent : B.raised, border: "none", borderRadius: "6px", color: feeName.trim() ? B.btnInk : B.textMut, cursor: feeName.trim() ? "pointer" : "default", fontSize: "12px", fontWeight: 700, padding: "8px 14px", whiteSpace: "nowrap", flexShrink: 0 } }, "Add")),
+          (window.LTP_FEE_QUICKNAMES || window.LTP_FEE_QUICKNAMES_DEFAULT).length > 0 &&
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
-            ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"].map(function(sug) {
+            (window.LTP_FEE_QUICKNAMES || window.LTP_FEE_QUICKNAMES_DEFAULT).map(function(sug) {
               return h("button", { key: sug, onClick: function() { setFeeName(sug); },
                 style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "12px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "3px 10px" } }, "+ " + sug);
             }))),
