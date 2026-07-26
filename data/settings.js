@@ -43,8 +43,14 @@ window.LTP_DATA_SETTINGS = {
     invoiced: "#FF8A50", booked: "#F5B83D", cancelled: "#8A99A0",
   },
 
-  // Crew Options — drive role/department dropdowns
-  crewRoleOptions: ["L1", "L2", "L3", "LD", "A1", "A2", "A3", "V1", "V2", "SH", "SM", "F1", "F2", "RIG", "PM", "TD", "PA"],
+  // Crew Options — department dropdown seed.
+  // Role abbreviations are intentionally NOT seeded here. Every role code the
+  // app offers or displays comes from the labor rate card (Quotes → Services),
+  // so a role can never appear that isn't backed by a real service — plus any
+  // one-off role a user has already saved on a specific crew member. Kept as an
+  // empty list (rather than removed) so any legacy reader sees [] not undefined;
+  // it is no longer read by the crew form or the Settings editor.
+  crewRoleOptions: [],
   crewDepartmentOptions: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"],
 
   // Fee quick-picks — one-tap names that pre-fill a CUSTOM fee's description in

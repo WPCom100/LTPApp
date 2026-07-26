@@ -36,7 +36,11 @@
                   posCount > 0 && h("div", { style: { fontSize: "10px", color: filled === posCount ? B.success : B.textMut, fontWeight: 600 } }, filled + "/" + posCount + " crew"),
                   (s.positions || []).slice(0, 3).map(function(p) {
                     var cm = p.crewId ? ctx.contacts.find(function(c) { return c.id === p.crewId; }) : null;
-                    return h("span", { key: p.id, style: { fontSize: "9px", background: cm ? B.accent + "22" : B.raised, color: cm ? B.accent : B.textMut, border: "1px solid " + (cm ? B.accent + "44" : B.border), padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, p.role + (cm ? ": " + cm.firstName : ""));
+                    // Resolve the role through its rate-card service; a position
+                    // with no live service reads generic "Crew" rather than a raw
+                    // (possibly stale/free-text) code.
+                    var svc = p.serviceId ? (ctx.services || []).find(function(x) { return x.id === p.serviceId; }) : null;
+                    return h("span", { key: p.id, style: { fontSize: "9px", background: cm ? B.accent + "22" : B.raised, color: cm ? B.accent : B.textMut, border: "1px solid " + (cm ? B.accent + "44" : B.border), padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, (svc ? svc.role : "Crew") + (cm ? ": " + cm.firstName : ""));
                   }))
               );
             })

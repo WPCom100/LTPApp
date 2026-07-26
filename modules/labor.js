@@ -60,6 +60,11 @@
             dayRoleCount: (dayRoleCounts[s.date] || {})[p.serviceId] || 0,
             crewId: p.crewId, status: p.status,
             svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
+            // Service-derived short role for at-a-glance displays (weekly grid).
+            // Resolves live through the linked service so a renamed service is
+            // reflected; a position with no live service reads generic "Crew"
+            // rather than echoing a stale/free-text code.
+            roleCode: svc ? svc.role : "Crew",
             dept: svc ? svc.department : "",
             crewName: cm ? cm.firstName + " " + cm.lastName : null,
           });
@@ -236,13 +241,20 @@
                   }, style: { background: active ? window.LTP_deptColor(d) + "22" : B.bg, color: active ? window.LTP_deptColor(d) : B.textMut, border: "1px solid " + (active ? window.LTP_deptColor(d) + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, d);
                 })
               )),
-            // Roles — toggle tags. Options merge the Settings list with every
-            // role on the labor rate card and any custom roles already on this
-            // person, so a rate-card role like "A1 FUMC" is assignable here
-            // without first adding it in Settings.
+            // Roles — toggle tags, sourced from the labor rate card plus any
+            // role already saved on this person (see the builder below).
             function() {
-              var roleOptions = (settings.crewRoleOptions || ["L1", "L2", "L3", "A1", "A2", "V1", "RIG", "PM"]).slice();
+              // Role tags are sourced ONLY from the labor rate card (Quotes →
+              // Services) plus any role already saved on this person — never a
+              // hardcoded or Settings-curated list. This guarantees the form
+              // can't offer a role that isn't backed by a real service (or a
+              // one-off the user themselves typed on this crew member before).
+              // Rate-card roles come first, alphabetized for a stable order;
+              // then any legacy/custom role still on the person, so it stays
+              // visible and removable even if its service is gone.
+              var roleOptions = [];
               (services || []).forEach(function(s) { if (s.role && roleOptions.indexOf(s.role) === -1) roleOptions.push(s.role); });
+              roleOptions.sort();
               (f.crewRoles || []).forEach(function(r) { if (roleOptions.indexOf(r) === -1) roleOptions.push(r); });
               function addCustomRole() {
                 var v = customRole.trim();
@@ -1433,7 +1445,7 @@
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
-                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.role + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
                     h(window.Badge, { status: r.pos.status }),
                     h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
                     h(window.LTPMailBtn, { email: r.crew.email, name: cname }));
@@ -1466,7 +1478,7 @@
                 dayShifts.map(function(s, si) {
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
                   return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px solid " + sc.color } },
-                    h("div", { style: { fontWeight: 600 } }, s.role),
+                    h("div", { style: { fontWeight: 600 } }, s.roleCode),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
                 }));
             }));

@@ -265,16 +265,19 @@
       }));
     }
 
-    // Assign crew to all days macro
+    // Assign crew to all days macro. Only a role backed by a rate-card service
+    // can be assigned — the buttons below are suppressed for a crew role with no
+    // matching service, and this guards again — so the macro can never mint a
+    // serviceId-less (phantom, unrateable) position.
     function assignToAllDays(crewId, serviceId, roleCode) {
       var c = crew.find(function(cr) { return cr.id === crewId; });
       var svc = serviceId ? svcs.find(function(sv) { return sv.id === serviceId; }) : null;
-      if (!c) return;
+      if (!c || !svc) return;
       onChange(schedule.map(function(s) {
         // Check if this crew is already on this day
         var already = (s.positions || []).some(function(p) { return p.crewId === crewId; });
         if (already) return s;
-        var newPos = { id: genId("pos"), role: svc ? svc.role : roleCode || (c.crewRoles || [])[0] || "", serviceId: serviceId || null, crewId: crewId, status: "open" };
+        var newPos = { id: genId("pos"), role: svc.role, serviceId: svc.id, crewId: crewId, status: "open" };
         return Object.assign({}, s, { positions: (s.positions || []).concat([newPos]) });
       }));
       setAssignCrewModal(false);
@@ -653,14 +656,20 @@
         h("p", { style: { fontSize: "12px", color: B.textMut, marginBottom: 12 } }, "Select a crew member and role. They will be added to every schedule day they aren't already on."),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 350, overflowY: "auto" } },
           crew.map(function(c) {
+            // Only offer roles that map to a rate-card service — a role with no
+            // service would create a position that carries no rate and no
+            // DB-backed identity. A crew member with no rate-card roles shows
+            // none (assign them from the schedule row via the Role dropdown).
+            var assignable = (c.crewRoles || []).map(function(roleCode) {
+              return svcs.find(function(sv) { return sv.role === roleCode; });
+            }).filter(Boolean);
             return h("div", { key: c.id, style: { display: "flex", gap: 8, alignItems: "center" } },
               h("div", { style: { flex: 1 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, (c.crewRoles || []).join(", "))),
-              (c.crewRoles || []).map(function(roleCode) {
-                var svc = svcs.find(function(sv) { return sv.role === roleCode; });
-                return h("button", { key: roleCode, onClick: function() { assignToAllDays(c.id, svc ? svc.id : null, roleCode); },
-                  style: { background: B.accent + "22", border: "1px solid " + B.accent + "44", borderRadius: "4px", padding: "4px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "as " + roleCode);
+                h("div", { style: { fontSize: "10px", color: B.textMut } }, assignable.length ? assignable.map(function(sv) { return sv.role; }).join(", ") : "No rate-card roles")),
+              assignable.map(function(sv) {
+                return h("button", { key: sv.id, onClick: function() { assignToAllDays(c.id, sv.id, sv.role); },
+                  style: { background: B.accent + "22", border: "1px solid " + B.accent + "44", borderRadius: "4px", padding: "4px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "as " + sv.role);
               })
             );
           })
