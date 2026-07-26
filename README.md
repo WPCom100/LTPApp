@@ -188,9 +188,13 @@ downloads the photo bytes once and serves its own stable copy from
 outbound email signatures, so recipients' mail clients must be able to
 load it). Existing users' photos are cached automatically on their next
 sign-in. If a photo is stale, an admin can click **Re-pull photo** on that
-person's row in Team Members; the fresh image is pulled on their next
-sign-in (a fresh login is required because the stored Google URL may itself
-be the expired one).
+person's row in Team Members: the app first tries to re-download it
+immediately from the stored Google URL (which usually works server-side even
+when the browser/email can't load it), and if that URL is itself expired it
+queues the re-pull for that user's next sign-in, where a fresh login provides
+a working URL. Team Members avatars fall back to an initial-letter
+placeholder whenever the image can't load, so a broken photo never shows a
+broken-image icon.
 
 ### Deliverability (landing in spam?)
 
