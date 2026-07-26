@@ -22,8 +22,9 @@ from backend import models
 
 
 # Brand defaults — mirror data/settings.js (accentColor, logoUrl) so a themed
-# email still renders before any Settings save. The LTP stacked logo doubles as
-# the signature photo fallback (theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
+# email still renders before any Settings save. The self-hosted LTP avatar
+# (_photo_fallback_url below) doubles as the signature photo fallback (kept in
+# sync with theme.js window.LTP_SIGNATURE_PHOTO_FALLBACK).
 _DEFAULT_ACCENT = "#EF5822"
 # The exact brand orange, sampled from assets/logos — used for the masthead
 # rule (so it color-matches the logo and reads as one shape) and the CTA button.
@@ -224,7 +225,7 @@ def _render_signature(
     # pre-dates the OAuth scope grant could be photo-less). We escape
     # picture_url too even though it's controlled by Google; an attacker
     # who managed to inject HTML there would still be neutered.
-    photo_url = (user.picture_url or "").strip() or _PHOTO_FALLBACK_URL
+    photo_url = _signature_photo_url(user)
     return (
         template
         .replace("{{userPhoto}}", escape(photo_url))
@@ -235,14 +236,37 @@ def _render_signature(
     )
 
 
-# Used by both _render_signature (for users with no Google profile pic)
-# AND embedded in _FALLBACK_SIGNATURE; pinned here so changing the URL
-# updates both call sites in one edit. MUST stay in sync with the same
-# constant in theme.js (window.LTP_SIGNATURE_PHOTO_FALLBACK) so the
+# Signature avatar shown when the signed-in user has no Google profile picture
+# (rare). Served by the app itself (like the masthead logo), NOT the marketing
+# site: the old marketing-site URL (…/wp-content/uploads/…/LTP-Logo-Stacked.png)
+# started returning 404, so every fallback signature carried a broken image —
+# which looks unprofessional AND is a deliverability penalty (mail-tester flags
+# broken links; broken images read as spammy to filters). Self-hosting it means
+# it can't break when the marketing site reorganizes.
+#
+# Absolute URL (built from the app origin) because email clients can't resolve a
+# relative src; empty origin in local dev degrades exactly like the masthead.
+# MUST stay in sync with theme.js (window.LTP_SIGNATURE_PHOTO_FALLBACK) so the
 # Send-modal preview renders the same image the recipient gets.
-_PHOTO_FALLBACK_URL = (
-    "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png"
-)
+_AVATAR_ASSET_PATH = "/assets/logos/ltp-avatar.png"
+
+
+def _photo_fallback_url() -> str:
+    return (_app_origin() or "") + _AVATAR_ASSET_PATH
+
+
+def _signature_photo_url(user: models.User) -> str:
+    """Absolute URL for the sender's signature avatar, in priority order:
+      1. the app-cached copy (stable, self-hosted) — the fix for rotted Google
+         URLs; served from GET /api/users/photo/{token},
+      2. the raw Google picture_url (until the first cache lands), then
+      3. the self-hosted LTP avatar fallback.
+    Absolute because email clients can't resolve a relative src (empty origin in
+    local dev degrades the same way the masthead does)."""
+    cached = user.cached_photo_path()
+    if cached:
+        return (_app_origin() or "") + cached
+    return (user.picture_url or "").strip() or _photo_fallback_url()
 
 
 # Server-side fallback signature — must stay byte-identical to the

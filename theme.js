@@ -1208,10 +1208,13 @@ window.LTP_crewNotify = function(contactId, projectId, template, opts) {
 // negatives (plain-text wrongly classified as HTML) lose the
 // formatting we're trying to add.
 // Fallback photo URL used when the signed-in user has no Google profile
-// picture (rare). Same image as the legacy logo position in the signature
-// template, so the layout doesn't break on first send. MUST stay in sync
-// with backend/routes/email.py::_PHOTO_FALLBACK_URL.
-window.LTP_SIGNATURE_PHOTO_FALLBACK = "https://www.luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png";
+// picture (rare). Served by the app itself (absolute, so the same URL works
+// in the sent email) — the old marketing-site URL started 404ing, leaving a
+// broken image in the signature. MUST stay in sync with
+// backend/email_compose.py::_photo_fallback_url (_AVATAR_ASSET_PATH).
+window.LTP_SIGNATURE_PHOTO_FALLBACK =
+  (typeof window !== "undefined" && window.location ? window.location.origin : "")
+  + "/assets/logos/ltp-avatar.png";
 
 // Render the {{signature}} placeholder against the currently signed-in
 // user, using the workspace-wide signature template from settings.
