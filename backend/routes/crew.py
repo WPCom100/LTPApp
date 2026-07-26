@@ -28,8 +28,9 @@ Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
     non-repudiation (internal-only — never surfaced on the payload).
   - /api/crew is rate-limited (backend/rate_limit.py) like /api/view.
 """
-from datetime import datetime, timezone
+from datetime import date as _date, datetime, timedelta, timezone
 from html import escape
+from urllib.parse import quote
 import os
 import re
 import secrets
@@ -272,6 +273,90 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
             'style="width:100%;margin:8px 0 16px">' + "".join(rows) + "</table>")
 
 
+def _gcal_url(shift: dict, project_name: str, location: str) -> str:
+    """Google Calendar 'add event' template URL for one confirmed shift. Times
+    are floating (no timezone) so the event renders as the posted wall-clock
+    wherever the crew member opens it. Mirrors theme.js LTP_gcalUrl (the web
+    call sheet's calendar buttons) so the email and page produce the same event.
+    Returns "" for a dateless shift (nothing to add)."""
+    date_iso = (shift.get("date") or "").strip()
+    d = date_iso.replace("-", "")
+    if not d:
+        return ""
+    start = (shift.get("startTime") or "").strip() or "00:00"
+    end = (shift.get("endTime") or "").strip()
+    start_stamp = d + "T" + start.replace(":", "") + "00"
+    if end:
+        end_d = d
+        # A wrap earlier than the call runs past midnight → end date rolls a day.
+        if end < start:
+            try:
+                y, m, dd = (int(x) for x in date_iso.split("-"))
+                end_d = (_date(y, m, dd) + timedelta(days=1)).strftime("%Y%m%d")
+            except Exception:
+                end_d = d
+        end_stamp = end_d + "T" + end.replace(":", "") + "00"
+    else:
+        # No wrap given → a one-hour block (hour clamped to 23).
+        try:
+            eh = min(23, int(start.split(":")[0]) + 1)
+        except Exception:
+            eh = 1
+        end_stamp = d + "T" + str(eh).zfill(2) + start.split(":")[1] + "00"
+    title = " — ".join(x for x in [project_name, shift.get("roleLabel") or ""] if x)
+    detail_parts = []
+    if (shift.get("startTime") or "").strip():
+        detail_parts.append("Call " + _fmt_hhmm(shift.get("startTime")))
+    if end:
+        detail_parts.append("Wrap " + _fmt_hhmm(end))
+    if (shift.get("shiftTitle") or "").strip():
+        detail_parts.append(shift.get("shiftTitle"))
+    details = "  ·  ".join(detail_parts)
+    url = ("https://calendar.google.com/calendar/render?action=TEMPLATE"
+           "&text=" + quote(title, safe="") + "&dates=" + start_stamp + "/" + end_stamp)
+    if details:
+        url += "&details=" + quote(details, safe="")
+    if location:
+        url += "&location=" + quote(location, safe="")
+    return url
+
+
+def _add_to_calendar_html(shifts: list, project_name: str, location: str, accent: str) -> str:
+    """Themed 'Add to Calendar' block for the confirmation email — one
+    Google-Calendar button per confirmed shift (a single "Add to Calendar"
+    button when there's just one; a per-date button otherwise). Empty when no
+    shift carries a date. Mirrors the crew page's confirmed-banner buttons."""
+    usable = [s for s in (shifts or []) if (s.get("date") or "").strip()]
+    if not usable:
+        return ""
+    single = len(usable) == 1
+    cells = []
+    for s in usable:
+        href = _gcal_url(s, project_name, location)
+        if not href:
+            continue
+        label = "Add to Calendar" if single else _fmt_iso_date(s.get("date"))
+        cells.append(
+            '<td style="padding:0 8px 8px 0">'
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>'
+            '<td style="background-color:#ffffff;border:1px solid ' + accent + ';border-radius:7px">'
+            '<a href="' + escape(href) + '" style="display:inline-block;padding:10px 18px;font-size:13px;'
+            'font-weight:bold;color:' + accent + ';text-decoration:none">' + escape(label) + '</a>'
+            '</td></tr></table></td>'
+        )
+    if not cells:
+        return ""
+    per_row = 1 if single else 2
+    rows = ["<tr>" + "".join(cells[i:i + per_row]) + "</tr>" for i in range(0, len(cells), per_row)]
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:6px 0 8px">'
+        '<tr><td style="font-size:12px;font-weight:bold;color:#8a949e;text-transform:uppercase;'
+        'letter-spacing:0.06em;padding:0 0 10px">Add to your calendar</td></tr>'
+        '<tr><td><table role="presentation" cellpadding="0" cellspacing="0" border="0">' + "".join(rows) + '</table></td></tr>'
+        '</table>'
+    )
+
+
 def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str, site_address: str = "") -> str:
     """Themed call-to-action card with a single accent button that opens the
     crew landing page (where Accept / Decline + the note actually happen).
@@ -367,14 +452,23 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # Settings previews stay valid without a redesign.
 _CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged"}
 
-# Server-side fallbacks for the removal templates, used when the workspace hasn't
+# Server-side fallbacks for the notify templates, used when the workspace hasn't
 # saved that template to the DB yet (load_settings reads the DB, which doesn't
-# carry the data/settings.js defaults until an admin clicks Save). All three
-# removal notices are pinned because the notify tray can send any of them before
-# settings are saved, so an empty body would be a broken email. Each lists
-# {{shifts}} (the tray groups per person, so a notice can cover several shifts).
-# MUST stay in sync with data/settings.js byte-for-byte.
+# carry the data/settings.js defaults until an admin clicks Save). These are
+# pinned because the notify tray / Confirm & Notify can send any of them before
+# settings are saved, so an empty body would be a broken email. The removal
+# notices list {{shifts}} (the tray groups per person); crewConfirmed lists
+# {{addToCalendar}} so a fresh deploy's confirmation still carries the calendar
+# button. MUST stay in sync with data/settings.js byte-for-byte.
 _NOTIFY_FALLBACKS = {
+    "crewConfirmed": {
+        "subject": "Confirmed: {{projectName}} — {{date}}",
+        "body": ("Hi {{crewName}},\n\nYou are confirmed for the following:\n\n"
+                 "Project: {{projectName}}\nRole: {{role}}\nDate: {{date}}\n"
+                 "Call: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\n"
+                 "Please reach out if you have any questions. We look forward to "
+                 "working with you.\n\n{{addToCalendar}}\n\n{{signature}}"),
+    },
     "crewWithdrawn": {
         "subject": "Update: {{projectName}} — crew request withdrawn",
         "body": ("Hi {{crewName}},\n\nWe've withdrawn our crew request for "
@@ -455,11 +549,21 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # BOLD in the withdrawal email, plain elsewhere — surviving the escaping
         # _paragraphs_to_html applies to the surrounding text.
         project_html = ("<strong>" + escape(project_name) + "</strong>") if template_key == "crewWithdrawn" else escape(project_name)
+        signature_html = _render_signature(user, settings_data)
         blocks = {
             "{{projectName}}": project_html,
             "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]) if shifts else "",
-            "{{signature}}": _render_signature(user, settings_data),
+            "{{signature}}": signature_html,
         }
+        # Confirmation email: a one-tap "Add to Calendar" button per confirmed
+        # shift. The maps-navigable address is the calendar location. The button
+        # is injected above the signature for any saved body that predates the
+        # {{addToCalendar}} token, so it always renders on a confirmation.
+        if template_key == "crewConfirmed":
+            cal_html = _add_to_calendar_html(shifts, project_name, site_address or location, brand["accent"])
+            blocks["{{addToCalendar}}"] = cal_html
+            if cal_html and "{{addToCalendar}}" not in body_text:
+                blocks["{{signature}}"] = cal_html + signature_html
         inner = _paragraphs_to_html(body_text, blocks)
         final_html = email_html(email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None

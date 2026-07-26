@@ -349,6 +349,13 @@ _CSP = (
     # Production behavior is identical either way (browsers don't fetch maps
     # unless DevTools is open).
     "connect-src 'self' https://cdnjs.cloudflare.com; "
+    # frame-src: the ONLY third-party frame we embed is the keyless Google Maps
+    # place embed (maps?q=…&output=embed) on the public crew call sheet, so crew
+    # can see the job site with a pin. maps.google.com issues the initial request
+    # and 302s to www.google.com/maps/embed, so both origins are allow-listed.
+    # No other embedding is permitted (without this, default-src 'self' would
+    # block the map entirely).
+    "frame-src https://www.google.com https://maps.google.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
     # appcenter.intuit.com is where /api/qbo/connect redirects the browser to

@@ -1570,18 +1570,37 @@ window.LTP_settingsAddress = function(s) {
 };
 
 // Build a Google Calendar "add event" template URL. Shared by the CRM meetings
-// and projects views. Event runs from {time} to one hour later (same minutes,
-// hour clamped to 23). attendees is an array of emails; details is optional.
+// and projects views and the public crew call sheet. When {endTime} is given it
+// sets the wrap (rolling to the next day for an overnight shift whose wrap is
+// earlier than the call); otherwise the event runs one hour (same minutes, hour
+// clamped to 23). {location} adds a place; attendees is an array of emails;
+// details is optional. Times are floating (no timezone) so they render as the
+// posted wall-clock wherever the crew member opens the link.
 window.LTP_gcalUrl = function(opts) {
   opts = opts || {};
   var time = opts.time || "00:00";
   var d = (opts.date || "").replace(/-/g, "");
-  var eh = String(Math.min(23, parseInt(time.split(":")[0]) + 1)).padStart(2, "0");
-  var dates = d + "T" + time.replace(":", "") + "00/" + d + "T" + eh + time.split(":")[1] + "00";
+  var startStamp = d + "T" + time.replace(":", "") + "00";
+  var endStamp;
+  if (opts.endTime) {
+    // A wrap earlier than the call means the shift runs past midnight, so the
+    // end date advances one calendar day.
+    var endD = d;
+    if (opts.date && opts.endTime < time) {
+      var nd = new Date(opts.date + "T00:00:00");
+      nd.setDate(nd.getDate() + 1);
+      endD = "" + nd.getFullYear() + String(nd.getMonth() + 1).padStart(2, "0") + String(nd.getDate()).padStart(2, "0");
+    }
+    endStamp = endD + "T" + opts.endTime.replace(":", "") + "00";
+  } else {
+    var eh = String(Math.min(23, parseInt(time.split(":")[0]) + 1)).padStart(2, "0");
+    endStamp = d + "T" + eh + time.split(":")[1] + "00";
+  }
   var url = "https://calendar.google.com/calendar/render?action=TEMPLATE"
     + "&text=" + encodeURIComponent(opts.title || "")
-    + "&dates=" + dates;
+    + "&dates=" + startStamp + "/" + endStamp;
   if (opts.details) url += "&details=" + encodeURIComponent(opts.details);
+  if (opts.location) url += "&location=" + encodeURIComponent(opts.location);
   return url + "&add=" + (opts.attendees || []).join(",");
 };
 
