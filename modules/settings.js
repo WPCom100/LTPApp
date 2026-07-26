@@ -9,6 +9,26 @@
   var sectionStyle = { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "18px 20px", marginBottom: 14 };
   var sectionTitle = { fontSize: "13px", fontWeight: 700, color: B.text, marginBottom: 14 };
 
+  // Circular team-member avatar. Renders the cached/Google photo, but falls back
+  // to the initial-letter placeholder BOTH when there's no usable http(s) URL
+  // AND when the image fails to load (a rotted Google URL, an uncached user) —
+  // so a broken photo shows a clean initial, never a broken-image icon. Resets
+  // its error state when the URL changes (e.g. after an admin re-pull succeeds).
+  function TeamAvatar(props) {
+    var u = props.u, size = props.size || 32;
+    var failedState = useState(false);
+    var failed = failedState[0], setFailed = failedState[1];
+    useEffect(function() { setFailed(false); }, [u.pictureUrl]);
+    var canShow = u.pictureUrl && /^https?:\/\//i.test(u.pictureUrl) && !failed;
+    if (canShow) {
+      return h("img", { src: u.pictureUrl, alt: u.name || u.email, referrerPolicy: "no-referrer",
+        onError: function() { setFailed(true); },
+        style: { width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid " + B.border } });
+    }
+    return h("div", { style: { width: size, height: size, borderRadius: "50%", background: B.bg, border: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "center", color: B.textMut, fontSize: "11px", fontWeight: 700, flexShrink: 0 } },
+      (u.name || u.email || "?").charAt(0).toUpperCase());
+  }
+
   // A settings section. On desktop it renders exactly as before (a bordered
   // card with a heading). On mobile the long settings page becomes unwieldy, so
   // each section collapses into a tap-to-expand accordion panel — the first one
@@ -220,14 +240,14 @@
       setIsDirty(true);
     }
 
-    // Queue a profile-photo re-pull for a user. Fires IMMEDIATELY (own POST,
-    // not deferred to the page Save) — it doesn't touch title/phone/role, so it
-    // shouldn't ride the Save/Discard flow. We only merge the returned
-    // photoRefreshRequested flag into local state (into BOTH users and the clean
-    // snapshot) so any unsaved title/phone/role edits on that row are preserved
-    // and no spurious dirty diff is introduced. The actual re-download happens
-    // server-side on that user's next sign-in (the stored Google URL may be the
-    // stale one, so we can't reliably re-pull now).
+    // Re-pull a user's profile photo. Fires IMMEDIATELY (own POST, not deferred
+    // to the page Save) — it doesn't touch title/phone/role, so it shouldn't
+    // ride the Save/Discard flow. The backend first tries a live server-side
+    // download from the stored Google URL (often works even when the browser
+    // can't load it); if that succeeds the photo updates right now, otherwise it
+    // queues a re-pull for the user's next sign-in. We merge only the changed
+    // fields into BOTH users and the clean snapshot so unsaved title/phone/role
+    // edits on that row are preserved and no spurious dirty diff is introduced.
     function repullPhoto(userId) {
       fetch("/api/users/" + userId + "/refresh-photo", { method: "POST", credentials: "include" })
         .then(function(r) {
@@ -235,12 +255,26 @@
           return r.json();
         })
         .then(function(saved) {
-          var mergeFlag = function(u) { return u.id === userId ? Object.assign({}, u, { photoRefreshRequested: true }) : u; };
-          setUsers(function(prev) { return Array.isArray(prev) ? prev.map(mergeFlag) : prev; });
-          if (Array.isArray(usersCleanRef.current)) usersCleanRef.current = usersCleanRef.current.map(mergeFlag);
-          if (window.LTP_toast) window.LTP_toast("Photo re-pull queued", {
-            message: (saved.name || saved.email || "This user") + "'s photo will refresh on their next sign-in.",
-            variant: "success" });
+          // On an immediate cache, adopt the fresh pictureUrl (new ?v= busts the
+          // browser cache so the new image shows at once); otherwise just mark
+          // it queued.
+          var patch = saved.photoCachedNow
+            ? { pictureUrl: saved.pictureUrl, photoRefreshRequested: false }
+            : { photoRefreshRequested: true };
+          var apply = function(u) { return u.id === userId ? Object.assign({}, u, patch) : u; };
+          setUsers(function(prev) { return Array.isArray(prev) ? prev.map(apply) : prev; });
+          if (Array.isArray(usersCleanRef.current)) usersCleanRef.current = usersCleanRef.current.map(apply);
+          if (window.LTP_toast) {
+            if (saved.photoCachedNow) {
+              window.LTP_toast("Photo updated", {
+                message: (saved.name || saved.email || "This user") + "'s profile photo has been refreshed.",
+                variant: "success" });
+            } else {
+              window.LTP_toast("Photo re-pull queued", {
+                message: "Couldn't fetch it right now — it'll refresh on " + (saved.name || saved.email || "the user") + "'s next sign-in.",
+                variant: "info" });
+            }
+          }
         })
         .catch(function(e) {
           if (window.LTP_toast) window.LTP_toast("Couldn't queue photo re-pull", { message: String(e.message || e), variant: "error" });
@@ -763,16 +797,9 @@
               // email signature template — showing it here makes it visible to
               // the admin which photo each team member's signature will use.
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
-                // URL scheme guard: only render an <img> when pictureUrl is
-                // explicitly http(s). CSP would already block javascript:/
-                // data: at runtime, but rejecting them here means a stored
-                // bad value can't even reach the DOM. Falls back to the
-                // initial-letter placeholder otherwise.
-                (u.pictureUrl && /^https?:\/\//i.test(u.pictureUrl))
-                  ? h("img", { src: u.pictureUrl, alt: u.name || u.email,
-                      style: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid " + B.border } })
-                  : h("div", { style: { width: 32, height: 32, borderRadius: "50%", background: B.bg, border: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "center", color: B.textMut, fontSize: "11px", fontWeight: 700, flexShrink: 0 } },
-                      (u.name || u.email || "?").charAt(0).toUpperCase()),
+                // Avatar: cached/Google photo with a graceful initial-letter
+                // fallback on any load failure (see TeamAvatar).
+                h(TeamAvatar, { u: u }),
                 h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 } },
                   h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
                   h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),

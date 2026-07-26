@@ -11,6 +11,21 @@ from backend.auth_deps import require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
 from backend.email_validate import parse_recipients, RecipientError
+from backend.email_compose import _app_origin
+from backend.routes.auth import _fetch_and_cache_photo
+
+
+def _picture_url(u: models.User) -> str:
+    """Public pictureUrl for API responses. Prefers the app-cached avatar as an
+    ABSOLUTE URL (origin + path) so it (a) passes the frontend's http(s)-only
+    <img> guard and (b) is the same URL used in emails. Falls back to the raw
+    Google URL until the first cache lands on that user's next sign-in, then to
+    "" (frontend shows an initials placeholder). Origin comes from
+    LTP_OAUTH_REDIRECT_URI; empty only in local dev without it set."""
+    cached = u.cached_photo_path()
+    if cached:
+        return (_app_origin() or "") + cached
+    return u.picture_url or ""
 
 
 # ── Generic helpers ───────────────────────────────────────────────────────
@@ -412,9 +427,9 @@ def _user_dict(u: models.User) -> dict:
         "id": u.id,
         "email": u.email,
         "name": u.name,
-        # App-cached avatar when available (stable, self-hosted), else the
-        # Google URL until the first cache lands on that user's next sign-in.
-        "pictureUrl": u.cached_photo_path() or (u.picture_url or ""),
+        # App-cached avatar when available (stable, self-hosted, absolute), else
+        # the Google URL until the first cache lands on that user's next sign-in.
+        "pictureUrl": _picture_url(u),
         # Whether a re-pull has already been queued (so the UI can show
         # "queued" instead of letting an admin click twice).
         "photoRefreshRequested": bool(u.photo_refresh_requested),
@@ -491,23 +506,38 @@ async def update_user(
 
 @router.post("/users/{user_id}/refresh-photo", dependencies=[Depends(require_admin)])
 async def refresh_user_photo(user_id: int, db: AsyncSession = Depends(get_db)):
-    """Admin-only. Queue a re-pull of this user's Google profile photo on their
-    NEXT sign-in.
+    """Admin-only. Re-pull a user's Google profile photo.
 
-    Why next sign-in and not now: the photo we'd re-fetch comes from the user's
-    Google `picture` URL, and that stored URL may itself be the stale/rotted one
-    (that's usually why the avatar broke). Only a fresh OAuth login hands us a
-    working URL, so we set a flag and let the callback do the download. Returns
-    the updated user dict (photoRefreshRequested=True) so the UI reflects the
-    queued state without a reload."""
+    Two-tier: first try an IMMEDIATE server-side download from the stored Google
+    `picture` URL. That often succeeds even when the same URL fails in a browser
+    or email client — Google throttles hotlinked/no-referrer avatar loads far
+    more than a plain server fetch — so the admin usually gets an instant fix
+    (and can fix OTHER users' photos without them re-logging in). If the stored
+    URL is itself stale/rotted (the common cause of a broken avatar), the fetch
+    fails and we fall back to flagging a re-pull on that user's NEXT sign-in,
+    where a fresh OAuth login hands us a working URL.
+
+    Returns the updated user dict plus `photoCachedNow` (True if the immediate
+    fetch succeeded)."""
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     target = result.scalar_one_or_none()
     if not target:
         raise HTTPException(status_code=404, detail=f"user {user_id} not found")
-    target.photo_refresh_requested = True
+
+    now = datetime.now(timezone.utc)
+    cached_now = False
+    if (target.picture_url or "").strip():
+        cached_now = await _fetch_and_cache_photo(target, target.picture_url, now)
+    if not cached_now:
+        # Couldn't fetch right now — queue it for the next sign-in (a fresh
+        # login refreshes picture_url to a working URL, then downloads it).
+        target.photo_refresh_requested = True
+
     await db.flush()
     await db.refresh(target)
-    return _user_dict(target)
+    out = _user_dict(target)
+    out["photoCachedNow"] = cached_now
+    return out
 
 
 # ── Public avatar serving (no session) ────────────────────────────────────

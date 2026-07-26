@@ -29,6 +29,7 @@ from backend.database import get_db
 from backend import models
 from backend.auth_deps import require_session, SESSION_COOKIE_NAME, hash_session_token
 from backend import crypto
+from backend.email_compose import _app_origin
 
 # Scope string for the per-user Gmail send feature. Mirrored from
 # backend/main.py — kept inline here so the lookup in /auth/me doesn't
@@ -408,9 +409,11 @@ async def me(user: models.User = Depends(require_session)):
         "id": user.id,
         "email": user.email,
         "name": user.name,
-        # Prefer the app-cached avatar (stable, self-hosted); fall back to the
-        # Google URL until the first cache lands on next sign-in.
-        "pictureUrl": user.cached_photo_path() or (user.picture_url or ""),
+        # Prefer the app-cached avatar (stable, self-hosted) as an ABSOLUTE URL
+        # so it passes the frontend's http(s)-only <img> guard and matches the
+        # email copy; fall back to the Google URL until the first cache lands.
+        "pictureUrl": ((_app_origin() or "") + user.cached_photo_path())
+                      if user.cached_photo_path() else (user.picture_url or ""),
         "role": user.role,
         "title": user.title or "",
         "phone": user.phone or "",

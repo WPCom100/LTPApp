@@ -40,12 +40,38 @@ if "_test_user_photo.db" in os.environ["DATABASE_URL"]:
         except FileNotFoundError:
             pass
 
+from contextlib import contextmanager  # noqa: E402
+
 from backend import models  # noqa: E402
 from backend.auth_deps import hash_session_token  # noqa: E402
 from backend.routes import auth as auth_mod  # noqa: E402
+from backend.routes import api as api_mod  # noqa: E402
 from backend.email_compose import (  # noqa: E402
     _signature_photo_url, _photo_fallback_url, _app_origin,
 )
+
+
+@contextmanager
+def _patch_fetch(*, returns, cache=False):
+    """Replace api._fetch_and_cache_photo so the refresh endpoint doesn't make a
+    real network call. `returns` is the boolean it yields; when cache=True the
+    fake also populates the user row like a real successful download would."""
+    orig = api_mod._fetch_and_cache_photo
+
+    async def fake(user, picture, now, **kwargs):
+        if cache:
+            user.photo_token = user.photo_token or f"immediate-tok-{user.id}"
+            user.photo_data = _PNG_BYTES
+            user.photo_content_type = "image/png"
+            user.photo_updated_at = now
+            user.photo_refresh_requested = False
+        return returns
+
+    api_mod._fetch_and_cache_photo = fake
+    try:
+        yield
+    finally:
+        api_mod._fetch_and_cache_photo = orig
 
 
 # 1×1 PNG — a real, tiny image payload for the serve-endpoint tests.
@@ -246,6 +272,7 @@ def test_get_user_photo_404_unknown_and_empty():
 
 
 def test_refresh_photo_requires_admin():
+    # Auth is checked before any fetch, so no patching needed here.
     client, admin_tok, member_tok, _, member_id, _ = _client_and_seed(with_photo=False)
     r = client.post(f"/api/users/{member_id}/refresh-photo", cookies={"ltp_session": member_tok})
     assert r.status_code == 403, r.status_code
@@ -253,18 +280,37 @@ def test_refresh_photo_requires_admin():
     assert r.status_code == 401, r.status_code
 
 
-def test_refresh_photo_sets_flag():
+def test_refresh_photo_falls_back_to_flag_when_fetch_fails():
+    """Stored Google URL is stale → immediate fetch fails → queue for next login."""
     client, admin_tok, _, _, member_id, _ = _client_and_seed(with_photo=False)
-    r = client.post(f"/api/users/{member_id}/refresh-photo", cookies={"ltp_session": admin_tok})
+    with _patch_fetch(returns=False):
+        r = client.post(f"/api/users/{member_id}/refresh-photo", cookies={"ltp_session": admin_tok})
     assert r.status_code == 200, r.status_code
-    assert r.json()["photoRefreshRequested"] is True
+    body = r.json()
+    assert body["photoCachedNow"] is False
+    assert body["photoRefreshRequested"] is True
     # Confirm it persisted via the roster.
     users = client.get("/api/users", cookies={"ltp_session": admin_tok}).json()
     member = next(u for u in users if u["id"] == member_id)
     assert member["photoRefreshRequested"] is True
 
 
+def test_refresh_photo_caches_immediately_when_fetch_succeeds():
+    """Stored Google URL still works server-side → photo updates right now, no
+    re-login needed, and pictureUrl becomes the app-cached absolute URL."""
+    client, admin_tok, _, _, member_id, _ = _client_and_seed(with_photo=False)
+    with _patch_fetch(returns=True, cache=True):
+        r = client.post(f"/api/users/{member_id}/refresh-photo", cookies={"ltp_session": admin_tok})
+    assert r.status_code == 200, r.status_code
+    body = r.json()
+    assert body["photoCachedNow"] is True
+    assert body["photoRefreshRequested"] is False
+    assert "/api/users/photo/" in body["pictureUrl"], body["pictureUrl"]
+    assert "lh3" not in body["pictureUrl"]
+
+
 def test_refresh_photo_404_unknown_user():
+    # 404 (user not found) is returned before any fetch, so no patching needed.
     client, admin_tok, _, _, _, _ = _client_and_seed(with_photo=False)
     r = client.post("/api/users/99999999/refresh-photo", cookies={"ltp_session": admin_tok})
     assert r.status_code == 404, r.status_code
@@ -274,7 +320,8 @@ def test_user_dict_picture_url_prefers_cache():
     client, admin_tok, _, _, member_id, token = _client_and_seed(with_photo=True)
     users = client.get("/api/users", cookies={"ltp_session": admin_tok}).json()
     member = next(u for u in users if u["id"] == member_id)
-    assert member["pictureUrl"].startswith(f"/api/users/photo/{token}?v="), member["pictureUrl"]
+    # Absolute URL (origin + path) so it passes the frontend http(s) <img> guard.
+    assert member["pictureUrl"].startswith(_app_origin() + f"/api/users/photo/{token}?v="), member["pictureUrl"]
     assert "lh3" not in member["pictureUrl"], "cached path replaces the Google URL"
 
 
