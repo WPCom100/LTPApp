@@ -396,6 +396,29 @@ eq("PP19 next period starts day after", PPI(_ppA, 14, "2026-08-03"), 2);
 const _ppLabel = window.LTP_payPeriodLabel("2026-07-06", "2026-07-19");
 ok("PP20 label reads both endpoints", /July 6th, 2026/.test(_ppLabel) && /July 19th, 2026/.test(_ppLabel), _ppLabel);
 
+// ── gcalUrl (calendar links: back-compat + crew endTime/location/overnight) ──
+const GC = window.LTP_gcalUrl;
+// Back-compat: no endTime → one-hour block, hour clamped, always trailing &add=.
+eq("GC1 legacy one-hour block",
+  GC({ title: "Sync — LTP", date: "2026-07-03", time: "09:30", details: "d" }),
+  "https://calendar.google.com/calendar/render?action=TEMPLATE&text=Sync%20%E2%80%94%20LTP&dates=20260703T093000/20260703T103000&details=d&add=");
+eq("GC2 legacy hour clamps at 23",
+  GC({ title: "T", date: "2026-07-03", time: "23:15" }),
+  "https://calendar.google.com/calendar/render?action=TEMPLATE&text=T&dates=20260703T231500/20260703T231500&add=");
+eq("GC3 legacy attendees joined",
+  GC({ title: "T", date: "2026-07-03", time: "10:00", attendees: ["a@b.com", "c@d.com"] }),
+  "https://calendar.google.com/calendar/render?action=TEMPLATE&text=T&dates=20260703T100000/20260703T110000&add=a@b.com,c@d.com");
+// Crew: explicit endTime is honored; location is appended.
+const _g4 = GC({ title: "Gala — A1", date: "2026-07-03", time: "08:00", endTime: "17:00", location: "500 Main St" });
+ok("GC4 endTime honored", /dates=20260703T080000\/20260703T170000/.test(_g4), _g4);
+ok("GC5 location appended", /&location=500%20Main%20St/.test(_g4), _g4);
+// Overnight (wrap earlier than call) rolls the end date one day.
+ok("GC6 overnight rolls a day",
+  /dates=20260703T180000\/20260704T020000/.test(GC({ title: "T", date: "2026-07-03", time: "18:00", endTime: "02:00" })), "overnight");
+// Same-day wrap does NOT roll.
+ok("GC7 equal times stay same day",
+  /dates=20260703T080000\/20260703T080000/.test(GC({ title: "T", date: "2026-07-03", time: "08:00", endTime: "08:00" })), "no-roll");
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

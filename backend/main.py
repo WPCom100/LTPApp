@@ -12,6 +12,7 @@ from authlib.integrations.starlette_client import OAuth
 from backend import models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
+from backend.routes.api import public_router as users_public_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
@@ -348,6 +349,13 @@ _CSP = (
     # Production behavior is identical either way (browsers don't fetch maps
     # unless DevTools is open).
     "connect-src 'self' https://cdnjs.cloudflare.com; "
+    # frame-src: the ONLY third-party frame we embed is the keyless Google Maps
+    # place embed (maps?q=…&output=embed) on the public crew call sheet, so crew
+    # can see the job site with a pin. maps.google.com issues the initial request
+    # and 302s to www.google.com/maps/embed, so both origins are allow-listed.
+    # No other embedding is permitted (without this, default-src 'self' would
+    # block the map entirely).
+    "frame-src https://www.google.com https://maps.google.com; "
     "object-src 'none'; "
     "base-uri 'self'; "
     # appcenter.intuit.com is where /api/qbo/connect redirects the browser to
@@ -542,6 +550,11 @@ app.state.oauth = oauth
 # registered first it would swallow `/auth/login` etc.
 app.include_router(auth_router)
 app.include_router(api_router)
+# Public avatar serving: token-only (no session) under /api/users/photo/* — the
+# same URL is embedded in outbound email signatures, so external mail clients
+# must be able to load it. Distinct GET path from the session-gated /api/users
+# routes, so registration order is not load-bearing here. See backend/routes/api.py.
+app.include_router(users_public_router)
 # PDF: api_pdf_router holds the session-gated POST endpoints (under /api/);
 # public_pdf_router holds the tokenized GET endpoint (under /pdf/) which
 # intentionally bypasses session auth — the token is the credential.

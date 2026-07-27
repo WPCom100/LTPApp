@@ -2206,13 +2206,32 @@
                 h(window.CompanySearchField, {
                   label: "Company *", compId: draft.companyId,
                   setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
-                  companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); }
+                  companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); },
+                  createKind: "company", allowEdit: true
                 }),
-                h(window.LTPSelect, { label: "Primary Contact",
-                  value: draft.clientContactId || "",
-                  onChange: function(v) { patchDraft({ clientContactId: v ? Number(v) : null }); },
-                  options: [{ value: "", label: "(none)" }].concat(projectContacts.map(function(c) { return { value: c.id, label: c.firstName + " " + c.lastName + (c.role ? " \u2014 " + c.role : "") }; }))
-                })
+                // The contact list is narrowed to this client, so when the
+                // client has no contacts yet the select is empty and there's
+                // nothing to pick \u2014 the \uff0b on the label is the way out. A
+                // contact added here is linked to the company so it lands in
+                // this very list.
+                // Tier 1 is this client's / project's contacts; everyone else is
+                // behind an "Other contacts" click, so a client whose contact was
+                // never linked is still reachable instead of unpickable.
+                (function() {
+                  var tiers = window.LTP_HELPERS.contactPickerTiers(
+                    projectContacts, draft.clientContactId, contacts, [{ value: "", label: "(none)" }]);
+                  return h(window.LTPSearchSelect, { label: "Primary Contact",
+                    value: draft.clientContactId || "",
+                    onChange: function(v) { patchDraft({ clientContactId: v === "" ? null : Number(v) }); },
+                    searchPlaceholder: "Search contacts\u2026",
+                    options: tiers.options, moreOptions: tiers.moreOptions, moreLabel: tiers.moreLabel,
+                    labelAction: h(window.LTPEntityQuickAction, {
+                      kind: "contact", id: draft.clientContactId || null,
+                      prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
+                      onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
+                    })
+                  });
+                })()
               ),
 
               // Contact mode
@@ -2220,15 +2239,28 @@
                 h(window.ContactSearchField, {
                   label: "Contact *", contactId: draft.clientContactId,
                   setContactId: function(id) { patchDraft({ clientContactId: id }); },
-                  contacts: contacts, placeholder: "Search all contacts..."
+                  contacts: contacts, placeholder: "Search all contacts...",
+                  createKind: "contact", allowEdit: true
                 })
               ),
 
               h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
-                h(window.LTPSelect, { label: "Linked Project",
-                  value: draft.projectId || "",
-                  onChange: function(v) {
-                    var pid = v ? Number(v) : null;
+                // Typeahead rather than a native <select>: the old dropdown grew
+                // unusable as projects piled up and had nowhere to put a create
+                // affordance. Clearing the chip is the old "(no project \u2014 use
+                // custom name)" option. A project created here inherits the
+                // quote's company and dates.
+                h(window.ProjectSearchField, { label: "Linked Project",
+                  projectId: draft.projectId || null,
+                  projects: projects, companies: companies,
+                  placeholder: "Search projects \u2014 or leave empty for a custom name",
+                  filter: function(p) {
+                    if (p.internal) return false;                       // manual shift, not quotable
+                    if (p.status === "completed" && p.id !== draft.projectId) return false;
+                    if (draft.clientType === "company" && draft.companyId && p.companyId !== draft.companyId) return false;
+                    return true;
+                  },
+                  setProjectId: function(pid) {
                     if (pid && draft.companyId) {
                       var proj = projects.find(function(p) { return p.id === pid; });
                       if (proj && proj.companyId && proj.companyId !== draft.companyId) {
@@ -2239,11 +2271,16 @@
                     }
                     patchDraft({ projectId: pid });
                   },
-                  options: [{ value: "", label: "(no project \u2014 use custom name)" }].concat(
-                    (draft.clientType === "company" && draft.companyId ? projects.filter(function(p) { return p.companyId === draft.companyId; }) : projects)
-                      .filter(function(p) { return p.status !== "completed" && !p.internal; })  // internal = manual shift, not quotable
-                      .map(function(p) { return { value: p.id, label: p.name + " \u00b7 " + fmt(p.startDate) }; })
-                  )
+                  createKind: "project", allowEdit: true,
+                  // Carry over what the quote already knows. contactIds matters
+                  // beyond convenience: once a project is linked, the Primary
+                  // Contact list narrows to THAT project's contacts, so a new
+                  // project with none would drop the contact already chosen.
+                  createPrefill: Object.assign({},
+                    draft.companyId ? { companyId: draft.companyId } : null,
+                    draft.clientContactId ? { contactIds: [draft.clientContactId] } : null,
+                    draft.customStartDate ? { startDate: draft.customStartDate } : null,
+                    draft.customEndDate ? { endDate: draft.customEndDate } : null)
                 }),
                 !draft.projectId && h(window.LTPInput, {
                   label: "Custom Quote Name", value: draft.customName,

@@ -146,18 +146,23 @@ def test_signature_userphoto_substituted_from_picture_url():
 def test_signature_userphoto_falls_back_when_picture_url_empty():
     """If a User row has no picture_url (rare for Google OAuth, but
     possible — pre-grant-scope users, or test seeds), {{userPhoto}}
-    falls back to the LTP logo URL so the layout doesn't break."""
+    falls back to the self-hosted LTP avatar so the layout doesn't break.
+    The avatar is served by the app (not the marketing site, whose old URL
+    started 404ing) — a broken signature image looks unprofessional and
+    is a deliverability penalty."""
     print("test_signature_userphoto_falls_back_when_picture_url_empty")
     u = models.User(google_sub="g", email="bob@x.com", name="Bob", picture_url="")
     out = _render_signature(u, {})
-    _check("fallback logo URL substituted",
-           "luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" in out)
+    _check("self-hosted avatar URL substituted",
+           "/assets/logos/ltp-avatar.png" in out)
+    _check("no broken marketing-site fallback",
+           "wp-content/uploads/2024/07/LTP-Logo-Stacked.png" not in out)
     _check("no literal {{userPhoto}} left", "{{userPhoto}}" not in out)
 
     u2 = models.User(google_sub="g", email="c@x.com", name="Carol", picture_url=None)
     out2 = _render_signature(u2, {})
     _check("None picture_url also falls back",
-           "luminarytechnology.productions/wp-content/uploads/2024/07/LTP-Logo-Stacked.png" in out2)
+           "/assets/logos/ltp-avatar.png" in out2)
 
 
 def test_signature_userphoto_html_escaped():

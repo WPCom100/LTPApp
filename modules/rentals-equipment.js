@@ -143,11 +143,14 @@
           R.Field("Weight", h("input", { type: "number", min: 0, step: "0.1", value: f.weight || "", onChange: function(e) { set("weight", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) }))
         ),
 
-        // Vendor from CRM — only for non-serialized (serialized items have per-unit vendor)
-        !f.serialized && R.Field("Purchase Vendor (from CRM)", h("select", { value: f.vendorCompanyId || "", onChange: function(e) { set("vendorCompanyId", e.target.value ? Number(e.target.value) : null); }, style: Object.assign({}, R.INP, { width: "100%" }) },
-          h("option", { value: "" }, "— Select vendor —"),
-          (vendors || []).map(function(v) { return h("option", { key: v.id, value: v.id }, v.name); })
-        )),
+        // Vendor from CRM — only for non-serialized (serialized items have per-unit vendor).
+        // Uses the same VendorSearch as the per-unit picker below rather than a
+        // bare <select>: one behaviour for the same field, and it can create a
+        // vendor that isn't in CRM yet.
+        !f.serialized && R.Field("Purchase Vendor (from CRM)", h(R.VendorSearch, {
+          vendors: vendors, value: f.vendorCompanyId || null,
+          onChange: function(id) { set("vendorCompanyId", id); }
+        })),
 
         // Rates (3-day is minimum / base rate)
         h("div", { style: { background: B.raised, borderRadius: 8, padding: "14px", border: "1px solid " + B.border } },

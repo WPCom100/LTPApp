@@ -219,13 +219,28 @@ _h2t.body_width = 0     # don't wrap; we want the plaintext to look like an emai
 _h2t.ignore_images = True
 _h2t.protect_links = True
 _h2t.unicode_snob = True
+# Our HTML is table-based for layout (email_shell's card, the masthead, and the
+# signature are all <table>s). Rendering those tables into the plaintext part
+# produces garbage: `| | |` / `---|---` grid artifacts AND — worse — it swallows
+# the paragraph breaks so body sentences run together ("...for the Gala.Due
+# Date: ...Payment can be made..."). A text/plain alternative that doesn't
+# cleanly mirror the HTML is a real deliverability penalty — spam scorers
+# (SpamAssassin's MIME_HTML_* checks and similar) treat a broken/empty plaintext
+# part as a spam signal. ignore_tables renders just the cell *content* (no grid),
+# so paragraphs separate correctly and the plaintext reads like a real email.
+_h2t.ignore_tables = True
 
 
 def html_to_text(html: str) -> str:
     """Convert HTML to a plaintext alternative for multipart/alternative.
     Mail clients that block HTML (still common in some corporate setups)
     will render this part instead. Preserves links as `(http://...)`
-    after their anchor text via html2text's protect_links flag."""
+    after their anchor text via html2text's protect_links flag.
+
+    Layout tables are flattened to their cell content (ignore_tables) so the
+    plaintext keeps proper paragraph spacing instead of the `| | |` grid
+    artifacts html2text emits by default — a garbled text/plain part that
+    doesn't match the HTML raises the message's spam score."""
     if not html:
         return ""
     return _h2t.handle(html).strip()

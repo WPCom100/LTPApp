@@ -14,8 +14,11 @@ The Authlib OAuth client is instantiated in backend/main.py and stashed on
 `app.state.oauth`. We pull it back via the Request to keep this module decoupled.
 """
 import os
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +29,7 @@ from backend.database import get_db
 from backend import models
 from backend.auth_deps import require_session, SESSION_COOKIE_NAME, hash_session_token
 from backend import crypto
+from backend.email_compose import _app_origin
 
 # Scope string for the per-user Gmail send feature. Mirrored from
 # backend/main.py — kept inline here so the lookup in /auth/me doesn't
@@ -227,6 +231,13 @@ async def callback(request: Request, db: AsyncSession = Depends(get_db)):
     _persist_gmail_tokens(user, token, now)
     await db.flush()
 
+    # Cache the profile photo bytes so the app serves its own stable copy
+    # instead of hotlinking the volatile Google URL. Best-effort — a failure
+    # never blocks sign-in; the app falls back to picture_url until it succeeds.
+    if _should_fetch_photo(user, picture):
+        await _fetch_and_cache_photo(user, picture, now)
+        await db.flush()
+
     # Mint session. The raw token goes in the cookie; we persist only its
     # SHA-256 hash so a DB disclosure yields no usable tokens
     # (SECURITY_REVIEW.md L1).
@@ -267,6 +278,69 @@ async def logout(
     response = Response(status_code=204)
     _clear_session_cookie(response, request)
     return response
+
+
+# Profile-photo caching. Google's lh*.googleusercontent.com URLs rot and
+# rate-limit when hotlinked, so the avatar silently stops rendering even when
+# the person hasn't changed their photo. We download the bytes once (on first
+# login, and again whenever an admin flags a re-pull) and serve our own stable
+# copy from GET /api/users/photo/{token}.
+_PHOTO_FETCH_TIMEOUT = 6.0                 # keep sign-in snappy; failure is non-fatal
+_PHOTO_MAX_BYTES = 5 * 1024 * 1024         # sanity cap — real avatars are a few KB
+# Google avatar URLs carry a "=s96-c" size hint; bump it so the cached copy is
+# crisp at the 120px the email signature renders it (and 32px in the nav).
+_PHOTO_SIZE_RE = re.compile(r"=s\d+-c\b")
+
+
+def _should_fetch_photo(user: models.User, picture: str) -> bool:
+    """Fetch the photo when we have a source URL AND either nothing is cached
+    yet (new user, or an existing row from before this feature) or an admin
+    asked for a re-pull. Reads only light columns — never the deferred blob."""
+    if not picture:
+        return False
+    return user.photo_updated_at is None or bool(user.photo_refresh_requested)
+
+
+async def _fetch_and_cache_photo(
+    user: models.User,
+    picture: str,
+    now: datetime,
+    *,
+    httpx_client: httpx.AsyncClient | None = None,
+) -> bool:
+    """Best-effort: download the Google profile photo into the user row. NEVER
+    raises — sign-in must not fail because an avatar didn't download. On success
+    stores bytes + content-type + timestamp, mints photo_token if absent, and
+    clears the re-pull flag; returns True. On any failure keeps the previous
+    cached copy (if any) and returns False."""
+    url = _PHOTO_SIZE_RE.sub("=s256-c", picture)
+    try:
+        if httpx_client is None:
+            async with httpx.AsyncClient(timeout=_PHOTO_FETCH_TIMEOUT, follow_redirects=True) as cli:
+                resp = await cli.get(url)
+        else:
+            resp = await httpx_client.get(url)
+    except Exception as e:  # noqa: BLE001 — any network error is non-fatal here
+        print(f"[LTP] auth: profile photo fetch failed ({e}); keeping cached copy", flush=True)
+        return False
+
+    ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if resp.status_code != 200 or not ctype.startswith("image/"):
+        print(f"[LTP] auth: profile photo not an image "
+              f"(status={resp.status_code} ctype={ctype!r}); keeping cached copy", flush=True)
+        return False
+    data = resp.content
+    if not data or len(data) > _PHOTO_MAX_BYTES:
+        print(f"[LTP] auth: profile photo size out of range ({len(data or b'')} bytes); skipping", flush=True)
+        return False
+
+    user.photo_data = data
+    user.photo_content_type = ctype
+    user.photo_updated_at = now
+    user.photo_refresh_requested = False
+    if not user.photo_token:
+        user.photo_token = secrets.token_urlsafe(16)
+    return True
 
 
 def _persist_gmail_tokens(user: models.User, token: dict, now: datetime) -> None:
@@ -335,7 +409,11 @@ async def me(user: models.User = Depends(require_session)):
         "id": user.id,
         "email": user.email,
         "name": user.name,
-        "pictureUrl": user.picture_url,
+        # Prefer the app-cached avatar (stable, self-hosted) as an ABSOLUTE URL
+        # so it passes the frontend's http(s)-only <img> guard and matches the
+        # email copy; fall back to the Google URL until the first cache lands.
+        "pictureUrl": ((_app_origin() or "") + user.cached_photo_path())
+                      if user.cached_photo_path() else (user.picture_url or ""),
         "role": user.role,
         "title": user.title or "",
         "phone": user.phone or "",

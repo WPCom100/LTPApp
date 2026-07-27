@@ -43,8 +43,14 @@ window.LTP_DATA_SETTINGS = {
     invoiced: "#FF8A50", booked: "#F5B83D", cancelled: "#8A99A0",
   },
 
-  // Crew Options — drive role/department dropdowns
-  crewRoleOptions: ["L1", "L2", "L3", "LD", "A1", "A2", "A3", "V1", "V2", "SH", "SM", "F1", "F2", "RIG", "PM", "TD", "PA"],
+  // Crew Options — department dropdown seed.
+  // Role abbreviations are intentionally NOT seeded here. Every role code the
+  // app offers or displays comes from the labor rate card (Quotes → Services),
+  // so a role can never appear that isn't backed by a real service — plus any
+  // one-off role a user has already saved on a specific crew member. Kept as an
+  // empty list (rather than removed) so any legacy reader sees [] not undefined;
+  // it is no longer read by the crew form or the Settings editor.
+  crewRoleOptions: [],
   crewDepartmentOptions: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"],
 
   // Fee quick-picks — one-tap names that pre-fill a CUSTOM fee's description in
@@ -159,8 +165,13 @@ window.LTP_DATA_SETTINGS = {
     crewConfirmed: {
       label: "Crew Position Confirmed",
       cc: "",
+      // Sent when a producer CONFIRMS an accepted crew member. {{addToCalendar}}
+      // renders one-tap "Add to Calendar" button(s) for the confirmed shift(s);
+      // the backend injects it above the signature even for a saved body that
+      // predates the token. The routes/crew.py::_NOTIFY_FALLBACKS entry must
+      // match this body byte-for-byte.
       subject: "Confirmed: {{projectName}} — {{date}}",
-      body: "Hi {{crewName}},\n\nYou are confirmed for the following:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease reach out if you have any questions. We look forward to working with you.\n\n{{signature}}"
+      body: "Hi {{crewName}},\n\nYou are confirmed for the following:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease reach out if you have any questions. We look forward to working with you.\n\n{{addToCalendar}}\n\n{{signature}}"
     },
     crewCancelled: {
       label: "Position Cancellation",
@@ -203,6 +214,16 @@ window.LTP_DATA_SETTINGS = {
       subject: "Schedule Update: {{projectName}} — shift times changed",
       body: "Hi {{crewName}},\n\nThe schedule for {{projectName}} has been updated. Please review your revised shift details below — the previous time is noted on each shift that moved:\n\n{{shifts}}\n\nIf the new schedule doesn't work for you, just reply to this email and let us know.\n\n{{signature}}"
     },
+    crewShiftNote: {
+      label: "Shift Note Added",
+      cc: "",
+      // Sent when a producer adds/updates a note on a shift a crew member is
+      // CONFIRMED on (from Labor → Assignments). Project-level + {{shifts}} — the
+      // note rides inside each shift card. The routes/crew.py::_NOTIFY_FALLBACKS
+      // entry must match this body byte-for-byte.
+      subject: "Note added: {{projectName}}",
+      body: "Hi {{crewName}},\n\nThere's a new note for your confirmed call on {{projectName}} — please review it below:\n\n{{shifts}}\n\nAny questions, just reply to this email.\n\n{{signature}}"
+    },
   },
 };
 
@@ -222,9 +243,10 @@ window.LTP_TEMPLATE_VARIABLES = {
   invoiceReminder: ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],
   crewRequest:     ["companyName", "crewName", "projectName", "location", "header", "shifts", "signature"],
-  crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "signature"],
+  crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "addToCalendar", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewScheduleChanged: ["companyName", "crewName", "projectName", "shifts", "signature"],
+  crewShiftNote:   ["companyName", "crewName", "projectName", "shifts", "signature"],
 };

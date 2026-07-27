@@ -145,6 +145,110 @@ shell exports.
 | `ANTHROPIC_API_KEY` | Optional | (none) | Enables label OCR in the barcode scan-import flow: when the barcode won't decode (glare/angle), the frame is sent to Claude to read the serial *printed* on the label. Unset = the feature hides itself entirely. **Secret — server-side only.** Get a key at console.anthropic.com; usage is roughly $2–3 per 1,000 fallback reads. |
 | `LTP_OCR_MODEL` | Optional | `claude-haiku-4-5-20251001` | Overrides the Claude model used for label OCR. Haiku is fast and cheap; only change if Anthropic deprecates the default. |
 
+## Inline add / edit on entity pickers
+
+Anywhere you pick a **company, contact, or project**, you can create or fix
+that record without leaving the page you're on — no abandoning a half-built
+quote to go to CRM and back.
+
+- **Create.** Type a name that doesn't match anything and the dropdown offers
+  **＋ Create "…" as a new company** (previously the dropdown just vanished on
+  zero matches, which read as a broken search box). There's also a **＋** at the
+  right edge of every such field. The form that opens is the same CRM form, so
+  there's one set of fields and one set of validation rules. What you typed is
+  carried in as the name, and the new record is selected the moment you save.
+- **Edit.** When something is selected, a **✎** opens that record's form
+  pre-filled — fix a company's billing address (which drives QuickBooks sales
+  tax) or a contact's email mid-quote, and the change lands on the record
+  everywhere.
+- **Context carries over.** A project created from a quote or invoice inherits
+  that document's company, its primary contact, and any custom dates. A contact
+  created from a **Primary Contact** field is linked to the document's company,
+  so it appears in that narrowed list immediately. A vendor created from a
+  rentals field is flagged `isVendor`.
+- **Nesting works.** Creating a project from a quote, then creating that
+  project's company from inside the project form, is fine — each form stacks
+  above the one that opened it.
+
+**Deleting is not offered here** — it stays in CRM, where the guided teardown
+reviews linked quotes, invoices, and crew assignments first.
+
+### Where it is (and deliberately isn't)
+
+| Surface | Field |
+|---|---|
+| Quote builder | Company · Primary Contact · Contact (individual) · Linked Project |
+| Invoice builder | Company · Primary Contact · Contact (individual) · Linked Project |
+| Project form | Company · Project Contacts |
+| Contact form | Link to Companies |
+| Meeting form | Attendees |
+| Rentals — equipment & scan import | Purchase Vendor (CRM) |
+
+**Not added, on purpose:** crew selection (schedule editor, assignments, manual
+shift) picks from a roster, not a record you author; statuses, categories,
+departments, units and payment terms are fixed lists; QuickBooks income/expense
+accounts are created in QuickBooks; and products, services, fees, equipment,
+kits and containers keep their existing catalog screens.
+
+If you add a new picker, pass `createKind` / `allowEdit` to it only when the
+user would be *naming a new record* rather than *choosing from a known set* —
+see the header comment in `components/entity-quick-form.js`.
+
+### Linked Project is now a search field
+
+The **Linked Project** picker on quotes and invoices was a native dropdown; it
+is now a type-to-search chip field matching the Company field. Clearing the
+chip is what the old "(no project — use custom name)" option did. It still
+filters to the document's company, still hides internal manual-shift projects
+and completed ones, and still warns on a company mismatch.
+
+## Searchable dropdowns
+
+Dropdowns whose list **grows** are type-to-search fields rather than native
+`<select>`s (`window.LTPSearchSelect`, `components/search-dropdown.js`).
+Clicking one opens the full list immediately — you never have to type to browse
+— with the search box focused so you can type straight away. `↑`/`↓` move,
+`Enter` picks, `Esc` cancels without changing anything.
+
+Converted: **crew** pickers (schedule editor, Assignments, Manual Shift),
+**role / rate-card** pickers, the Assignments **project filter**, **Primary
+Contact** on quotes and invoices, and **Link to Meeting** on project notes. The
+company / contact / project chip fields already worked this way and now also
+show their list on focus instead of waiting for a keystroke.
+
+**Left as native dropdowns, deliberately:**
+
+| | Why |
+|---|---|
+| Status, Category, Unit, Department, Type, Payment Method, Net terms | Frozen lists of 3–10. Typing to narrow four options is slower, not faster. |
+| QuickBooks income / expense accounts (Settings and the per-item overrides) | Seeing every account at once is the point of those fields. |
+| Rate type and pricing variant inside quote/invoice line rows | A popover fights the row layout and horizontal scrolling. |
+| Person-slot `#1 / #2` | Positional, not a list you search. |
+
+If you add a picker, the test is whether the list grows with the business. It
+should not be searchable just for visual consistency.
+
+### Crew pickers: role-matched first, everyone else behind a click
+
+A crew dropdown lists **only crew tagged with the role being filled**. Everyone
+else is behind an **"Other crew (N) — not tagged for this role"** row you have
+to click, so a name match from another department can't bury the people who are
+actually qualified. Each row shows the person's roles and department underneath.
+
+**Crew is picked, never authored.** These fields have no inline-create — a crew
+member is a roster entry, not something you invent from a schedule row. Adding
+`createKind` to a crew picker would be a bug; `tests/test_pickers.js` asserts
+the authorable set stays company / contact / project.
+
+Whoever is **currently assigned** always appears in the first tier, flagged
+(`— inactive`, or `— not tagged for this role`) when they'd otherwise be
+filtered out. This fixes a quiet data bug: a native `<select>` whose value
+matches none of its options renders its *first* option, so a position held by a
+crew member who had since gone inactive displayed "Crew…" — indistinguishable
+from unassigned — while the booking was still live. The same fix applies to
+**Primary Contact**, which likewise shows the selected person even when the
+narrowed list excludes them, with "Other contacts" as the escape hatch.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that
@@ -174,11 +278,38 @@ can spot users in this state from the Team Members section of Settings —
 a "Gmail not connected" warning shows below their email.
 
 The signature template ships with a `{{userPhoto}}` placeholder that
-resolves to each sender's Google profile picture at send time. Users
-who somehow lack a profile picture (rare for Google OAuth) get the LTP
-logo as a fallback. The Team Members section in Settings shows each
-user's photo as a small circular avatar so admins can verify what each
-team member's signature will display.
+resolves to each sender's Google profile picture. Users who somehow lack
+a profile picture (rare for Google OAuth) get the LTP logo as a fallback.
+The Team Members section in Settings shows each user's photo as a small
+circular avatar so admins can verify what each team member's signature
+will display.
+
+Profile photos are **cached in the app**, not hotlinked from Google.
+Google's `lh*.googleusercontent.com` URLs rot and rate-limit when embedded
+elsewhere, which made avatars silently stop rendering. On sign-in the app
+downloads the photo bytes once and serves its own stable copy from
+`GET /api/users/photo/{token}` (public — the same URL is embedded in
+outbound email signatures, so recipients' mail clients must be able to
+load it). Existing users' photos are cached automatically on their next
+sign-in. If a photo is stale, an admin can click **Re-pull photo** on that
+person's row in Team Members: the app first tries to re-download it
+immediately from the stored Google URL (which usually works server-side even
+when the browser/email can't load it), and if that URL is itself expired it
+queues the re-pull for that user's next sign-in, where a fresh login provides
+a working URL. Team Members avatars fall back to an initial-letter
+placeholder whenever the image can't load, so a broken photo never shows a
+broken-image icon.
+
+### Deliverability (landing in spam?)
+
+Mail is sent through the **Gmail API as the signed-in user**, so inbox-vs-spam
+is decided by your **domain's email authentication** (SPF/DKIM/DMARC) and sender
+reputation — not by app code. As of the last check the domain's SPF/DKIM/DMARC
+all pass and align, so if mail still lands in some recipients' spam folders the
+lever is **sender reputation** (Google Postmaster Tools, Microsoft SNDS/JMRP,
+warm-up, "Not spam" engagement). See **[docs/EMAIL_DELIVERABILITY.md](docs/EMAIL_DELIVERABILITY.md)**
+for the diagnosis, what was fixed, and how to verify with *Show original* /
+mail-tester.
 
 ## QuickBooks Online integration
 

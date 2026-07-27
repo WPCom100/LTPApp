@@ -124,18 +124,26 @@ def _crew_shifts(project, position_ids, services_by_id) -> list:
                 continue
             svc = services_by_id.get(pos.get("serviceId"))
             if svc is not None:
-                role_label = (svc.role or "")
+                role_code = (svc.role or "")
+                role_label = role_code
                 if svc.description:
                     role_label = (role_label + " — " + svc.description).strip(" —")
                 dept = svc.department or ""
             else:
-                role_label = pos.get("role") or ""
+                role_code = pos.get("role") or ""
+                role_label = role_code
                 dept = ""
             out.append({
                 "positionId": pos.get("id"),
+                # `role` is the bare role acronym (A1, L1, …) for the calendar
+                # event title; `roleLabel` is the human line (acronym — description).
+                "role": role_code,
                 "roleLabel": role_label or "Crew",
                 "department": dept,
                 "status": pos.get("status"),
+                # Producer-authored per-shift note (parking, gate code, wardrobe …)
+                # set on the Assignments tab. Shown under the call on the page + email.
+                "note": (pos.get("note") or "").strip(),
                 "shiftTitle": shift.get("title") or "",
                 "date": shift.get("date") or "",
                 "startTime": shift.get("time") or "",
@@ -162,6 +170,7 @@ def _coerce_shifts(raw) -> list:
             "date": str(s.get("date") or "")[:40],
             "startTime": str(s.get("startTime") or "")[:20],
             "endTime": str(s.get("endTime") or "")[:20],
+            "note": str(s.get("note") or "")[:1000],
             # Previous date/time — set only by a schedule-change notice so the
             # card can render "Updated from …". Absent (empty) for every other
             # notify template, which renders exactly as before.
@@ -255,11 +264,17 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
         prev_rng = " – ".join([x for x in (_fmt_hhmm(s.get("prevStartTime")), _fmt_hhmm(s.get("prevEndTime"))) if x])
         prev_dt = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (prev_when, prev_rng) if x])
         line_prev = ('<div style="font-size:11px;color:#b26a00;margin-top:3px">Updated from:&nbsp;' + prev_dt + '</div>') if (prev_dt and prev_dt != when_time) else ""
+        # Producer's per-shift note (parking, gate code, etc.) — its own line under
+        # the call, accent-tinted so it reads as an instruction, not chrome.
+        note = escape(s.get("note") or "").replace("\n", "<br>")
+        line_note = ('<div style="font-size:12px;color:#3d4852;margin-top:6px;padding:7px 10px;'
+                     'background-color:#f7f9fa;border-radius:5px;border-left:2px solid ' + accent + '">'
+                     + note + '</div>') if note else ""
         rows.append(
             '<tr><td style="padding:11px 14px;border:1px solid #eceef0;border-left:3px solid ' + accent + ';'
             'background-color:#ffffff;border-radius:6px">'
             '<div style="font-size:14px;font-weight:bold;color:#233038">' + escape(s.get("roleLabel") or "Crew") + '</div>'
-            + line_dt + line_prev + line_title +
+            + line_dt + line_prev + line_title + line_note +
             '</td></tr><tr><td style="font-size:0;line-height:0;padding:0">&nbsp;</td></tr>'
         )
     if not rows:
@@ -270,6 +285,28 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
     # collapsed by _paragraphs_to_html). 16px ≈ the body paragraph rhythm.
     return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
             'style="width:100%;margin:8px 0 16px">' + "".join(rows) + "</table>")
+
+
+def _add_to_calendar_cta(view_url: str, accent: str) -> str:
+    """A single 'Add to Calendar' button that opens the crew call sheet, where
+    the per-shift Google-Calendar buttons live. Email clients can't run the
+    calendar-link JS reliably and multi-shift button grids read as clutter, so
+    the email just routes the crew back to the page. Empty when no link (no
+    token) is available."""
+    if not view_url:
+        return ""
+    url = escape(view_url)
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;margin:8px 0 4px">'
+        '<tr><td style="text-align:center;padding:6px 0 14px">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
+        '<td style="background-color:' + accent + ';border-radius:7px">'
+        '<a href="' + url + '" style="display:inline-block;padding:13px 34px;font-size:15px;font-weight:bold;'
+        'color:#ffffff;text-decoration:none">Click here to add to calendar</a></td>'
+        '</tr></table>'
+        '<div style="font-size:11px;color:#8a949e;margin-top:9px">Opens your call sheet — add each call in one tap.</div>'
+        '</td></tr></table>'
+    )
 
 
 def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str, site_address: str = "") -> str:
@@ -365,16 +402,25 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
 # from a representative position, so the shipped template bodies AND their
 # Settings previews stay valid without a redesign.
-_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged"}
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"}
 
-# Server-side fallbacks for the removal templates, used when the workspace hasn't
+# Server-side fallbacks for the notify templates, used when the workspace hasn't
 # saved that template to the DB yet (load_settings reads the DB, which doesn't
-# carry the data/settings.js defaults until an admin clicks Save). All three
-# removal notices are pinned because the notify tray can send any of them before
-# settings are saved, so an empty body would be a broken email. Each lists
-# {{shifts}} (the tray groups per person, so a notice can cover several shifts).
-# MUST stay in sync with data/settings.js byte-for-byte.
+# carry the data/settings.js defaults until an admin clicks Save). These are
+# pinned because the notify tray / Confirm & Notify can send any of them before
+# settings are saved, so an empty body would be a broken email. The removal
+# notices list {{shifts}} (the tray groups per person); crewConfirmed lists
+# {{addToCalendar}} so a fresh deploy's confirmation still carries the calendar
+# button. MUST stay in sync with data/settings.js byte-for-byte.
 _NOTIFY_FALLBACKS = {
+    "crewConfirmed": {
+        "subject": "Confirmed: {{projectName}} — {{date}}",
+        "body": ("Hi {{crewName}},\n\nYou are confirmed for the following:\n\n"
+                 "Project: {{projectName}}\nRole: {{role}}\nDate: {{date}}\n"
+                 "Call: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\n"
+                 "Please reach out if you have any questions. We look forward to "
+                 "working with you.\n\n{{addToCalendar}}\n\n{{signature}}"),
+    },
     "crewWithdrawn": {
         "subject": "Update: {{projectName}} — crew request withdrawn",
         "body": ("Hi {{crewName}},\n\nWe've withdrawn our crew request for "
@@ -407,17 +453,25 @@ _NOTIFY_FALLBACKS = {
                  "If the new schedule doesn't work for you, just reply to this "
                  "email and let us know.\n\n{{signature}}"),
     },
+    "crewShiftNote": {
+        "subject": "Note added: {{projectName}}",
+        "body": ("Hi {{crewName}},\n\nThere's a new note for your confirmed "
+                 "call on {{projectName}} — please review it below:\n\n{{shifts}}\n\n"
+                 "Any questions, just reply to this email.\n\n{{signature}}"),
+    },
 }
 
 
-async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data, project_name=None) -> dict:
+async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data, project_name=None, token=None) -> dict:
     """Best-effort send of a crew notification email. NEVER raises (mirrors
     _send_crew_email): a delivery failure must not undo the producer's
     confirm/release/cancel, which already happened client-side.
 
     `project_name` overrides the display name — used when the notify tray flushes
     a removal after its project was deleted (project is None by then, but the
-    snapshot carried the name)."""
+    snapshot carried the name). `token` is the crew-request token, used only by
+    the crewConfirmed template to link its "Add to Calendar" button to the call
+    sheet."""
     if not (contact and contact.email):
         return {"emailed": False, "error": "no email on file"}
     try:
@@ -455,11 +509,23 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # BOLD in the withdrawal email, plain elsewhere — surviving the escaping
         # _paragraphs_to_html applies to the surrounding text.
         project_html = ("<strong>" + escape(project_name) + "</strong>") if template_key == "crewWithdrawn" else escape(project_name)
+        signature_html = _render_signature(user, settings_data)
         blocks = {
             "{{projectName}}": project_html,
             "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]) if shifts else "",
-            "{{signature}}": _render_signature(user, settings_data),
+            "{{signature}}": signature_html,
         }
+        # Confirmation email: a single "Click here to add to calendar" button that
+        # routes the crew back to their call sheet, where the per-shift calendar
+        # buttons live (email clients can't run the calendar-link JS reliably).
+        # The button is injected above the signature for any saved body that
+        # predates the {{addToCalendar}} token, so it always renders on a confirmation.
+        if template_key == "crewConfirmed":
+            view_url = ((_app_origin() or "") + "/#/crew/" + token) if token else ""
+            cal_html = _add_to_calendar_cta(view_url, _CTA_ORANGE)
+            blocks["{{addToCalendar}}"] = cal_html
+            if cal_html and "{{addToCalendar}}" not in body_text:
+                blocks["{{signature}}"] = cal_html + signature_html
         inner = _paragraphs_to_html(body_text, blocks)
         final_html = email_html(email_shell(inner, brand))
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
@@ -839,6 +905,11 @@ async def crew_notify(
     position_ids = body.get("positionIds") or []
     explicit_shifts = body.get("shifts")
     project_name_override = body.get("projectName")
+    # Optional crew-request token — lets the crewConfirmed email link its
+    # "Add to Calendar" button back to the call sheet. Validated loosely (a
+    # short/garbage value just yields no button rather than a broken link).
+    token = body.get("token")
+    token = token if isinstance(token, str) and len(token) >= 8 else None
     if not isinstance(contact_id, int) or isinstance(contact_id, bool):
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "required integer"})
     if not isinstance(project_id, int) or isinstance(project_id, bool):
@@ -861,5 +932,5 @@ async def crew_notify(
         shifts = _crew_shifts(project, position_ids, {s.id: s for s in services})
     settings_data = await load_settings(db)
     project_name = project_name_override if isinstance(project_name_override, str) and project_name_override.strip() else None
-    email_status = await _send_crew_notify(db, user, contact, project, shifts, template, settings_data, project_name=project_name)
+    email_status = await _send_crew_notify(db, user, contact, project, shifts, template, settings_data, project_name=project_name, token=token)
     return {"emailStatus": email_status}

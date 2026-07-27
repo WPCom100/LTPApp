@@ -159,9 +159,10 @@ function LTPSignedInApp(props) {
   window.LTP_SENDER_NAME = props.authUser.name || "";
   window.LTP_SENDER_TITLE = props.authUser.title || "";
   window.LTP_SENDER_PHONE = props.authUser.phone || "";
-  // Google-hosted profile photo (lh*.googleusercontent.com) — feeds
-  // {{userPhoto}} in the signature template, falling back to the LTP
-  // logo when this is empty (rare for Google OAuth users).
+  // Profile photo — feeds {{userPhoto}} in the signature template, falling
+  // back to the LTP logo when empty. This is the app-cached avatar path
+  // (/api/users/photo/{token}) once cached, else the raw Google URL; /auth/me
+  // resolves which. Caching means a rotted Google URL stops breaking it.
   window.LTP_SENDER_PHOTO = props.authUser.pictureUrl || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
@@ -392,7 +393,7 @@ function LTPSignedInApp(props) {
       }));
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
-        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings, invoices: invoices, quotes: quotes }));
+        return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings, invoices: invoices, quotes: quotes, services: services }));
       default: nav("dashboard"); return null;
     }
   }
@@ -583,7 +584,17 @@ function LTPSignedInApp(props) {
    isMobile && moreOpen && h(LTPMoreSheet, { route: route, isAdmin: isAdmin, nav: nav, onClose: function() { setMoreOpen(false); } }),
    isMobile && createOpen && h(LTPCreateSheet, { nav: nav, onClose: function() { setCreateOpen(false); } }),
    h(window.LTPErrorToasts),
-   h(window.LTPCrewOutbox)
+   h(window.LTPCrewOutbox),
+   // Inline "add / edit the record you're picking" forms. Mounted here because
+   // this is the only place that holds every entity setter — which is what lets
+   // a picker anywhere in the app create a company or project without those
+   // setters being threaded down to it (the quote builder never receives
+   // setCompanies; the invoice builder never receives setProjects).
+   h(window.LTPEntityFormHost, {
+     companies: companies, setCompanies: setCompanies,
+     contacts:  contacts,  setContacts:  setContacts,
+     projects:  projects,  setProjects:  setProjects,
+   })
   );
 }
 

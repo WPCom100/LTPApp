@@ -9,18 +9,22 @@
   // viewport crossing the breakpoint; components branch inline styles / choose
   // card-vs-table / agenda-vs-grid on it. Desktop ( > 600px ) → false.
   window.LTP_MOBILE_QUERY = "(max-width: 600px)";
-  window.LTP_useIsMobile = function() {
+  // Generic matchMedia hook: returns whether `query` currently matches and
+  // re-renders when it crosses. LTP_useIsMobile is the mobile-width
+  // specialization; other views pass their own query (e.g. a wide-desktop
+  // breakpoint) to branch layout on viewport size.
+  window.LTP_useMediaQuery = function(query) {
     var useEffect = React.useEffect;
     function read() {
-      try { return window.matchMedia(window.LTP_MOBILE_QUERY).matches; }
+      try { return window.matchMedia(query).matches; }
       catch (e) { return false; }
     }
     var pair = useState(read);
-    var isMobile = pair[0], setIsMobile = pair[1];
+    var matches = pair[0], setMatches = pair[1];
     useEffect(function() {
       var m;
-      try { m = window.matchMedia(window.LTP_MOBILE_QUERY); } catch (e) { return; }
-      function onChange() { setIsMobile(m.matches); }
+      try { m = window.matchMedia(query); } catch (e) { return; }
+      function onChange() { setMatches(m.matches); }
       // addEventListener is the modern API; addListener is the Safari < 14
       // fallback (older iOS still in the field for a home-screen PWA).
       if (m.addEventListener) m.addEventListener("change", onChange);
@@ -30,9 +34,10 @@
         if (m.removeEventListener) m.removeEventListener("change", onChange);
         else if (m.removeListener) m.removeListener(onChange);
       };
-    }, []);
-    return isMobile;
+    }, [query]);
+    return matches;
   };
+  window.LTP_useIsMobile = function() { return window.LTP_useMediaQuery(window.LTP_MOBILE_QUERY); };
 
   window.Badge = function({ status }) {
     var c = SC[status] || SC.draft;
@@ -150,9 +155,15 @@
     );
   };
 
-  window.LTPSelect = function({ label, value, onChange, options, style: sx }) {
+  // labelAction renders a small control (typically the ＋ / ✎ affordance from
+  // components/entity-quick-form.js) at the right end of the label row. A
+  // native <select> can't host a "create new" row that opens a form, so the
+  // entity-backed selects hang that action off the label instead.
+  window.LTPSelect = function({ label, value, onChange, options, style: sx, labelAction }) {
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
-      label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
+      (label || labelAction) && h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: labelAction ? 26 : undefined } },
+        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label || ""),
+        labelAction || null),
       h("select", { value: value, onChange: function(e) { onChange(e.target.value); },
         onFocus: function(e) { e.target.style.borderColor = B.accent; },
         onBlur: function(e) { e.target.style.borderColor = B.border; },
@@ -242,8 +253,11 @@
   // On mobile (<=600px) the ltp-modal-backdrop / ltp-modal-panel classes are
   // upgraded by the index.html CSS layer into a full-screen sheet (no floating
   // card, safe-area insets). Desktop keeps the centered fixed-width dialog.
-  window.LTPModal = function({ title, onClose, children, wide, disableBackdrop }) {
-    return h("div", { className: "ltp-modal-backdrop", style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 },
+  // zIndex lifts a modal above the default 1000 layer. Used by the inline
+  // entity add/edit stack (components/entity-quick-form.js), where a form can
+  // be opened from inside another modal and must render above it.
+  window.LTPModal = function({ title, onClose, children, wide, disableBackdrop, zIndex }) {
+    return h("div", { className: "ltp-modal-backdrop", style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: zIndex || 1000 },
       onClick: disableBackdrop ? null : onClose },
       h("div", { className: "ltp-modal-panel", onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },

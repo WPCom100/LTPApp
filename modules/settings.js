@@ -9,6 +9,26 @@
   var sectionStyle = { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "18px 20px", marginBottom: 14 };
   var sectionTitle = { fontSize: "13px", fontWeight: 700, color: B.text, marginBottom: 14 };
 
+  // Circular team-member avatar. Renders the cached/Google photo, but falls back
+  // to the initial-letter placeholder BOTH when there's no usable http(s) URL
+  // AND when the image fails to load (a rotted Google URL, an uncached user) —
+  // so a broken photo shows a clean initial, never a broken-image icon. Resets
+  // its error state when the URL changes (e.g. after an admin re-pull succeeds).
+  function TeamAvatar(props) {
+    var u = props.u, size = props.size || 32;
+    var failedState = useState(false);
+    var failed = failedState[0], setFailed = failedState[1];
+    useEffect(function() { setFailed(false); }, [u.pictureUrl]);
+    var canShow = u.pictureUrl && /^https?:\/\//i.test(u.pictureUrl) && !failed;
+    if (canShow) {
+      return h("img", { src: u.pictureUrl, alt: u.name || u.email, referrerPolicy: "no-referrer",
+        onError: function() { setFailed(true); },
+        style: { width: size, height: size, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid " + B.border } });
+    }
+    return h("div", { style: { width: size, height: size, borderRadius: "50%", background: B.bg, border: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "center", color: B.textMut, fontSize: "11px", fontWeight: 700, flexShrink: 0 } },
+      (u.name || u.email || "?").charAt(0).toUpperCase());
+  }
+
   // A settings section. On desktop it renders exactly as before (a bordered
   // card with a heading). On mobile the long settings page becomes unwieldy, so
   // each section collapses into a tap-to-expand accordion panel — the first one
@@ -19,7 +39,14 @@
     var openState = useState(props.defaultOpen != null ? props.defaultOpen : !isMobile);
     var open = openState[0], setOpen = openState[1];
     if (!isMobile) {
-      return h("div", { style: sectionStyle }, h("div", { style: sectionTitle }, props.title), kids);
+      // break-inside:avoid keeps a card from splitting across the desktop
+      // two-column masonry (a harmless no-op when the page is a single
+      // column, i.e. narrow desktop and the full-width sections below).
+      var cardStyle = Object.assign({}, sectionStyle, {
+        breakInside: "avoid",
+        WebkitColumnBreakInside: "avoid",
+      });
+      return h("div", { style: cardStyle }, h("div", { style: sectionTitle }, props.title), kids);
     }
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", marginBottom: 12, overflow: "hidden" } },
       h("button", { onClick: function() { setOpen(!open); }, className: "ltp-tap",
@@ -120,8 +147,13 @@
         "Notifications are per-device — turn them on for each phone or tablet you want alerted. You’ll get a push when a crew member responds to a request."));
   }
 
-  window.SettingsView = function({ settings, setSettings, invoices, quotes }) {
+  window.SettingsView = function({ settings, setSettings, invoices, quotes, services }) {
     var isMobile = window.LTP_useIsMobile();
+    // Wide-desktop two-column layout. Below this width — tablets, split
+    // windows, and smaller laptops (especially with the sidebar open) — the
+    // page stays the original single centered column; only genuinely wide
+    // screens get the denser two-column masonry that cuts the scrolling.
+    var isWide = window.LTP_useMediaQuery("(min-width: 1200px)");
     var [draft, setDraft] = useState(Object.assign({}, settings));
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
     // a save+nav from flashing a bogus "unsaved changes" prompt.
@@ -206,6 +238,47 @@
         return prev.map(function(u) { return u.id === userId ? Object.assign({}, u, patch) : u; });
       });
       setIsDirty(true);
+    }
+
+    // Re-pull a user's profile photo. Fires IMMEDIATELY (own POST, not deferred
+    // to the page Save) — it doesn't touch title/phone/role, so it shouldn't
+    // ride the Save/Discard flow. The backend first tries a live server-side
+    // download from the stored Google URL (often works even when the browser
+    // can't load it); if that succeeds the photo updates right now, otherwise it
+    // queues a re-pull for the user's next sign-in. We merge only the changed
+    // fields into BOTH users and the clean snapshot so unsaved title/phone/role
+    // edits on that row are preserved and no spurious dirty diff is introduced.
+    function repullPhoto(userId) {
+      fetch("/api/users/" + userId + "/refresh-photo", { method: "POST", credentials: "include" })
+        .then(function(r) {
+          if (!r.ok) return r.json().then(function(err) { throw new Error(err.detail && err.detail.reason ? err.detail.reason : "HTTP " + r.status); });
+          return r.json();
+        })
+        .then(function(saved) {
+          // On an immediate cache, adopt the fresh pictureUrl (new ?v= busts the
+          // browser cache so the new image shows at once); otherwise just mark
+          // it queued.
+          var patch = saved.photoCachedNow
+            ? { pictureUrl: saved.pictureUrl, photoRefreshRequested: false }
+            : { photoRefreshRequested: true };
+          var apply = function(u) { return u.id === userId ? Object.assign({}, u, patch) : u; };
+          setUsers(function(prev) { return Array.isArray(prev) ? prev.map(apply) : prev; });
+          if (Array.isArray(usersCleanRef.current)) usersCleanRef.current = usersCleanRef.current.map(apply);
+          if (window.LTP_toast) {
+            if (saved.photoCachedNow) {
+              window.LTP_toast("Photo updated", {
+                message: (saved.name || saved.email || "This user") + "'s profile photo has been refreshed.",
+                variant: "success" });
+            } else {
+              window.LTP_toast("Photo re-pull queued", {
+                message: "Couldn't fetch it right now — it'll refresh on " + (saved.name || saved.email || "the user") + "'s next sign-in.",
+                variant: "info" });
+            }
+          }
+        })
+        .catch(function(e) {
+          if (window.LTP_toast) window.LTP_toast("Couldn't queue photo re-pull", { message: String(e.message || e), variant: "error" });
+        });
     }
 
     function loadQbo() {
@@ -332,7 +405,7 @@
     var qboConnError = (qbo && qbo.lastError)
       ? { message: qbo.lastError, at: qbo.lastErrorAt } : null;
 
-    return h("div", { style: { maxWidth: 800, margin: "0 auto" } },
+    return h("div", { style: { maxWidth: isWide ? 1400 : 800, margin: "0 auto" } },
       // Header
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, "Company Settings"),
@@ -341,6 +414,15 @@
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
           isDirty && h(window.Btn, { small: true, onClick: save }, "Save Settings"))
       ),
+
+      // Compact settings sections. On a wide desktop these short cards flow
+      // into a balanced two-column masonry (columnCount:2) so they take up
+      // half the vertical space; each card sets break-inside:avoid so it
+      // never splits across the gap. On mobile / narrow desktop the wrapper
+      // is a plain block and the cards stack in order. The taller, wider
+      // sections (Team Members, QuickBooks, the HTML-editor panels, …) are
+      // rendered full-width below this wrapper where they have room to breathe.
+      h("div", { style: isWide ? { columnCount: 2, columnGap: 16 } : null },
 
       // ── Company Info ───────────────────────────────────────────────────────
       h(AccordionSection, { title: "Company Information", defaultOpen: true },
@@ -412,77 +494,30 @@
         )
       ),
 
-      // ── Tag & Badge Colors ─────────────────────────────────────────────────
-      h(AccordionSection, { title: "Tag & Badge Colors" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Customize colors for departments, statuses, and categories. Changes apply immediately across the app."),
-        function() {
-          var tc = draft.tagColors || {};
-          function setTagColor(key, val) {
-            var updated = Object.assign({}, tc);
-            updated[key] = val;
-            set("tagColors", updated);
-          }
-          var groups = [
-            { label: "Departments", keys: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"] },
-            { label: "Document Status", keys: ["draft", "sent", "accepted", "declined", "paid", "partial", "overdue", "converted", "invoiced"] },
-            { label: "Crew Status", keys: ["open", "requested", "confirmed"] },
-            { label: "CRM", keys: ["active", "inactive", "client", "vendor", "prospect"] },
-            { label: "Project Categories", keys: ["rental", "labor", "service", "full-production"] },
-          ];
-          return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
-            groups.map(function(g) {
-              return h("div", { key: g.label },
-                h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, g.label),
-                h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
-                  g.keys.map(function(k) {
-                    var color = tc[k] || "#666666";
-                    return h("div", { key: k, style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 8px" } },
-                      h("input", { type: "color", value: color, onChange: function(e) { setTagColor(k, e.target.value); },
-                        style: { width: 20, height: 20, border: "none", padding: 0, cursor: "pointer", background: "transparent", borderRadius: "3px" } }),
-                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: color } }, k),
-                      h("span", { style: { background: color + "1F", color: color, border: "1px solid " + color + "59", padding: "1px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, textTransform: "uppercase" } }, k)
-                    );
-                  })
-                )
-              );
-            })
-          );
-        }()
-      ),
-
       // ── Crew Options ──────────────────────────────────────────────────────
       h(AccordionSection, { title: "Crew Options" },
         h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
-          "Manage the available roles and departments for crew members. These appear as selectable tags on the crew form. Roles from the labor rate card (Quotes → Services) show up there automatically, and one-off custom roles can be typed directly on the crew form."),
+          "Crew roles come from your labor rate card (Quotes → Services): every role a crew member can be tagged with is backed by a real service, so nothing appears that you didn't create. One-off roles can still be typed directly on an individual crew member. Departments are managed here."),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 } },
-          // Roles
+          // Roles \u2014 derived (read-only) from the labor rate card. This used to be
+          // a free-text list seeded with hardcoded codes; those surfaced on the
+          // crew form as roles nobody had entered and that linked to no service.
+          // Roles now have a single source of truth (the Services rate card), so
+          // this panel just mirrors it \u2014 add or rename a role by editing its service.
           h("div", null,
-            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Roles"),
-            h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 } },
-              (draft.crewRoleOptions || []).map(function(r, i) {
-                return h("span", { key: r, style: { display: "flex", alignItems: "center", gap: 4, background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, color: B.text } },
-                  r,
-                  h("button", { onClick: function() { set("crewRoleOptions", (draft.crewRoleOptions || []).filter(function(x) { return x !== r; })); },
-                    style: { background: "none", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: "0 0 0 4px", lineHeight: 1 } }, "\u00d7"));
-              })
-            ),
-            h("div", { style: { display: "flex", gap: 4 } },
-              h("input", { id: "newRole", placeholder: "New role\u2026",
-                style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none" },
-                onKeyDown: function(e) {
-                  if (e.key === "Enter" && e.target.value.trim()) {
-                    var v = e.target.value.trim().toUpperCase();
-                    if ((draft.crewRoleOptions || []).indexOf(v) === -1) set("crewRoleOptions", (draft.crewRoleOptions || []).concat([v]));
-                    e.target.value = "";
-                  }
-                } }),
-              h("button", { onClick: function() {
-                var inp = document.getElementById("newRole"); if (!inp || !inp.value.trim()) return;
-                var v = inp.value.trim().toUpperCase();
-                if ((draft.crewRoleOptions || []).indexOf(v) === -1) set("crewRoleOptions", (draft.crewRoleOptions || []).concat([v]));
-                inp.value = "";
-              }, style: { background: B.accent, border: "none", borderRadius: "4px", padding: "4px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "+"))),
+            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Roles \u00b7 from rate card"),
+            (function() {
+              var roles = Array.from(new Set((services || []).map(function(s) { return s.role; }).filter(Boolean))).sort();
+              if (roles.length === 0) {
+                return h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", lineHeight: 1.5 } },
+                  "No roles yet. Add services under Quotes \u2192 Services and they'll appear on the crew form automatically.");
+              }
+              return h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+                roles.map(function(r) {
+                  return h("span", { key: r, title: "Defined by a service on the labor rate card (Quotes \u2192 Services)",
+                    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, color: B.text } }, r);
+                }));
+            }())),
           // Departments
           h("div", null,
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Departments"),
@@ -540,122 +575,6 @@
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } }),
           h(window.LTPInput, { label: "Reply-To Email", value: draft.emailReplyTo || "", onChange: function(v) { set("emailReplyTo", v); }, type: "email",
             validate: function(v) { return v && !window.LTP_isValidEmail(v) ? "Enter a valid email" : null; } })
-        )
-      ),
-
-      // ── Email Signature Template ───────────────────────────────────────────
-      // Single workspace-wide HTML template. The send pipeline substitutes
-      // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}}/{{userPhoto}} against the
-      // sender's User row when an email body contains {{signature}}. Stored
-      // pre-sanitized server-side (PUT /api/settings runs email_html on it).
-      h(AccordionSection, { title: "Email Signature Template" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
-          "HTML signature rendered per-user when a template body uses ",
-          h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{signature}}"),
-          ". Per-user values come from each team member's Title and Phone (edit below)."),
-        h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 10, border: "1px solid " + B.border } },
-          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
-          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
-            ["userName", "userEmail", "userTitle", "userPhone", "userPhoto"].map(function(v) {
-              return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
-            }))
-        ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-          // Left: raw HTML textarea
-          h("div", null,
-            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "HTML"),
-            h("textarea", { value: draft.emailSignatureTemplate || "",
-              onChange: function(e) { set("emailSignatureTemplate", e.target.value); },
-              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "monospace", outline: "none", resize: "vertical", lineHeight: 1.5 } })
-          ),
-          // Right: sanitized preview rendered with placeholder values so the
-          // admin sees what a real send will look like
-          h("div", null,
-            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview (sample values)"),
-            h("div", {
-              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
-              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(
-                // Fall back to the data/settings.js default when the draft
-                // signature is empty/missing, so admins editing a fresh
-                // install see the rich starter template they'll get sent.
-                // Sample values for name/title/phone/email; {{userPhoto}}
-                // uses the admin's OWN photo so they see a real image
-                // (their own) rather than a placeholder.
-                (draft.emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate || "")
-                  .replace(/\{\{userName\}\}/g, "Sarah Chen")
-                  .replace(/\{\{userTitle\}\}/g, "Production Manager")
-                  .replace(/\{\{userPhone\}\}/g, "(555) 123-4567")
-                  .replace(/\{\{userEmail\}\}/g, "sarah@example.com")
-                  .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK)
-              )) }
-            })
-          )
-        )
-      ),
-
-      // ── Team Members ───────────────────────────────────────────────────────
-      // Admin-only roster of users who have signed in. Editable: title,
-      // phone, role. Identity fields (name/email/picture) come from Google
-      // and refresh on every login — not editable here. Self-demotion is
-      // blocked server-side.
-      h(AccordionSection, { title: "Team Members" },
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
-          "Title and Phone feed the email signature template above. Role changes take effect on the user's next request — they don't need to sign out."),
-        usersErr && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 10 } }, usersErr),
-        users === null && !usersErr && h("div", { style: { padding: "12px 0", display: "flex", justifyContent: "flex-start" } },
-          h(window.LTPLoadingBar, { label: "Loading team members…" })),
-        Array.isArray(users) && users.length === 0 && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No team members yet."),
-        // Team Members rows use raw <input> / <select> instead of LTPInput /
-        // LTPSelect deliberately: LTPInput renders an above-the-field label
-        // wrapper, which would break the single-row grid alignment. Raw
-        // controls keep all five cells on the same visual baseline.
-        Array.isArray(users) && users.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          users.map(function(u) {
-            return h("div", { key: u.id,
-              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 12px", display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 0.8fr", gap: 8, alignItems: "center" } },
-              // Identity (read-only): circular Google profile photo + name/email.
-              // The photo is the same image that feeds {{userPhoto}} in the
-              // email signature template — showing it here makes it visible to
-              // the admin which photo each team member's signature will use.
-              h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
-                // URL scheme guard: only render an <img> when pictureUrl is
-                // explicitly http(s). CSP would already block javascript:/
-                // data: at runtime, but rejecting them here means a stored
-                // bad value can't even reach the DOM. Falls back to the
-                // initial-letter placeholder otherwise.
-                (u.pictureUrl && /^https?:\/\//i.test(u.pictureUrl))
-                  ? h("img", { src: u.pictureUrl, alt: u.name || u.email,
-                      style: { width: 32, height: 32, borderRadius: "50%", objectFit: "cover", flexShrink: 0, border: "1px solid " + B.border } })
-                  : h("div", { style: { width: 32, height: 32, borderRadius: "50%", background: B.bg, border: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "center", color: B.textMut, fontSize: "11px", fontWeight: 700, flexShrink: 0 } },
-                      (u.name || u.email || "?").charAt(0).toUpperCase()),
-                h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 } },
-                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
-                  h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
-                  u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected")
-                )
-              ),
-              // Title (editable — joins the page's Save/Discard flow)
-              h("input", { type: "text", value: u.title || "", placeholder: "Title",
-                onChange: function(e) { editUser(u.id, { title: e.target.value }); },
-                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
-              }),
-              // Phone (editable — joins the page's Save/Discard flow)
-              h("input", { type: "text", value: u.phone || "", placeholder: "Phone",
-                onChange: function(e) { editUser(u.id, { phone: e.target.value }); },
-                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
-              }),
-              // Role (editable — joins the page's Save/Discard flow)
-              h("select", { value: u.role || "member",
-                onChange: function(e) { editUser(u.id, { role: e.target.value }); },
-                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } },
-                h("option", { value: "member" }, "Member"),
-                h("option", { value: "admin" }, "Admin")
-              ),
-              // Last login (read-only display, helps admins spot stale accounts)
-              h("div", { style: { fontSize: "10px", color: B.textMut, textAlign: "right", whiteSpace: "nowrap" } },
-                u.lastLogin ? "Last seen " + u.lastLogin.substring(0, 10) : "Never signed in")
-            );
-          })
         )
       ),
 
@@ -759,6 +678,171 @@
                   options: acctOptions(qbo.apAccounts, draft.qboPayoutApAccountId, "QuickBooks default A/P account") })))
           : h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 14, fontStyle: "italic" } },
               "Connect QuickBooks above to map the payout expense and Accounts-Payable accounts.")
+      ),
+      ),  // ← end of the two-column compact wrapper
+
+      // ── Tag & Badge Colors ─────────────────────────────────────────────────
+      // Full-width: the color chips wrap across the whole page (shorter and
+      // tidier than squeezed into one masonry column).
+      h(AccordionSection, { title: "Tag & Badge Colors" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+          "Customize colors for departments, statuses, and categories. Changes apply immediately across the app."),
+        function() {
+          var tc = draft.tagColors || {};
+          function setTagColor(key, val) {
+            var updated = Object.assign({}, tc);
+            updated[key] = val;
+            set("tagColors", updated);
+          }
+          var groups = [
+            { label: "Departments", keys: ["Lighting", "Audio", "Video", "Stage", "Rigging", "Production"] },
+            { label: "Document Status", keys: ["draft", "sent", "accepted", "declined", "paid", "partial", "overdue", "converted", "invoiced"] },
+            { label: "Crew Status", keys: ["open", "requested", "confirmed"] },
+            { label: "CRM", keys: ["active", "inactive", "client", "vendor", "prospect"] },
+            { label: "Project Categories", keys: ["rental", "labor", "service", "full-production"] },
+          ];
+          return h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+            groups.map(function(g) {
+              return h("div", { key: g.label },
+                h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, g.label),
+                h("div", { style: { display: "flex", flexWrap: "wrap", gap: 6 } },
+                  g.keys.map(function(k) {
+                    var color = tc[k] || "#666666";
+                    return h("div", { key: k, style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 8px" } },
+                      h("input", { type: "color", value: color, onChange: function(e) { setTagColor(k, e.target.value); },
+                        style: { width: 20, height: 20, border: "none", padding: 0, cursor: "pointer", background: "transparent", borderRadius: "3px" } }),
+                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: color } }, k),
+                      h("span", { style: { background: color + "1F", color: color, border: "1px solid " + color + "59", padding: "1px 6px", borderRadius: "3px", fontSize: "9px", fontWeight: 700, textTransform: "uppercase" } }, k)
+                    );
+                  })
+                )
+              );
+            })
+          );
+        }()
+      ),
+
+      // ── Email Signature Template ───────────────────────────────────────────
+      // Single workspace-wide HTML template. The send pipeline substitutes
+      // {{userName}}/{{userEmail}}/{{userTitle}}/{{userPhone}}/{{userPhoto}} against the
+      // sender's User row when an email body contains {{signature}}. Stored
+      // pre-sanitized server-side (PUT /api/settings runs email_html on it).
+      h(AccordionSection, { title: "Email Signature Template" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+          "HTML signature rendered per-user when a template body uses ",
+          h("code", { style: { background: B.raised, padding: "1px 4px", borderRadius: "3px", fontSize: "10px" } }, "{{signature}}"),
+          ". Per-user values come from each team member's Title and Phone (edit below)."),
+        h("div", { style: { background: B.bg, borderRadius: "6px", padding: "6px 10px", marginBottom: 10, border: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 } }, "Available variables"),
+          h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4 } },
+            ["userName", "userEmail", "userTitle", "userPhone", "userPhoto"].map(function(v) {
+              return h("span", { key: v, style: { fontSize: "9px", background: B.accent + "22", color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 6px", borderRadius: "3px", fontFamily: "monospace", fontWeight: 600 } }, "{{" + v + "}}");
+            }))
+        ),
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+          // Left: raw HTML textarea
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "HTML"),
+            h("textarea", { value: draft.emailSignatureTemplate || "",
+              onChange: function(e) { set("emailSignatureTemplate", e.target.value); },
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "monospace", outline: "none", resize: "vertical", lineHeight: 1.5 } })
+          ),
+          // Right: sanitized preview rendered with placeholder values so the
+          // admin sees what a real send will look like
+          h("div", null,
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Preview (sample values)"),
+            h("div", {
+              style: { width: "100%", minHeight: 140, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", lineHeight: 1.5, overflowY: "auto" },
+              dangerouslySetInnerHTML: { __html: window.LTP_SANITIZE.emailHtml(window.LTP_textToHtml(
+                // Fall back to the data/settings.js default when the draft
+                // signature is empty/missing, so admins editing a fresh
+                // install see the rich starter template they'll get sent.
+                // Sample values for name/title/phone/email; {{userPhoto}}
+                // uses the admin's OWN photo so they see a real image
+                // (their own) rather than a placeholder.
+                (draft.emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate || "")
+                  .replace(/\{\{userName\}\}/g, "Sarah Chen")
+                  .replace(/\{\{userTitle\}\}/g, "Production Manager")
+                  .replace(/\{\{userPhone\}\}/g, "(555) 123-4567")
+                  .replace(/\{\{userEmail\}\}/g, "sarah@example.com")
+                  .replace(/\{\{userPhoto\}\}/g, window.LTP_SENDER_PHOTO || window.LTP_SIGNATURE_PHOTO_FALLBACK)
+              )) }
+            })
+          )
+        )
+      ),
+
+      // ── Team Members ───────────────────────────────────────────────────────
+      // Admin-only roster of users who have signed in. Editable: title,
+      // phone, role. Identity fields (name/email/picture) come from Google
+      // and refresh on every login — not editable here. Self-demotion is
+      // blocked server-side.
+      h(AccordionSection, { title: "Team Members" },
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+          "Title and Phone feed the email signature template above. Role changes take effect on the user's next request — they don't need to sign out."),
+        usersErr && h("div", { style: { background: B.danger + "08", border: "1px solid " + B.danger + "22", borderRadius: "6px", padding: "8px 12px", fontSize: "11px", color: B.danger, marginBottom: 10 } }, usersErr),
+        users === null && !usersErr && h("div", { style: { padding: "12px 0", display: "flex", justifyContent: "flex-start" } },
+          h(window.LTPLoadingBar, { label: "Loading team members…" })),
+        Array.isArray(users) && users.length === 0 && !usersErr && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No team members yet."),
+        // Team Members rows use raw <input> / <select> instead of LTPInput /
+        // LTPSelect deliberately: LTPInput renders an above-the-field label
+        // wrapper, which would break the single-row grid alignment. Raw
+        // controls keep all five cells on the same visual baseline.
+        Array.isArray(users) && users.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+          users.map(function(u) {
+            return h("div", { key: u.id,
+              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 12px", display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 0.8fr", gap: 8, alignItems: "center" } },
+              // Identity (read-only): circular Google profile photo + name/email.
+              // The photo is the same image that feeds {{userPhoto}} in the
+              // email signature template — showing it here makes it visible to
+              // the admin which photo each team member's signature will use.
+              h("div", { style: { display: "flex", alignItems: "center", gap: 10, minWidth: 0 } },
+                // Avatar: cached/Google photo with a graceful initial-letter
+                // fallback on any load failure (see TeamAvatar).
+                h(TeamAvatar, { u: u }),
+                h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, flex: 1 } },
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.name || u.email),
+                  h("div", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, u.email),
+                  u.gmailConnected === false && h("div", { style: { fontSize: "9px", color: B.warn, marginTop: 2 } }, "Gmail not connected"),
+                  // Re-pull the Google profile photo. The app caches the image
+                  // so a rotted/rate-limited Google URL stops breaking the
+                  // avatar; this queues a fresh download on the user's next
+                  // sign-in. Link-style button, kept next to the photo it acts on.
+                  h("button", {
+                    onClick: function() { if (!u.photoRefreshRequested) repullPhoto(u.id); },
+                    disabled: !!u.photoRefreshRequested,
+                    title: u.photoRefreshRequested
+                      ? "Queued — this photo will refresh on the user's next sign-in"
+                      : "Re-download this user's Google profile photo on their next sign-in",
+                    style: { alignSelf: "flex-start", marginTop: 3, background: "transparent", border: "none",
+                      padding: 0, color: u.photoRefreshRequested ? B.textMut : B.accent, fontSize: "9px",
+                      fontFamily: "inherit", cursor: u.photoRefreshRequested ? "default" : "pointer", textAlign: "left" } },
+                    u.photoRefreshRequested ? "↻ Photo re-pull queued" : "↻ Re-pull photo")
+                )
+              ),
+              // Title (editable — joins the page's Save/Discard flow)
+              h("input", { type: "text", value: u.title || "", placeholder: "Title",
+                onChange: function(e) { editUser(u.id, { title: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
+              }),
+              // Phone (editable — joins the page's Save/Discard flow)
+              h("input", { type: "text", value: u.phone || "", placeholder: "Phone",
+                onChange: function(e) { editUser(u.id, { phone: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" }
+              }),
+              // Role (editable — joins the page's Save/Discard flow)
+              h("select", { value: u.role || "member",
+                onChange: function(e) { editUser(u.id, { role: e.target.value }); },
+                style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "5px 6px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } },
+                h("option", { value: "member" }, "Member"),
+                h("option", { value: "admin" }, "Admin")
+              ),
+              // Last login (read-only display, helps admins spot stale accounts)
+              h("div", { style: { fontSize: "10px", color: B.textMut, textAlign: "right", whiteSpace: "nowrap" } },
+                u.lastLogin ? "Last seen " + u.lastLogin.substring(0, 10) : "Never signed in")
+            );
+          })
+        )
       ),
 
       // ── Email Templates ────────────────────────────────────────────────────

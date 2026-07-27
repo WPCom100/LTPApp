@@ -58,8 +58,13 @@
             posId: p.id, role: p.role, serviceId: p.serviceId,
             slot: slots[p.id] || 1,
             dayRoleCount: (dayRoleCounts[s.date] || {})[p.serviceId] || 0,
-            crewId: p.crewId, status: p.status,
+            crewId: p.crewId, status: p.status, note: p.note || "",
             svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
+            // Service-derived short role for at-a-glance displays (weekly grid).
+            // Resolves live through the linked service so a renamed service is
+            // reflected; a position with no live service reads generic "Crew"
+            // rather than echoing a stale/free-text code.
+            roleCode: svc ? svc.role : "Crew",
             dept: svc ? svc.department : "",
             crewName: cm ? cm.firstName + " " + cm.lastName : null,
           });
@@ -80,6 +85,26 @@
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
             if (pos.id !== posId) return pos;
             return Object.assign({}, pos, patch);
+          })});
+        })});
+      });
+    });
+  }
+
+  // Write a per-shift note. Scope "one": just this position (posId). Scope "day":
+  // every position sharing the same schedule shift (schedItemId) — the "same time
+  // period" grouping from the schedule builder — so a producer can drop "parking
+  // is on 4th St" onto everyone on that call without retyping it per person.
+  // Persists through the same debounced projects PUT as any other schedule edit.
+  function writeShiftNote(setProjects, projectId, schedItemId, posId, note, applyToDay) {
+    setProjects(function(prev) {
+      return prev.map(function(p) {
+        if (p.id !== projectId) return p;
+        return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
+          if (s.id !== schedItemId) return s;
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+            if (!(applyToDay || pos.id === posId)) return pos;
+            return Object.assign({}, pos, { note: note });
           })});
         })});
       });
@@ -236,13 +261,20 @@
                   }, style: { background: active ? window.LTP_deptColor(d) + "22" : B.bg, color: active ? window.LTP_deptColor(d) : B.textMut, border: "1px solid " + (active ? window.LTP_deptColor(d) + "55" : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, d);
                 })
               )),
-            // Roles — toggle tags. Options merge the Settings list with every
-            // role on the labor rate card and any custom roles already on this
-            // person, so a rate-card role like "A1 FUMC" is assignable here
-            // without first adding it in Settings.
+            // Roles — toggle tags, sourced from the labor rate card plus any
+            // role already saved on this person (see the builder below).
             function() {
-              var roleOptions = (settings.crewRoleOptions || ["L1", "L2", "L3", "A1", "A2", "V1", "RIG", "PM"]).slice();
+              // Role tags are sourced ONLY from the labor rate card (Quotes →
+              // Services) plus any role already saved on this person — never a
+              // hardcoded or Settings-curated list. This guarantees the form
+              // can't offer a role that isn't backed by a real service (or a
+              // one-off the user themselves typed on this crew member before).
+              // Rate-card roles come first, alphabetized for a stable order;
+              // then any legacy/custom role still on the person, so it stays
+              // visible and removable even if its service is gone.
+              var roleOptions = [];
               (services || []).forEach(function(s) { if (s.role && roleOptions.indexOf(s.role) === -1) roleOptions.push(s.role); });
+              roleOptions.sort();
               (f.crewRoles || []).forEach(function(r) { if (roleOptions.indexOf(r) === -1) roleOptions.push(r); });
               function addCustomRole() {
                 var v = customRole.trim();
@@ -354,7 +386,6 @@
     var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");
     var [end, setEnd] = useState(editing ? (editShift.endTime || "18:00") : "18:00");
     var [location, setLocation] = useState(editing ? (editProject.siteAddress || "") : "");
-    var [notes, setNotes] = useState(editing ? (editProject.scheduleNotes || "") : "");
     // Position rows — each is a role (rate-card Service) + optional crew member.
     var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
     // Crew-wide meal breaks on the shift (same {id,startTime,endTime,type} shape
@@ -382,21 +413,16 @@
     function updateBreak(i, patch) { setBreaks(function(bs) { return bs.map(function(b, j) { return j === i ? Object.assign({}, b, patch) : b; }); }); }
     function removeBreak(i) { setBreaks(function(bs) { return bs.filter(function(_, j) { return j !== i; }); }); }
 
-    // Crew tagged with the row's role float to the top (like the schedule editor),
-    // but everyone stays selectable so an untagged role is never unassignable.
-    function crewOptionsFor(serviceId) {
+    // Only crew tagged with the row's role are listed; everyone else sits behind
+    // the "Other crew" reveal. Shared with the schedule editor and the
+    // Assignments tab so all three crew pickers behave identically — they used
+    // to each build their own option list and had drifted apart.
+    function crewOptionsFor(serviceId, selectedId) {
       var sv = serviceId ? svcs.find(function(s) { return s.id === Number(serviceId); }) : null;
-      var roleCode = sv ? sv.role : "";
-      var tagged = [], others = [];
-      crew.forEach(function(c) {
-        if (roleCode && (c.crewRoles || []).indexOf(roleCode) !== -1) tagged.push(c); else others.push(c);
+      return window.LTP_crewSelectOptions({
+        crew: crew, role: sv ? sv.role : "", selectedId: selectedId,
+        allContacts: contacts, leading: [{ value: "", label: "Unassigned" }],
       });
-      var toOpt = function(c) { return { value: String(c.id), label: (c.firstName + " " + c.lastName).trim() }; };
-      var opts = [{ value: "", label: "Unassigned" }];
-      if (tagged.length && others.length) {
-        return opts.concat(tagged.map(toOpt)).concat([{ value: "__sep", label: "— other crew —" }]).concat(others.map(toOpt));
-      }
-      return opts.concat(crew.map(toOpt));
     }
 
     function handleSave() {
@@ -409,16 +435,19 @@
       if (editing) {
         // Roles/crew aren't touched here — only the shift's scalar fields + breaks.
         onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-          location: location.trim(), notes: notes.trim(), breaks: cleanBreaks });
+          location: location.trim(), breaks: cleanBreaks });
         return;
       }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
         var sv = svcs.find(function(s) { return s.id === Number(r.serviceId); });
-        return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: (r.crewId && r.crewId !== "__sep") ? Number(r.crewId) : null };
+        // No "__sep" guard any more: that separator was a fake <option> the
+        // native select needed to imitate a group heading. The searchable
+        // picker has a real second tier, so no sentinel can reach this.
+        return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: r.crewId ? Number(r.crewId) : null };
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
       onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-        location: location.trim(), notes: notes.trim(), breaks: cleanBreaks, positions: positions });
+        location: location.trim(), breaks: cleanBreaks, positions: positions });
     }
 
     var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
@@ -491,16 +520,25 @@
               svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
               rows.map(function(r, i) {
                 return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
-                  h(window.LTPSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
-                    options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: String(s.id), label: s.role + (s.description ? " — " + s.description : "") }; })) }),
-                  h(window.LTPSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId, onChange: function(v) { updateRow(i, { crewId: v }); },
-                    options: crewOptionsFor(r.serviceId) }),
+                  h(window.LTPSearchSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
+                    options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: s.id, label: s.role, sublabel: s.description }; })),
+                    searchPlaceholder: "Search roles…" }),
+                  // Changing the role deliberately does NOT clear an already-picked
+                  // person — they stay pinned in the list, flagged as untagged, so a
+                  // role edit never silently drops the crew you meant to book.
+                  (function() {
+                    var co = crewOptionsFor(r.serviceId, r.crewId);
+                    return h(window.LTPSearchSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId,
+                      onChange: function(v) { updateRow(i, { crewId: v }); },
+                      options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+                      searchPlaceholder: "Search crew…" });
+                  })(),
                   h(window.Btn, { small: true, variant: "ghost", onClick: function() { removeRow(i); }, style: { opacity: rows.length > 1 ? 1 : 0.4 } }, "✕")
                 );
               }),
               h("div", null, h(window.Btn, { small: true, variant: "ghost", onClick: addRow }, "+ Add role"))
             ),
-        h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Optional notes for this shift" }),
+        h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Shift notes (parking, gate codes, etc.) are added per role on the Assignments tab after the shift is created."),
         err && h("div", { style: { fontSize: "11px", color: B.danger } }, err),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 } },
           h(window.Btn, { variant: "ghost", onClick: onClose }, "Cancel"),
@@ -523,7 +561,69 @@
     var [conflictWarn, setConflictWarn] = useState(null);
     var [showManualShift, setShowManualShift] = useState(false);
     var [editManualProject, setEditManualProject] = useState(null);
+    var [noteDlg, setNoteDlg] = useState(null);   // { pos, text, applyToDay, dayCount }
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
+
+    // Open the shift-note editor for a booking's representative position. dayCount
+    // = how many positions share this shift (drives the "apply to everyone on this
+    // day" option — only offered when there's more than one).
+    function openNoteDlg(pos) {
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
+      var dayCount = shift ? (shift.positions || []).length : 1;
+      setNoteDlg({ pos: pos, text: pos.note || "", applyToDay: false, dayCount: dayCount, notify: true });
+    }
+
+    // Confirmed crew (with an email on file) among the positions a note write
+    // would touch — one entry per crew member, carrying a shift snapshot (with the
+    // note text baked in) so the email renders correctly regardless of the
+    // debounced projects PUT. Drives both the "email confirmed crew" option and
+    // the actual sends. Only CONFIRMED crew are notified (a note on an unconfirmed
+    // slot isn't a change to a commitment they've been locked into yet).
+    function confirmedCrewForNote(pos, applyToDay, noteText) {
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
+      if (!shift) return [];
+      var byCrew = {};
+      (shift.positions || []).forEach(function(p) {
+        if (!(applyToDay || p.id === pos.posId)) return;
+        if (p.status !== "confirmed" || !p.crewId) return;
+        var c = (contacts || []).find(function(x) { return x.id === p.crewId; });
+        if (!c || !(c.email || "").trim()) return;
+        var sv = p.serviceId ? (services || []).find(function(s) { return s.id === p.serviceId; }) : null;
+        var roleLabel = sv ? (sv.role + (sv.description ? " — " + sv.description : "")) : (p.role || "Crew");
+        var snap = { roleLabel: roleLabel, shiftTitle: shift.title || "", date: shift.date || "",
+                     startTime: shift.time || "", endTime: shift.endTime || "", note: noteText };
+        if (!byCrew[p.crewId]) byCrew[p.crewId] = { crewId: p.crewId, crewName: (c.firstName + " " + c.lastName).trim(), shifts: [] };
+        byCrew[p.crewId].shifts.push(snap);
+      });
+      return Object.keys(byCrew).map(function(k) { return byCrew[k]; });
+    }
+
+    function saveNoteDlg() {
+      var d = noteDlg; if (!d) return;
+      var text = (d.text || "").trim();
+      writeShiftNote(setProjects, d.pos.projectId, d.pos.schedItemId, d.pos.posId, text, !!d.applyToDay);
+      // Email confirmed crew about the note (opt-in, only when there's text).
+      var recipients = (text && d.notify) ? confirmedCrewForNote(d.pos, !!d.applyToDay, text) : [];
+      setNoteDlg(null);
+      if (recipients.length) {
+        var proj = (projects || []).find(function(p) { return p.id === d.pos.projectId; });
+        var pname = proj ? proj.name : "";
+        recipients.forEach(function(r) {
+          window.LTP_crewNotify(r.crewId, d.pos.projectId, "crewShiftNote", { shifts: r.shifts, projectName: pname });
+        });
+        window.LTP_toast("Shift note saved", {
+          variant: "success",
+          message: "Emailed " + recipients.length + " confirmed crew member" + (recipients.length === 1 ? "" : "s") + " about the note.",
+        });
+      } else {
+        window.LTP_toast(text ? "Shift note saved" : "Shift note cleared", {
+          variant: "success",
+          message: d.applyToDay ? "Applied to everyone on this shift." : undefined,
+        });
+      }
+    }
 
     // Create a one-off manual shift: build an internal project (no client, no
     // schedule editor) and append it to the projects collection — data-state.js
@@ -563,7 +663,7 @@
         return (prev || []).map(function(p) {
           return p.id === proj.id ? Object.assign({}, p, {
             name: form.title, startDate: form.date, endDate: form.date,
-            siteAddress: form.location, scheduleNotes: form.notes, schedule: newSchedule,
+            siteAddress: form.location, schedule: newSchedule,
           }) : p;
         });
       });
@@ -951,11 +1051,18 @@
             style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
         }),
-        h("select", { value: projFilter, onChange: function(e) { setProjFilter(e.target.value); },
-          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-          h("option", { value: "all" }, "All Projects"),
-          projOptions.map(function(p) { return h("option", { key: p.id, value: p.id }, p.name); })
-        ),
+        // Values stay STRINGS: the filter is compared with `Number(projFilter)`
+        // and against the literal "all" further up.
+        h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
+          // sentinel:true — "All Projects" is a real value but not a record, so
+          // it shouldn't be held in the list while you search for a project.
+          options: [{ value: "all", label: "All Projects", sentinel: true }].concat(
+            projOptions.map(function(p) { return { value: String(p.id), label: p.name }; })),
+          searchPlaceholder: "Search projects\u2026",
+          style: { width: 190, flexShrink: 0 },
+          triggerStyle: { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
+          panelMinWidth: 240,
+        }),
         h("div", { style: { flex: 1 } }),
         h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
           style: { background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "+ Manual Shift"),
@@ -1018,6 +1125,22 @@
                         var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
                         var conflicts = (crewConflicts || {})[pos.posId];
                         var hasConflict = conflicts && conflicts.length > 0;
+                        // Two-tier crew list for this position's role — shared with
+                        // the schedule editor and the manual-shift form.
+                        //
+                        // The filter resolves through the LINKED SERVICE, not the
+                        // denormalized pos.role, for the same reason the weekly
+                        // grid does: a stale or free-text role would match nobody
+                        // and silently push the whole roster behind "Other crew".
+                        // pos.roleCode is unusable here — it degrades to the
+                        // display placeholder "Crew" when there's no service, and
+                        // that matches nobody either. No service linked means no
+                        // role is being filled, so offer everyone.
+                        var posSvc = pos.serviceId ? (services || []).find(function(sv) { return sv.id === pos.serviceId; }) : null;
+                        var crewOpts = window.LTP_crewSelectOptions({
+                          crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
+                          allContacts: contacts, leading: [{ value: "", label: "Assign crew\u2026" }],
+                        });
                         return h("div", { key: pos.posId + "-" + bi, style: { padding: isMobile ? "8px 10px" : "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
                           hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
                             style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
@@ -1030,8 +1153,8 @@
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
-                          h("select", { value: pos.crewId || "", onChange: function(e) {
-                            var cid = Number(e.target.value) || null;
+                          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
+                            var cid = (v === "" || v == null) ? null : Number(v);
                             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
                             function doAssign() {
                               // Check for conflicts before assigning
@@ -1096,19 +1219,17 @@
                               return;
                             }
                             doAssign();
-                          }, style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-                            h("option", { value: "" }, "Assign crew\u2026"),
-                            // Role-tagged crew first; everyone else stays reachable under
-                            // "Other crew" so a role nobody is tagged with (e.g. a custom
-                            // rate-card role) never leaves the position unassignable.
-                            (function() {
-                              var opt = function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); };
-                              var matching = crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; });
-                              if (matching.length === crew.length) return crew.map(opt);
-                              var others = crew.filter(function(c) { return matching.indexOf(c) === -1; });
-                              return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
-                            })()
-                          ),
+                          },
+                            // Only crew tagged with this role are listed; the rest
+                            // sit behind a deliberate "Other crew" click. Crew is
+                            // PICKED from the roster here, never authored — this
+                            // field has no inline-create, by design.
+                            options: crewOpts.options, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
+                            searchPlaceholder: "Search crew\u2026",
+                            style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, minWidth: 0 },
+                            triggerStyle: { borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", fontSize: "10px", minHeight: 0 },
+                            panelMinWidth: 260,
+                          }),
                           pos.status === "open" && !pos.crewId && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "Needs crew"),
                           pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
                           pos.status === "requested" && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600, background: B.warn + "18", border: "1px solid " + B.warn + "33", borderRadius: "3px", padding: "2px 8px" } }, "Awaiting\u2026"),
@@ -1125,6 +1246,11 @@
                             h("button", { onClick: function() {
                               booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
                             }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign")),
+                          // Per-shift note — the crew see it under this call on the web
+                          // call sheet and in the request email. Highlighted once set.
+                          h("button", { onClick: function() { openNoteDlg(pos); }, title: pos.note ? "Edit shift note" : "Add a shift note (parking, gate code, wardrobe…)",
+                            style: { background: pos.note ? B.accent + "1c" : "transparent", border: "1px solid " + (pos.note ? B.accent + "66" : B.border), borderRadius: "3px", padding: "3px 8px", color: pos.note ? B.accent : B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+                            pos.note ? "✎ Note" : "+ Note"),
                           // Mobile: tap-to-call the assigned crew member straight from
                           // the booking row (field leads confirming a shift on-site).
                           isMobile && pos.crewId && (function() {
@@ -1148,6 +1274,37 @@
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
           h(window.Btn, { variant: "ghost", onClick: function() { setConflictWarn(null); } }, "Cancel"),
           h(window.Btn, { variant: "danger", onClick: conflictWarn.onConfirm }, "Assign Anyway"))
+      ),
+
+      // Shift-note editor. The note rides under this call on the crew web sheet
+      // and in the request email. "Apply to everyone on this shift" writes the
+      // same note onto every position sharing the schedule day (so a producer
+      // enters parking/gate instructions once instead of per person).
+      noteDlg && h(window.LTPModal, { title: "Shift Note", onClose: function() { setNoteDlg(null); } },
+        h("div", null,
+          h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6, lineHeight: 1.5 } },
+            (noteDlg.pos.svcName || "Crew") + (noteDlg.pos.date ? " · " + window.LTP_formatDate(noteDlg.pos.date) : "") + " · the crew see this under their call on the web and in their email."),
+          h("textarea", { value: noteDlg.text, autoFocus: true, maxLength: 1000,
+            onChange: function(e) { var v = e.target.value; setNoteDlg(function(d) { return Object.assign({}, d, { text: v }); }); },
+            placeholder: "e.g. Parking is on 4th St. Enter through the loading dock; gate code 4821.",
+            style: { width: "100%", minHeight: 96, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box" } }),
+          noteDlg.dayCount > 1 && h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 12, fontSize: "12px", color: B.textSec, cursor: "pointer" } },
+            h("input", { type: "checkbox", checked: !!noteDlg.applyToDay,
+              onChange: function(e) { var v = e.target.checked; setNoteDlg(function(d) { return Object.assign({}, d, { applyToDay: v }); }); } }),
+            "Apply to everyone on this shift (" + noteDlg.dayCount + " position" + (noteDlg.dayCount === 1 ? "" : "s") + ")"),
+          // Email confirmed crew — only surfaced when the note has text AND some
+          // affected position is confirmed (crew locked into the call). The count
+          // tracks the "apply to everyone" toggle above.
+          (function() {
+            var n = (noteDlg.text || "").trim() ? confirmedCrewForNote(noteDlg.pos, !!noteDlg.applyToDay, noteDlg.text).length : 0;
+            return n > 0 ? h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: "12px", color: B.textSec, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: noteDlg.notify !== false,
+                onChange: function(e) { var v = e.target.checked; setNoteDlg(function(d) { return Object.assign({}, d, { notify: v }); }); } }),
+              "Email " + n + " confirmed crew member" + (n === 1 ? "" : "s") + " about this note") : null;
+          })(),
+          h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setNoteDlg(null); } }, "Cancel"),
+            h(window.Btn, { onClick: saveNoteDlg }, "Save Note")))
       ),
 
       // Status change confirmation dialog. The notification itself is decided in
@@ -1433,7 +1590,7 @@
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
-                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.role + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
                     h(window.Badge, { status: r.pos.status }),
                     h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
                     h(window.LTPMailBtn, { email: r.crew.email, name: cname }));
@@ -1466,7 +1623,7 @@
                 dayShifts.map(function(s, si) {
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
                   return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px solid " + sc.color } },
-                    h("div", { style: { fontWeight: 600 } }, s.role),
+                    h("div", { style: { fontWeight: 600 } }, s.roleCode),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
                 }));
             }));
@@ -2292,7 +2449,7 @@
         });
       });
       if (notify) {
-        window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [] })
+        window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [], token: req.token })
           .then(function(res) {
             var es = (res.ok && res.body.emailStatus) || {};
             if (es.emailed) window.LTP_toast("Crew confirmed", { message: "Confirmation email sent to " + crewLabel(req.contactId) + ".", variant: "success" });

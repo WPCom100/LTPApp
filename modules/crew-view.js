@@ -48,6 +48,8 @@
   var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   var _MONTHS = ["January", "February", "March", "April", "May", "June",
                  "July", "August", "September", "October", "November", "December"];
+  var _MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
   function fmtDate(iso) {
     if (!iso) return "";
@@ -57,6 +59,14 @@
     var sfx = (day >= 11 && day <= 13) ? "th"
             : ({ 1: "st", 2: "nd", 3: "rd" }[day % 10] || "th");
     return _WEEKDAYS[d.getDay()] + ", " + _MONTHS[d.getMonth()] + " " + day + sfx + ", " + d.getFullYear();
+  }
+
+  // Compact label for the per-shift calendar buttons — "Fri, Jul 3".
+  function fmtDateShort(iso) {
+    if (!iso) return "";
+    var d = new Date(iso + "T00:00:00");
+    if (isNaN(d.getTime())) return iso;
+    return _WEEKDAYS[d.getDay()] + ", " + _MONTHS_SHORT[d.getMonth()] + " " + d.getDate();
   }
 
   function fmtTime(t) {
@@ -137,6 +147,11 @@
           subTitle && h("span", { style: { fontSize: "13px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
           s.department && h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
       : null;
+    // Producer's per-shift note (parking, gate code, wardrobe, …) — its own
+    // accent-edged line under the call so it reads as an instruction.
+    var noteRow = (s.note && String(s.note).trim())
+      ? h("div", { style: { marginTop: 10, padding: "8px 12px", background: INSET, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "13px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, s.note)
+      : null;
 
     return h("div", {
       key: s.positionId || i,
@@ -153,18 +168,93 @@
         // position title — its own full-width line below the timeframe, so a long
         // role can run the whole width instead of fighting the time column.
         h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: hasTimeframe ? 6 : 0 } }, (s.roleLabel || "Crew")),
-        subMeta)
+        subMeta,
+        noteRow)
     );
   }
 
-  // ── Terminal banner (accepted / declined / withdrawn) ──────────────────────
-  function renderBanner(status, crewName, respondedAt, siteAddress) {
+  // ── "Add to calendar" buttons (confirmed only) ─────────────────────────────
+  // One Google-Calendar link per confirmed call (a single "Add to Calendar"
+  // button when there's just one). Times are posted wall-clock — LTP_gcalUrl
+  // emits a floating (timezone-less) event so it lands right wherever the crew
+  // member opens it. Silently renders nothing if the shared helper is absent.
+  function calGlyph(color) {
+    return h("svg", { width: 15, height: 15, viewBox: "0 0 16 16", style: { flexShrink: 0 } },
+      h("rect", { x: 2, y: 3, width: 12, height: 11, rx: 2, fill: "none", stroke: color, strokeWidth: 1.4 }),
+      h("line", { x1: 2, y1: 6, x2: 14, y2: 6, stroke: color, strokeWidth: 1.4 }),
+      h("line", { x1: 5, y1: 1.6, x2: 5, y2: 4, stroke: color, strokeWidth: 1.4, strokeLinecap: "round" }),
+      h("line", { x1: 11, y1: 1.6, x2: 11, y2: 4, stroke: color, strokeWidth: 1.4, strokeLinecap: "round" }));
+  }
+
+  function calUrlFor(s, projectName, location) {
+    if (!window.LTP_gcalUrl) return null;
+    // Event title: "LTP - <position acronym> - <project>" (e.g. "LTP - A1 - Sunset Gala").
+    var acronym = s.role || s.roleLabel || "Crew";
+    var title = "LTP - " + acronym + " - " + (projectName || "Project");
+    var base = [
+      s.startTime ? "Call " + fmtTime(s.startTime) : "",
+      s.endTime ? "Wrap " + fmtTime(s.endTime) : "",
+      s.shiftTitle || "",
+    ].filter(function(x) { return x; }).join("  ·  ");
+    // Shift note appended directly after the existing description.
+    var note = (s.note && String(s.note).trim()) ? String(s.note).trim() : "";
+    var details = note ? (base ? base + "\n\n" + note : note) : base;
+    return window.LTP_gcalUrl({
+      title: title, date: s.date, time: s.startTime || "",
+      endTime: s.endTime || "", location: location || "", details: details,
+    });
+  }
+
+  function calButtons(shifts, projectName, location) {
+    if (!window.LTP_gcalUrl) return null;
+    var usable = (shifts || []).filter(function(s) { return s.date; });
+    if (!usable.length) return null;
+    var single = usable.length === 1;
+    // Each call is its own event (its own date + call/wrap time), so a crew
+    // member with several calls gets one button per call. When more than one
+    // call shares a day, the date alone would be ambiguous — so multi-call
+    // labels carry the start time too ("Sat, Aug 1 · 8:00 AM").
+    var btns = usable.map(function(s, i) {
+      var href = calUrlFor(s, projectName, location);
+      if (!href) return null;
+      var label = single ? "Add to Calendar"
+        : (fmtDateShort(s.date) + (s.startTime ? " · " + fmtTime(s.startTime) : ""));
+      return h("a", {
+        key: s.positionId || i, href: href, target: "_blank", rel: "noopener", className: "ltp-cal-btn",
+        style: { display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 14px", background: SUCCESS_BG, border: "1px solid " + SUCCESS_BD, borderRadius: 8, color: TEXT, fontSize: "13px", fontWeight: 600, textDecoration: "none", fontFamily: "inherit" },
+      }, calGlyph(SUCCESS), label);
+    }).filter(function(x) { return x; });
+    if (!btns.length) return null;
+    return h("div", { style: { marginTop: 16 } },
+      h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: SUCCESS, marginBottom: 10 } }, "Add to your calendar"),
+      h("div", { style: { display: "flex", flexWrap: "wrap", gap: 10 } }, btns));
+  }
+
+  // ── Terminal banner (confirmed / penciled / declined / withdrawn) ──────────
+  // `opts`: { crewName, respondedAt, siteAddress, isConfirmed, shifts, projectName }.
+  // A crew member's acceptance leaves the request "accepted" but the positions
+  // still need the producer to confirm them — so the accepted banner has two
+  // faces: "penciled in" (awaiting confirmation) and "confirmed" (locked, with
+  // the calendar buttons). isConfirmed is derived from the shift statuses.
+  function renderBanner(status, opts) {
+    opts = opts || {};
+    var crewName = opts.crewName, respondedAt = opts.respondedAt, siteAddress = opts.siteAddress;
+    var confirmed = status === "accepted" && opts.isConfirmed;
+    // Amber "awaiting confirmation" treatment so a penciled hold never reads as done.
+    var PENCIL = ORANGE_SOFT, PENCIL_BG = "rgba(249,185,152,0.10)", PENCIL_BD = "rgba(249,185,152,0.32)";
     var cfg;
-    if (status === "accepted") {
+    if (confirmed) {
       cfg = { color: SUCCESS, bg: SUCCESS_BG, bd: SUCCESS_BD,
               glyph: h("span", { className: "ltp-check-pop", style: { color: "#fff", fontSize: "16px", lineHeight: 1 } }, "✓"),
-              headline: "You're penciled in",
-              note: "Thanks" + (crewName ? ", " + crewName : "") + "! Please pencil these calls into your calendar — a production manager will confirm you've been selected for the position in a separate email." };
+              headline: "You're confirmed",
+              note: "You're locked in" + (crewName ? ", " + crewName : "") + " — we'll see you on the call. Add these calls to your calendar so the details stay in your pocket." };
+    } else if (status === "accepted") {
+      cfg = { color: PENCIL, bg: PENCIL_BG, bd: PENCIL_BD,
+              glyph: h("svg", { width: 16, height: 16, viewBox: "0 0 16 16" },
+                        h("circle", { cx: 8, cy: 8, r: 6, fill: "none", stroke: BTN_INK, strokeWidth: 1.6 }),
+                        h("path", { d: "M8 4.4 V8 L10.6 9.4", fill: "none", stroke: BTN_INK, strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" })),
+              headline: "You're penciled in — awaiting confirmation",
+              note: "Thanks" + (crewName ? ", " + crewName : "") + "! You've accepted these calls. A production manager still needs to confirm you for the position — you'll get a separate confirmation email once you're locked in. Please pencil these calls in for now." };
     } else if (status === "declined") {
       cfg = { color: DECLINE, bg: DECLINE_BG, bd: DECLINE_BD,
               glyph: h("svg", { width: 16, height: 16, viewBox: "0 0 16 16" },
@@ -179,20 +269,23 @@
     var receipt = (status !== "withdrawn" && respondedAt)
       ? h("div", { style: { fontSize: "12px", fontWeight: 500, color: FAINT, fontFamily: MONO, fontVariantNumeric: "tabular-nums", marginTop: 8 } }, "Responded " + fmtRespondedAt(respondedAt))
       : null;
+    // Calendar buttons only once actually confirmed (task: add-to-calendar on confirm).
+    var cal = confirmed ? calButtons(opts.shifts, opts.projectName, siteAddress) : null;
     // Where to show up — repeated inside the acceptance confirmation (the part
     // crew screenshot / come back to), linked to a map for one-tap navigation.
     var whereRow = (status === "accepted" && siteAddress)
       ? h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(siteAddress), target: "_blank", rel: "noopener",
-          style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 8 } },
+          style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 12 } },
           siteAddress)
       : null;
 
     return h("div", { style: { background: cfg.bg, border: "1px solid " + cfg.bd, borderRadius: 14, padding: 20 } },
       h("div", { style: { display: "flex", alignItems: "flex-start", gap: 14 } },
         cfg.glyph && h("div", { style: { width: 28, height: 28, borderRadius: "50%", background: cfg.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } }, cfg.glyph),
-        h("div", null,
+        h("div", { style: { flex: 1, minWidth: 0 } },
           h("div", { style: { fontSize: "16px", fontWeight: 700, color: cfg.color } }, cfg.headline),
           h("div", { style: { fontSize: "13px", color: TEXT, lineHeight: 1.55, marginTop: 4 } }, cfg.note),
+          cal,
           whereRow,
           receipt)));
   }
@@ -273,20 +366,34 @@
     var terminal = status !== "pending";
     var withdrawn = status === "withdrawn";
 
+    // Confirmation is a SECOND step the producer takes AFTER the crew member
+    // accepts: the request stays "accepted", but each position advances
+    // accepted → confirmed. So "confirmed" is derived from the shift statuses,
+    // not the request status — the page must not claim a hold is confirmed until
+    // the producer has actually confirmed the positions.
+    var activeShifts = shifts.filter(function(s) { return s.status !== "declined"; });
+    var isConfirmed = status === "accepted" && activeShifts.length > 0 &&
+      activeShifts.every(function(s) { return s.status === "confirmed"; });
+
     var dateRange = [fmtDate(project.startDate), fmtDate(project.endDate)].filter(function(x) { return x; });
     var dateLine = dateRange.length === 2 && dateRange[0] !== dateRange[1]
       ? dateRange[0] + " – " + dateRange[1]
       : (dateRange[0] || "");
     var projectMeta = [project.venue, dateLine].filter(function(x) { return x; }).join("  ·  ");
 
-    // Overline status eyebrow per state.
-    var statusEyebrow = status === "accepted" ? { t: "Confirmed", c: SUCCESS }
+    // Overline status eyebrow per state. An accepted-but-unconfirmed hold reads
+    // "Awaiting Confirmation" (never "Confirmed") until the producer confirms.
+    var statusEyebrow = status === "accepted"
+        ? (isConfirmed ? { t: "Confirmed", c: SUCCESS } : { t: "Awaiting Confirmation", c: ORANGE_SOFT })
       : status === "declined" ? { t: "Declined", c: DECLINE }
       : status === "withdrawn" ? { t: "Withdrawn", c: NEUTRAL }
       : { t: "Awaiting your response", c: ORANGE_SOFT };
 
     var intent = withdrawn ? null
-      : (terminal ? "Here are the calls on this request." : "You've been requested for the following calls.");
+      : status === "accepted"
+        ? (isConfirmed ? "You're confirmed for the following calls." : "You've accepted these calls — a producer will confirm you shortly.")
+      : status === "declined" ? "Here are the calls on this request."
+      : "You've been requested for the following calls.";
 
     // ── Accept / Decline submit (inline reveal → POST → reload) ───────────────
     function submit() {
@@ -377,9 +484,18 @@
           h("div", { style: { fontSize: "13px", color: TEXT, fontStyle: "italic", lineHeight: 1.55, marginTop: 6 } }, data.comment))
       : null;
 
+    // The confirmed banner (with the calendar buttons) is hoisted to the top of
+    // the sheet (replacing the greeting), so it must NOT also render down here.
+    var bannerNode = renderBanner(status, {
+      crewName: crewName, respondedAt: data.respondedAt, siteAddress: project.siteAddress,
+      isConfirmed: isConfirmed, shifts: shifts, projectName: project.name,
+    });
+
     var actionZone;
-    if (terminal) {
-      actionZone = h("div", { style: { marginTop: 40 } }, renderBanner(status, crewName, data.respondedAt, project.siteAddress));
+    if (isConfirmed) {
+      actionZone = null;                                   // shown at the top instead
+    } else if (terminal) {
+      actionZone = h("div", { style: { marginTop: 40 } }, bannerNode);
     } else {
       actionZone = h("div", { ref: actionRef, style: { marginTop: 40, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
         h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take these calls?"),
@@ -439,18 +555,35 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE_SOFT } }, "Crew Call Sheet"),
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: statusEyebrow.c } }, statusEyebrow.t)),
 
-        // Greeting cluster
-        crewName && h("div", { style: { fontSize: "16px", fontWeight: 600, color: WHITE, marginTop: 28 } }, "Hi " + crewName + ","),
-        intent && h("div", { style: { fontSize: "14px", color: MUTE, lineHeight: 1.5, marginTop: 6 } }, intent),
+        // Greeting cluster — once confirmed, the green confirmation box (with the
+        // calendar buttons) takes this slot at the top of the sheet instead.
+        isConfirmed
+          ? h("div", { style: { marginTop: 28 } }, bannerNode)
+          : h("div", null,
+              crewName && h("div", { style: { fontSize: "16px", fontWeight: 600, color: WHITE, marginTop: 28 } }, "Hi " + crewName + ","),
+              intent && h("div", { style: { fontSize: "14px", color: MUTE, lineHeight: 1.5, marginTop: 6 } }, intent)),
 
-        // Project marquee (greyed when withdrawn)
-        h("div", { style: { marginTop: 40 } },
-          h("div", { style: { fontSize: "30px", fontWeight: 800, color: withdrawn ? NEUTRAL : WHITE, letterSpacing: "-0.02em", lineHeight: 1.08, textTransform: "uppercase", overflowWrap: "break-word" } }, (project.name || "Project").toUpperCase()),
-          projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta),
-          // Job-site address — linked to a map so crew can navigate in one tap.
-          project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
-            style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
-            project.siteAddress)),
+        // Project marquee (greyed when withdrawn) — text on the left, the in-frame
+        // map right-aligned and top-aligned with the project name (stacks on mobile).
+        h("div", { style: { marginTop: 40, display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: "flex-start", justifyContent: "space-between", gap: isMobile ? 18 : 28 } },
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "30px", fontWeight: 800, color: withdrawn ? NEUTRAL : WHITE, letterSpacing: "-0.02em", lineHeight: 1.08, textTransform: "uppercase", overflowWrap: "break-word" } }, (project.name || "Project").toUpperCase()),
+            projectMeta && h("div", { style: { fontSize: "13px", fontWeight: 600, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.01em", marginTop: 8 } }, projectMeta),
+            // Job-site address — linked to a map so crew can navigate in one tap.
+            project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
+              style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
+              project.siteAddress)),
+          // Small in-frame map with a pin at the job site. Keyless Google Maps
+          // place embed (no API key) — the CSP allows www/maps.google.com in
+          // frame-src (backend/main.py). Suppressed when withdrawn (no call to make).
+          project.siteAddress && !withdrawn && h("div", { style: { flexShrink: 0, width: isMobile ? "100%" : 320, maxWidth: "100%", borderRadius: 12, overflow: "hidden", border: "1px solid " + HAIR, background: INSET } },
+            h("iframe", {
+              title: "Map to " + project.siteAddress,
+              src: "https://www.google.com/maps?q=" + encodeURIComponent(project.siteAddress) + "&z=15&output=embed",
+              width: "100%", height: isMobile ? 180 : 196, loading: "lazy", allowFullScreen: true,
+              referrerPolicy: "no-referrer-when-downgrade",
+              style: { display: "block", width: "100%", height: isMobile ? 180 : 196, border: 0 },
+            }))),
 
         // Shifts
         shiftSection,

@@ -244,6 +244,32 @@ def test_html_to_text_preserves_links():
     _check("link URL appears in plaintext", "https://x.com/quote" in out)
 
 
+def test_html_to_text_flattens_layout_tables():
+    """The real emails wrap the body in layout <table>s (email_shell card,
+    masthead, signature). If html2text renders those tables, the plaintext
+    part comes out garbled — `| | |` / `---|---` grid artifacts AND paragraphs
+    running together — which is a spam signal. ignore_tables must flatten them
+    so the plaintext keeps clean paragraph separation."""
+    print("test_html_to_text_flattens_layout_tables")
+    # Two paragraphs nested in a layout table cell, like email_shell produces.
+    html = (
+        '<table><tr><td>'
+        '<p>Please find attached invoice INV-2026-014 for Acme Gala.</p>'
+        '<p>Due Date: Aug 15, 2026</p>'
+        '</td></tr></table>'
+    )
+    out = gmail.html_to_text(html)
+    _check("no table pipe artifacts", "|" not in out, f"got {out!r}")
+    _check("no markdown table rule", "---|---" not in out and "--- " not in out.replace("\n", " "),
+           f"got {out!r}")
+    # The decisive check: the two paragraphs must NOT run together — there has
+    # to be whitespace between the end of one sentence and the start of the next.
+    _check("paragraphs stay separated (not 'Gala.Due')",
+           "Gala.Due" not in out.replace(" ", ""), f"got {out!r}")
+    _check("both paragraphs present",
+           "Acme Gala" in out and "Aug 15, 2026" in out)
+
+
 # ── Token refresh helper ───────────────────────────────────────────────────
 
 
@@ -630,6 +656,7 @@ def main() -> int:
     test_build_message_with_pdf_attachment()
     test_build_message_no_attachment_stays_alternative()
     test_html_to_text_preserves_links()
+    test_html_to_text_flattens_layout_tables()
     test_view_url_construction()
     test_render_signature_substitutes_variables()
     test_render_signature_handles_missing_template()

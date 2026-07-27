@@ -34,7 +34,10 @@
     return h(window.LTPModal, { title: "Add Note", onClose: function() { ctx.setShowAddNote(null); }, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h(window.LTPSelect, { label: "Author", value: author, onChange: setAuthor, options: [{ value: window.LTP_CURRENT_USER || "User", label: window.LTP_CURRENT_USER || "User" }] }),
-        meetings.length > 0 && h(window.LTPSelect, { label: "Link to Meeting (optional)", value: linkedMeetingId || "", onChange: function(v) { setLinkedMeetingId(v ? Number(v) : null); }, options: [{ value: "", label: "None" }].concat(meetings.map(function(m) { return { value: m.id, label: m.title + " (" + fmt(m.date) + ")" }; })) }),
+        meetings.length > 0 && h(window.LTPSearchSelect, { label: "Link to Meeting (optional)", value: linkedMeetingId || "",
+          onChange: function(v) { setLinkedMeetingId(v === "" ? null : Number(v)); },
+          searchPlaceholder: "Search meetings\u2026",
+          options: [{ value: "", label: "None" }].concat(meetings.map(function(m) { return { value: m.id, label: m.title, sublabel: fmt(m.date) }; })) }),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
           h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Note"),
           h(window.RichTextEditor, { value: "", onChange: setText, placeholder: "Meeting notes, decisions, action items..." })
@@ -117,7 +120,10 @@
     return h(window.LTPModal, { title: "Edit Note", onClose: function() { ctx.setEditNote(null); }, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h(window.LTPSelect, { label: "Author", value: author, onChange: setAuthor, options: [{ value: window.LTP_CURRENT_USER || "User", label: window.LTP_CURRENT_USER || "User" }] }),
-        meetings.length > 0 && h(window.LTPSelect, { label: "Link to Meeting (optional)", value: linkedMeetingId || "", onChange: function(v) { setLinkedMeetingId(v ? Number(v) : null); }, options: [{ value: "", label: "None" }].concat(meetings.map(function(m) { return { value: m.id, label: m.title + " (" + fmt(m.date) + ")" }; })) }),
+        meetings.length > 0 && h(window.LTPSearchSelect, { label: "Link to Meeting (optional)", value: linkedMeetingId || "",
+          onChange: function(v) { setLinkedMeetingId(v === "" ? null : Number(v)); },
+          searchPlaceholder: "Search meetings\u2026",
+          options: [{ value: "", label: "None" }].concat(meetings.map(function(m) { return { value: m.id, label: m.title, sublabel: fmt(m.date) }; })) }),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
           h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Note"),
           h(window.RichTextEditor, { value: note.text, onChange: setText, placeholder: "Edit note..." })
