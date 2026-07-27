@@ -571,17 +571,58 @@
       var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
       var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
       var dayCount = shift ? (shift.positions || []).length : 1;
-      setNoteDlg({ pos: pos, text: pos.note || "", applyToDay: false, dayCount: dayCount });
+      setNoteDlg({ pos: pos, text: pos.note || "", applyToDay: false, dayCount: dayCount, notify: true });
     }
+
+    // Confirmed crew (with an email on file) among the positions a note write
+    // would touch — one entry per crew member, carrying a shift snapshot (with the
+    // note text baked in) so the email renders correctly regardless of the
+    // debounced projects PUT. Drives both the "email confirmed crew" option and
+    // the actual sends. Only CONFIRMED crew are notified (a note on an unconfirmed
+    // slot isn't a change to a commitment they've been locked into yet).
+    function confirmedCrewForNote(pos, applyToDay, noteText) {
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
+      if (!shift) return [];
+      var byCrew = {};
+      (shift.positions || []).forEach(function(p) {
+        if (!(applyToDay || p.id === pos.posId)) return;
+        if (p.status !== "confirmed" || !p.crewId) return;
+        var c = (contacts || []).find(function(x) { return x.id === p.crewId; });
+        if (!c || !(c.email || "").trim()) return;
+        var sv = p.serviceId ? (services || []).find(function(s) { return s.id === p.serviceId; }) : null;
+        var roleLabel = sv ? (sv.role + (sv.description ? " — " + sv.description : "")) : (p.role || "Crew");
+        var snap = { roleLabel: roleLabel, shiftTitle: shift.title || "", date: shift.date || "",
+                     startTime: shift.time || "", endTime: shift.endTime || "", note: noteText };
+        if (!byCrew[p.crewId]) byCrew[p.crewId] = { crewId: p.crewId, crewName: (c.firstName + " " + c.lastName).trim(), shifts: [] };
+        byCrew[p.crewId].shifts.push(snap);
+      });
+      return Object.keys(byCrew).map(function(k) { return byCrew[k]; });
+    }
+
     function saveNoteDlg() {
       var d = noteDlg; if (!d) return;
       var text = (d.text || "").trim();
       writeShiftNote(setProjects, d.pos.projectId, d.pos.schedItemId, d.pos.posId, text, !!d.applyToDay);
+      // Email confirmed crew about the note (opt-in, only when there's text).
+      var recipients = (text && d.notify) ? confirmedCrewForNote(d.pos, !!d.applyToDay, text) : [];
       setNoteDlg(null);
-      window.LTP_toast(text ? "Shift note saved" : "Shift note cleared", {
-        variant: "success",
-        message: d.applyToDay ? "Applied to everyone on this shift." : undefined,
-      });
+      if (recipients.length) {
+        var proj = (projects || []).find(function(p) { return p.id === d.pos.projectId; });
+        var pname = proj ? proj.name : "";
+        recipients.forEach(function(r) {
+          window.LTP_crewNotify(r.crewId, d.pos.projectId, "crewShiftNote", { shifts: r.shifts, projectName: pname });
+        });
+        window.LTP_toast("Shift note saved", {
+          variant: "success",
+          message: "Emailed " + recipients.length + " confirmed crew member" + (recipients.length === 1 ? "" : "s") + " about the note.",
+        });
+      } else {
+        window.LTP_toast(text ? "Shift note saved" : "Shift note cleared", {
+          variant: "success",
+          message: d.applyToDay ? "Applied to everyone on this shift." : undefined,
+        });
+      }
     }
 
     // Create a one-off manual shift: build an internal project (no client, no
@@ -1251,6 +1292,16 @@
             h("input", { type: "checkbox", checked: !!noteDlg.applyToDay,
               onChange: function(e) { var v = e.target.checked; setNoteDlg(function(d) { return Object.assign({}, d, { applyToDay: v }); }); } }),
             "Apply to everyone on this shift (" + noteDlg.dayCount + " position" + (noteDlg.dayCount === 1 ? "" : "s") + ")"),
+          // Email confirmed crew — only surfaced when the note has text AND some
+          // affected position is confirmed (crew locked into the call). The count
+          // tracks the "apply to everyone" toggle above.
+          (function() {
+            var n = (noteDlg.text || "").trim() ? confirmedCrewForNote(noteDlg.pos, !!noteDlg.applyToDay, noteDlg.text).length : 0;
+            return n > 0 ? h("label", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10, fontSize: "12px", color: B.textSec, cursor: "pointer" } },
+              h("input", { type: "checkbox", checked: noteDlg.notify !== false,
+                onChange: function(e) { var v = e.target.checked; setNoteDlg(function(d) { return Object.assign({}, d, { notify: v }); }); } }),
+              "Email " + n + " confirmed crew member" + (n === 1 ? "" : "s") + " about this note") : null;
+          })(),
           h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
             h(window.Btn, { variant: "ghost", onClick: function() { setNoteDlg(null); } }, "Cancel"),
             h(window.Btn, { onClick: saveNoteDlg }, "Save Note")))

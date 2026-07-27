@@ -656,6 +656,39 @@ def test_crew_shifts_payload_carries_role_and_note():
     assert "Parking is on 4th St. Gate code 4821." in html
 
 
+def test_notify_shift_note_email_renders_note_from_snapshot():
+    """The crewShiftNote notify (sent when a producer adds a note to a confirmed
+    shift) renders the note from the shift snapshot — no dependence on the
+    debounced projects PUT having landed — and carries no calendar/accept link."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "note-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": P_NOTIFY, "template": "crewShiftNote",
+                              "projectName": "Gala Notify",
+                              "shifts": [{"roleLabel": "L1 — Lead Lighting Tech", "date": "2026-07-30",
+                                          "startTime": "10:00", "endTime": "14:00",
+                                          "note": "Load-in via the north gate. Badge required."}]},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    html = captured["html_body"]
+    assert "Load-in via the north gate. Badge required." in html
+    assert "Note added" in captured["subject"] or "Gala Notify" in captured["subject"]
+    # Informational — no accept/decline link, no calendar CTA.
+    assert "/#/crew/" not in html
+
+
 def test_notify_rejects_unknown_template():
     client, tok = _setup()
     r = client.post("/api/crew-requests/notify",
@@ -970,6 +1003,7 @@ def main() -> int:
         test_notify_confirmed_add_to_calendar_links_to_call_sheet,
         test_notify_confirmed_without_token_has_no_broken_calendar_link,
         test_crew_shifts_payload_carries_role_and_note,
+        test_notify_shift_note_email_renders_note_from_snapshot,
         test_notify_rejects_unknown_template,
         test_notify_with_snapshot_shifts_works_without_live_project,
         test_notify_missing_project_without_snapshot_is_404,
