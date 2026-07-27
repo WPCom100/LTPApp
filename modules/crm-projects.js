@@ -257,22 +257,27 @@
     );
   };
 
-  window.CRMProjectForm = function({ ctx, initial, onSave, onClose }) {
+  // `prefill` / `modalZIndex`: see the note on window.CRMCompanyForm. A project
+  // created inline from a quote or invoice arrives with that document's company
+  // and the typed name already filled in.
+  window.CRMProjectForm = function({ ctx, initial, prefill, onSave, onClose, modalZIndex }) {
     var isMobile = window.LTP_useIsMobile();
-    var [name, setName] = useState(initial ? initial.name : "");
-    var [compId, setCompId] = useState(initial ? initial.companyId : null);
-    var [cat, setCat] = useState(initial ? initial.category : "Rental");
-    var [projStatus, setProjStatus] = useState(initial ? initial.status : "upcoming");
-    var [start, setStart] = useState(initial ? initial.startDate : window.LTP_todayISO());
-    var [end, setEnd] = useState(initial ? initial.endDate : window.LTP_todayISO());
-    var [venue, setVenue] = useState(initial ? (initial.venue || "") : "");
-    var [siteAddr, setSiteAddr] = useState(initial ? (initial.siteAddress || "") : "");
-    var [siteUseComp, setSiteUseComp] = useState(initial ? !!initial.siteUseCompanyAddress : false);
-    var [cIds, setCIds] = useState(initial ? initial.contactIds : []);
-    var [budL, setBudL] = useState(initial ? initial.budget.lighting : 0);
-    var [budLb, setBudLb] = useState(initial ? initial.budget.labor : 0);
-    var [budR, setBudR] = useState(initial ? initial.budget.rentals : 0);
-    var [budM, setBudM] = useState(initial ? initial.budget.misc : 0);
+    var seed = initial || prefill || {};
+    var seedBudget = seed.budget || {};
+    var [name, setName] = useState(seed.name || "");
+    var [compId, setCompId] = useState(seed.companyId == null ? null : seed.companyId);
+    var [cat, setCat] = useState(seed.category || "Rental");
+    var [projStatus, setProjStatus] = useState(seed.status || "upcoming");
+    var [start, setStart] = useState(seed.startDate || window.LTP_todayISO());
+    var [end, setEnd] = useState(seed.endDate || window.LTP_todayISO());
+    var [venue, setVenue] = useState(seed.venue || "");
+    var [siteAddr, setSiteAddr] = useState(seed.siteAddress || "");
+    var [siteUseComp, setSiteUseComp] = useState(!!seed.siteUseCompanyAddress);
+    var [cIds, setCIds] = useState(seed.contactIds || []);
+    var [budL, setBudL] = useState(seedBudget.lighting || 0);
+    var [budLb, setBudLb] = useState(seedBudget.labor || 0);
+    var [budR, setBudR] = useState(seedBudget.rentals || 0);
+    var [budM, setBudM] = useState(seedBudget.misc || 0);
 
     var [schedError, setSchedError] = useState("");
 
@@ -317,11 +322,12 @@
       doSubmit();
     }
 
-    return h(window.LTPModal, { title: initial ? "Edit Project" : "Create Project", onClose: onClose, wide: true, disableBackdrop: true },
+    return h(window.LTPModal, { title: initial ? "Edit Project" : "Create Project", onClose: onClose, wide: true, disableBackdrop: true, zIndex: modalZIndex },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h(window.LTPInput, { label: "Project Name *", value: name, onChange: setName, placeholder: "e.g. Fall Musical 2026" }),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-          h(window.CompanySearchField, { label: "Company *", compId: compId, setCompId: setCompId, companies: ctx.companies, onClear: function() { setCIds([]); } }),
+          h(window.CompanySearchField, { label: "Company *", compId: compId, setCompId: setCompId, companies: ctx.companies, onClear: function() { setCIds([]); },
+            createKind: "company", allowEdit: true }),
           h(window.LTPSelect, { label: "Category", value: cat, onChange: setCat, options: CATS.map(function(c) { return { value: c, label: c }; }) })
         ),
         initial && h(window.LTPSelect, { label: "Status", value: projStatus, onChange: setProjStatus, options: [{ value: "upcoming", label: "Upcoming" }, { value: "in-progress", label: "In Progress" }, { value: "completed", label: "Completed" }] }),
@@ -349,7 +355,11 @@
               h("input", { type: "checkbox", checked: siteUseComp, onChange: function(e) { setSiteUseComp(e.target.checked); }, style: { cursor: "pointer" } }),
               "Use the client company's address as the site address"));
         })(),
-        h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
+        // A contact created here is linked to the project's company, so it also
+        // shows up in the quote/invoice "Primary Contact" list for that client.
+        h(window.SearchSelect, { label: "Project Contacts", items: ctx.contacts, selectedIds: cIds, onChange: setCIds, nameField: function(c) { return c.firstName + " " + c.lastName; },
+          createKind: "contact", allowEdit: true,
+          createPrefill: compId ? { companyIds: [compId] } : null }),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 0", textTransform: "uppercase" } }, "Preliminary Budget"),
         h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10 } },
           h(window.LTPInput, { label: "Lighting", value: budL, onChange: function(v) { setBudL(Number(v) || 0); }, type: "number" }),

@@ -413,21 +413,16 @@
     function updateBreak(i, patch) { setBreaks(function(bs) { return bs.map(function(b, j) { return j === i ? Object.assign({}, b, patch) : b; }); }); }
     function removeBreak(i) { setBreaks(function(bs) { return bs.filter(function(_, j) { return j !== i; }); }); }
 
-    // Crew tagged with the row's role float to the top (like the schedule editor),
-    // but everyone stays selectable so an untagged role is never unassignable.
-    function crewOptionsFor(serviceId) {
+    // Only crew tagged with the row's role are listed; everyone else sits behind
+    // the "Other crew" reveal. Shared with the schedule editor and the
+    // Assignments tab so all three crew pickers behave identically — they used
+    // to each build their own option list and had drifted apart.
+    function crewOptionsFor(serviceId, selectedId) {
       var sv = serviceId ? svcs.find(function(s) { return s.id === Number(serviceId); }) : null;
-      var roleCode = sv ? sv.role : "";
-      var tagged = [], others = [];
-      crew.forEach(function(c) {
-        if (roleCode && (c.crewRoles || []).indexOf(roleCode) !== -1) tagged.push(c); else others.push(c);
+      return window.LTP_crewSelectOptions({
+        crew: crew, role: sv ? sv.role : "", selectedId: selectedId,
+        allContacts: contacts, leading: [{ value: "", label: "Unassigned" }],
       });
-      var toOpt = function(c) { return { value: String(c.id), label: (c.firstName + " " + c.lastName).trim() }; };
-      var opts = [{ value: "", label: "Unassigned" }];
-      if (tagged.length && others.length) {
-        return opts.concat(tagged.map(toOpt)).concat([{ value: "__sep", label: "— other crew —" }]).concat(others.map(toOpt));
-      }
-      return opts.concat(crew.map(toOpt));
     }
 
     function handleSave() {
@@ -445,7 +440,10 @@
       }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
         var sv = svcs.find(function(s) { return s.id === Number(r.serviceId); });
-        return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: (r.crewId && r.crewId !== "__sep") ? Number(r.crewId) : null };
+        // No "__sep" guard any more: that separator was a fake <option> the
+        // native select needed to imitate a group heading. The searchable
+        // picker has a real second tier, so no sentinel can reach this.
+        return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: r.crewId ? Number(r.crewId) : null };
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
       onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
@@ -522,10 +520,19 @@
               svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
               rows.map(function(r, i) {
                 return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
-                  h(window.LTPSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
-                    options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: String(s.id), label: s.role + (s.description ? " — " + s.description : "") }; })) }),
-                  h(window.LTPSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId, onChange: function(v) { updateRow(i, { crewId: v }); },
-                    options: crewOptionsFor(r.serviceId) }),
+                  h(window.LTPSearchSelect, { label: i === 0 ? "Role" : "", value: r.serviceId, onChange: function(v) { updateRow(i, { serviceId: v }); },
+                    options: [{ value: "", label: "Select role…" }].concat(svcs.map(function(s) { return { value: s.id, label: s.role, sublabel: s.description }; })),
+                    searchPlaceholder: "Search roles…" }),
+                  // Changing the role deliberately does NOT clear an already-picked
+                  // person — they stay pinned in the list, flagged as untagged, so a
+                  // role edit never silently drops the crew you meant to book.
+                  (function() {
+                    var co = crewOptionsFor(r.serviceId, r.crewId);
+                    return h(window.LTPSearchSelect, { label: i === 0 ? "Crew (optional)" : "", value: r.crewId,
+                      onChange: function(v) { updateRow(i, { crewId: v }); },
+                      options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+                      searchPlaceholder: "Search crew…" });
+                  })(),
                   h(window.Btn, { small: true, variant: "ghost", onClick: function() { removeRow(i); }, style: { opacity: rows.length > 1 ? 1 : 0.4 } }, "✕")
                 );
               }),
@@ -1003,11 +1010,18 @@
             style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
         }),
-        h("select", { value: projFilter, onChange: function(e) { setProjFilter(e.target.value); },
-          style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 8px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-          h("option", { value: "all" }, "All Projects"),
-          projOptions.map(function(p) { return h("option", { key: p.id, value: p.id }, p.name); })
-        ),
+        // Values stay STRINGS: the filter is compared with `Number(projFilter)`
+        // and against the literal "all" further up.
+        h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
+          // sentinel:true — "All Projects" is a real value but not a record, so
+          // it shouldn't be held in the list while you search for a project.
+          options: [{ value: "all", label: "All Projects", sentinel: true }].concat(
+            projOptions.map(function(p) { return { value: String(p.id), label: p.name }; })),
+          searchPlaceholder: "Search projects\u2026",
+          style: { width: 190, flexShrink: 0 },
+          triggerStyle: { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
+          panelMinWidth: 240,
+        }),
         h("div", { style: { flex: 1 } }),
         h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
           style: { background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "+ Manual Shift"),
@@ -1070,6 +1084,22 @@
                         var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
                         var conflicts = (crewConflicts || {})[pos.posId];
                         var hasConflict = conflicts && conflicts.length > 0;
+                        // Two-tier crew list for this position's role — shared with
+                        // the schedule editor and the manual-shift form.
+                        //
+                        // The filter resolves through the LINKED SERVICE, not the
+                        // denormalized pos.role, for the same reason the weekly
+                        // grid does: a stale or free-text role would match nobody
+                        // and silently push the whole roster behind "Other crew".
+                        // pos.roleCode is unusable here — it degrades to the
+                        // display placeholder "Crew" when there's no service, and
+                        // that matches nobody either. No service linked means no
+                        // role is being filled, so offer everyone.
+                        var posSvc = pos.serviceId ? (services || []).find(function(sv) { return sv.id === pos.serviceId; }) : null;
+                        var crewOpts = window.LTP_crewSelectOptions({
+                          crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
+                          allContacts: contacts, leading: [{ value: "", label: "Assign crew\u2026" }],
+                        });
                         return h("div", { key: pos.posId + "-" + bi, style: { padding: isMobile ? "8px 10px" : "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
                           hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
                             style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
@@ -1082,8 +1112,8 @@
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
-                          h("select", { value: pos.crewId || "", onChange: function(e) {
-                            var cid = Number(e.target.value) || null;
+                          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
+                            var cid = (v === "" || v == null) ? null : Number(v);
                             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
                             function doAssign() {
                               // Check for conflicts before assigning
@@ -1148,19 +1178,17 @@
                               return;
                             }
                             doAssign();
-                          }, style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-                            h("option", { value: "" }, "Assign crew\u2026"),
-                            // Role-tagged crew first; everyone else stays reachable under
-                            // "Other crew" so a role nobody is tagged with (e.g. a custom
-                            // rate-card role) never leaves the position unassignable.
-                            (function() {
-                              var opt = function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); };
-                              var matching = crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; });
-                              if (matching.length === crew.length) return crew.map(opt);
-                              var others = crew.filter(function(c) { return matching.indexOf(c) === -1; });
-                              return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
-                            })()
-                          ),
+                          },
+                            // Only crew tagged with this role are listed; the rest
+                            // sit behind a deliberate "Other crew" click. Crew is
+                            // PICKED from the roster here, never authored — this
+                            // field has no inline-create, by design.
+                            options: crewOpts.options, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
+                            searchPlaceholder: "Search crew\u2026",
+                            style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, minWidth: 0 },
+                            triggerStyle: { borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", fontSize: "10px", minHeight: 0 },
+                            panelMinWidth: 260,
+                          }),
                           pos.status === "open" && !pos.crewId && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "Needs crew"),
                           pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
                           pos.status === "requested" && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600, background: B.warn + "18", border: "1px solid " + B.warn + "33", borderRadius: "3px", padding: "2px 8px" } }, "Awaiting\u2026"),

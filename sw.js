@@ -38,7 +38,7 @@
 // hard-bypassed by isBypass's /api/ rule — nothing OCR-related is ever cached.
 // Decoder stack unchanged: native BarcodeDetector where available, else the
 // vendored ZXing-C++ WASM (runtime-cached on first scan, not precached).
-var CACHE_VERSION = 'ltp-shell-v47';
+var CACHE_VERSION = 'ltp-shell-v48';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

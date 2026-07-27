@@ -25,6 +25,7 @@
   window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict }) {
     var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
+    var [crewSearch, setCrewSearch] = useState("");
     var [deletionDlg, setDeletionDlg] = useState(null);
     var [conflictWarn, setConflictWarn] = useState(null);
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
@@ -32,6 +33,16 @@
     // Per-crew negotiated minimums, so the cost totals below reflect what each
     // assigned person is actually paid (never the client rate).
     var crewMins = window.LTP_crewMinMap(contacts);
+    // Roster shown in the "Assign Crew to All Days" modal, narrowed by its
+    // search box (name, roles, or department).
+    var shownCrew = (function() {
+      var cq = crewSearch.trim().toLowerCase();
+      if (!cq) return crew;
+      return crew.filter(function(c) {
+        var hay = (c.firstName + " " + c.lastName + " " + (c.crewRoles || []).join(" ") + " " + (c.crewDepartments || []).join(" ")).toLowerCase();
+        return hay.indexOf(cq) !== -1;
+      });
+    })();
     var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
 
     // Removing a day/position that has crew assigned just confirms here — the
@@ -517,14 +528,23 @@
                         // Role + person-slot share one row on mobile; the wrapper is
                         // display:contents on desktop so that layout is unchanged.
                         h("div", { style: { display: isMobile ? "flex" : "contents", flex: isMobile ? "1 1 100%" : undefined, gap: 6, alignItems: "center" } },
-                        h("select", { value: pos.serviceId || "", onChange: function(e) {
-                          var sid = Number(e.target.value) || null;
-                          var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
-                          updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
-                        }, style: { flex: 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-                          h("option", { value: "" }, "Role\u2026"),
-                          svcs.map(function(sv) { return h("option", { key: sv.id, value: sv.id }, sv.role + " \u2014 " + sv.description); })
-                        ),
+                        // Searchable: the rate card grows, and scrolling a bare
+                        // <select> for "the L2 role" got old fast.
+                        h(window.LTPSearchSelect, {
+                          value: pos.serviceId || "",
+                          onChange: function(v) {
+                            var sid = (v === "" || v == null) ? null : Number(v);
+                            var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
+                            updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
+                          },
+                          options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
+                            return { value: sv.id, label: sv.role, sublabel: sv.description };
+                          })),
+                          searchPlaceholder: "Search roles\u2026",
+                          style: { flex: 1, minWidth: 0 },
+                          triggerStyle: { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 },
+                          panelMinWidth: 250,
+                        }),
                         // Person slot \u2014 shown when a role has 2+ on the day. Give
                         // distinct people different numbers so each is tracked
                         // separately (own hours / OT / meal penalty); leave two
@@ -542,27 +562,40 @@
                             opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
                         })()
                         ),
-                        h("select", { value: pos.crewId || "", onChange: function(e) {
-                          var cid = Number(e.target.value) || null;
-                          if (cid) { assignCrewToDay(s.id, pos, cid); }
-                          // Clearing the crew reopens the slot — an unassigned position
-                          // can't stay requested/accepted/confirmed (same reason as
-                          // reassignStatus, and it keeps the stale-write guard's
-                          // "downgrade clears the assignee" invariant intact).
-                          else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
-                        }, style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-                          h("option", { value: "" }, "Crew\u2026"),
-                          // Role-tagged crew first; everyone else stays reachable under
-                          // "Other crew" so a role nobody is tagged with (e.g. a custom
-                          // rate-card role) never leaves the position unassignable.
-                          (function() {
-                            var opt = function(c) { return h("option", { key: c.id, value: c.id }, c.firstName + " " + c.lastName); };
-                            var matching = crew.filter(function(c) { return !pos.role || (c.crewRoles || []).indexOf(pos.role) !== -1; });
-                            if (matching.length === crew.length) return crew.map(opt);
-                            var others = crew.filter(function(c) { return matching.indexOf(c) === -1; });
-                            return matching.map(opt).concat([h("optgroup", { key: "_other", label: "Other crew" }, others.map(opt))]);
-                          })()
-                        ),
+                        // Only crew tagged with this role are listed; everyone
+                        // else sits behind a deliberate "Other crew" click, so a
+                        // role nobody is tagged with never leaves the position
+                        // unassignable. Crew is PICKED here, never authored —
+                        // this field deliberately has no inline-create.
+                        (function() {
+                          // Filter on the LINKED SERVICE's role, not the
+                          // denormalized pos.role: a stale or free-text code
+                          // matches nobody and would push the whole roster
+                          // behind "Other crew". No service = no role being
+                          // filled = offer everyone.
+                          var posSvc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
+                          var co = window.LTP_crewSelectOptions({
+                            crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
+                            allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
+                          });
+                          return h(window.LTPSearchSelect, {
+                            value: pos.crewId || "",
+                            onChange: function(v) {
+                              var cid = (v === "" || v == null) ? null : Number(v);
+                              if (cid) { assignCrewToDay(s.id, pos, cid); }
+                              // Clearing the crew reopens the slot — an unassigned position
+                              // can't stay requested/accepted/confirmed (same reason as
+                              // reassignStatus, and it keeps the stale-write guard's
+                              // "downgrade clears the assignee" invariant intact).
+                              else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
+                            },
+                            options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+                            searchPlaceholder: "Search crew\u2026",
+                            style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 },
+                            triggerStyle: { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 },
+                            panelMinWidth: 260,
+                          });
+                        })(),
                         // Footer row on mobile: status + margin toggle + breaks on
                         // the left, rate + copy + delete pushed to the right. The
                         // wrapper is display:contents on desktop so the single-line
@@ -652,10 +685,16 @@
         });
       }(),
       // Assign crew to all days modal
-      assignCrewModal && h(window.LTPModal, { title: "Assign Crew to All Days", onClose: function() { setAssignCrewModal(false); } },
+      // Not a dropdown (each row is a person × one button per role they hold),
+      // so it keeps its list shape — but it gets the same search box, because
+      // scrolling a long roster is exactly what this change is about.
+      assignCrewModal && h(window.LTPModal, { title: "Assign Crew to All Days", onClose: function() { setAssignCrewModal(false); setCrewSearch(""); } },
         h("p", { style: { fontSize: "12px", color: B.textMut, marginBottom: 12 } }, "Select a crew member and role. They will be added to every schedule day they aren't already on."),
+        h("input", { type: "text", value: crewSearch, placeholder: "Search crew\u2026", autoFocus: true,
+          onChange: function(e) { setCrewSearch(e.target.value); },
+          style: { width: "100%", boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontSize: isMobile ? "16px" : "13px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, maxHeight: 350, overflowY: "auto" } },
-          crew.map(function(c) {
+          shownCrew.map(function(c) {
             // Only offer roles that map to a rate-card service — a role with no
             // service would create a position that carries no rate and no
             // DB-backed identity. A crew member with no rate-card roles shows
@@ -672,7 +711,9 @@
                   style: { background: B.accent + "22", border: "1px solid " + B.accent + "44", borderRadius: "4px", padding: "4px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "as " + sv.role);
               })
             );
-          })
+          }),
+          shownCrew.length === 0 && h("div", { key: "_nores", style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } },
+            crew.length === 0 ? "No active crew yet." : "No crew match \u201c" + crewSearch.trim() + "\u201d.")
         )
       ),
 

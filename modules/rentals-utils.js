@@ -162,9 +162,13 @@
     var fPair = useState(false);
     var focused = fPair[0], setFocused = fPair[1];
     var filtered = (vendors || []).filter(function(v) { return v.name.toLowerCase().indexOf(query.toLowerCase()) !== -1; });
+    // Newly-created vendors are selected straight away — the parent recomputes
+    // `vendors` from the app-level companies array in the same batched update.
+    function onCreated(rec) { if (rec && rec.id != null) { onChange(rec.id); setQuery(""); setFocused(false); } }
+    var showCreate = focused && !sel && query.length > 0;
 
     return h("div", { style: { position: "relative" } },
-      h("div", { style: { display: "flex", alignItems: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 10px", minHeight: 37 } },
+      h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 10px", minHeight: 37 } },
         sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
           sel.name,
           h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
@@ -175,16 +179,25 @@
           onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
           onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
           style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" }
-        })
+        }),
+        // Inline add/edit of the CRM company itself. A vendor you're buying
+        // from often doesn't exist in CRM yet at the moment you're logging the
+        // gear, and the old field simply had no answer for that.
+        h(window.LTPEntityQuickAction, { kind: "company", id: sel ? sel.id : null,
+          prefill: { isVendor: true, isClient: false },
+          onSaved: onCreated })
       ),
-      focused && !sel && query.length > 0 && filtered.length > 0 && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 140, overflowY: "auto", zIndex: 20 } },
+      (showCreate || (focused && !sel && query.length > 0 && filtered.length > 0)) && h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: 140, overflowY: "auto", zIndex: 20 } },
         filtered.map(function(v) {
           return h("div", { key: v.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { onChange(v.id); setQuery(""); setFocused(false); },
             style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border },
             onMouseOver: function(e) { e.currentTarget.style.background = B.raised; },
             onMouseOut:  function(e) { e.currentTarget.style.background = "transparent"; }
           }, v.name);
-        })
+        }).concat(showCreate
+          ? [h(window.LTPEntityCreateRow, { key: "_create", kind: "company", query: query,
+              prefill: { isVendor: true, isClient: false }, onSaved: onCreated, first: filtered.length === 0 })]
+          : [])
       )
     );
   }

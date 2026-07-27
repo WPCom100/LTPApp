@@ -19,7 +19,10 @@
           h(window.LTPInput, { label: "Date", value: date, onChange: setDate, type: "date" }),
           h(window.LTPInput, { label: "Time", value: time, onChange: setTime, type: "time" })
         ),
-        h(window.SearchSelect, { label: "Attendees", items: ctx.contacts, selectedIds: attIds, onChange: setAttIds, nameField: function(c) { return c.firstName + " " + c.lastName; } }),
+        h(window.SearchSelect, { label: "Attendees", items: ctx.contacts, selectedIds: attIds, onChange: setAttIds, nameField: function(c) { return c.firstName + " " + c.lastName; },
+          createKind: "contact", allowEdit: true }),
+        // Notes are sub-records of the project, not an authorable entity \u2014 no
+        // createKind here on purpose.
         notes.length > 0 && h(window.SearchSelect, { label: "Link to Notes (optional)", items: notes, selectedIds: linkedNoteIds, onChange: setLinkedNoteIds, nameField: function(n) { return n.author + " \u2014 " + fmt(n.date); } }),
         h(window.Btn, { onClick: function() {
           if (!title.trim() || !date) return;
