@@ -210,13 +210,19 @@
     var usable = (shifts || []).filter(function(s) { return s.date; });
     if (!usable.length) return null;
     var single = usable.length === 1;
+    // Each call is its own event (its own date + call/wrap time), so a crew
+    // member with several calls gets one button per call. When more than one
+    // call shares a day, the date alone would be ambiguous — so multi-call
+    // labels carry the start time too ("Sat, Aug 1 · 8:00 AM").
     var btns = usable.map(function(s, i) {
       var href = calUrlFor(s, projectName, location);
       if (!href) return null;
+      var label = single ? "Add to Calendar"
+        : (fmtDateShort(s.date) + (s.startTime ? " · " + fmtTime(s.startTime) : ""));
       return h("a", {
         key: s.positionId || i, href: href, target: "_blank", rel: "noopener", className: "ltp-cal-btn",
         style: { display: "inline-flex", alignItems: "center", gap: 8, padding: "9px 14px", background: SUCCESS_BG, border: "1px solid " + SUCCESS_BD, borderRadius: 8, color: TEXT, fontSize: "13px", fontWeight: 600, textDecoration: "none", fontFamily: "inherit" },
-      }, calGlyph(SUCCESS), single ? "Add to Calendar" : fmtDateShort(s.date));
+      }, calGlyph(SUCCESS), label);
     }).filter(function(x) { return x; });
     if (!btns.length) return null;
     return h("div", { style: { marginTop: 16 } },

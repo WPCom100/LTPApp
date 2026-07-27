@@ -214,6 +214,16 @@ window.LTP_DATA_SETTINGS = {
       subject: "Schedule Update: {{projectName}} — shift times changed",
       body: "Hi {{crewName}},\n\nThe schedule for {{projectName}} has been updated. Please review your revised shift details below — the previous time is noted on each shift that moved:\n\n{{shifts}}\n\nIf the new schedule doesn't work for you, just reply to this email and let us know.\n\n{{signature}}"
     },
+    crewShiftNote: {
+      label: "Shift Note Added",
+      cc: "",
+      // Sent when a producer adds/updates a note on a shift a crew member is
+      // CONFIRMED on (from Labor → Assignments). Project-level + {{shifts}} — the
+      // note rides inside each shift card. The routes/crew.py::_NOTIFY_FALLBACKS
+      // entry must match this body byte-for-byte.
+      subject: "Note added: {{projectName}}",
+      body: "Hi {{crewName}},\n\nThere's a new note for your confirmed call on {{projectName}} — please review it below:\n\n{{shifts}}\n\nAny questions, just reply to this email.\n\n{{signature}}"
+    },
   },
 };
 
@@ -238,4 +248,5 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewScheduleChanged: ["companyName", "crewName", "projectName", "shifts", "signature"],
+  crewShiftNote:   ["companyName", "crewName", "projectName", "shifts", "signature"],
 };

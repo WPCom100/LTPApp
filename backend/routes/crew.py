@@ -402,7 +402,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
 # from a representative position, so the shipped template bodies AND their
 # Settings previews stay valid without a redesign.
-_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged"}
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"}
 
 # Server-side fallbacks for the notify templates, used when the workspace hasn't
 # saved that template to the DB yet (load_settings reads the DB, which doesn't
@@ -452,6 +452,12 @@ _NOTIFY_FALLBACKS = {
                  "previous time is noted on each shift that moved:\n\n{{shifts}}\n\n"
                  "If the new schedule doesn't work for you, just reply to this "
                  "email and let us know.\n\n{{signature}}"),
+    },
+    "crewShiftNote": {
+        "subject": "Note added: {{projectName}}",
+        "body": ("Hi {{crewName}},\n\nThere's a new note for your confirmed "
+                 "call on {{projectName}} — please review it below:\n\n{{shifts}}\n\n"
+                 "Any questions, just reply to this email.\n\n{{signature}}"),
     },
 }
 
