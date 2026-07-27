@@ -188,6 +188,7 @@
     var isMobile = window.LTP_useIsMobile();
     var [tab, setTab] = useState("equipment");
     var [search, setSearch] = useState("");
+    var [noteText, setNoteText] = useState("");
     // Custom (ad-hoc) fee entry — a fee with no catalog row (feeId null).
     var [feeName, setFeeName] = useState("");
     var [feeAmount, setFeeAmount] = useState("");
@@ -370,13 +371,16 @@
               }))
       ),
 
+      // Note text is stored with its authored spacing and newlines intact (see
+      // LTP_noteText) \u2014 the textarea IS the formatting control for these lines.
       tab === "note" && h("div", null,
-        h("textarea", { id: "_inv_note", placeholder: "Enter note text\u2026", rows: 3,
-          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "vertical", marginBottom: 10 } }),
-        h(window.Btn, { small: true, onClick: function() {
-          var el = document.getElementById("_inv_note");
-          var txt = el ? el.value.trim() : "";
-          if (txt) { onAdd({ id: genId("item"), type: "note", text: txt }); }
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6 } }, "Notes appear as line items on the invoice but have no price. Line breaks and spacing are kept exactly as typed \u2014 on the invoice, the client view and the PDF."),
+        h("textarea", { value: noteText, onChange: function(e) { setNoteText(e.target.value); }, placeholder: "Enter note text\u2026", rows: 4,
+          style: { width: "100%", boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "12px", lineHeight: 1.5, fontFamily: "inherit", outline: "none", resize: "vertical", marginBottom: 10 } }),
+        h(window.Btn, { small: true, disabled: !window.LTP_noteHasText(noteText), onClick: function() {
+          if (!window.LTP_noteHasText(noteText)) return;
+          onAdd({ id: genId("item"), type: "note", text: window.LTP_noteText(noteText) });
+          setNoteText("");
         } }, "Add Note"))
     );
   }
@@ -386,13 +390,15 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
+    // Shared with the quote builder (components/ui.js): pre-wrap display so the
+    // authored newlines/indentation survive, plus in-place editing while draft.
     if (item.type === "note") {
-      return h("div", { style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
-        h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase" } }, "Note"),
-        h("div", { style: { flex: 1, fontSize: "12px", color: B.textSec, fontStyle: "italic" } }, item.text),
-        isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); },
-          style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px" } }, "\u00d7")
-      );
+      return h(window.LTPNoteLineRow, {
+        text: item.text,
+        editable: !!isDraft,
+        onSave: function(txt) { onUpdate(sectionId, item.id, { text: txt }); },
+        onDelete: function() { onDelete(sectionId, item.id); },
+      });
     }
 
     var isFee = item.type === "fee";
@@ -1348,7 +1354,16 @@
         if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" \u2192 \"" + aSec.label + "\"" });
         var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
         (aSec.items || []).forEach(function(i) {
-          if (i.type === "note") return;
+          // Notes are editable in place, so an edited note has to show up here \u2014
+          // otherwise a changed note reads as a silent edit on a sent invoice.
+          if (i.type === "note") {
+            if (!bItemMap[i.id]) {
+              changes.push({ cat: aSec.label + " \u2014 Note Added", detail: window.LTP_noteSummary(i.text) });
+            } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
+              changes.push({ cat: aSec.label + " \u2014 Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " \u2192 " + window.LTP_noteSummary(i.text) });
+            }
+            return;
+          }
           if (!bItemMap[i.id]) { changes.push({ cat: aSec.label + " \u2014 Added", detail: i.name + " \u00d7" + i.qty }); return; }
           var bi = bItemMap[i.id];
           // Pricing-variant switch \u2192 explicit from \u2192 to entry with both labels
@@ -1365,7 +1380,12 @@
             changes.push({ cat: aSec.label + " \u2014 Adj.", detail: i.name + ": " + (bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)") + " \u2192 " + (i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)") });
           }
         });
-        (bSec.items || []).forEach(function(i) { if (i.type !== "note" && !(aSec.items || []).find(function(ai) { return ai.id === i.id; })) changes.push({ cat: aSec.label + " \u2014 Removed", detail: i.name }); });
+        (bSec.items || []).forEach(function(i) {
+          if ((aSec.items || []).find(function(ai) { return ai.id === i.id; })) return;
+          changes.push(i.type === "note"
+            ? { cat: aSec.label + " \u2014 Note Removed", detail: window.LTP_noteSummary(i.text) }
+            : { cat: aSec.label + " \u2014 Removed", detail: i.name });
+        });
       });
       (before.sections || []).forEach(function(s) { if (!(after.sections || []).find(function(as) { return as.id === s.id; })) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" }); });
       return changes.length > 0 ? changes : null;
