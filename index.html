@@ -38,7 +38,20 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     /* Page field matches the customer-facing surfaces' slate (theme.js bg). */
-    body { background: #131C21; overflow: hidden; }
+    /* The app typeface lives HERE, on <body>, not only on the app shell div in
+       app.js. Anything rendered outside the React tree — the searchable dropdown
+       panels portal into <body> so they can escape `overflow:hidden` ancestors —
+       has no app ancestor to inherit from, and fell back to the UA default. */
+    body { background: #131C21; overflow: hidden; font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif; }
+    /* Form controls do NOT inherit font-family: every browser substitutes its
+       own UI face unless told otherwise. Roughly 230 inputs, buttons, selects
+       and textareas across the app never set it inline, so they rendered in the
+       browser default instead of DM Sans — most visibly on the editing screens,
+       which are almost entirely form controls.
+       Font SIZE is deliberately NOT reset here: controls set their own sizes and
+       inheriting the parent's would resize them (and iOS zooms on focus below
+       16px, which several call sites tune deliberately). */
+    input, select, textarea, button, option { font-family: inherit; }
     /* The SPA shell fills #root. Use the DYNAMIC viewport height (dvh) so on
        iOS Safari the app matches the actually-visible area — `100vh` there is
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
