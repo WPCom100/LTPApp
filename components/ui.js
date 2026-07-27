@@ -155,6 +155,78 @@
     );
   };
 
+  // ── Note line item row (quotes + invoices) ────────────────────────────────
+  // A note is the one line item whose whole payload is free text, authored in
+  // a <textarea>. Its blank lines, indentation and runs of spaces are content,
+  // so the row displays with LTP_NOTE_TEXT_STYLE (white-space: pre-wrap) and
+  // edits back into a textarea — never a single-line input, which would strip
+  // the newlines the author just typed.
+  //
+  // Both builders render the same component so the display, the edit affordance
+  // and the text normalization can't drift apart:
+  //   quotes-builder.js — passes drag handlers via `containerProps` + a handle
+  //   invoices.js       — no drag; `editable` follows the draft/issued state
+  //
+  // `editable` false collapses the row to a read-only caption (locked quote,
+  // issued invoice). Save is disabled while the text is blank so clearing the
+  // box can't silently empty a note — deleting is the × button's job.
+  window.LTPNoteLineRow = function({ text, editable, onSave, onDelete, containerProps, handle }) {
+    var isMobile = window.LTP_useIsMobile();
+    var [editing, setEditing] = useState(false);
+    var [val, setVal] = useState("");
+    var body = text || "";
+
+    function begin() { setVal(body); setEditing(true); }
+    function cancel() { setEditing(false); setVal(""); }
+    function save() {
+      if (!window.LTP_noteHasText(val)) return;
+      onSave(window.LTP_noteText(val));
+      setEditing(false);
+      setVal("");
+    }
+    function onKeyDown(e) {
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+      // ⌘/Ctrl+Enter commits — a bare Enter has to stay a newline in here.
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); save(); }
+    }
+
+    var shell = { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "flex-start", gap: 10 };
+    var label = h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", flexShrink: 0, marginTop: 1 } }, "Note");
+    // Touch targets: 44px minimum on a phone (the app-wide .ltp-tap treatment),
+    // a compact glyph button on desktop.
+    var iconBtn = { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", padding: "2px 6px", flexShrink: 0, fontFamily: "inherit", lineHeight: 1 };
+    if (isMobile) iconBtn = Object.assign(iconBtn, { minWidth: 40, minHeight: 44 });
+    var iconCls = isMobile ? "ltp-tap" : undefined;
+
+    if (editing) {
+      return h("div", { style: Object.assign({}, shell, { flexDirection: "column", alignItems: "stretch", gap: 8 }) },
+        label,
+        h("textarea", {
+          value: val, autoFocus: true, rows: Math.min(12, Math.max(3, val.split("\n").length + 1)),
+          onChange: function(e) { setVal(e.target.value); }, onKeyDown: onKeyDown,
+          "aria-label": "Note text",
+          style: { width: "100%", boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "13px", lineHeight: 1.5, fontFamily: "inherit", outline: "none", resize: "vertical" },
+        }),
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" } },
+          h("span", { style: { fontSize: "10px", color: B.textMut } }, "Line breaks and spacing are kept on the quote, client view and PDF."),
+          h("div", { style: { display: "flex", gap: 6 } },
+            h(window.Btn, { small: true, variant: "ghost", onClick: cancel }, "Cancel"),
+            h(window.Btn, { small: true, onClick: save, disabled: !window.LTP_noteHasText(val) }, "Save")))
+      );
+    }
+
+    return h("div", Object.assign({ style: shell }, containerProps || {}),
+      handle || null,
+      label,
+      h("div", {
+        onDoubleClick: editable ? begin : undefined,
+        style: Object.assign({ flex: 1, minWidth: 0, fontSize: "12px", color: B.textSec, fontStyle: "italic", lineHeight: 1.5 }, window.LTP_NOTE_TEXT_STYLE),
+      }, body),
+      editable && h("button", { onClick: begin, className: iconCls, title: "Edit note", "aria-label": "Edit note", style: Object.assign({}, iconBtn, { fontSize: isMobile ? "16px" : "12px" }) }, "✎"),
+      editable && onDelete && h("button", { onClick: onDelete, className: iconCls, title: "Remove note", "aria-label": "Remove note", style: Object.assign({}, iconBtn, { fontSize: isMobile ? "22px" : "14px" }) }, "×")
+    );
+  };
+
   // labelAction renders a small control (typically the ＋ / ✎ affordance from
   // components/entity-quick-form.js) at the right end of the label row. A
   // native <select> can't host a "create new" row that opens a form, so the

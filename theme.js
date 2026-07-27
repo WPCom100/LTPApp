@@ -1511,6 +1511,51 @@ window.LTP_safeUrl = function(url) {
   return s;
 };
 
+// ── Note line items ─────────────────────────────────────────────────────────
+// Notes are authored in a plain <textarea> on quotes and invoices, so the
+// author's blank lines, indentation and runs of spaces are part of the content
+// — they carry meaning (bulleted call-times, indented sub-points). Historically
+// the builders stored `noteText.trim()`, which was fine for the emptiness check
+// but silently ate a leading indent on the first line.
+//
+// LTP_noteText normalizes line endings and drops only TRAILING whitespace (a
+// stray newline left by the Enter key renders as a blank gap in the PDF and
+// client view, and is never intentional). Everything else survives verbatim —
+// leading indentation included.
+window.LTP_noteText = function(raw) {
+  if (raw == null) return "";
+  return String(raw).replace(/\r\n?/g, "\n").replace(/[ \t\n]+$/, "");
+};
+
+// True when a note has any visible content — the guard for "Add Note".
+window.LTP_noteHasText = function(raw) {
+  return window.LTP_noteText(raw).trim() !== "";
+};
+
+// One-line digest of a note for places that can only show a single line — the
+// quote/invoice change log. Takes the first line that has content, collapses
+// its internal whitespace and ellipsizes past `max` (default 60).
+window.LTP_noteSummary = function(raw, max) {
+  var lines = window.LTP_noteText(raw).split("\n");
+  var first = "";
+  for (var i = 0; i < lines.length; i++) {
+    if (lines[i].trim()) { first = lines[i].trim().replace(/\s+/g, " "); break; }
+  }
+  var lim = max || 60;
+  if (first.length > lim) first = first.slice(0, lim - 1).replace(/\s+$/, "") + "…";
+  return first;
+};
+
+// Shared style fragment for every surface that DISPLAYS note text (builder
+// rows, invoice rows, the client-facing view). `pre-wrap` is what makes the
+// authored newlines and spacing survive into the DOM; the break rules keep a
+// long unbroken token from blowing out the column.
+window.LTP_NOTE_TEXT_STYLE = {
+  whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+};
+
 // A schedule row is worth keeping if ANYTHING was entered into the day — a
 // title, date, end-date, start/end time, crew positions, or breaks. Titles
 // are optional and a day added via "Add Day" starts with an empty date, so

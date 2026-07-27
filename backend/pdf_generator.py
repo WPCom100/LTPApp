@@ -25,6 +25,7 @@ None values are tolerated — every field has a sensible fallback so a
 half-populated quote still renders.
 """
 import os
+import re
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
@@ -201,6 +202,71 @@ def _calc_totals(entity):
         tax = 0.0
     return {"subtotal": sub, "adjusted": adj, "preTax": after, "tax": tax,
             "total": after + tax, "cost": cost}
+
+
+def _wrap_plain(text, font_name, font_size, max_w):
+    """Wrap authored plain text into drawable lines, preserving its shape.
+
+    Note line items are typed into a textarea, so blank lines, indentation and
+    runs of spaces are part of what the author wrote. reportlab's `simpleSplit`
+    collapses every whitespace run to a single space and ignores hard newlines,
+    which flattens a bulleted/indented note into one paragraph — so we wrap by
+    hand instead:
+
+      * hard newlines always break; a blank line stays a blank line
+      * leading indentation is preserved AND re-applied to continuation lines
+        (hanging indent) so a wrapped bullet stays visually under its bullet
+      * interior runs of spaces survive; the space at a wrap point does not
+      * tabs expand to 4 columns
+      * a single token wider than `max_w` is hard-broken by character rather
+        than overflowing the column
+
+    Returns a list of strings (possibly empty ones) ready for `drawString`.
+    """
+    src = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    out = []
+    for raw in src.split("\n"):
+        raw = raw.expandtabs(4)
+        if not raw.strip():
+            out.append("")
+            continue
+        stripped = raw.lstrip(" ")
+        indent = " " * (len(raw) - len(stripped))
+        cur = indent
+        for tok in re.split(r"( +)", stripped):
+            if not tok:
+                continue
+            if _sw(cur + tok, font_name, font_size) <= max_w:
+                cur += tok
+                continue
+            if tok.strip() == "":
+                # Wrapping AT a space run: the run is consumed by the break.
+                out.append(cur.rstrip())
+                cur = indent
+                continue
+            if cur.strip():
+                out.append(cur.rstrip())
+                cur = indent
+            # Still too wide on a line of its own → break by character.
+            while _sw(cur + tok, font_name, font_size) > max_w and len(tok) > 1:
+                k = 1
+                while k < len(tok) and _sw(cur + tok[:k + 1], font_name, font_size) <= max_w:
+                    k += 1
+                out.append(cur + tok[:k])
+                tok = tok[k:]
+                cur = indent
+            cur += tok
+        out.append(cur.rstrip())
+    return out
+
+
+def _sw(text, font_name, font_size):
+    """stringWidth that tolerates a font that failed to register (the bundled
+    TTFs are optional at import time — see _register_fonts)."""
+    try:
+        return pdfmetrics.stringWidth(text, font_name, font_size)
+    except Exception:
+        return len(text) * font_size * 0.5
 
 
 def _draw_gradient(c, x, y, w, h):
@@ -432,6 +498,37 @@ class _DocPDF:
 
         self.y -= 10
 
+    # ── Note line item ─────────────────────────────────────────────────────
+    NOTE_FONT = "Roboto-Light"
+    NOTE_SIZE = 9
+    NOTE_LEADING = 12
+
+    def _draw_note(self, txt, x):
+        """Draw a note line item as a full-width caption, honoring the spacing
+        and newlines the author typed in the builder's textarea.
+
+        The body is laid out as a hanging indent: the "Note:" label sits in the
+        gutter and every wrapped line — including the first — starts at the same
+        x, so a multi-line note reads as one block. Each line gets its own page-
+        break check, so a long note flows onto the next page instead of running
+        off the bottom (the old renderer truncated at 110 characters)."""
+        c = self.c
+        label = "Note: "
+        label_w = _sw(label, self.NOTE_FONT, self.NOTE_SIZE)
+        body_x = x + label_w
+        max_w = (self.W - self.M - 10) - body_x
+        lines = _wrap_plain(txt, self.NOTE_FONT, self.NOTE_SIZE, max_w) or [""]
+        for i, ln in enumerate(lines):
+            self._need(self.NOTE_LEADING + 4)
+            c.setFont(self.NOTE_FONT, self.NOTE_SIZE)
+            c.setFillColor(MUTED)
+            if i == 0:
+                c.drawString(x, self.y - 10, label)
+            if ln:
+                c.drawString(body_x, self.y - 10, ln)
+            self.y -= self.NOTE_LEADING
+        self.y -= 4   # breathing room before the next row / next note
+
     # ── Section ────────────────────────────────────────────────────────────
     def _draw_section(self, sec):
         c = self.c
@@ -503,14 +600,8 @@ class _DocPDF:
         stripe_i = 0
         for it in all_items:
             if it.get("type") == "note":
-                self._need(16)
-                c.setFont("Roboto-Light", 9)
-                c.setFillColor(MUTED)
-                txt = it.get("text", "") or it.get("name", "") or ""
-                if len(txt) > 110:
-                    txt = txt[:107] + "..."
-                c.drawString(col["item"], self.y - 10, f"Note: {txt}")
-                self.y -= 14
+                self._draw_note(it.get("text", "") or it.get("name", "") or "",
+                                col["item"])
                 continue
 
             qty = it.get("qty", 0) or 0

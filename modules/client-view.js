@@ -273,9 +273,14 @@
     // builder), so the client view matches the editor. A note is a full-width
     // caption row; a priced line is the 4-column grid row. Whichever element is
     // last in the section drops its bottom border.
+    // A note's blank lines, indentation and runs of spaces are authored content
+    // (LTP_NOTE_TEXT_STYLE → white-space: pre-wrap), so the customer sees the
+    // same shape the builder and the PDF show. The "Note:" label sits in its own
+    // span so the body's own leading indent isn't measured from after the label.
     function noteRow(n, key, isLast) {
       return h("div", { key: key, style: { padding: "10px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, fontSize: "12px", color: MUTE, fontStyle: "italic", lineHeight: 1.5 } },
-        "Note: " + (n.text || n.name || ""));
+        h("span", { style: { fontStyle: "normal", fontWeight: 700, letterSpacing: "0.04em" } }, "Note: "),
+        h("span", { style: window.LTP_NOTE_TEXT_STYLE }, n.text || n.name || ""));
     }
     function lineRow(it, key, isLast) {
       var qty = Number(it.qty) || 0;

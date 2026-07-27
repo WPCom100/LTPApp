@@ -298,9 +298,11 @@
       });
       setFeeName(""); setFeeAmount("");
     }
+    // The note is stored with its authored spacing and newlines intact (see
+    // LTP_noteText) — the textarea IS the formatting control for these lines.
     function addNote() {
-      if (!noteText.trim()) return;
-      onAdd({ id: genId("item"), type: "note", text: noteText.trim() });
+      if (!window.LTP_noteHasText(noteText)) return;
+      onAdd({ id: genId("item"), type: "note", text: window.LTP_noteText(noteText) });
       setNoteText("");
     }
 
@@ -511,11 +513,11 @@
 
       // Note tab
       tab === "note" && h("div", null,
-        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6 } }, "Notes appear as line items on the quote but have no price."),
+        h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6 } }, "Notes appear as line items on the quote but have no price. Line breaks and spacing are kept exactly as typed — on the quote, the client view and the PDF."),
         h("textarea", { value: noteText, onChange: function(e) { setNoteText(e.target.value); }, placeholder: "Enter note text…", rows: 4,
-          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", resize: "vertical", marginBottom: 10 } }),
+          style: { width: "100%", boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "12px", lineHeight: 1.5, fontFamily: "inherit", outline: "none", resize: "vertical", marginBottom: 10 } }),
         h("div", { style: { display: "flex", justifyContent: "flex-end" } },
-          h(window.Btn, { small: true, onClick: addNote }, "Add Note")
+          h(window.Btn, { small: true, onClick: addNote, disabled: !window.LTP_noteHasText(noteText) }, "Add Note")
         )
       )
     );
@@ -527,20 +529,24 @@
 
   function LineItemRow({ item, sectionId, quoteStatus, onUpdate, onDelete, onDragStart, onDragOver, onDrop, onMove, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
+    // Note rows are the shared LTPNoteLineRow: pre-wrap display so the authored
+    // newlines/indentation survive, plus in-place editing. Locked quotes
+    // (accepted/converted) get the read-only caption.
     if (item.type === "note") {
-      return h("div", {
-        draggable: true,
-        onDragStart: function(e) { onDragStart(sectionId, item.id); e.dataTransfer.effectAllowed = "move"; },
-        onDragOver:  function(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
-        onDrop:      function(e) { e.preventDefault(); onDrop(sectionId, item.id); },
-        style: { background: B.bg, border: "1px dashed " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 }
-      },
-        h("span", { style: { fontSize: "12px", color: B.textMut, cursor: "grab" } }, "\u2630"),
-        h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Note"),
-        h("div", { style: { flex: 1, fontSize: "12px", color: B.textSec, fontStyle: "italic" } }, item.text),
-        h("button", { onClick: function() { onDelete(sectionId, item.id); },
-          style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "14px", padding: "2px 6px" } }, "\u00d7")
-      );
+      var noteLocked = quoteStatus === "accepted" || quoteStatus === "converted";
+      return h(window.LTPNoteLineRow, {
+        text: item.text,
+        editable: !noteLocked,
+        onSave: function(txt) { onUpdate(sectionId, item.id, { text: txt }); },
+        onDelete: function() { onDelete(sectionId, item.id); },
+        containerProps: noteLocked ? null : {
+          draggable: true,
+          onDragStart: function(e) { onDragStart(sectionId, item.id); e.dataTransfer.effectAllowed = "move"; },
+          onDragOver:  function(e) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
+          onDrop:      function(e) { e.preventDefault(); onDrop(sectionId, item.id); },
+        },
+        handle: noteLocked ? null : h("span", { key: "handle", style: { fontSize: "12px", color: B.textMut, cursor: "grab", flexShrink: 0 } }, "\u2630"),
+      });
     }
 
     // Equipment / product / service / fee row
@@ -1071,9 +1077,19 @@
       var aItemMap = {}; (aSec.items || []).forEach(function(i) { aItemMap[i.id] = i; });
 
       (aSec.items || []).forEach(function(i) {
-        if (!bItemMap[i.id] && i.type !== "note") {
+        // Notes are editable in place, so an edited note has to show up here —
+        // otherwise a changed note reads as a silent edit on a sent quote.
+        if (i.type === "note") {
+          if (!bItemMap[i.id]) {
+            changes.push({ cat: aSec.label + " — Note Added", detail: window.LTP_noteSummary(i.text) });
+          } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
+            changes.push({ cat: aSec.label + " — Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " → " + window.LTP_noteSummary(i.text) });
+          }
+          return;
+        }
+        if (!bItemMap[i.id]) {
           changes.push({ cat: aSec.label + " — Item Added", detail: i.name + " (×" + i.qty + ")" });
-        } else if (bItemMap[i.id] && i.type !== "note") {
+        } else if (bItemMap[i.id]) {
           var bi = bItemMap[i.id];
           // Pricing-variant switch → one explicit from → to entry carrying both
           // labels AND both prices. Without this, only the plain Price entry
@@ -1099,7 +1115,10 @@
         }
       });
       (bSec.items || []).forEach(function(i) {
-        if (!aItemMap[i.id] && i.type !== "note") {
+        if (aItemMap[i.id]) return;
+        if (i.type === "note") {
+          changes.push({ cat: aSec.label + " — Note Removed", detail: window.LTP_noteSummary(i.text) });
+        } else {
           changes.push({ cat: aSec.label + " — Item Removed", detail: i.name });
         }
       });

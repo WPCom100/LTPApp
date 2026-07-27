@@ -419,6 +419,43 @@ ok("GC6 overnight rolls a day",
 ok("GC7 equal times stay same day",
   /dates=20260703T080000\/20260703T080000/.test(GC({ title: "T", date: "2026-07-03", time: "08:00", endTime: "08:00" })), "no-roll");
 
+// ── Note line items (spacing/newlines are content) ──────────────────────────
+// Notes are typed into a textarea on quotes/invoices; the author's blank lines
+// and indentation carry meaning (call times, indented sub-points). The old
+// builders stored noteText.trim(), which ate a leading indent on line one.
+const NT = window.LTP_noteText;
+eq("NT1 interior newlines kept", NT("a\nb"), "a\nb");
+eq("NT2 blank line kept", NT("a\n\nb"), "a\n\nb");
+eq("NT3 leading indent kept", NT("    - load in"), "    - load in");
+eq("NT4 interior space runs kept", NT("a  b   c"), "a  b   c");
+eq("NT5 trailing whitespace dropped", NT("a\n\n  \n"), "a");
+eq("NT6 trailing spaces on last line dropped", NT("a   "), "a");
+eq("NT7 CRLF normalized", NT("a\r\nb"), "a\nb");
+eq("NT8 lone CR normalized", NT("a\rb"), "a\nb");
+eq("NT9 null is empty", NT(null), "");
+eq("NT10 undefined is empty", NT(undefined), "");
+eq("NT11 whitespace-only collapses to empty", NT("  \n\t \n"), "");
+
+const NH = window.LTP_noteHasText;
+ok("NH1 text has content", NH("hi") === true);
+ok("NH2 whitespace-only has none", NH("  \n \t ") === false);
+ok("NH3 empty has none", NH("") === false);
+ok("NH4 null has none", NH(null) === false);
+ok("NH5 indented text has content", NH("    x") === true);
+
+// One-line digest for the change log: first line with content, collapsed.
+const NS = window.LTP_noteSummary;
+eq("NS1 first line wins", NS("first line\nsecond line"), "first line");
+eq("NS2 leading blank lines skipped", NS("\n\n  real text"), "real text");
+eq("NS3 interior runs collapsed for the digest", NS("a   b"), "a b");
+eq("NS4 ellipsized past the limit", NS("abcdefghij", 5), "abcd…");
+eq("NS5 exactly at the limit is untouched", NS("abcde", 5), "abcde");
+eq("NS6 empty note digests to empty", NS(""), "");
+
+// The display style is what carries the formatting into the DOM.
+eq("NSTY1 pre-wrap", window.LTP_NOTE_TEXT_STYLE.whiteSpace, "pre-wrap");
+ok("NSTY2 long tokens can break", !!window.LTP_NOTE_TEXT_STYLE.overflowWrap);
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
