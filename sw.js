@@ -38,7 +38,11 @@
 // hard-bypassed by isBypass's /api/ rule — nothing OCR-related is ever cached.
 // Decoder stack unchanged: native BarcodeDetector where available, else the
 // vendored ZXing-C++ WASM (runtime-cached on first scan, not precached).
-var CACHE_VERSION = 'ltp-shell-v48';
+// v49: interactive drag-to-reorder (components/sortable.js) for quote and
+// invoice line items + sections. index.html changed (new script tag + the
+// reorder CSS), so the shell must be refetched; sortable.js itself is picked
+// up by the runtime /components/ rule below, not precached.
+var CACHE_VERSION = 'ltp-shell-v49';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

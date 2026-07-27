@@ -85,6 +85,44 @@
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
 
+    /* ── Interactive reorder (components/sortable.js) ───────────────────────
+       Used by the quote and invoice builders for line items and sections.
+       The engine is pointer-based (works with a mouse and on iPad), so these
+       rules cover the three visual states: the handle you grab, the row left
+       behind in the list, and the clone that follows the cursor. */
+    .ltp-drag-handle {
+      background: transparent; border: none; border-radius: 4px;
+      padding: 2px 4px; line-height: 1; color: #6E7E86; cursor: grab;
+      /* Pointer drags must own the gesture — without this the browser claims
+         it for panning on any touch-capable screen (iPad) and the row never
+         lifts. Phones never render a handle; they keep the ▲▼ buttons. */
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      transition: color .12s ease, background .12s ease;
+    }
+    .ltp-drag-handle:hover { color: #EF5822; background: rgba(239,88,34,0.10); }
+    .ltp-drag-handle:focus-visible { outline: 2px solid #EF5822; outline-offset: 1px; color: #EF5822; }
+    .ltp-drag-handle:active { cursor: grabbing; }
+    /* The row's place in the list while its ghost is out with the cursor —
+       dimmed and dashed so it reads as the slot the row will drop into. */
+    .ltp-sort-dragging {
+      opacity: .34;
+      outline: 1px dashed rgba(239,88,34,.65);
+      outline-offset: -1px;
+      transition: opacity .12s ease;
+    }
+    .ltp-sort-dragging * { pointer-events: none; }
+    /* The floating clone. Lifted off the page with a shadow + orange hairline
+       so it reads as picked up rather than as a second copy of the row. */
+    .ltp-sort-ghost {
+      pointer-events: none; opacity: .97;
+      box-shadow: 0 16px 36px rgba(0,0,0,.48), 0 0 0 1px rgba(239,88,34,.55);
+      border-radius: 6px; will-change: transform;
+    }
+    /* Keep the grabbing cursor over the whole page for the length of the drag,
+       not just over the handle it started on. */
+    body.ltp-sorting, body.ltp-sorting * { cursor: grabbing !important; }
+
     /* ── Mobile / iOS PWA responsive layer ──────────────────────────────────
        The app styles almost everything with inline React style objects, so
        this class + element layer is where breakpoint and safe-area behavior
@@ -275,6 +313,9 @@
   <script src="components/helpers.js"></script>
   <script src="components/data-state.js"></script>
   <script src="components/ui.js"></script>
+  <!-- Drag-to-reorder engine + the mobile ▲▼ arrows. Reads LTP_THEME only;
+       consumed by the quote and invoice builders. -->
+  <script src="components/sortable.js"></script>
   <script src="components/search-select.js"></script>
   <script src="components/search-dropdown.js"></script>
   <script src="components/entity-quick-form.js"></script>
