@@ -1,6 +1,6 @@
 // Core UI Components
 (function() {
-  var B = window.LTP_THEME, SC = window.LTP_STATUS_COLORS, h = React.createElement, useState = React.useState;
+  var B = window.LTP_THEME, SC = window.LTP_STATUS_COLORS, h = React.createElement, useState = React.useState, useRef = React.useRef;
 
   // ── Shared mobile breakpoint ───────────────────────────────────────────────
   // One source of truth for "are we on a phone-width screen", matching the
@@ -153,6 +153,61 @@
                : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, inputMode: inputMode, step: step, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
+  };
+
+  // ── Deferred-commit date field ────────────────────────────────────────────
+  // A bare <input type="date"> that holds keyboard edits locally and only
+  // publishes them when the field is done being edited.
+  //
+  // Why: a native date input emits a value on EVERY segment keystroke, and the
+  // in-between values are garbage — a half-typed year reads as "0002-08-14",
+  // and any incomplete date reads as "" (empty). A parent that re-orders or
+  // re-groups its rows off that value (the schedule editor groups its rows by
+  // day, so "" lands under "Unscheduled") re-renders the row out from under the
+  // caret: the day card jumps and the input is torn down mid-word, so the field
+  // deselects after a single digit and the date can never be typed through.
+  //
+  // Buffering while the user types keeps the caret and the row put. The value
+  // is published on blur, on Enter, and immediately for a pick from the
+  // browser's calendar popup (a change with no keystroke behind it) — so the
+  // picker still feels instant. Escape drops the buffer and restores the
+  // committed value.
+  //
+  // `value` is an ISO yyyy-mm-dd string (or ""), the same contract as a raw
+  // date input. onChange fires with the new string only when it actually
+  // differs from `value`.
+  window.LTPDateField = function({ value, onChange, style: sx, title, disabled, ariaLabel }) {
+    // null = not editing (mirror the prop); a string = a buffered edit.
+    var [buf, setBuf] = useState(null);
+    var typingRef = useRef(false);
+    var shown = buf === null ? (value || "") : buf;
+
+    function commit(next) {
+      typingRef.current = false;
+      setBuf(null);
+      if ((next || "") !== (value || "")) onChange(next || "");
+    }
+    return h("input", {
+      type: "date",
+      value: shown,
+      disabled: disabled,
+      title: title,
+      "aria-label": ariaLabel,
+      onKeyDown: function(e) {
+        // Enter commits; Escape abandons the buffer. Anything else that can
+        // alter a segment (digits, arrows, backspace) marks this edit as
+        // keyboard-driven so the change it produces is buffered, not published.
+        if (e.key === "Enter") { commit(e.target.value); return; }
+        if (e.key === "Escape") { typingRef.current = false; setBuf(null); return; }
+        if (e.key !== "Tab") typingRef.current = true;
+      },
+      onChange: function(e) {
+        if (typingRef.current) { setBuf(e.target.value); return; }
+        commit(e.target.value);   // calendar-popup pick → publish right away
+      },
+      onBlur: function(e) { commit(e.target.value); },
+      style: sx,
+    });
   };
 
   // ── Note line item row (quotes + invoices) ────────────────────────────────
