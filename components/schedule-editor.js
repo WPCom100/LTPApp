@@ -463,17 +463,33 @@
                     isMobile && h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
                       style: { flexShrink: 0, background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "20px", padding: "0 4px", lineHeight: 1 } }, "×"),
                     h("div", { style: { display: "flex", gap: isMobile ? 6 : 4, alignItems: "center", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined } },
+                      // LTPDateField, not a raw <input type="date">: rows are
+                      // grouped and sorted by day below, so publishing every
+                      // keystroke would re-key the day card mid-edit (a
+                      // half-typed date reads as "" → the row jumps to
+                      // "Unscheduled" and the input is destroyed under the
+                      // caret). The field buffers typed/arrow edits and
+                      // publishes on blur, Enter, or a calendar pick.
                       // One updateItem only — it syncs endDate itself. A second
                       // call here recomputed from the stale `schedule` prop and
                       // clobbered the date update entirely (freezing half-typed
                       // dates like "0002-08-14" into the hidden endDate).
-                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); },
+                      h(window.LTPDateField, { value: s.date, onChange: function(v) { updateItem(s.id, "date", v); },
+                        ariaLabel: "Shift date",
                         style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : undefined, width: isMobile ? undefined : 120, minWidth: 0, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
-                      h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
+                      // Deferred like the date, and for the same reason twice
+                      // over: the rows inside a day are sorted by start time, so
+                      // publishing a half-typed hour ("01:00" on the way to
+                      // "11:00", or "" while a segment is empty) jumps this row
+                      // past its neighbours mid-word \u2014 the field moves out from
+                      // under the caret and the time can't be typed through.
+                      h(window.LTPTimeField, { value: s.time, onChange: function(v) { updateItem(s.id, "time", v); },
+                        ariaLabel: "Shift start time",
                         style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
                       h("span", { style: { color: B.textMut, fontSize: "10px" } }, "\u2192"),
-                      h("input", { type: "time", value: s.endTime, onChange: function(e) { updateItem(s.id, "endTime", e.target.value); },
+                      h(window.LTPTimeField, { value: s.endTime, onChange: function(v) { updateItem(s.id, "endTime", v); },
+                        ariaLabel: "Shift end time",
                         style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
                       h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, flexShrink: 0 } }, calcHours(s.time, s.endTime) ? calcHours(s.time, s.endTime) + "h" : ""),
                       h("button", { onClick: function() { updateItem(s.id, "showOnCalendar", !s.showOnCalendar); },
@@ -495,10 +511,16 @@
                         h("button", { onClick: function() { updateBreak(s.id, brk.id, { type: isPaid ? "unpaid" : "paid", endTime: isPaid ? _addTime(brk.startTime, 60) : _addTime(brk.startTime, 30) }); },
                           style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
                           isPaid ? "PAID" : "UNPAID"),
-                        h("input", { type: "time", value: brk.startTime, onChange: function(e) { updateBreak(s.id, brk.id, { startTime: e.target.value }); },
+                        // Break times defer too: a half-typed break feeds the
+                        // labor engine a bogus span, so the day's OT / meal-
+                        // penalty badges flicker (and the "fix" button appears
+                        // and vanishes) between keystrokes.
+                        h(window.LTPTimeField, { value: brk.startTime, onChange: function(v) { updateBreak(s.id, brk.id, { startTime: v }); },
+                          ariaLabel: "Break start time",
                           style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
                         h("span", { style: { color: B.textMut } }, "\u2192"),
-                        h("input", { type: "time", value: brk.endTime, onChange: function(e) { updateBreak(s.id, brk.id, { endTime: e.target.value }); },
+                        h(window.LTPTimeField, { value: brk.endTime, onChange: function(v) { updateBreak(s.id, brk.id, { endTime: v }); },
+                          ariaLabel: "Break end time",
                           style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
                         h("button", { onClick: function() { removeBreak(s.id, brk.id); }, style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "10px", padding: 0 } }, "\u00d7")
                       );

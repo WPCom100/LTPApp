@@ -38,7 +38,20 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     /* Page field matches the customer-facing surfaces' slate (theme.js bg). */
-    body { background: #131C21; overflow: hidden; }
+    /* The app typeface lives HERE, on <body>, not only on the app shell div in
+       app.js. Anything rendered outside the React tree — the searchable dropdown
+       panels portal into <body> so they can escape `overflow:hidden` ancestors —
+       has no app ancestor to inherit from, and fell back to the UA default. */
+    body { background: #131C21; overflow: hidden; font-family: 'DM Sans', 'Segoe UI', system-ui, sans-serif; }
+    /* Form controls do NOT inherit font-family: every browser substitutes its
+       own UI face unless told otherwise. Roughly 230 inputs, buttons, selects
+       and textareas across the app never set it inline, so they rendered in the
+       browser default instead of DM Sans — most visibly on the editing screens,
+       which are almost entirely form controls.
+       Font SIZE is deliberately NOT reset here: controls set their own sizes and
+       inheriting the parent's would resize them (and iOS zooms on focus below
+       16px, which several call sites tune deliberately). */
+    input, select, textarea, button, option { font-family: inherit; }
     /* The SPA shell fills #root. Use the DYNAMIC viewport height (dvh) so on
        iOS Safari the app matches the actually-visible area — `100vh` there is
        the toolbar-hidden height, which pushes bottom-anchored content (e.g. the
@@ -84,6 +97,44 @@
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
+
+    /* ── Interactive reorder (components/sortable.js) ───────────────────────
+       Used by the quote and invoice builders for line items and sections.
+       The engine is pointer-based (works with a mouse and on iPad), so these
+       rules cover the three visual states: the handle you grab, the row left
+       behind in the list, and the clone that follows the cursor. */
+    .ltp-drag-handle {
+      background: transparent; border: none; border-radius: 4px;
+      padding: 2px 4px; line-height: 1; color: #6E7E86; cursor: grab;
+      /* Pointer drags must own the gesture — without this the browser claims
+         it for panning on any touch-capable screen (iPad) and the row never
+         lifts. Phones never render a handle; they keep the ▲▼ buttons. */
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      transition: color .12s ease, background .12s ease;
+    }
+    .ltp-drag-handle:hover { color: #EF5822; background: rgba(239,88,34,0.10); }
+    .ltp-drag-handle:focus-visible { outline: 2px solid #EF5822; outline-offset: 1px; color: #EF5822; }
+    .ltp-drag-handle:active { cursor: grabbing; }
+    /* The row's place in the list while its ghost is out with the cursor —
+       dimmed and dashed so it reads as the slot the row will drop into. */
+    .ltp-sort-dragging {
+      opacity: .34;
+      outline: 1px dashed rgba(239,88,34,.65);
+      outline-offset: -1px;
+      transition: opacity .12s ease;
+    }
+    .ltp-sort-dragging * { pointer-events: none; }
+    /* The floating clone. Lifted off the page with a shadow + orange hairline
+       so it reads as picked up rather than as a second copy of the row. */
+    .ltp-sort-ghost {
+      pointer-events: none; opacity: .97;
+      box-shadow: 0 16px 36px rgba(0,0,0,.48), 0 0 0 1px rgba(239,88,34,.55);
+      border-radius: 6px; will-change: transform;
+    }
+    /* Keep the grabbing cursor over the whole page for the length of the drag,
+       not just over the handle it started on. */
+    body.ltp-sorting, body.ltp-sorting * { cursor: grabbing !important; }
 
     /* ── Mobile / iOS PWA responsive layer ──────────────────────────────────
        The app styles almost everything with inline React style objects, so
@@ -275,6 +326,9 @@
   <script src="components/helpers.js"></script>
   <script src="components/data-state.js"></script>
   <script src="components/ui.js"></script>
+  <!-- Drag-to-reorder engine + the mobile ▲▼ arrows. Reads LTP_THEME only;
+       consumed by the quote and invoice builders. -->
+  <script src="components/sortable.js"></script>
   <script src="components/search-select.js"></script>
   <script src="components/search-dropdown.js"></script>
   <script src="components/entity-quick-form.js"></script>

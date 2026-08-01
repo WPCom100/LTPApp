@@ -1,6 +1,6 @@
 // Core UI Components
 (function() {
-  var B = window.LTP_THEME, SC = window.LTP_STATUS_COLORS, h = React.createElement, useState = React.useState;
+  var B = window.LTP_THEME, SC = window.LTP_STATUS_COLORS, h = React.createElement, useState = React.useState, useRef = React.useRef;
 
   // ── Shared mobile breakpoint ───────────────────────────────────────────────
   // One source of truth for "are we on a phone-width screen", matching the
@@ -154,6 +154,70 @@
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
   };
+
+  // ── Deferred-commit date / time fields ────────────────────────────────────
+  // Bare <input type="date"> and <input type="time"> that hold keyboard edits
+  // locally and only publish them when the field is done being edited.
+  //
+  // Why: a native date/time input emits a value on EVERY segment keystroke, and
+  // the in-between values are garbage — a half-typed year reads as
+  // "0002-08-14", a half-typed hour reads as "01:00" on the way to "11:00", and
+  // any incomplete value reads as "" (empty). A parent that re-orders or
+  // re-groups its rows off that value re-renders the row out from under the
+  // caret. The schedule editor does exactly that twice over: it groups rows by
+  // day (so a half-typed date lands under "Unscheduled") and sorts the rows
+  // within a day by start time (so a half-typed hour jumps the row past its
+  // neighbours). The field is moved — or torn down and rebuilt — mid-word, so
+  // it deselects after a single digit and the value can never be typed through.
+  //
+  // Buffering while the user types keeps the caret and the row put. The value
+  // is published on blur, on Enter, and immediately for a pick from the
+  // browser's calendar/clock popup (a change with no keystroke behind it) — so
+  // the picker still feels instant. Escape drops the buffer and restores the
+  // committed value.
+  //
+  // `value` is the native string a raw input of that type carries — ISO
+  // yyyy-mm-dd for a date, 24-hour hh:mm for a time — or "". onChange fires
+  // with the new string only when it actually differs from `value`.
+  function deferredTemporalField(inputType) {
+    return function({ value, onChange, style: sx, title, disabled, ariaLabel, step }) {
+      // null = not editing (mirror the prop); a string = a buffered edit.
+      var [buf, setBuf] = useState(null);
+      var typingRef = useRef(false);
+      var shown = buf === null ? (value || "") : buf;
+
+      function commit(next) {
+        typingRef.current = false;
+        setBuf(null);
+        if ((next || "") !== (value || "")) onChange(next || "");
+      }
+      return h("input", {
+        type: inputType,
+        value: shown,
+        disabled: disabled,
+        title: title,
+        step: step,
+        "aria-label": ariaLabel,
+        onKeyDown: function(e) {
+          // Enter commits; Escape abandons the buffer. Anything else that can
+          // alter a segment (digits, arrows, backspace, AM/PM letters) marks
+          // this edit as keyboard-driven so the change it produces is buffered,
+          // not published.
+          if (e.key === "Enter") { commit(e.target.value); return; }
+          if (e.key === "Escape") { typingRef.current = false; setBuf(null); return; }
+          if (e.key !== "Tab") typingRef.current = true;
+        },
+        onChange: function(e) {
+          if (typingRef.current) { setBuf(e.target.value); return; }
+          commit(e.target.value);   // popup pick → publish right away
+        },
+        onBlur: function(e) { commit(e.target.value); },
+        style: sx,
+      });
+    };
+  }
+  window.LTPDateField = deferredTemporalField("date");
+  window.LTPTimeField = deferredTemporalField("time");
 
   // ── Note line item row (quotes + invoices) ────────────────────────────────
   // A note is the one line item whose whole payload is free text, authored in

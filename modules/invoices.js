@@ -388,8 +388,23 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, services, products, equipment, fees, customerTaxable }) {
+  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, onMove, sortable, itemIndex, itemCount, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
+
+    // Reorder affordance, matching the quote builder: a grab handle on desktop
+    // (drag with live reordering, or focus it and press ↑/↓) and the two ▲▼
+    // buttons on a phone.
+    function reorderControl() {
+      if (isMobile) {
+        return h(window.LTPMoveArrows, {
+          onMove: function(dir) { onMove(sectionId, item.id, dir); },
+          canUp: itemIndex > 0, canDown: itemIndex < itemCount - 1, label: "line item",
+        });
+      }
+      return h("button", sortable.handleProps("item", sectionId, item.id,
+        { label: "Reorder line item", fontSize: "12px" }), "☰");
+    }
+
     // Shared with the quote builder (components/ui.js): pre-wrap display so the
     // authored newlines/indentation survive, plus in-place editing while draft.
     if (item.type === "note") {
@@ -398,6 +413,10 @@
         editable: !!isDraft,
         onSave: function(txt) { onUpdate(sectionId, item.id, { text: txt }); },
         onDelete: function() { onDelete(sectionId, item.id); },
+        containerProps: sortable.itemProps(sectionId, item.id),
+        // Desktop grab handle only — same reasoning as the quote builder: the
+        // phone note row stays exactly as it was.
+        handle: (isDraft && !isMobile) ? reorderControl() : null,
       });
     }
 
@@ -433,13 +452,14 @@
       var fld = { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" };
       var lbl = { fontSize: "10px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 };
       var selStyle = Object.assign({}, fld, { marginTop: 8, appearance: "auto" });
-      return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } },
+      return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } }, sortable.itemProps(sectionId, item.id)),
         h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
           h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "3px", flexShrink: 0, marginTop: 3 } }, typeBadge),
           h("div", { style: { flex: 1, minWidth: 0 } },
             h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
             item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
             sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
+          isDraft && reorderControl(),
           isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
             style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 44, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
         // Rate-type (services) / variant (products) selects — full width on mobile.
@@ -484,7 +504,8 @@
             h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lt)))));
     }
 
-    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } },
+    return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } }, sortable.itemProps(sectionId, item.id)),
+      isDraft && reorderControl(),
       h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "2px 5px", borderRadius: "3px" } }, typeBadge),
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
@@ -1283,8 +1304,9 @@
       setDraft(function(d) { return Object.assign({}, d, { sections: d.sections.filter(function(s) { return s.id !== secId; }) }); });
     }
 
-    // Touch-friendly section reorder — swap a section with its neighbour (drives
-    // the ▲▼ buttons in each section header on mobile).
+    // Single-step section reorder — swap a section with its neighbour. Drives
+    // the ▲▼ buttons in each section header on mobile and the ↑/↓ keys on a
+    // focused desktop grab handle.
     function moveSection(secId, dir) {
       if (!isDraft) return;
       setDraft(function(d) {
@@ -1296,6 +1318,91 @@
         var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
         return Object.assign({}, d, { sections: secs });
       });
+    }
+
+    // Same, one line item at a time within its section.
+    function moveItem(secId, itemId, dir) {
+      if (!isDraft) return;
+      setDraft(function(d) {
+        return Object.assign({}, d, { sections: d.sections.map(function(s) {
+          if (s.id !== secId) return s;
+          var items = s.items.slice();
+          var idx = items.findIndex(function(i) { return i.id === itemId; });
+          var to = idx + dir;
+          if (idx === -1 || to < 0 || to >= items.length) return s;
+          var moved = items.splice(idx, 1)[0];
+          items.splice(to, 0, moved);
+          return Object.assign({}, s, { items: items });
+        }) });
+      });
+    }
+
+    // ── Reorder engine (components/sortable.js) ────────────────────────────
+    // Matches the quote builder: pointer drag with the list reordering live
+    // under the cursor on desktop/iPad, ▲▼ buttons on phones. Only draft
+    // invoices reorder — once issued the line order is part of the document.
+    var sortSnapshot = useRef(null);   // section order at pick-up, for Escape
+    var sortable = window.LTP_useSortable({
+      enabled: !isMobile && isDraft,
+      onMove: function(m) { sortMove(m); },
+      onDragStart: function() { sortSnapshot.current = draft.sections; },
+      onDrop: function() { sortSnapshot.current = null; },
+      onCancel: function() {
+        var snap = sortSnapshot.current;
+        sortSnapshot.current = null;
+        if (snap) setDraft(function(d) { return Object.assign({}, d, { sections: snap }); });
+      },
+      onKeyMove: function(kind, zoneId, id, dir) {
+        if (kind === "section") moveSection(id, dir);
+        else moveItem(zoneId, id, dir);
+      },
+    });
+
+    // Applied on every hit-test while a row is in flight (not once on release),
+    // which is what makes the list its own drop preview. `m` is
+    // { kind, id, fromZone, toZone, targetId, after }; a null targetId means
+    // "append to toZone" (released over a section's empty space).
+    function sortMove(m) {
+      if (!isDraft) return;
+      if (m.kind === "section") {
+        setDraft(function(d) {
+          var secs = d.sections.slice();
+          var from = secs.findIndex(function(s) { return s.id === m.id; });
+          if (from === -1) return d;
+          var moved = secs.splice(from, 1)[0];
+          var to = m.targetId == null ? secs.length : secs.findIndex(function(s) { return s.id === m.targetId; });
+          if (to === -1) to = secs.length;
+          else if (m.after) to += 1;
+          secs.splice(to, 0, moved);
+          return Object.assign({}, d, { sections: secs });
+        });
+        return;
+      }
+      setDraft(function(d) {
+        var secs = d.sections.map(function(s) { return Object.assign({}, s, { items: s.items.slice() }); });
+        var from = secs.find(function(s) { return s.id === m.fromZone; });
+        var dest = secs.find(function(s) { return s.id === m.toZone; });
+        if (!from || !dest) return d;
+        var idx = from.items.findIndex(function(i) { return i.id === m.id; });
+        if (idx === -1) return d;
+        var moved = from.items.splice(idx, 1)[0];
+        // Resolve the target AFTER the removal so the index is already right
+        // for a same-section move.
+        var to = m.targetId == null ? dest.items.length : dest.items.findIndex(function(i) { return i.id === m.targetId; });
+        if (to === -1) to = dest.items.length;
+        else if (m.after) to += 1;
+        dest.items.splice(to, 0, moved);
+        return Object.assign({}, d, { sections: secs });
+      });
+    }
+
+    // Mobile ▲▼ taps go through the sortable's FLIP so rows slide into place
+    // instead of snapping — the drag's motion, with no extra screen space.
+    function moveItemAnimated(secId, itemId, dir) {
+      sortable.animate(function() { moveItem(secId, itemId, dir); }, "item");
+    }
+    function moveSectionAnimated(secId, dir) {
+      sortable.animate(function() { moveSection(secId, dir); }, "section");
     }
 
     // Section totals
@@ -1835,16 +1942,16 @@
           draft.sections.map(function(sec, secIdx) {
             var st = sectionTotals(sec);
             // Document core — flat orange-ruled panel (customer line-item treatment)
-            return h("div", { key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12 } },
+            return h("div", Object.assign({ key: sec.id, style: { background: B.raised, borderTop: "1px solid " + B.border, padding: 12 } }, sortable.zoneProps(sec.id)),
               // Section header
               h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 8 } },
-                // Touch reorder ▲▼ (mobile only; desktop has no drag here either,
-                // but the arrows keep the phone workflow usable).
-                isDraft && isMobile && h("div", { style: { display: "flex", flexShrink: 0, gap: 3 } },
-                  h("button", { onClick: function() { moveSection(sec.id, -1); }, disabled: secIdx === 0, "aria-label": "Move section up", className: "ltp-tap",
-                    style: { background: "transparent", border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, cursor: secIdx === 0 ? "default" : "pointer", fontSize: "11px", width: 32, height: 32, padding: 0, opacity: secIdx === 0 ? 0.3 : 1 } }, "▲"),
-                  h("button", { onClick: function() { moveSection(sec.id, 1); }, disabled: secIdx === draft.sections.length - 1, "aria-label": "Move section down", className: "ltp-tap",
-                    style: { background: "transparent", border: "1px solid " + B.border, borderRadius: 4, color: B.textMut, cursor: secIdx === draft.sections.length - 1 ? "default" : "pointer", fontSize: "11px", width: 32, height: 32, padding: 0, opacity: secIdx === draft.sections.length - 1 ? 0.3 : 1 } }, "▼")),
+                // Reorder: grab handle on desktop, ▲▼ buttons on a phone.
+                isDraft && (isMobile
+                  ? h(window.LTPMoveArrows, { boxed: true, label: "section",
+                      onMove: function(dir) { moveSectionAnimated(sec.id, dir); },
+                      canUp: secIdx > 0, canDown: secIdx < draft.sections.length - 1 })
+                  : h("button", sortable.handleProps("section", sec.id, sec.id,
+                      { label: "Reorder section", fontSize: "14px" }), "☰")),
                 isDraft
                   ? h("input", { type: "text", value: sec.label,
                       onChange: function(e) { updateSectionLabel(sec.id, e.target.value); },
@@ -1857,8 +1964,11 @@
               // Items
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 } },
                 sec.items.length === 0 && h("div", { style: { padding: 14, textAlign: "center", color: B.textMut, fontSize: "11px", fontStyle: "italic", background: B.surface, borderRadius: "4px", border: "1px dashed " + B.border } }, "No items yet."),
-                sec.items.map(function(it) {
-                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft, onUpdate: updateItem, onDelete: deleteItem, services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
+                sec.items.map(function(it, itIdx) {
+                  return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft,
+                    onUpdate: updateItem, onDelete: deleteItem, onMove: moveItemAnimated,
+                    sortable: sortable, itemIndex: itIdx, itemCount: sec.items.length,
+                    services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },
