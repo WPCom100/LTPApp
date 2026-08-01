@@ -463,11 +463,19 @@
                     isMobile && h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
                       style: { flexShrink: 0, background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "20px", padding: "0 4px", lineHeight: 1 } }, "×"),
                     h("div", { style: { display: "flex", gap: isMobile ? 6 : 4, alignItems: "center", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined } },
+                      // LTPDateField, not a raw <input type="date">: rows are
+                      // grouped and sorted by day below, so publishing every
+                      // keystroke would re-key the day card mid-edit (a
+                      // half-typed date reads as "" → the row jumps to
+                      // "Unscheduled" and the input is destroyed under the
+                      // caret). The field buffers typed/arrow edits and
+                      // publishes on blur, Enter, or a calendar pick.
                       // One updateItem only — it syncs endDate itself. A second
                       // call here recomputed from the stale `schedule` prop and
                       // clobbered the date update entirely (freezing half-typed
                       // dates like "0002-08-14" into the hidden endDate).
-                      h("input", { type: "date", value: s.date, onChange: function(e) { updateItem(s.id, "date", e.target.value); },
+                      h(window.LTPDateField, { value: s.date, onChange: function(v) { updateItem(s.id, "date", v); },
+                        ariaLabel: "Shift date",
                         style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : undefined, width: isMobile ? undefined : 120, minWidth: 0, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
                       h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
