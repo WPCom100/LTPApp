@@ -42,7 +42,11 @@
 // invoice line items + sections. index.html changed (new script tag + the
 // reorder CSS), so the shell must be refetched; sortable.js itself is picked
 // up by the runtime /components/ rule below, not precached.
-var CACHE_VERSION = 'ltp-shell-v49';
+// v50: the app typeface moved onto <body> and form controls were told to
+// inherit it (index.html again). Two branches had independently claimed v49
+// for the two changes; anything already holding a v49 shell needs a new
+// string to refetch, so the merge takes the next one rather than reusing it.
+var CACHE_VERSION = 'ltp-shell-v50';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -248,6 +248,11 @@
           position: "fixed", left: left, minWidth: wide, maxWidth: "calc(100vw - 16px)",
           zIndex: 3000, background: B.surface, border: "1px solid " + B.border,
           borderRadius: "8px", boxShadow: "0 12px 32px rgba(0,0,0,0.45)", overflow: "hidden",
+          // Stated outright rather than inherited: this panel is portaled to
+          // <body>, so it has no app ancestor to take a typeface from. The body
+          // rule in index.html covers it, but a floating layer rendered outside
+          // the tree shouldn't depend on ambient CSS to look right.
+          fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif",
         }, rect.up ? { bottom: rect.bottomGap + 2 } : { top: rect.top + 2 }),
       },
         h("input", {
