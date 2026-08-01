@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Coverage for window.LTPDateField (components/ui.js) — the deferred-commit
-// <input type="date"> the schedule editor uses for a shift's date.
+// Coverage for window.LTPDateField / window.LTPTimeField (components/ui.js) —
+// the deferred-commit <input type="date"> and <input type="time"> the schedule
+// editor uses for a shift's date, its start/end times and its break times.
 //
-// The bug this guards: a native date input fires a change on EVERY segment
-// keystroke, and the in-between values are garbage — an incomplete date reads
-// as "" and a half-typed year reads as "0002-08-14". The schedule editor groups
-// and sorts its rows by day, so publishing those intermediates re-keyed the day
-// card mid-edit: the row jumped to "Unscheduled", the input was torn down under
-// the caret, and the field deselected after a single digit. Typing a date
+// The bug this guards: a native date/time input fires a change on EVERY segment
+// keystroke, and the in-between values are garbage — an incomplete value reads
+// as "", a half-typed year reads as "0002-08-14", and a half-typed hour reads
+// as "01:00" on the way to "11:00". The schedule editor groups its rows by day
+// AND sorts the rows within a day by start time, so publishing those
+// intermediates re-shuffled the list mid-edit: the row jumped to "Unscheduled"
+// or past its neighbours, the input moved (or was torn down) under the caret,
+// and the field deselected after a single digit. Typing a date or a time
 // through was impossible and arrow-key nudges moved the row on every press.
 //
 // The rules held here:
@@ -60,18 +63,22 @@ global.document = undefined;
 (0, eval)(fs.readFileSync(path.join(root, "components/ui.js"), "utf8"));
 
 const DateField = window.LTPDateField;
+const TimeField = window.LTPTimeField;
 ok("LTPDateField is exported", typeof DateField === "function");
+ok("LTPTimeField is exported", typeof TimeField === "function");
+ok("they are distinct components", DateField !== TimeField);
 
 // Host: renders the component, keeps its hook state across re-renders, and
 // exposes the rendered <input> props so a test can fire its handlers.
-function mount(initialValue) {
+function mount(initialValue, Component) {
+  const Field = Component || DateField;
   const published = [];
   let props = { value: initialValue, onChange: function (v) { published.push(v); } };
   const ctx = { hooks: [], idx: 0, render: null };
   let el = null;
   ctx.render = function () {
     const prev = CTX; CTX = ctx; ctx.idx = 0;
-    try { el = DateField(props); } finally { CTX = prev; }
+    try { el = Field(props); } finally { CTX = prev; }
   };
   ctx.render();
   return {
@@ -222,15 +229,71 @@ function mount(initialValue) {
   eq("field follows a parent-driven change", f.shown(), "2026-12-25");
 }
 
-// ── The schedule editor actually uses it ───────────────────────────────────
-// A regression here would silently restore the raw <input type="date"> and the
-// focus-loss bug with it.
+// ── The time field follows the same rules ──────────────────────────────────
+// Same component, so the commit machinery is already covered above; what
+// matters here is that a TIME behaves the same way, since the schedule editor
+// sorts the rows inside a day by start time and so re-shuffles on every
+// intermediate value it is handed.
 {
-  const src = fs.readFileSync(path.join(root, "components/schedule-editor.js"), "utf8");
-  ok("schedule editor renders LTPDateField", /h\(window\.LTPDateField,\s*\{\s*value:\s*s\.date/.test(src));
-  ok("schedule editor has no raw date input left", src.indexOf('type: "date"') === -1);
+  const f = mount("08:00", TimeField);
+  eq("renders an <input type=time>", [f.el().type, f.el().props.type], ["input", "time"]);
+  // Typing "11:45" into an hh:mm field: the hour passes through "01" before it
+  // reads "11", and "01:00" would sort this row ahead of an 05:00 neighbour.
+  f.key("1"); f.change("01:00");
+  eq("the half-typed hour is not published", f.published, []);
+  eq("but the field shows it", f.shown(), "01:00");
+  f.key("1"); f.change("11:00");
+  f.key("4"); f.change("11:04");
+  f.key("5"); f.change("11:45");
+  eq("nothing published while typing through", f.published, []);
+  f.blur();
+  eq("blur publishes the finished time once", f.published, ["11:45"]);
 }
 
-console.log("\ndate-field suite — PASS: " + pass + "   FAIL: " + fail);
+// An emptied segment reads as "" — the value that sorts a row to the very top
+// of its day. It must not escape mid-edit either.
+{
+  const f = mount("09:00", TimeField);
+  f.key("Backspace"); f.change("");
+  f.key("1"); f.change("01:00");
+  f.key("0"); f.change("10:00");
+  eq("the empty intermediate never reaches the parent", f.published, []);
+  f.blur();
+  eq("only the retyped time is published", f.published, ["10:00"]);
+}
+
+// The AM/PM segment is keyboard-driven too ("P" flips 08:00 → 20:00, which
+// re-sorts the row past a 13:00 neighbour).
+{
+  const f = mount("08:00", TimeField);
+  f.key("p"); f.change("20:00");
+  eq("an AM/PM keystroke is buffered", f.published, []);
+  f.key("Enter");
+  eq("Enter publishes it", f.published, ["20:00"]);
+}
+
+// A clock-popup pick (a change with no keystroke behind it) still lands at once.
+{
+  const f = mount("08:00", TimeField);
+  f.change("07:30");
+  eq("popup pick publishes immediately", f.published, ["07:30"]);
+}
+
+// ── The schedule editor actually uses them ─────────────────────────────────
+// A regression here would silently restore the raw date/time inputs and the
+// focus-loss bug with them.
+{
+  const src = fs.readFileSync(path.join(root, "components/schedule-editor.js"), "utf8");
+  ok("schedule editor renders LTPDateField for the shift date",
+     /h\(window\.LTPDateField,\s*\{\s*value:\s*s\.date/.test(src));
+  ok("shift start time uses LTPTimeField", /h\(window\.LTPTimeField,\s*\{\s*value:\s*s\.time/.test(src));
+  ok("shift end time uses LTPTimeField", /h\(window\.LTPTimeField,\s*\{\s*value:\s*s\.endTime/.test(src));
+  ok("break start time uses LTPTimeField", /h\(window\.LTPTimeField,\s*\{\s*value:\s*brk\.startTime/.test(src));
+  ok("break end time uses LTPTimeField", /h\(window\.LTPTimeField,\s*\{\s*value:\s*brk\.endTime/.test(src));
+  ok("no raw date input left", src.indexOf('type: "date"') === -1);
+  ok("no raw time input left", src.indexOf('type: "time"') === -1);
+}
+
+console.log("\ndate/time-field suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { console.log("\nFailures:"); fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

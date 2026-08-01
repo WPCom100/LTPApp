@@ -478,10 +478,18 @@
                         ariaLabel: "Shift date",
                         style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : undefined, width: isMobile ? undefined : 120, minWidth: 0, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
                       s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
-                      h("input", { type: "time", value: s.time, onChange: function(e) { updateItem(s.id, "time", e.target.value); },
+                      // Deferred like the date, and for the same reason twice
+                      // over: the rows inside a day are sorted by start time, so
+                      // publishing a half-typed hour ("01:00" on the way to
+                      // "11:00", or "" while a segment is empty) jumps this row
+                      // past its neighbours mid-word \u2014 the field moves out from
+                      // under the caret and the time can't be typed through.
+                      h(window.LTPTimeField, { value: s.time, onChange: function(v) { updateItem(s.id, "time", v); },
+                        ariaLabel: "Shift start time",
                         style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
                       h("span", { style: { color: B.textMut, fontSize: "10px" } }, "\u2192"),
-                      h("input", { type: "time", value: s.endTime, onChange: function(e) { updateItem(s.id, "endTime", e.target.value); },
+                      h(window.LTPTimeField, { value: s.endTime, onChange: function(v) { updateItem(s.id, "endTime", v); },
+                        ariaLabel: "Shift end time",
                         style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
                       h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, flexShrink: 0 } }, calcHours(s.time, s.endTime) ? calcHours(s.time, s.endTime) + "h" : ""),
                       h("button", { onClick: function() { updateItem(s.id, "showOnCalendar", !s.showOnCalendar); },
@@ -503,10 +511,16 @@
                         h("button", { onClick: function() { updateBreak(s.id, brk.id, { type: isPaid ? "unpaid" : "paid", endTime: isPaid ? _addTime(brk.startTime, 60) : _addTime(brk.startTime, 30) }); },
                           style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
                           isPaid ? "PAID" : "UNPAID"),
-                        h("input", { type: "time", value: brk.startTime, onChange: function(e) { updateBreak(s.id, brk.id, { startTime: e.target.value }); },
+                        // Break times defer too: a half-typed break feeds the
+                        // labor engine a bogus span, so the day's OT / meal-
+                        // penalty badges flicker (and the "fix" button appears
+                        // and vanishes) between keystrokes.
+                        h(window.LTPTimeField, { value: brk.startTime, onChange: function(v) { updateBreak(s.id, brk.id, { startTime: v }); },
+                          ariaLabel: "Break start time",
                           style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
                         h("span", { style: { color: B.textMut } }, "\u2192"),
-                        h("input", { type: "time", value: brk.endTime, onChange: function(e) { updateBreak(s.id, brk.id, { endTime: e.target.value }); },
+                        h(window.LTPTimeField, { value: brk.endTime, onChange: function(v) { updateBreak(s.id, brk.id, { endTime: v }); },
+                          ariaLabel: "Break end time",
                           style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
                         h("button", { onClick: function() { removeBreak(s.id, brk.id); }, style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "10px", padding: 0 } }, "\u00d7")
                       );
