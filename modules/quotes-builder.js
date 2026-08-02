@@ -460,7 +460,10 @@
               h("div", { style: { width: 40, fontSize: "12px", fontWeight: 700, color: B.accent } }, s.role),
               h("div", { style: { flex: 1, minWidth: 0 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, s.department)
+                h("div", { style: { fontSize: "10px", color: B.textMut, display: "flex", gap: 5, alignItems: "center" } }, s.department,
+                  // The price beside this row is already the client's negotiated
+                  // rate (the list is resolved) — say where it came from.
+                  h(window.ClientRateChip, { svc: s, tiny: true }))
               ),
               h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + s.dayRate + "/day")
             );
@@ -596,6 +599,30 @@
     var missingLabel = item.type === "service" ? "Service" : item.type === "product" ? "Product" : "Equipment";
 
     var unitP = Number(item.unitPrice) || 0;
+    // ── Client-rate provenance (service lines) ─────────────────────────────
+    // `services` here is already resolved for THIS quote's client, so svcData
+    // carries `clientRate` when the role was negotiated. The line keeps its own
+    // snapshotted price — re-pricing on the client's behalf would silently
+    // rewrite a sent quote — so a mismatch is surfaced with a one-click apply.
+    function clientRateNote(small) {
+      if (!svcData || !svcData.clientRate) return null;
+      var maps = window.LTP_serviceRateMaps(svcData);
+      var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
+      var stale = Math.abs(live - unitP) > 0.005;
+      return h("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginTop: 2 } },
+        h(window.ClientRateChip, { svc: svcData, tiny: small }),
+        svcData.minHours > 0 && h("span", { style: { fontSize: small ? "10px" : "11px", color: B.textMut } },
+          svcData.minHours + "-hour day minimum"),
+        stale && (isLocked
+          ? h("span", { style: { fontSize: small ? "10px" : "11px", color: B.warn } }, "contract rate is now $" + window.LTP_money(live))
+          : h("button", { onClick: function() {
+                onUpdate(sectionId, item.id, { unitPrice: live, cost: Math.round((maps.costMap[svcRateType] || 0) * 100) / 100, adjustedPrice: null });
+              },
+              title: "This line was priced at $" + window.LTP_money(unitP) + "; the client's contract rate for this tier is now $" + window.LTP_money(live) + ". Click to re-price the line.",
+              style: { background: "transparent", border: "1px solid " + B.warn + "66", color: B.warn, borderRadius: "3px", padding: "0 5px",
+                       fontSize: small ? "10px" : "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
+              "contract rate $" + window.LTP_money(live) + " — apply")));
+    }
     var effectivePrice = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lineTotal = effectivePrice * (Number(item.qty) || 0);
     var origTotal = unitP * (Number(item.qty) || 0);
@@ -622,6 +649,7 @@
             h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
             item.type === "equipment" && h("div", { style: { fontSize: "12px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
             item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            clientRateNote(false),
             sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
           !isLocked && onMove && reorderControl(),
           !isLocked && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap", style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 40, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
@@ -677,6 +705,7 @@
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
         item.type === "equipment" && h("div", { style: { fontSize: "10px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
         item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+        clientRateNote(true),
         sourceMissing && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked to quote")
       ),
       // Rate type selector (services only)
@@ -1137,7 +1166,7 @@
   }
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, fees, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
@@ -1994,6 +2023,16 @@
     }
 
     // ── Derived data ───────────────────────────────────────────────────────────
+    // The rate card AS THIS CLIENT SEES IT — negotiated overrides folded in
+    // (theme.js::LTP_servicesForClient). Service lines added, re-tiered, or
+    // badged below all read `svcs`, so a contract rate prices the quote the same
+    // way it prices the schedule it came from. Switching the client re-resolves;
+    // lines ALREADY on the quote keep their snapshotted price (same rule as a
+    // base rate-card edit) and surface a hint when they differ.
+    var svcs = React.useMemo(function() {
+      return window.LTP_servicesForClient(services, clientRates,
+        window.LTP_clientRef({ clientType: draft.clientType, companyId: draft.companyId, clientContactId: draft.clientContactId }));
+    }, [services, clientRates, draft.clientType, draft.companyId, draft.clientContactId]);
     var selectedProject = draft.projectId ? projects.find(function(p) { return p.id === draft.projectId; }) : null;
     var selectedCompany = draft.companyId ? companies.find(function(c) { return c.id === draft.companyId; }) : null;
     // QuickBooks tax state. Contacts billed directly are always taxable;
@@ -2342,7 +2381,7 @@
             sectionIndex: secIdx, sectionCount: draft.sections.length, onSectionMove: moveSectionAnimated,
             quoteDates: quoteDates, quoteStatus: draft.status,
             sectionSubtotal: t.subtotal, sectionMargin: t.margin,
-            services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable,
+            services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
             onDelete: deleteSection,
@@ -2543,7 +2582,7 @@
           sectionLabel: (pickerSec || {}).label || "",
           sectionItems: pickerSec ? pickerSec.items : [],
           allSections: draft.sections,
-          equipment: equipment, products: products, services: services, fees: fees,
+          equipment: equipment, products: products, services: svcs, fees: fees,
           allocations: allocations,
           quoteDates: pickerDates,
           onAdd: function(item) { addItemToSection(pickerForSection, item); },

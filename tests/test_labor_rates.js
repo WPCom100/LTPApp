@@ -445,6 +445,136 @@ eq("L3 checkbox but company missing → typed fallback", SITE({ siteUseCompanyAd
 eq("L4 no data → empty", SITE({}, COMPS), "");
 eq("L5 null project → empty", SITE(null, COMPS), "");
 
+// ── M. Per-client service rates + minimum charges ───────────────────────────
+// A client can negotiate a different rate for SPECIFIC roles, plus a minimum
+// number of billable/payable hours per day. Resolution happens at one seam
+// (LTP_servicesForClient); the engine only interprets minHours/minCostHours.
+const REF = window.LTP_clientRef, FOR = window.LTP_servicesForClient, APPLY = window.LTP_applyClientRate;
+for (const [name, fn] of Object.entries({ LTP_clientRef: REF, LTP_servicesForClient: FOR, LTP_applyClientRate: APPLY,
+                                          LTP_clientRateMap: window.LTP_clientRateMap, LTP_clientRateMatches: window.LTP_clientRateMatches })) {
+  if (typeof fn !== "function") { console.error("theme.js did not export " + name); process.exit(1); }
+}
+
+// M1: clientRef normalizes quotes/invoices/projects to one shape.
+eq("M1 company quote", JSON.stringify(REF({ clientType: "company", companyId: 3, clientContactId: null })), JSON.stringify({ clientType: "company", companyId: 3, clientContactId: null }));
+eq("M1 contact quote", JSON.stringify(REF({ clientType: "contact", companyId: null, clientContactId: 9 })), JSON.stringify({ clientType: "contact", companyId: null, clientContactId: 9 }));
+eq("M1 project (company only)", JSON.stringify(REF({ companyId: 3 })), JSON.stringify({ clientType: "company", companyId: 3, clientContactId: null }));
+eq("M1 internal project → null", REF({ companyId: null, internal: true }), null);
+eq("M1 contact type without id → null", REF({ clientType: "contact", clientContactId: null }), null);
+eq("M1 null entity → null", REF(null), null);
+
+// M2: resolution only touches the overridden role, and returns the SAME array
+// when nothing applies (identity is what lets callers memoize).
+const CR = [{ id: 1, clientType: "company", companyId: 3, serviceId: 1, dayRate: 800, minHours: 10, active: true }];
+const fumc = FOR(S, CR, REF({ companyId: 3 }));
+eq("M2 L1 day rate overridden", fumc[0].dayRate, 800);
+eq("M2 L1 carries the minimum", fumc[0].minHours, 10);
+eq("M2 L2 untouched", fumc[1].dayRate, 600);
+eq("M2 base card not mutated", S[0].dayRate, 1000);
+ok("M2 no client → same array", FOR(S, CR, null) === S);
+ok("M2 other client → same array", FOR(S, CR, REF({ companyId: 4 })) === S);
+ok("M2 no rate rows → same array", FOR(S, [], REF({ companyId: 3 })) === S);
+
+// M3: an inactive row is ignored; a contact-client row never matches a company.
+ok("M3 inactive ignored", FOR(S, [{ id: 2, clientType: "company", companyId: 3, serviceId: 1, dayRate: 800, active: false }], REF({ companyId: 3 })) === S);
+ok("M3 contact row vs company client", FOR(S, [{ id: 3, clientType: "contact", clientContactId: 3, serviceId: 1, dayRate: 800 }], REF({ companyId: 3 })) === S);
+eq("M3 contact row matches contact client", FOR(S, [{ id: 3, clientType: "contact", clientContactId: 3, serviceId: 1, dayRate: 800 }], REF({ clientType: "contact", clientContactId: 3 }))[0].dayRate, 800);
+
+// M4: derived tiers follow the NEW day rate unless the contract restates them.
+// (0 is how the base card says "derive" — see LTP_serviceRateMaps.)
+const withHalf = [{ id: 1, role: "L1", dayRate: 1000, halfDay: 500, otRate: 150, dayCost: 800, halfDayCost: 400, otCost: 120 }];
+let rs = APPLY(withHalf[0], { id: 9, dayRate: 800 });
+eq("M4 half cleared for derivation", rs.halfDay, 0);
+eq("M4 ot cleared for derivation", rs.otRate, 0);
+eq("M4 cost side untouched when only rate overridden", rs.dayCost, 800);
+eq("M4 cost half untouched", rs.halfDayCost, 400);
+eq("M4 derived half via rate maps", window.LTP_serviceRateMaps(rs).priceMap.half, 400);
+rs = APPLY(withHalf[0], { id: 9, dayRate: 800, halfDay: 600 });
+eq("M4 explicit half wins", window.LTP_serviceRateMaps(rs).priceMap.half, 600);
+rs = APPLY(withHalf[0], { id: 9, dayCost: 500 });
+eq("M4 cost half derives from new day cost", window.LTP_serviceRateMaps(rs).costMap.half, 250);
+eq("M4 rate side untouched when only cost overridden", window.LTP_serviceRateMaps(rs).priceMap.half, 500);
+rs = APPLY(withHalf[0], { id: 9, dayRate: 0 });
+eq("M4 zero is a real rate, not 'inherit'", rs.dayRate, 0);
+rs = APPLY(withHalf[0], { id: 9, dayRate: "", halfDay: null });
+eq("M4 blank/null inherit", rs.dayRate, 1000);
+eq("M4 blank leaves half alone", rs.halfDay, 500);
+
+// M5: THE headline case — reduced day rate + full 10-hour day minimum. A 4-hour
+// call bills the full (adjusted) day rate, not the half day.
+const MINS = FOR(S, [{ id: 1, clientType: "company", companyId: 3, serviceId: 1, dayRate: 800, minHours: 10 }], REF({ companyId: 3 }));
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], MINS);
+eq("M5 4h billed as full day", d.units[0].tier, "full");
+near("M5 4h bills the adjusted day rate", d.units[0].rateTotal, 800);
+eq("M5 no OT from the minimum", d.units[0].otHours, 0);
+eq("M5 actual hours still reported", d.units[0].paidHours, 4);
+eq("M5 billed hours floored to the minimum", d.units[0].billedHours, 10);
+eq("M5 minHoursApplied flagged", d.units[0].minHoursApplied, true);
+// …and without the minimum the same call is a half day off the base card.
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], S);
+eq("M5 control: no minimum → half", d.units[0].tier, "half");
+near("M5 control: half of base rate", d.units[0].rateTotal, 500);
+
+// M6: a meal penalty stacks ON TOP of the minimum — the guarantee can't absorb
+// it. 7h straight through = 5 regular + 2h penalty; floored to a 10h day the
+// client still owes the 2 penalty hours.
+d = DAY([{ time: "09:00", endTime: "16:00", breaks: [], positions: [P(1)] }], MINS);
+eq("M6 meal penalty preserved", d.units[0].mealPenaltyHours, 2);
+eq("M6 OT = the penalty only", d.units[0].otHours, 2);
+near("M6 full day + 2h penalty at derived OT rate", d.units[0].rateTotal, 800 + 2 * (800 / 10 * 1.5));
+
+// M7: hours ABOVE the minimum bill normally (the minimum is a floor, not a cap),
+// and a minimum over 10h pushes into real OT.
+const longDay = [{ time: "08:00", endTime: "14:00", breaks: [], positions: [P(1)] }, { time: "15:00", endTime: "21:00", breaks: [], positions: [P(1)] }];
+d = DAY(longDay, MINS);           // two 6h segments = 10 regular + 2h meal penalty
+eq("M7 12h worked → minimum is irrelevant", d.units[0].otHours, DAY(longDay, S).units[0].otHours);
+eq("M7 12h worked → minimum not flagged", d.units[0].minHoursApplied, false);
+const MIN12 = FOR(S, [{ id: 1, clientType: "company", companyId: 3, serviceId: 1, minHours: 12 }], REF({ companyId: 3 }));
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], MIN12);
+eq("M7 12h minimum on a 4h call → 2h OT", d.units[0].otHours, 2);
+near("M7 12h minimum bills day + 2h OT", d.units[0].rateTotal, 1000 + 2 * 150);
+
+// M8: bill and pay minimums are independent — a client's billing guarantee never
+// inflates the payout. 4h call, 10h BILL minimum, no pay minimum.
+eq("M8 client billed full", DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], MINS).units[0].tier, "full");
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], MINS);
+eq("M8 crew still paid half", d.units[0].costTier, "half");
+near("M8 half-day cost off the base card", d.units[0].costTotal, 400);
+// With a pay minimum too, the payout follows.
+const BOTH = FOR(S, [{ id: 1, clientType: "company", companyId: 3, serviceId: 1, dayRate: 800, dayCost: 600, minHours: 10, minCostHours: 10 }], REF({ companyId: 3 }));
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(1)] }], BOTH);
+eq("M8 pay minimum promotes the pay tier", d.units[0].costTier, "full");
+near("M8 custom payout paid in full", d.units[0].costTotal, 600);
+near("M8 custom contract rate billed", d.units[0].rateTotal, 800);
+
+// M9: the payout pipeline reads the PAY side. A billing-only minimum leaves the
+// stamped snapshot at the half-day cost.
+pd = CDP([{ time: "09:00", endTime: "13:00", breaks: [], positions: [PP(1, 7, "confirmed")] }], 7, MINS);
+near("M9 snapshot total is the pay side", pd.total, 400);
+eq("M9 snapshot tier is the pay tier", pd.tier, "half");
+eq("M9 snapshot hours are pay hours", pd.paidHours, 4);
+pd = CDP([{ time: "09:00", endTime: "13:00", breaks: [], positions: [PP(1, 7, "confirmed")] }], 7, BOTH);
+near("M9 pay minimum → full custom payout", pd.total, 600);
+eq("M9 pay minimum tier", pd.tier, "full");
+eq("M9 pay minimum hours floored", pd.paidHours, 10);
+
+// M10: a crew member's own negotiated floor still applies on top of a client
+// rate, and follows the PAY tier (not a client's inflated billing tier).
+d = DAY([{ time: "09:00", endTime: "13:00", breaks: [], positions: [PC(1, CID)] }], MINS, { 7: 900 });
+near("M10 crew floor on a half pay-tier day = min*0.5", d.units[0].costTotal, 450);
+eq("M10 crew floor flagged", d.units[0].minApplied, true);
+near("M10 client billing untouched by the crew floor", d.units[0].rateTotal, 800);
+
+// M11: payoutRows re-prices the recomputed figure against the PROJECT's client.
+const CR_PAY = [{ id: 1, clientType: "company", companyId: 3, serviceId: 1, dayCost: 650, minCostHours: 10 }];
+let ms = [{ id: "m1", date: "2026-07-10", time: "09:00", endTime: "13:00", breaks: [], positions: [PP(1, 7, "confirmed", { id: "mp1" })] }];
+po = PAYOUT([{ id: 7, name: "MinP", companyId: 3, schedule: ms }], CONTACTS, S, "2026-07-01", "2026-07-31", CR_PAY);
+near("M11 recomputed on the client's payout rate", po.groups[0].rows[0].current.total, 650);
+po = PAYOUT([{ id: 7, name: "MinP", companyId: 3, schedule: ms }], CONTACTS, S, "2026-07-01", "2026-07-31");
+near("M11 without rates → base half day", po.groups[0].rows[0].current.total, 400);
+po = PAYOUT([{ id: 7, name: "MinP", companyId: 4, schedule: ms }], CONTACTS, S, "2026-07-01", "2026-07-31", CR_PAY);
+near("M11 another client → base half day", po.groups[0].rows[0].current.total, 400);
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

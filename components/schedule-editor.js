@@ -644,7 +644,16 @@
                         h("div", { style: { flexShrink: 0, width: 92, textAlign: "right", fontSize: "9px", marginLeft: isMobile ? "auto" : undefined } },
                           !posUnit ? null : (isUnitPrimary
                             ? [
-                                h("div", { key: "r", style: { color: B.accent, fontWeight: 600 } }, "$" + Math.round(posUnit.rateTotal)),
+                                // A rate that came from this client's contract is
+                                // marked, so a figure that doesn't match the base
+                                // rate card is never a mystery.
+                                (posUnit.svc && posUnit.svc.clientRate) ? h("div", { key: "cr", style: { marginBottom: 1 } },
+                                  h(window.ClientRateChip, { svc: posUnit.svc, tiny: true })) : null,
+                                h("div", { key: "r", style: { color: B.accent, fontWeight: 600 },
+                                    title: posUnit.minHoursApplied
+                                      ? ("Billed as " + posUnit.billedHours + "h — this client's " + posUnit.minHours + "-hour minimum for " + (posUnit.svc.role || "this role") + " (worked " + posUnit.paidHours + "h).")
+                                      : undefined },
+                                  "$" + Math.round(posUnit.rateTotal)),
                                 posUnit.fullMargin
                                   ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
                                   : h("div", { key: "c", style: { color: posUnit.minApplied ? B.warn : B.textMut },
@@ -692,9 +701,18 @@
                     if (u.mealPenaltyHours > 0) extras.push(u.mealPenaltyHours + "h meal penalty");
                     if (regOT > 0) extras.push(regOT + "h OT");
                     var label = u.svc.role + (roleUnitCount[u.serviceId] > 1 ? " #" + u.slot : "") + " — " + (u.tier === "half" ? "Half" : "Full") + " " + u.paidHours + "h";
-                    return h("div", { key: u.serviceId + "#" + u.slot, style: { display: "flex", gap: 6 } },
+                    return h("div", { key: u.serviceId + "#" + u.slot, style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
                       h("span", { style: { color: B.textMut } }, label),
                       extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),
+                      // Minimum charge: the day is short but bills (and/or pays)
+                      // up to the client's contracted floor.
+                      u.minHoursApplied && h("span", { style: { color: B.info, fontWeight: 600 },
+                        title: "Billed as " + u.billedHours + "h under this client's " + u.minHours + "-hour minimum for " + u.svc.role + "." },
+                        "· billed " + u.billedHours + "h (" + u.minHours + "h min)"),
+                      u.minCostHoursApplied && h("span", { style: { color: B.info, fontWeight: 600 },
+                        title: "Paid as " + u.costHours + "h under this client's " + u.minCostHours + "-hour payout minimum for " + u.svc.role + "." },
+                        "· paid " + u.costHours + "h (" + u.minCostHours + "h min)"),
+                      u.svc.clientRate && h(window.ClientRateChip, { svc: u.svc, tiny: true }),
                       u.fullMargin && h("span", { style: { color: B.success, fontWeight: 600 } }, "· full margin"));
                   });
                 })(),

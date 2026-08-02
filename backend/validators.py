@@ -204,6 +204,23 @@ def _build_rules():
             "hourlyCost":  _nonneg_number,
             "otCost":      _nonneg_number,
         },
+        # Every rate/cost field is nullable ("inherit the base Service value"),
+        # which _nonneg_number already passes through — it only rejects negative
+        # or non-numeric values.
+        models.ClientRate: {
+            "clientType":   _enum("client_type"),
+            "label":        _str_max(100),
+            "dayRate":      _nonneg_number,
+            "halfDay":      _nonneg_number,
+            "hourlyRate":   _nonneg_number,
+            "otRate":       _nonneg_number,
+            "dayCost":      _nonneg_number,
+            "halfDayCost":  _nonneg_number,
+            "hourlyCost":   _nonneg_number,
+            "otCost":       _nonneg_number,
+            "minHours":     _nonneg_number,
+            "minCostHours": _nonneg_number,
+        },
         models.Allocation: {
             "state":     _enum("allocation_state"),
             "qty":       _nonneg_number,

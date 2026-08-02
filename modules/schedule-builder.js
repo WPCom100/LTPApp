@@ -20,9 +20,24 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, companies, quotes, setQuotes, getNextQuoteId }) {
+  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId }) {
     var isMobile = window.LTP_useIsMobile();
     var company = companies.find(function(c) { return c.id === project.companyId; });
+
+    // THE rate card for this project — the catalog with this client's negotiated
+    // overrides folded in (theme.js::LTP_servicesForClient). Everything below
+    // prices off `svcs`, never the raw `services` prop, so a contract rate or an
+    // hours minimum lands on the editor, the summary, and the generated quote
+    // identically. Memoized on identity: a client with no negotiated rates gets
+    // the same array back, so this is free for the common case.
+    var svcs = useMemo(function() {
+      return window.LTP_servicesForClient(services, clientRates, window.LTP_clientRef(project));
+    }, [services, clientRates, project.companyId]);
+    // Roles this client has negotiated — surfaced as a banner so the producer
+    // knows the day totals aren't the base card.
+    var clientRateRoles = useMemo(function() {
+      return svcs.filter(function(s) { return s && s.clientRate; });
+    }, [svcs]);
 
     // Deep clone schedule with positions
     var initial = useMemo(function() {
@@ -150,7 +165,7 @@
       });
       var crewMins = window.LTP_crewMinMap(contacts);
       Object.keys(dateMap).forEach(function(d) {
-        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, services, crewMins);
+        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, svcs, crewMins);
         totalRate += dayLabor.rateTotal;
         totalCost += dayLabor.costTotal;
       });
@@ -218,8 +233,8 @@
         // (removed/reassigned) and crew whose still-held shift was MOVED. Both
         // park into the notify tray, grouped per person, for the producer to
         // send or decline. Snapshot here (the draft is about to persist).
-        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, services);
-        var changed = window.LTP_diffChangedShifts(cleanRef.current.schedule, draft.schedule, contacts, services);
+        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, svcs);
+        var changed = window.LTP_diffChangedShifts(cleanRef.current.schedule, draft.schedule, contacts, svcs);
         removed.concat(changed).forEach(function(g) {
           window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: project.id, projectName: project.name || "", template: g.template, shifts: g.shifts });
         });
@@ -325,15 +340,20 @@
         if (!g.dayCall || !g.dayWrap) return;
         var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
 
-        window.LTP_calcDayLabor(g.items, services, crewMins).units.forEach(function(u) {
+        window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
           // Each unit is one person. The day-rate line aggregates units of the
           // same role+tier (qty = how many people); costAccum adds $0 for a
           // full-margin unit so its rate is pure margin. Per-unit cost is
           // blended at build time so a single line stays correct.
           var drKey = u.serviceId + "|" + u.tier;
           if (!dayRateItems[drKey]) {
-            dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
+            dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other",
+                                    minHours: u.minHours || 0, minApplied: false };
           }
+          // A day billed up to the client's contract minimum says so on the
+          // quote line — otherwise "Full day" against a 4-hour call reads as a
+          // mistake to whoever reviews it.
+          if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
           dayRateItems[drKey].qty += 1;
           dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
           if (dayRateItems[drKey].dates.indexOf(fmtDate) === -1) dayRateItems[drKey].dates.push(fmtDate);
@@ -368,7 +388,8 @@
           rateType: li.tier === "half" ? "half" : "day",
           qty: li.qty, unitPrice: li.rate, adjustedPrice: null,
           cost: li.qty > 0 ? Math.round((li.costAccum / li.qty) * 100) / 100 : 0,
-          notes: dayList, deliveredQty: 0, invoicedQty: 0
+          notes: dayList + (li.minApplied ? " \u00b7 " + li.minHours + "-hour contract minimum applied" : ""),
+          deliveredQty: 0, invoicedQty: 0
         } });
       });
 
@@ -457,7 +478,7 @@
       h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0 } },
-          h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: services,
+          h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {
               var otherBookings = [];
@@ -495,7 +516,19 @@
               h("span", { style: { fontSize: "11px", color: B.textMut } }, "$" + stats.totalCost.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "3px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
               h("span", { style: { fontSize: "11px", color: B.textMut } }, "Margin"),
-              h("span", { style: { fontSize: "11px", fontWeight: 700, color: stats.margin >= 0 ? B.success : B.danger } }, "$" + stats.margin.toLocaleString()))
+              h("span", { style: { fontSize: "11px", fontWeight: 700, color: stats.margin >= 0 ? B.success : B.danger } }, "$" + stats.margin.toLocaleString())),
+            // Which roles on this schedule are priced on the client's contract
+            // rather than the base card — the totals above already reflect them.
+            clientRateRoles.length > 0 && h("div", { style: { marginTop: 8, paddingTop: 8, borderTop: "1px solid " + B.border } },
+              h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.info, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 5 } },
+                (company ? company.name : "Client") + " rates"),
+              clientRateRoles.map(function(s) {
+                var maps = window.LTP_serviceRateMaps(s);
+                return h("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", gap: 6, fontSize: "10px", padding: "1px 0" } },
+                  h("span", { style: { color: B.textSec, fontWeight: 600 } }, s.role,
+                    s.minHours > 0 && h("span", { style: { color: B.info, fontWeight: 700 } }, " · " + s.minHours + "h min")),
+                  h("span", { style: { color: B.textMut } }, "$" + Math.round(maps.priceMap.day) + "/day"));
+              }))
           ),
 
           // CONFLICTS

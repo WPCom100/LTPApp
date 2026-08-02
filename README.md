@@ -249,6 +249,88 @@ from unassigned — while the booking was still live. The same fix applies to
 **Primary Contact**, which likewise shows the selected person even when the
 narrowed list excludes them, with "Other contacts" as the escape hatch.
 
+## Client service rates (contract rates + day minimums)
+
+A client can be on a negotiated rate for **specific roles**, with its own crew
+pay and its own **minimum charge** — the shape of a real contract:
+
+> A1 for FUMC is a reduced day rate, but carries a full 10-hour day minimum, so
+> a 4-hour call bills the full adjusted day rate, not the half day.
+
+Rates are added **one role at a time**. Nothing is toggled on catalog-wide: a
+role with no negotiated row bills the base rate card exactly as before, so the
+feature is invisible until you use it.
+
+### Where you edit them
+
+- **Quotes → Client Rates** — pick a client (company or an individual billed
+  directly), then add the roles they negotiated. Also lists every client who
+  has rates, so you can jump between contracts.
+- **CRM → a company → Service Rates** — the same editor, in context.
+
+Each row carries:
+
+| Field | Meaning |
+|---|---|
+| **Client Rate** (day / half / hourly / OT) | What this client pays. Blank = inherit the base card. |
+| **Crew Pay** (day / half / hourly / OT) | What we pay for that role on this client's work — the margin column, independent of the rate. |
+| **Bill Min (hrs)** | The day bills as if at least this many hours were worked. |
+| **Pay Min (hrs)** | Same, for the payout. Separate on purpose — see below. |
+| **Contract Label / Notes** | Which agreement this came from. |
+| **Active / Paused** | Park a rate without deleting it; paused rows are ignored everywhere. |
+
+**Blank means inherit, `0` means zero.** Set only the Day row and the half /
+hourly / OT tiers derive off it (÷2, ÷10, ÷10×1.5) exactly like the base card —
+so a discounted day rate can't leave a stale full-price half day behind. Restate
+any tier explicitly to override that.
+
+### How a minimum behaves
+
+The minimum floors the **non-penalty** hours of a person's day, then the normal
+tier and OT math runs on top:
+
+- 4h worked, 10h minimum → **full day** at the contract rate, no OT.
+- 7h straight through, 10h minimum → full day **plus the 2h meal penalty**. A
+  guarantee can't absorb a penalty the client actually incurred.
+- 12h worked, 10h minimum → priced on the 12 hours. The minimum is a floor,
+  never a cap.
+- 4h worked, 12h minimum → full day **+ 2h OT**.
+
+**Bill and pay minimums are separate numbers.** A client's 10-hour billing
+guarantee does not silently become a 10-hour payout — with a bill minimum only,
+the same day bills `full` and pays `half`. Set both when the crew is owed the
+guarantee too. A crew member's own negotiated floor (Labor → Crew Roster →
+Minimum Day Rate) still applies on top of whatever the contract pays.
+
+### Where it shows up
+
+Resolution happens at one seam — `theme.js::LTP_servicesForClient` folds a
+client's overrides into the rate card, and every pricing surface consumes the
+result:
+
+- **Schedule builder / editor** — day totals, per-person breakdown ("A1 — Full
+  4h · billed 10h (10h min)"), a `CLIENT RATE` chip on the position, and a
+  panel listing the client's negotiated roles.
+- **Quote from a schedule** — lines price at the contract rate, and a day billed
+  up to a minimum says so in the line notes.
+- **Quote builder / invoice editor** — the service picker and the rate-type
+  switch price at the client's rate; a line whose snapshot no longer matches the
+  contract offers a one-click **apply** rather than re-pricing itself (a sent
+  document must never move on its own).
+- **Payouts** — the recomputed figure and the pay locked at confirm/sign-off use
+  the project's client rate card; a day paid up to a minimum is labelled
+  "(contract minimum)".
+
+Already-priced quote/invoice lines and already-locked pay keep their saved
+amounts when a contract changes — the same rule the base rate card follows.
+
+### Data model
+
+`client_rates`, one row per (client, service) — see `backend/models.py::ClientRate`.
+All three FKs CASCADE, so an override can't outlive its client or its service.
+The engine reads only `minHours` / `minCostHours` off the resolved service; the
+rate/cost columns are ordinary rate-card values by the time they reach it.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that
@@ -550,7 +632,7 @@ All entities follow REST conventions:
 | PUT | `/api/{entity}/{id}` | Update |
 | DELETE | `/api/{entity}/{id}` | Delete |
 
-Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`
+Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`
 
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
@@ -600,6 +682,7 @@ ltp-app/
 │       ├── api.py         # REST API routes + /sync
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete
 ├── components/            # Frontend: shared React components
+│   └── client-rates.js    # Per-client rate editor + the CLIENT RATE chip
 ├── modules/               # Frontend: page modules
 ├── data/                  # Frontend: default/seed data
 ├── index.html             # Frontend: entry point
