@@ -754,6 +754,20 @@ class CrewRequest(Base):
     existing two-step hire flow is preserved. Decline leaves the crew member
     attached to the (now `declined`) position for the producer to handle —
     nothing reopens automatically.
+
+    One row can also record a booking that never used any of that: a DIRECT
+    BOOK (`silent=True`), for the crew member already agreed with by phone or
+    text. It skips the whole ask — no email, no landing page, no crew action —
+    and lands as `status='accepted'` with its positions straight at
+    `confirmed`:
+
+        book direct → positions open → confirmed  ; status accepted, silent
+
+    `silent` is what separates the two on read: everything downstream
+    (integrity reconcile, the producer list, the Payouts pay snapshot) treats a
+    direct book exactly like an accepted-then-confirmed request, but the Labor
+    UI badges it "Booked directly" so a booking the crew member was never
+    emailed about is never mistaken for one they answered.
     """
     __tablename__ = "crew_requests"
 
@@ -768,6 +782,11 @@ class CrewRequest(Base):
     contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
     position_ids = Column(JSON, default=list)            # list[str] — schedule position ids this request covers
     status = Column(String(20), default="pending")       # {pending, accepted, declined, withdrawn}
+    # Direct book — recorded by the producer, never sent to the crew member.
+    # Server-set only (routes/crew.py send with {"silent": true}); the crew
+    # member has no way to reach it, since the whole point is that no token
+    # ever left the building.
+    silent = Column(Boolean, nullable=False, server_default=false(), default=False)
     comment = Column(Text, default="")                   # optional note the crew member leaves on response
     sent_at = Column(DateTime(timezone=True), server_default=func.now())
     responded_at = Column(DateTime(timezone=True), nullable=True)  # set when the crew member accepts/declines

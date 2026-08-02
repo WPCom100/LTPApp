@@ -11,6 +11,8 @@ Covers the full state machine and security posture of backend/routes/crew.py:
   - decline → positions declined
   - withdraw (pending) → positions back to open; 409 once answered
   - split: positionIds subset requests only those positions
+  - direct book ({silent: true}): no email, positions straight to confirmed,
+    allowed for crew with no email on file, and closed to resend/withdraw
   - guards: non-crew contact, crew without email, no-sendable-positions, and
     short/garbage tokens
 
@@ -78,6 +80,9 @@ CO_ADDR     = 6001  # company with a billing address (for P_ADDR_CO)
 P_DRIFT     = 7024  # positions drifted open before the answer → accept still lands
 P_ZOMBIE    = 7025  # accepted request whose positions drifted open → list heals
 P_FLOOR     = 7026  # stale PUT downgrade blocked; deliberate release passes
+P_SILENT    = 7027  # direct book (silent) → confirmed, no email
+P_SILENT2   = 7028  # direct book for a crew member with NO email on file
+P_SILENT3   = 7029  # a direct book can't be resent or withdrawn
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -229,6 +234,21 @@ def _setup():
                 db.add(models.Project(id=P_FLOOR, name="Gala Floor", schedule=[
                     _shift("sfl", "Show", "2026-08-21", [_pos("pfl_a", C1, service=S1)]),
                 ]))
+                # Direct book (silent) — two shifts for C1 plus another crew
+                # member's slot, which must stay untouched.
+                db.add(models.Project(id=P_SILENT, name="Gala Silent", schedule=[
+                    _shift("ssi", "Show", "2026-08-23",
+                           [_pos("psi_a", C1, service=S1), _pos("psi_b", C1, service=S1),
+                            _pos("psi_x", C2, service=S1)]),
+                ]))
+                # …and one for the crew member with NO email on file: bookable
+                # directly, never sendable.
+                db.add(models.Project(id=P_SILENT2, name="Gala Silent NoEmail", schedule=[
+                    _shift("ssn", "Show", "2026-08-25", [_pos("psn_a", C2, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_SILENT3, name="Gala Silent Locked", schedule=[
+                    _shift("ssl", "Show", "2026-08-27", [_pos("psl_a", C1, service=S1)]),
+                ]))
                 await db.commit()
 
         asyncio.run(seed())
@@ -265,10 +285,12 @@ def _pos_crew(project_json, pos_id):
     return None
 
 
-def _send(client, tok, pid, cid, position_ids=None):
+def _send(client, tok, pid, cid, position_ids=None, silent=None):
     body = {"projectId": pid, "contactId": cid}
     if position_ids is not None:
         body["positionIds"] = position_ids
+    if silent is not None:
+        body["silent"] = silent
     return client.post("/api/crew-requests/send", json=body, cookies={"ltp_session": tok})
 
 
@@ -325,6 +347,85 @@ def test_send_skips_unscheduled_positions_in_mixed_project():
     proj = _project(client, tok, P_MIXED)
     assert _pos_status(proj, "pmx_dated") == "requested"
     assert _pos_status(proj, "pmx_undated") == "open"
+
+
+# ── direct book (silent — no email, no ask) ─────────────────────────────────
+
+def test_silent_send_books_positions_confirmed_without_emailing():
+    """{silent: true} books the crew member outright: no email composed or
+    sent, positions straight to confirmed, request stored as an already
+    answered `accepted` row flagged silent."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    called = {"n": 0}
+
+    async def fake_send(**kwargs):
+        called["n"] += 1
+        return {"id": "x"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = _send(client, tok, P_SILENT, C1, silent=True)
+    finally:
+        gmailmod.send = orig
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert called["n"] == 0                                  # nothing was sent
+    assert body["emailStatus"] == {"emailed": False, "silent": True}
+    assert body["status"] == "accepted" and body["silent"] is True
+    assert body["respondedAt"]                               # already answered
+    assert set(body["positionIds"]) == {"psi_a", "psi_b"}
+
+    proj = _project(client, tok, P_SILENT)
+    assert _pos_status(proj, "psi_a") == "confirmed"
+    assert _pos_status(proj, "psi_b") == "confirmed"
+    assert _pos_crew(proj, "psi_a") == C1                    # crew stays attached
+    # Another crew member's slot on the same shift is untouched.
+    assert _pos_status(proj, "psi_x") == "open"
+
+
+def test_silent_send_works_for_crew_without_an_email():
+    """The no-email guard is a delivery-address check, so it applies only to a
+    real send. A crew member who only takes texts can still be booked."""
+    client, tok = _setup()
+    r = _send(client, tok, P_SILENT2, C2)                     # normal send → blocked
+    assert r.status_code == 400 and "email" in r.text, r.text
+    assert _pos_status(_project(client, tok, P_SILENT2), "psn_a") == "open"
+
+    r = _send(client, tok, P_SILENT2, C2, silent=True)        # direct book → allowed
+    assert r.status_code == 200, r.text
+    assert r.json()["silent"] is True
+    assert _pos_status(_project(client, tok, P_SILENT2), "psn_a") == "confirmed"
+
+
+def test_silent_book_cannot_be_resent_or_withdrawn():
+    """A direct book has no outstanding ask, so the chase actions are closed:
+    unbooking goes through the Labor status controls like any confirmed
+    position."""
+    client, tok = _setup()
+    req = _send(client, tok, P_SILENT3, C1, silent=True).json()
+    r = client.post("/api/crew-requests/" + str(req["id"]) + "/resend", cookies={"ltp_session": tok})
+    assert r.status_code == 409, r.text
+    r = client.post("/api/crew-requests/" + str(req["id"]) + "/withdraw", cookies={"ltp_session": tok})
+    assert r.status_code == 409, r.text
+    # Still booked after both refusals.
+    assert _pos_status(_project(client, tok, P_SILENT3), "psl_a") == "confirmed"
+
+
+def test_notify_flags_a_crew_member_with_no_email_as_undeliverable():
+    """A notice aimed at someone with no email can never be delivered — flagged
+    `noEmail` so the notify tray drops it instead of parking it forever to
+    retry (crew booked directly need never have an address on file)."""
+    client, tok = _setup()
+    r = client.post("/api/crew-requests/notify",
+                    json={"contactId": C2, "projectId": P_SILENT2, "template": "crewCancelled",
+                          "positionIds": ["psn_a"]},
+                    cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+    es = r.json()["emailStatus"]
+    assert es["emailed"] is False and es["noEmail"] is True, es
 
 
 def test_send_unauthenticated_is_rejected():
@@ -508,8 +609,9 @@ def test_list_crew_requests_shape_and_filter():
     assert isinstance(allreqs, list)
     mine = [r for r in allreqs if r["id"] == created["id"]]
     assert len(mine) == 1
-    for k in ("id", "token", "projectId", "contactId", "positionIds", "status", "sentAt"):
+    for k in ("id", "token", "projectId", "contactId", "positionIds", "status", "silent", "sentAt"):
         assert k in mine[0], k
+    assert mine[0]["silent"] is False        # a real send is never a direct book
     # ?projectId= narrows to that project only.
     filtered = client.get("/api/crew-requests?projectId=" + str(P_LIST), cookies={"ltp_session": tok}).json()
     assert filtered and all(r["projectId"] == P_LIST for r in filtered)
@@ -986,6 +1088,10 @@ def main() -> int:
         test_send_guards_non_crew_no_email_and_no_sendable,
         test_send_for_unscheduled_day_is_rejected,
         test_send_skips_unscheduled_positions_in_mixed_project,
+        test_silent_send_books_positions_confirmed_without_emailing,
+        test_silent_send_works_for_crew_without_an_email,
+        test_silent_book_cannot_be_resent_or_withdrawn,
+        test_notify_flags_a_crew_member_with_no_email_as_undeliverable,
         test_send_unauthenticated_is_rejected,
         test_public_payload_is_allow_listed,
         test_short_or_unknown_token_is_404,
