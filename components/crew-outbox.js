@@ -100,12 +100,18 @@
       })).then(function(results) {
         var emailed = results.filter(function(r) { return r.es.emailed; }).length;
         var reconnect = results.some(function(r) { return r.es.needsReconnect; });
-        // Clear the ones that sent; leave failures in the tray to retry.
-        results.forEach(function(r) { if (r.es.emailed) window.LTP_outbox.removeKey(keyFor(r.it.crewId, r.it.projectId, r.it.template)); });
+        // A crew member with no email on file can never receive this notice —
+        // typically someone booked directly, who was never emailed in the
+        // first place. Retrying is pointless, so it clears alongside the sent
+        // ones rather than wedging the tray behind a permanent failure.
+        var undeliverable = results.filter(function(r) { return !r.es.emailed && r.es.noEmail; }).length;
+        // Clear what sent + what can never send; leave real failures to retry.
+        results.forEach(function(r) { if (r.es.emailed || r.es.noEmail) window.LTP_outbox.removeKey(keyFor(r.it.crewId, r.it.projectId, r.it.template)); });
         setSending(false);
-        if (emailed === results.length) window.LTP_toast("Crew notified", { message: emailed + " notice" + (emailed !== 1 ? "s" : "") + " emailed.", variant: "success" });
-        else if (reconnect) window.LTP_toast("Some not notified", { message: "Connect Google in Settings, then Notify again from the tray.", variant: "warn" });
-        else window.LTP_toast(emailed ? "Some crew notified" : "Notification failed", { message: emailed + " of " + results.length + " emailed; the rest stay in the tray to retry.", variant: emailed ? "warn" : "error" });
+        var undelivMsg = undeliverable ? " " + undeliverable + " had no email on file and " + (undeliverable === 1 ? "was" : "were") + " dropped." : "";
+        if (emailed + undeliverable === results.length) window.LTP_toast(emailed ? "Crew notified" : "Nothing to send", { message: emailed + " notice" + (emailed !== 1 ? "s" : "") + " emailed." + undelivMsg, variant: emailed ? "success" : "info" });
+        else if (reconnect) window.LTP_toast("Some not notified", { message: "Connect Google in Settings, then Notify again from the tray." + undelivMsg, variant: "warn" });
+        else window.LTP_toast(emailed ? "Some crew notified" : "Notification failed", { message: emailed + " of " + results.length + " emailed; the rest stay in the tray to retry." + undelivMsg, variant: emailed ? "warn" : "error" });
       }, function() {
         setSending(false);
         window.LTP_toast("Notification failed", { message: "Could not reach the server — your pending notices were kept.", variant: "error" });

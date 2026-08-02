@@ -192,6 +192,10 @@ def _request_dict(r: models.CrewRequest) -> dict:
         "contactId": r.contact_id,
         "positionIds": r.position_ids or [],
         "status": r.status,
+        # True = booked directly (no email, no crew answer). Drives the
+        # "Booked directly" badge in Labor → Crew Requests, so a booking the
+        # crew member never saw doesn't read as one they accepted.
+        "silent": bool(r.silent),
         "comment": r.comment or "",
         "sentAt": r.sent_at.isoformat() if r.sent_at else None,
         "respondedAt": r.responded_at.isoformat() if r.responded_at else None,
@@ -473,7 +477,10 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
     the crewConfirmed template to link its "Add to Calendar" button to the call
     sheet."""
     if not (contact and contact.email):
-        return {"emailed": False, "error": "no email on file"}
+        # Permanently undeliverable, not a transient failure — flagged so the
+        # notify tray drops the notice instead of parking it forever to retry
+        # (crew booked directly need never have an email on file).
+        return {"emailed": False, "noEmail": True, "error": "no email on file"}
     try:
         tmpl = ((settings_data.get("emailTemplates") or {}).get(template_key) or {})
         brand = _email_brand(settings_data)
@@ -721,7 +728,15 @@ async def send_crew_request(
     a delivery failure leaves the request intact; see emailStatus in the
     response).
 
-    Validates the crew member exists, is crew, and has an email on file."""
+    Validates the crew member exists, is crew, and has an email on file.
+
+    Body `{silent: true}` books DIRECTLY instead: for a crew member the
+    producer already agreed with off-platform. No email is composed or sent,
+    the positions go straight open/declined → confirmed, and the request is
+    stored as an already-answered `accepted` row flagged `silent=True`. An
+    email address is not required in this mode — that's the point: a crew
+    member who only takes texts can still be booked and paid. Emailing stays
+    the default; the UI makes this the deliberate second action."""
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be a JSON object")
     project_id = body.get("projectId")
@@ -730,6 +745,7 @@ async def send_crew_request(
         raise HTTPException(status_code=400, detail={"field": "projectId", "reason": "required integer"})
     if not isinstance(contact_id, int) or isinstance(contact_id, bool):
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "required integer"})
+    silent = body.get("silent") is True
 
     project = await _load_project(db, project_id)
     if project is None:
@@ -740,7 +756,9 @@ async def send_crew_request(
         raise HTTPException(status_code=404, detail={"field": "contactId", "reason": "contact not found"})
     if not contact.is_crew:
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "contact is not a crew member"})
-    if not (contact.email or "").strip():
+    # An email is the delivery address for the ask — required to send one,
+    # irrelevant when booking directly (nothing is being delivered).
+    if not silent and not (contact.email or "").strip():
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "crew member has no email on file"})
 
     # Optional subset selection. When omitted/empty → whole project (every
@@ -771,18 +789,35 @@ async def send_crew_request(
             detail={"reason": "no sendable positions — assign this crew member to a scheduled day (with a date) on the project first"},
         )
 
+    # A direct book is already answered: it records an agreement the producer
+    # made off-platform, so it opens at `accepted` with its positions
+    # confirmed. The token is still minted (the column is NOT NULL and unique,
+    # and the row stays a normal request for everything downstream), but it is
+    # never emailed or rendered into a link — nothing can reach the public
+    # landing page for it.
     req = models.CrewRequest(
         token=secrets.token_urlsafe(32),
         project_id=project_id,
         contact_id=contact_id,
         position_ids=sendable,
-        status="pending",
+        status="accepted" if silent else "pending",
+        silent=silent,
+        responded_at=datetime.now(timezone.utc) if silent else None,
         sent_by_user_id=user.id,
     )
     db.add(req)
-    _update_positions(project, sendable, to_status="requested", require_from=_SENDABLE_FROM)
+    _update_positions(project, sendable,
+                      to_status="confirmed" if silent else "requested",
+                      require_from=_SENDABLE_FROM)
     await db.flush()
     await db.refresh(req)
+
+    out = _request_dict(req)
+    if silent:
+        # Nothing was sent, by design — report it explicitly so the UI can say
+        # so rather than leaving the producer wondering whether mail failed.
+        out["emailStatus"] = {"emailed": False, "silent": True}
+        return out
 
     # Compose + send the crew-request email (best-effort). A delivery failure
     # (e.g. the sender hasn't connected Gmail) leaves the request intact — the
@@ -791,10 +826,7 @@ async def send_crew_request(
     services_by_id = {s.id: s for s in services}
     shifts = _crew_shifts(project, sendable, services_by_id)
     settings_data = await load_settings(db)
-    email_status = await _send_crew_email(db, user, contact, project, shifts, req.token, settings_data)
-
-    out = _request_dict(req)
-    out["emailStatus"] = email_status
+    out["emailStatus"] = await _send_crew_email(db, user, contact, project, shifts, req.token, settings_data)
     return out
 
 
