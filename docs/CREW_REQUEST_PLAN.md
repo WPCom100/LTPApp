@@ -95,6 +95,12 @@ NO session — mirrors `view.py`):**
   `open → requested`; sends the crew-request email via the Gmail pipeline;
   returns the request + a `needsReconnect`/error shape mirroring `email.py`.
   Splitting = call once per shift-subset.
+  Body `{silent: true}` **books directly** instead — for a crew member already
+  agreed with by phone or text. No email is composed or sent, the positions go
+  straight `open/declined → confirmed`, and the row is stored as an
+  already-answered `accepted` request flagged `silent`. An email on file is not
+  required in this mode (that's the point: crew who only take texts can still
+  be booked and paid). Emailing stays the default — see §5.
 - `POST /api/crew-requests/{id}/withdraw` → request `→ withdrawn`; its positions
   `requested → open`; optional withdrawal email (reuse the existing quiet/notify
   toggle).
@@ -136,10 +142,21 @@ NO session — mirrors `view.py`):**
   default sends the whole project as one request, with checkboxes to **select a
   subset of shifts** (and "send remaining as separate request"). Replaces the
   current manual `open → requested` flip with a real tokenized send + email.
+- **Book without emailing**: the send panel's quiet secondary action, behind its
+  own confirmation dialog — the primary button stays "Send N Requests", so
+  emailing is what happens unless the producer deliberately opts out. Confirms
+  the selected crew outright (positions → confirmed, pay locked via
+  `LTP_stampPay`, activity entry stamped) and posts `{silent: true}`. Crew with
+  no email on file can only be booked this way; the recipient list labels them.
+  Every route to `confirmed` — here and the Crew Requests tab's Confirm — runs
+  through the one `confirmPositionsLocal` helper, so none can skip the pay lock
+  the Payouts tab reads.
 - **Track responses**: surface `crew_requests` status (pending / accepted /
   declined / withdrawn) next to the existing position statuses. When crew accept
   via the landing page, the position auto-appears in the producer's
-  "to confirm" list; decline shows as declined (crew attached).
+  "to confirm" list; decline shows as declined (crew attached). A direct book
+  badges as **Booked directly** and offers no resend/withdraw — there's no ask
+  outstanding; unbooking is a cancel on the Assignments tab.
 - **Withdraw / resend**: withdraw a pending request (positions → open) and
   re-send (to the same or a different crew member).
 
@@ -159,10 +176,11 @@ Promote the Labor tabs to nav like CRM/Rentals/Quotes:
 ## 7. Status state machine (summary)
 
 ```
-producer sends     → request: pending   ; positions: open → requested
+producer sends      → request: pending   ; positions: open → requested
 crew accepts        → request: accepted  ; positions: requested → accepted   (producer later confirms → confirmed)
 crew declines       → request: declined  ; positions: requested → declined   (crew stays attached)
 producer withdraws  → request: withdrawn ; positions: requested → open
+producer books direct → request: accepted+silent ; positions: open → confirmed  (no email, no crew action)
 ```
 Responses are locked once terminal (re-POST → 409 with current status); the
 producer can withdraw + re-send.

@@ -142,6 +142,56 @@
     });
   }
 
+  // Move a crew member's positions to `confirmed` in one project, lock their pay
+  // for the days that changed, and stamp a schedule-activity entry.
+  //
+  // EVERY route to `confirmed` goes through here — the Crew Requests tab's
+  // Confirm and the Assignments tab's direct book (no email). The pay stamp is
+  // the reason: LTP_stampPay writes the agreed figure the Payouts tab reads, so
+  // a confirm path that skipped it would book crew whose pay never locks. Only
+  // the dates this call touched are (re)stamped, so a rate change since an
+  // EARLIER confirm still surfaces as drift in Payouts instead of being
+  // silently re-locked.
+  //
+  // Positions reassigned away in the meantime are skipped (the crewId must
+  // still match), so a slot handed to someone else never inherits this
+  // person's confirm — the same guard reconcileFromRequests applies below.
+  //
+  // o: { projectId, contactId, posIds, fromStatuses, crewName, message, cat,
+  //      services, clientRates, contacts }
+  function confirmPositionsLocal(setProjects, o) {
+    var ids = {}; (o.posIds || []).forEach(function(id) { ids[id] = true; });
+    var from = {}; (o.fromStatuses || []).forEach(function(st) { from[st] = true; });
+    setProjects(function(prev) {
+      return prev.map(function(p) {
+        if (p.id !== o.projectId) return p;
+        var changed = 0;
+        var confirmDates = {};
+        var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
+          return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
+            if (ids[ps.id] && from[ps.status] && ps.crewId === o.contactId) {
+              changed++;
+              if (s.date) confirmDates[s.date] = true;
+              return Object.assign({}, ps, { status: "confirmed" });
+            }
+            return ps;
+          })});
+        })});
+        if (changed > 0) {
+          updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
+            updated.schedule, o.contactId, svcsFor(o.services, o.clientRates, p), window.LTP_crewMinMap(o.contacts),
+            new Date().toISOString(), Object.keys(confirmDates)) });
+          var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+            type: "saved", user: (window.LTP_CURRENT_USER || "User"),
+            message: o.message + ": " + o.crewName + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
+            changes: [{ cat: o.cat, detail: o.crewName + " → confirmed across " + changed + " position" + (changed > 1 ? "s" : "") }] };
+          updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+        }
+        return updated;
+      });
+    });
+  }
+
   // Reconcile crew-request answers (accepted/declined) into local position
   // statuses, advancing positions still at "requested" — or at "open", which
   // under an answered request with the SAME crew member still assigned can only
@@ -559,13 +609,14 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
-  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests }) {
+  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests, clientRates }) {
     var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
     var [showSendPanel, setShowSendPanel] = useState(false);
     var [sendSelection, setSendSelection] = useState({});
+    var [bookDlg, setBookDlg] = useState(null);   // groups awaiting a direct-book (no email) confirmation
     var [conflictWarn, setConflictWarn] = useState(null);
     var [showManualShift, setShowManualShift] = useState(false);
     var [editManualProject, setEditManualProject] = useState(null);
@@ -981,11 +1032,9 @@
       setSendSelection(sel);
     }
 
-    function sendSelected() {
-      // Build one request per selected (crew, project), collecting that
-      // person's open positions on the project. POST /api/crew-requests/send
-      // creates the tokenized request, flips the positions server-side, and
-      // emails the crew member (best-effort) their Accept/Decline link.
+    // Collect the selected recipients into one request group per (crew,
+    // project) \u2014 every one of that person's open positions on the project.
+    function selectedGroups() {
       var selectedKeys = {};
       Object.keys(sendSelection).forEach(function(k) { if (k !== "_previewIdx" && sendSelection[k]) selectedKeys[k] = true; });
       var groups = {};
@@ -995,20 +1044,38 @@
         if (!groups[key]) groups[key] = { projectId: p.projectId, contactId: p.crewId, positionIds: [] };
         groups[key].positionIds.push(p.posId);
       });
-      var groupList = Object.keys(groups).map(function(k) { return groups[k]; });
+      return Object.keys(groups).map(function(k) { return groups[k]; });
+    }
+
+    // POST /api/crew-requests/send for each group.
+    //
+    // `silent` is the direct-book path: the producer already has the crew
+    // member's yes (phone, text, in person), so the server skips the email
+    // entirely and books the positions straight to confirmed. Emailing is the
+    // default \u2014 this only ever runs from the deliberate second action behind
+    // its own confirmation (see bookDlg below).
+    function sendSelected(silent) {
+      var groupList = selectedGroups();
       if (groupList.length === 0) { setShowSendPanel(false); return; }
 
-      // Optimistically reflect the open \u2192 requested move locally (the server
-      // does the same), so the grouped view updates without a project refetch.
-      var allIds = [];
-      groupList.forEach(function(g) { allIds = allIds.concat(g.positionIds); });
-      flipPositionsLocal(setProjects, null, allIds, "open", "requested");
+      // A send flips open \u2192 requested optimistically (the server does the same),
+      // so the grouped view updates without a project refetch. A direct book
+      // does NOT: it confirms and LOCKS PAY, so it waits for the server to
+      // accept before writing that locally \u2014 a rejected book must not leave a
+      // pay-stamped confirmation behind for the debounced project PUT to
+      // persist.
+      if (!silent) {
+        var allIds = [];
+        groupList.forEach(function(g) { allIds = allIds.concat(g.positionIds); });
+        flipPositionsLocal(setProjects, null, allIds, "open", "requested");
+      }
 
       setShowSendPanel(false);
       Promise.all(groupList.map(function(g) {
         return fetch("/api/crew-requests/send", {
           method: "POST", credentials: "include",
-          headers: { "Content-Type": "application/json" }, body: JSON.stringify(g),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(silent ? Object.assign({}, g, { silent: true }) : g),
         }).then(function(r) {
           return r.json().then(function(j) { return { ok: r.ok, body: j, group: g }; },
                                function() { return { ok: r.ok, body: {}, group: g }; });
@@ -1018,6 +1085,15 @@
         results.forEach(function(res) {
           if (res.ok) {
             sent++;
+            // Mirror the server's confirm locally now that it stuck — pay
+            // stamp and activity entry included (confirmPositionsLocal).
+            if (silent) confirmPositionsLocal(setProjects, {
+              projectId: res.group.projectId, contactId: res.group.contactId,
+              posIds: (res.body && res.body.positionIds) || res.group.positionIds,
+              fromStatuses: ["open", "declined"], crewName: crewLabel(res.group.contactId),
+              message: "Crew booked directly (no email)", cat: "Crew Booked Directly",
+              services: services, clientRates: clientRates, contacts: contacts,
+            });
             if (res.body && res.body.emailStatus && res.body.emailStatus.needsReconnect) reconnect = true;
           } else {
             var detail = (res.body && res.body.detail) || (res.body && res.body.error) || "send failed";
@@ -1025,6 +1101,12 @@
             errors.push(crewLabel(res.group.contactId) + ": " + detail);
           }
         });
+        if (silent) {
+          if (errors.length) window.LTP_toast(sent > 0 ? "Some bookings didn't save" : "Booking failed", { message: errors.join("; "), variant: "error" });
+          else window.LTP_toast(sent + " crew member" + (sent !== 1 ? "s" : "") + " booked", { message: "Confirmed directly \u2014 no email was sent.", variant: "success" });
+          reloadCrewRequests();
+          return;
+        }
         if (errors.length) {
           window.LTP_toast(sent > 0 ? "Some requests didn't send" : "Send failed", { message: errors.join("; "), variant: "error" });
         } else if (reconnect) {
@@ -1382,7 +1464,10 @@
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
                         h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
-                      !cm || !cm.email ? h("span", { title: "No email on file", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "no email") : null
+                      // No email on file — the request can't be sent, but the
+                      // person can still be booked directly (that path never
+                      // needed an address).
+                      !cm || !cm.email ? h("span", { title: "No email on file — this one can only be booked without emailing", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "no email") : null
                     );
                   }))
               ),
@@ -1414,15 +1499,44 @@
                       }))
               )
             ),
-            h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center" } },
+            h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 } },
               h("div", { style: { fontSize: "11px", color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length),
-              h("div", { style: { display: "flex", gap: 8 } },
+              h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
                 h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); } }, "Cancel"),
-                h(window.Btn, { onClick: selectedCount > 0 ? sendSelected : undefined,
-                  style: selectedCount > 0 ? {} : { opacity: 0.4, cursor: "not-allowed" } },
+                // Direct book — for crew already agreed with off-platform.
+                // Deliberately the quiet, secondary action: emailing the ask is
+                // what this panel is for, and this one skips it for good.
+                h(window.Btn, { variant: "ghost", disabled: selectedCount === 0,
+                  onClick: function() { setBookDlg(selectedGroups()); },
+                  style: { borderColor: B.warn + "66", color: B.warn } },
+                  "Book Without Emailing"),
+                h(window.Btn, { disabled: selectedCount === 0, onClick: function() { sendSelected(false); } },
                   "Send " + selectedCount + " Request" + (selectedCount !== 1 ? "s" : ""))))
           );
         }()
+      ),
+
+      // Direct-book confirmation. Sits ABOVE the send panel (higher zIndex) so
+      // cancelling drops the producer back into their selection instead of
+      // losing it. Spells out that nothing is sent, because that's the whole
+      // difference between this and the primary button behind it.
+      bookDlg && h(window.LTPModal, { title: "Book Without Emailing", onClose: function() { setBookDlg(null); }, zIndex: 1100 },
+        h("div", null,
+          h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 12 } },
+            "Confirm ", h("strong", { style: { color: B.text } }, bookDlg.length + " crew member" + (bookDlg.length !== 1 ? "s" : "")),
+            " with ", h("strong", { style: { color: B.text } }, "no email, no request, no reply"),
+            ". Their shifts go straight to confirmed and their pay locks — use this only for people who have already agreed."),
+          h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", marginBottom: 14, maxHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 } },
+            bookDlg.map(function(g) {
+              return h("div", { key: g.contactId + "|" + g.projectId, style: { fontSize: "11px", color: B.text } },
+                h("span", { style: { fontWeight: 600 } }, crewLabel(g.contactId)),
+                h("span", { style: { color: B.textMut } }, "  ·  " + g.positionIds.length + " shift" + (g.positionIds.length !== 1 ? "s" : "")));
+            })),
+          h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+            "They'll show as “Booked directly” on the Crew Requests tab. To notify them later, cancel the position and send a real request."),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setBookDlg(null); } }, "Cancel"),
+            h(window.Btn, { onClick: function() { setBookDlg(null); sendSelected(true); } }, "Book Without Emailing")))
       )
     );
   }
@@ -2417,6 +2531,11 @@
     function displayState(req, info) {
       if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
       if (req.status === "declined") return { label: "Declined", color: B.danger };
+      // A direct book was never sent, never answered — say so, permanently, so
+      // it can't be read as a booking this person accepted. Nothing to resend
+      // or withdraw (there's no ask outstanding); unbooking is a cancel on the
+      // Assignments tab, like any other confirmed position.
+      if (req.silent) return { label: "Booked directly", color: B.info };
       if (req.status === "accepted") {
         if (info.counts.accepted > 0) return { label: info.counts.confirmed > 0 ? "Confirm remaining" : "Accepted", color: B.success, confirm: true };
         if (info.counts.confirmed > 0) return { label: "Confirmed", color: B.info };
@@ -2430,34 +2549,11 @@
     function doConfirm(req, notify) {
       setConfirmDlg(null);
       var accepted = reqInfo(req).counts.accepted;
-      var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
-      setProjects(function(prev) {
-        return prev.map(function(p) {
-          if (p.id !== req.projectId) return p;
-          var changed = 0;
-          var confirmDates = {};
-          var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              if (ids[ps.id] && ps.status === "accepted") { changed++; if (s.date) confirmDates[s.date] = true; return Object.assign({}, ps, { status: "confirmed" }); }
-              return ps;
-            })});
-          })});
-          if (changed > 0) {
-            // Lock this person's pay for the days this confirm touched — the
-            // agreed figure the Payouts tab reads. Only the confirmed dates are
-            // (re)stamped so a rate change since an EARLIER confirm still shows
-            // as drift there instead of being silently re-locked here.
-            updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
-              updated.schedule, req.contactId, svcsFor(services, clientRates, p), window.LTP_crewMinMap(contacts),
-              new Date().toISOString(), Object.keys(confirmDates)) });
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "saved", user: (window.LTP_CURRENT_USER || "User"),
-              message: "Crew confirmed: " + crewLabel(req.contactId) + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
-              changes: [{ cat: "Crew Confirmed", detail: crewLabel(req.contactId) + " → confirmed across " + changed + " position" + (changed > 1 ? "s" : "") }] };
-            updated = Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
-          }
-          return updated;
-        });
+      confirmPositionsLocal(setProjects, {
+        projectId: req.projectId, contactId: req.contactId, posIds: req.positionIds || [],
+        fromStatuses: ["accepted"], crewName: crewLabel(req.contactId),
+        message: "Crew confirmed", cat: "Crew Confirmed",
+        services: services, clientRates: clientRates, contacts: contacts,
       });
       if (notify) {
         window.LTP_crewNotify(req.contactId, req.projectId, "crewConfirmed", { positionIds: req.positionIds || [], token: req.token })
@@ -2533,6 +2629,9 @@
                                 (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
                             }))
                         : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                      // Direct book — no ask was ever sent, so there's no crew
+                      // note to show and none is coming.
+                      r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
                       // Note the crew member left when they accepted/declined.
                       r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”"));
                   var badgeEl = h("span", { key: "badge", style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label);
@@ -2645,7 +2744,7 @@
           conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
-      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
+      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests, clientRates: clientRates }),
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, clientRates: clientRates, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
