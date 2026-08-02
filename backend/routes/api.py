@@ -340,6 +340,10 @@ _crud_routes(router, "equipment",   models.Equipment, has_activity=False)
 _crud_routes(router, "products",    models.Product,   has_activity=False)
 _crud_routes(router, "services",    models.Service,   has_activity=False)
 _crud_routes(router, "fees",        models.Fee,       has_activity=False)
+# Per-client service rate overrides (negotiated contract rates + day minimums).
+# Path is hyphenated to match the frontend state key (components/data-state.js
+# derives the URL from the key verbatim).
+_crud_routes(router, "client-rates", models.ClientRate, has_activity=False)
 _crud_routes(router, "allocations", models.Allocation, has_activity=False)
 _crud_routes(router, "containers",  models.Container, has_activity=False)
 _crud_routes(router, "kits",        models.Kit,       has_activity=False)

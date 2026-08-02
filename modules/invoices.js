@@ -327,7 +327,10 @@
               onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
               h("div", { style: { flex: 1 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, s.role),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, s.department || "")),
+                h("div", { style: { fontSize: "10px", color: B.textMut, display: "flex", gap: 5, alignItems: "center" } }, s.department || "",
+                  // The price beside this row is already the client's negotiated
+                  // rate (the list is resolved) — say where it came from.
+                  h(window.ClientRateChip, { svc: s, tiny: true }))),
               h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + (s.dayRate || 0) + "/day")
             );
           }))
@@ -440,6 +443,29 @@
       (item.type === "equipment" && item.equipmentId != null && !(equipment || []).some(function(e) { return e.id === item.equipmentId; }));
     var missingLabel = item.type === "service" ? "Service" : item.type === "product" ? "Product" : "Equipment";
     var unitP = Number(item.unitPrice) || 0;
+    // Client-rate provenance (service lines). `services` is already resolved for
+    // THIS invoice's client, so svcData carries `clientRate` when the role was
+    // negotiated. The line keeps its snapshotted price — an invoice must not
+    // silently re-price itself — so a mismatch offers a one-click apply instead.
+    function clientRateNote(small) {
+      if (!svcData || !svcData.clientRate) return null;
+      var maps = window.LTP_serviceRateMaps(svcData);
+      var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
+      var stale = Math.abs(live - unitP) > 0.005;
+      return h("div", { style: { display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginTop: 2 } },
+        h(window.ClientRateChip, { svc: svcData, tiny: small }),
+        svcData.minHours > 0 && h("span", { style: { fontSize: small ? "10px" : "11px", color: B.textMut } },
+          svcData.minHours + "-hour day minimum"),
+        stale && (!isDraft
+          ? h("span", { style: { fontSize: small ? "10px" : "11px", color: B.warn } }, "contract rate is now $" + window.LTP_money(live))
+          : h("button", { onClick: function() {
+                onUpdate(sectionId, item.id, { unitPrice: live, cost: Math.round((maps.costMap[svcRateType] || 0) * 100) / 100, adjustedPrice: null });
+              },
+              title: "This line was priced at $" + window.LTP_money(unitP) + "; the client's contract rate for this tier is now $" + window.LTP_money(live) + ". Click to re-price the line.",
+              style: { background: "transparent", border: "1px solid " + B.warn + "66", color: B.warn, borderRadius: "3px", padding: "0 5px",
+                       fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
+              "contract rate $" + window.LTP_money(live) + " — apply")));
+    }
     var adjusted = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
     var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lt = eff * (Number(item.qty) || 0);
@@ -458,6 +484,7 @@
           h("div", { style: { flex: 1, minWidth: 0 } },
             h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
             item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            clientRateNote(false),
             sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
           isDraft && reorderControl(),
           isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
@@ -510,6 +537,7 @@
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
         item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+        clientRateNote(true),
         sourceMissing && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked to invoice")
       ),
       // Rate type selector (services only)
@@ -603,7 +631,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
                             companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
-                            equipment, products, services, fees, settings, isAdmin, qbo }) {
+                            equipment, products, services, clientRates, fees, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
     function emptyInvoice() {
@@ -1199,6 +1227,13 @@
     var refDisplay = draft.id != null ? window.LTP_INVOICE_REF(draft) : "INV-NEW";
     var selectedProject = draft.projectId ? projects.find(function(p) { return p.id === draft.projectId; }) : null;
     var selectedCompany = draft.companyId ? companies.find(function(c) { return c.id === draft.companyId; }) : null;
+    // The rate card AS THIS CLIENT SEES IT — negotiated overrides folded in, so
+    // a service added or re-tiered here prices exactly as it did on the quote
+    // this invoice came from (theme.js::LTP_servicesForClient).
+    var svcs = React.useMemo(function() {
+      return window.LTP_servicesForClient(services, clientRates,
+        window.LTP_clientRef({ clientType: draft.clientType, companyId: draft.companyId, clientContactId: draft.clientContactId }));
+    }, [services, clientRates, draft.clientType, draft.companyId, draft.clientContactId]);
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "New Invoice");
     var linkedQuote = draft.quoteId ? quotes.find(function(q) { return q.id === draft.quoteId; }) : null;
     var t = window.LTP_INVOICE_TOTALS(draft);
@@ -1968,7 +2003,7 @@
                   return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft,
                     onUpdate: updateItem, onDelete: deleteItem, onMove: moveItemAnimated,
                     sortable: sortable, itemIndex: itIdx, itemCount: sec.items.length,
-                    services: services, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
+                    services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },
@@ -2159,7 +2194,7 @@
 
       // Item picker
       pickerForSection && h(InvAddItemPicker, {
-        equipment: equipment, products: products, services: services, fees: fees,
+        equipment: equipment, products: products, services: svcs, fees: fees,
         onAdd: function(item) { addItemToSection(pickerForSection, item); },
         onClose: function() { setPickerForSection(null); }
       }),
@@ -2368,7 +2403,7 @@
         companies: props.companies, setCompanies: props.setCompanies,
         contacts: props.contacts, setContacts: props.setContacts, projects: props.projects,
         quotes: props.quotes, setQuotes: props.setQuotes,
-        equipment: props.equipment, products: props.products, services: props.services, fees: props.fees,
+        equipment: props.equipment, products: props.products, services: props.services, clientRates: props.clientRates, fees: props.fees,
         settings: props.settings, isAdmin: props.isAdmin, qbo: props.qbo,
       });
     }

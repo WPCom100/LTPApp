@@ -124,6 +124,10 @@ function LTPSignedInApp(props) {
   var [products, setProducts, productsReady] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
   var [services, setServices, servicesReady] = usePersistentState("services", window.LTP_DATA_SERVICES);
   var [fees,     setFees,     feesReady]     = usePersistentState("fees",     window.LTP_DATA_FEES);
+  // Per-client service rate overrides (negotiated contract rates + day minimums).
+  // Folded into the rate card per client by theme.js::LTP_servicesForClient —
+  // every pricing surface (quotes, invoices, schedules, payouts) resolves through it.
+  var [clientRates, setClientRates, clientRatesReady] = usePersistentState("client-rates", window.LTP_DATA_CLIENT_RATES);
   // Invoices
   var [invoices, setInvoices, invoicesReady] = usePersistentState("invoices", window.LTP_DATA_INVOICES);
   // Settings
@@ -131,7 +135,7 @@ function LTPSignedInApp(props) {
 
   var allReady = companiesReady && contactsReady && projectsReady
               && equipmentReady && allocationsReady && containersReady && kitsReady
-              && quotesReady && productsReady && servicesReady && feesReady
+              && quotesReady && productsReady && servicesReady && feesReady && clientRatesReady
               && invoicesReady && settingsReady;
 
   var isAdmin = props.authUser.role === "admin";
@@ -356,8 +360,8 @@ function LTPSignedInApp(props) {
   function renderModule() {
     switch (activeModule) {
       case "dashboard": return h(window.LTPErrorBoundary, { name: "Dashboard" }, h(window.DashboardView, { companies: companies, projects: projects, quotes: quotes, equipment: equipment, invoices: invoices, contacts: contacts, services: services, settings: settings }));
-      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services }));
-      case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, invoices: invoices, setInvoices: setInvoices, route: route }));
+      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services, clientRates: clientRates, setClientRates: setClientRates }));
+      case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, clientRates: clientRates, invoices: invoices, setInvoices: setInvoices, route: route }));
       case "calendar":  return h(window.LTPErrorBoundary, { name: "Calendar" }, h(window.CalendarView,  { projects: projects }));
       case "rentals":   return h(window.LTPErrorBoundary, { name: "Rentals" }, h(window.RentalsView,   {
         companies: companies, projects: projects, route: route,
@@ -372,6 +376,7 @@ function LTPSignedInApp(props) {
         products: products, setProducts: setProducts,
         services: services, setServices: setServices,
         fees: fees,         setFees: setFees,
+        clientRates: clientRates, setClientRates: setClientRates,
         equipment: equipment, allocations: allocations,
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
@@ -383,12 +388,13 @@ function LTPSignedInApp(props) {
         companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects,
         quotes: quotes, setQuotes: setQuotes, route: route,
         equipment: equipment, products: products, services: services, fees: fees, allocations: allocations,
+        clientRates: clientRates,
         settings: settings, isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "labor":     return h(window.LTPErrorBoundary, { name: "Labor" }, h(window.LaborView, {
         contacts: contacts, setContacts: setContacts,
         projects: projects, setProjects: setProjects,
-        services: services, quotes: quotes, companies: companies, settings: settings, route: route,
+        services: services, clientRates: clientRates, quotes: quotes, companies: companies, settings: settings, route: route,
         isAdmin: isAdmin, qbo: qboStatus,
       }));
       case "settings":
@@ -485,15 +491,15 @@ function LTPSignedInApp(props) {
               { path: "quotes/products", label: "Products" },
               { path: "quotes/services", label: "Services" },
               { path: "quotes/fees",     label: "Fees"     },
+              { path: "quotes/client-rates", label: "Client Rates" },
             ];
+            // The bare "quotes" row is active for the list AND the builder, i.e.
+            // any route that isn't one of the catalog tabs.
+            var QUOTE_TABS = { products: 1, services: 1, fees: 1, "client-rates": 1 };
             quotesSubs.forEach(function(sub) {
               var subActive = sub.path === "quotes"
-                ? (route.module === "quotes" && (!route.sub || route.sub !== "products" && route.sub !== "services" && route.sub !== "fees"))
-                : sub.path === "quotes/products"
-                  ? (route.module === "quotes" && route.sub === "products")
-                  : sub.path === "quotes/services"
-                    ? (route.module === "quotes" && route.sub === "services")
-                    : (route.module === "quotes" && route.sub === "fees");
+                ? (route.module === "quotes" && !QUOTE_TABS[route.sub])
+                : (route.module === "quotes" && ("quotes/" + route.sub) === sub.path);
               rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
@@ -631,6 +637,7 @@ var LTP_MODULE_SUBS = {
     { path: "quotes/products", label: "Products" },
     { path: "quotes/services", label: "Services" },
     { path: "quotes/fees",     label: "Fees"     },
+    { path: "quotes/client-rates", label: "Client Rates" },
   ],
   labor: [
     { path: "labor/assignments", label: "Assignments"     },

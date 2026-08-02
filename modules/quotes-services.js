@@ -110,7 +110,7 @@
     );
   }
 
-  window.QuotesServices = function({ services, setServices, projects, quotes, settings, qbo }) {
+  window.QuotesServices = function({ services, setServices, projects, quotes, clientRates, companies, contacts, settings, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
@@ -119,6 +119,22 @@
     var [dlg, setDlg]             = useState(null);
 
     var departments = ["all"].concat(Array.from(new Set(services.map(function(s) { return s.department; }))).sort());
+
+    // Which roles carry a negotiated CLIENT rate, and for whom. Editing the base
+    // card here doesn't move a client whose contract restates the number — this
+    // badge is how you find out before wondering why (see Quotes → Client Rates).
+    var clientRatesByService = React.useMemo(function() {
+      var m = {};
+      (clientRates || []).forEach(function(r) {
+        if (!r || r.serviceId == null) return;
+        var who = r.clientType === "contact"
+          ? (contacts || []).find(function(c) { return c.id === r.clientContactId; })
+          : (companies || []).find(function(c) { return c.id === r.companyId; });
+        var name = who ? (r.clientType === "contact" ? ((who.firstName || "") + " " + (who.lastName || "")).trim() : who.name) : "Unknown client";
+        (m[r.serviceId] = m[r.serviceId] || []).push(name + (r.active === false ? " (paused)" : ""));
+      });
+      return m;
+    }, [clientRates, companies, contacts]);
 
     var q = search.trim().toLowerCase();
     var filtered = services.filter(function(s) {
@@ -221,7 +237,12 @@
             ),
             h("div", { style: { flex: 1, minWidth: 0 } },
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, s.department + (s.notes ? " \u00b7 " + s.notes : ""))
+              h("div", { style: { fontSize: "11px", color: B.textMut, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                h("span", null, s.department + (s.notes ? " \u00b7 " + s.notes : "")),
+                (clientRatesByService[s.id] || []).length > 0 && h("span", {
+                  title: "Negotiated for: " + clientRatesByService[s.id].join(", ") + ". Those clients price on their own contract, not this row.",
+                  style: { color: B.info, fontWeight: 700, fontSize: "9px", background: B.info + "1c", border: "1px solid " + B.info + "55", borderRadius: "3px", padding: "0 4px", cursor: "help" } },
+                  clientRatesByService[s.id].length + " client rate" + (clientRatesByService[s.id].length === 1 ? "" : "s")))
             ),
             h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 80, textAlign: "right" } }, "$" + s.dayRate + "/day"),
             h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 70, textAlign: "right" } }, "cost $" + s.dayCost),

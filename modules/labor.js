@@ -13,6 +13,14 @@
   var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info } };
 
   // ── Aggregate positions from all project schedules ─────────────────────
+  // THE rate card for ONE project — the catalog with that project's client's
+  // negotiated overrides folded in (theme.js::LTP_servicesForClient). Every pay
+  // figure computed or FROZEN here must go through this: a contract rate or an
+  // hours minimum has to reach the payout the same way it reaches the quote.
+  function svcsFor(services, clientRates, proj) {
+    return window.LTP_servicesForClient(services, clientRates, window.LTP_clientRef(proj));
+  }
+
   function aggregatePositions(projects, contacts, services) {
     var all = [];
     (projects || []).forEach(function(proj) {
@@ -1803,7 +1811,7 @@
           pushing ? "Exporting…" : "Export " + selectedIds.length + " bill" + (selectedIds.length === 1 ? "" : "s"))));
   }
 
-  function PayoutsTab({ projects, setProjects, contacts, services, settings, isAdmin, qbo }) {
+  function PayoutsTab({ projects, setProjects, contacts, services, clientRates, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     function iso(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 
@@ -1848,8 +1856,8 @@
     }
 
     var data = useMemo(function() {
-      return window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
-    }, [projects, contacts, services, range.start, range.end]);
+      return window.LTP_payoutRows(projects, contacts, services, range.start, range.end, clientRates);
+    }, [projects, contacts, services, clientRates, range.start, range.end]);
 
     // Per-shift QuickBooks export/paid status, keyed "crewId|projectId|date".
     // Fetched from the server (ledger + bill payment state) whenever the range
@@ -1942,7 +1950,7 @@
     function finalTotalFor(row, actuals) {
       var proj = projects.find(function(p) { return p.id === row.projectId; });
       if (!proj) return 0;
-      var next = window.LTP_signOffDay(proj.schedule || [], row.crewId, row.date, actuals, services, window.LTP_crewMinMap(contacts), "preview", "preview");
+      var next = window.LTP_signOffDay(proj.schedule || [], row.crewId, row.date, actuals, svcsFor(services, clientRates, proj), window.LTP_crewMinMap(contacts), "preview", "preview");
       var t = 0;
       next.forEach(function(s) {
         if (s.date !== row.date) return;
@@ -1959,7 +1967,7 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_signOffDay(p.schedule || [], row.crewId, row.date, actuals, services, mins, now, user) });
+          var updated = Object.assign({}, p, { schedule: window.LTP_signOffDay(p.schedule || [], row.crewId, row.date, actuals, svcsFor(services, clientRates, p), mins, now, user) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: user,
             message: "Day signed off (" + stateLabel + "): " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(total),
@@ -2024,7 +2032,7 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, services, mins, now, [row.date]) });
+          var updated = Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, svcsFor(services, clientRates, p), mins, now, [row.date]) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Pay " + (wasLocked ? "re-locked" : "locked") + ": " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(newTotal),
@@ -2067,7 +2075,10 @@
       if (!src.tier && !(src.paidHours > 0)) return "No-show";
       var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : "Mixed";
       var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
-      return t + " · " + hrs;
+      // A client's negotiated PAYOUT minimum paid this day up to a floor — say
+      // so, otherwise "Full day · 10h" against a 4-hour call reads as an error.
+      var byMin = (src.units || []).some(function(u) { return u && u.minHoursApplied; });
+      return t + " · " + hrs + (byMin ? " (contract minimum)" : "");
     }
 
     var presetBtn = function(key, label) {
@@ -2315,7 +2326,7 @@
   // crew member left, plus Resend / Withdraw on still-pending ones. Crew
   // responses also flow back as POSITION status changes (reconciled into the
   // Assignments view); this tab tracks the request envelope itself.
-  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services, companies }) {
+  function CrewRequestsTab({ crewRequests, reloadCrewRequests, contacts, projects, setProjects, services, clientRates, companies }) {
     var isMobile = window.LTP_useIsMobile();
     // Resend / withdraw / confirm confirmations + errors surface as toasts (window.LTP_toast).
     var [withdrawDlg, setWithdrawDlg] = useState(null);  // pending request awaiting a withdraw decision
@@ -2437,7 +2448,7 @@
             // (re)stamped so a rate change since an EARLIER confirm still shows
             // as drift there instead of being silently re-locked here.
             updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
-              updated.schedule, req.contactId, services, window.LTP_crewMinMap(contacts),
+              updated.schedule, req.contactId, svcsFor(services, clientRates, p), window.LTP_crewMinMap(contacts),
               new Date().toISOString(), Object.keys(confirmDates)) });
             var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
               type: "saved", user: (window.LTP_CURRENT_USER || "User"),
@@ -2579,7 +2590,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   MAIN VIEW
   // ═══════════════════════════════════════════════════════════════════════════
-  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, quotes, companies, settings, route, isAdmin, qbo }) {
+  window.LaborView = function({ contacts, setContacts, projects, setProjects, services, clientRates, quotes, companies, settings, route, isAdmin, qbo }) {
     // Active tab is URL-derived — the sidebar sub-nav drives it, exactly like
     // CRM / Rentals / Quotes (see modules/crm-shell.js, rentals-shell.js).
     //   labor            → assignments (default)
@@ -2635,10 +2646,10 @@
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests }),
-      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, companies: companies }),
+      tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, clientRates: clientRates, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
-      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services, settings: settings, isAdmin: isAdmin, qbo: qbo })
+      tab === "payouts" && h(PayoutsTab, { projects: projects, setProjects: setProjects, contacts: contacts, services: services, clientRates: clientRates, settings: settings, isAdmin: isAdmin, qbo: qbo })
     );
   };
 })();

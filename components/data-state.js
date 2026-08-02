@@ -17,9 +17,11 @@
   var DEBOUNCE_MS = 400;
 
   // Keys backed by /api/{key} as an array of {id, ...} rows
+  // The key IS the URL segment (/api/{key}), so a hyphenated key must match the
+  // route registered in backend/routes/api.py.
   var ENTITY_KEYS = {
     companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
-    equipment: 1, products: 1, services: 1, fees: 1,
+    equipment: 1, products: 1, services: 1, fees: 1, "client-rates": 1,
     allocations: 1, containers: 1, kits: 1,
   };
 
