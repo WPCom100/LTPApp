@@ -8,6 +8,7 @@
 //   #/quotes/products       products management tab
 //   #/quotes/services       services management tab
 //   #/quotes/fees           fees management tab (misc billable line items)
+//   #/quotes/client-rates   per-client service rate overrides (contract rates)
 (function() {
   var h = React.createElement;
   var B = window.LTP_THEME;
@@ -15,7 +16,7 @@
 
   window.QuotesView = function({ companies, contacts, projects, setProjects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
-                                  fees, setFees,
+                                  fees, setFees, clientRates, setClientRates,
                                   equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, setSettings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
@@ -29,6 +30,7 @@
       sub === "products" ? "products" :
       sub === "services" ? "services" :
       sub === "fees"     ? "fees"     :
+      sub === "client-rates" ? "client-rates" :
       "quotes";
 
     // Determine if we're in the builder
@@ -43,6 +45,7 @@
         { key: "products", label: "Products", path: "quotes/products" },
         { key: "services", label: "Services", path: "quotes/services" },
         { key: "fees",     label: "Fees",     path: "quotes/fees"     },
+        { key: "client-rates", label: "Client Rates", path: "quotes/client-rates" },
       ];
       return h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18 } },
         tabs.map(function(t) {
@@ -66,6 +69,7 @@
         getNextQuoteId: getNextQuoteId,
         products:   products,
         services:   services,
+        clientRates: clientRates,
         fees:       fees,
         equipment:  equipment,
         allocations: allocations,
@@ -98,12 +102,18 @@
 
       activeTab === "services" && h(window.QuotesServices, {
         services: services, setServices: setServices, projects: projects, quotes: quotes,
+        clientRates: clientRates, companies: companies, contacts: contacts,
         settings: settings, qbo: qbo,
       }),
 
       activeTab === "fees" && h(window.QuotesFees, {
         fees: fees, setFees: setFees, quotes: quotes, invoices: invoices,
         settings: settings, setSettings: setSettings, isAdmin: isAdmin, qbo: qbo,
+      }),
+
+      activeTab === "client-rates" && h(window.QuotesClientRates, {
+        services: services, clientRates: clientRates, setClientRates: setClientRates,
+        companies: companies, contacts: contacts,
       })
     );
   };

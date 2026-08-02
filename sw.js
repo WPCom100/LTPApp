@@ -46,7 +46,12 @@
 // inherit it (index.html again). Two branches had independently claimed v49
 // for the two changes; anything already holding a v49 shell needs a new
 // string to refetch, so the merge takes the next one rather than reusing it.
-var CACHE_VERSION = 'ltp-shell-v50';
+// v51: per-client service rates (contract rates + day minimums). index.html
+// gained three script tags (data/client-rates.js, components/client-rates.js,
+// modules/quotes-client-rates.js), so the shell must be refetched; the new
+// files themselves are picked up by the runtime /data/, /components/ and
+// /modules/ rules below, not precached.
+var CACHE_VERSION = 'ltp-shell-v51';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

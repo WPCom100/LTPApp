@@ -1,5 +1,5 @@
 // Projects Module — top-level view (formerly nested under CRM)
-window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, invoices, setInvoices, route }) {
+window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, route }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var isMobile = window.LTP_useIsMobile();
@@ -49,7 +49,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       return h(window.ScheduleBuilder, {
         project: schedProject, projects: projects, setProjects: setProjects,
         contacts: contacts, setContacts: setContacts, services: services,
-        companies: companies,
+        clientRates: clientRates, companies: companies,
         quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
       });
     }

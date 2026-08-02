@@ -1,0 +1,1 @@
+window.LTP_DATA_CLIENT_RATES = [];

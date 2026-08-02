@@ -1,5 +1,5 @@
 // CRM Shell — Companies + Contacts only (Projects → /projects, Calendar → /calendar)
-window.CRMView = function CRMView({ companies, setCompanies, contacts, setContacts, projects, setProjects, quotes, invoices, route, services }) {
+window.CRMView = function CRMView({ companies, setCompanies, contacts, setContacts, projects, setProjects, quotes, invoices, route, services, clientRates, setClientRates }) {
   var B = window.LTP_THEME;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var nav = window.LTPRouter.navigate;
@@ -44,6 +44,10 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     contacts:  contacts,  setContacts:  setContacts,
     projects:  projects,  services: services || [],
     quotes: quotes || [],
+    // Per-client negotiated service rates — edited from the company detail
+    // (CRMCompanyDetail) and read by every pricing surface via
+    // theme.js::LTP_servicesForClient.
+    clientRates: clientRates || [], setClientRates: setClientRates,
     selectedCompany: selectedCompany,
     setSelectedCompanyId: setSelectedCompanyId,
     setEditCompanyId: function(id) {

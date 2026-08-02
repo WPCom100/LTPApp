@@ -453,6 +453,76 @@ class Service(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
+class ClientRate(Base):
+    """ONE client's negotiated override of ONE Service's rate card — e.g. "A1
+    for FUMC is a reduced day rate, but carries a full 10-hour day minimum".
+
+    Deliberately per-SERVICE, not per-client: a client with no row for a role
+    bills the base Service card exactly as before. You add the roles that were
+    actually negotiated, one at a time; nothing is toggled on catalog-wide.
+
+    `client_type` mirrors Quote/Invoice — {company, contact} picks which FK is
+    the billing party (some clients are individuals without a company). A
+    project's client is always its company, so schedule/payout surfaces resolve
+    with client_type="company".
+
+    ── Rate columns (nullable = inherit) ───────────────────────────────────
+    Every rate/cost column is NULLABLE and means "inherit the Service's value"
+    when null, so a contract can restate just the day rate and let the half /
+    hourly / OT tiers derive off it the same way the base card does. 0 is a REAL
+    value (a genuinely free tier), never "inherit". When the day rate IS
+    restated but a derived tier is not, the tier derives from the NEW day rate
+    rather than inheriting the base card's absolute value — see
+    theme.js::LTP_applyClientRate, which owns that resolution.
+
+    The rate_* columns (what the CLIENT pays) and the *_cost columns (what WE
+    pay the crew) are independent, so a discounted contract rate can carry its
+    own custom payout — that's the margin column in the editor. Crew-level
+    floors (Contact.min_day_cost) still apply on top of the resolved cost.
+
+    ── Minimum charges ────────────────────────────────────────────────────
+    `min_hours` / `min_cost_hours` are the minimum-CHARGE half of the feature: a
+    day bills (or pays) as if at least that many hours were worked, so a 4-hour
+    call against a 10-hour minimum bills the full adjusted day rate instead of
+    the half-day rate. Hours worked beyond the minimum bill normally, and
+    meal-penalty hours stack ON TOP of the minimum (the minimum floors the
+    non-penalty hours only). 0 = no minimum. Bill and pay minimums are separate
+    numbers so a 10-hour client minimum doesn't silently become a 10-hour payout.
+    Engine: theme.js::LTP_calcDayLabor.
+
+    ── Foreign keys ───────────────────────────────────────────────────────
+    All three FKs CASCADE (the exception to the app-wide SET NULL, shared with
+    Allocation): an override has no meaning without both its client and its
+    service — an orphan row would silently match nobody forever."""
+    __tablename__ = "client_rates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_type = Column(String(20), default="company")  # {company, contact}
+    company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True, index=True)
+    client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=True, index=True)
+    service_id = Column(Integer, ForeignKey("services.id", ondelete="CASCADE"), nullable=True, index=True)
+    label = Column(String(100), default="")              # optional contract name, e.g. "FUMC A1 agreement"
+    # Billing overrides — null = inherit the Service's value (see class docstring).
+    day_rate = Column(Float, nullable=True)
+    half_day = Column(Float, nullable=True)
+    hourly_rate = Column(Float, nullable=True)
+    ot_rate = Column(Float, nullable=True)
+    # Payout overrides — the margin side of the same contract line.
+    day_cost = Column(Float, nullable=True)
+    half_day_cost = Column(Float, nullable=True)
+    hourly_cost = Column(Float, nullable=True)
+    ot_cost = Column(Float, nullable=True)
+    # Minimum billable / payable hours per day. 0 = no minimum.
+    min_hours = Column(Float, default=0)
+    min_cost_hours = Column(Float, default=0)
+    # False parks a negotiated rate without deleting it (history stays legible);
+    # inactive rows are ignored by every resolver.
+    active = Column(Boolean, default=True)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Allocation(Base):
     """A booking of equipment to a project for a date range. The lifecycle is:
        reserved → allocated → checked-out → returned.

@@ -45,7 +45,8 @@ if (loaded) {
   ["LTP_THEME", "LTP_MODULES", "LTP_calcDayLabor", "LTP_calcLaborDay", "LTP_mealFixBreaks",
    "LTP_QUOTE_TOTALS", "LTP_INVOICE_TOTALS", "LTP_QUOTE_REF", "LTP_INVOICE_REF",
    "LTP_safeUrl", "LTP_formatDate", "LTP_formatTime", "LTP_resolveTemplate",
-   "LTP_detectCrewConflicts", "LTP_diffRemovedCrew", "LTP_manualShiftProject"].forEach((k) => {
+   "LTP_detectCrewConflicts", "LTP_diffRemovedCrew", "LTP_manualShiftProject",
+   "LTP_clientRef", "LTP_servicesForClient", "LTP_applyClientRate", "LTP_clientRateMap"].forEach((k) => {
     ok("theme exports " + k, typeof window[k] !== "undefined");
   });
 }
