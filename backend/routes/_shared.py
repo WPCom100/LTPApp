@@ -49,6 +49,46 @@ def safe_pdf_filename(stem: str) -> str:
     return safe if safe.lower().endswith(".pdf") else f"{safe}.pdf"
 
 
+def doc_project_ids(entity) -> list:
+    """Every project a quote/invoice bills work for, primary first.
+
+    Server-side mirror of window.LTP_docProjectIds (theme.js). `project_id` is
+    the PRIMARY project — it names the document on the PDF, in the QuickBooks
+    memo and in push notifications — and `project_ids` carries the full set once
+    a schedule has sent labor into a document that started on another project.
+    Rows written before that column existed have NULL/[], so the primary is
+    always folded in and de-duplicated here rather than trusted from the list.
+    """
+    if entity is None:
+        return []
+    out: list = []
+    seen: set = set()
+    for pid in [getattr(entity, "project_id", None)] + list(getattr(entity, "project_ids", None) or []):
+        if pid is None or pid in seen:
+            continue
+        seen.add(pid)
+        out.append(pid)
+    return out
+
+
+async def load_project_names(db: AsyncSession, project_ids: list) -> list:
+    """Resolve project ids to display names, preserving the given order.
+
+    A project that has since been deleted degrades to "Project <id>" rather than
+    dropping out — silently shortening the list would understate what the
+    document covers. (FKs are ON DELETE SET NULL, so the primary `project_id`
+    clears on delete but ids inside `project_ids` can outlive their row.)
+    """
+    ids = [p for p in (project_ids or []) if p is not None]
+    if not ids:
+        return []
+    rows = await db.execute(
+        select(models.Project.id, models.Project.name).where(models.Project.id.in_(ids))
+    )
+    by_id = {pid: (name or "") for pid, name in rows.all()}
+    return [by_id.get(pid) or f"Project {pid}" for pid in ids]
+
+
 def quote_dict(q: models.Quote) -> dict:
     """Convert a Quote row into the camelCase dict shape the generator
     and the frontend expect. None-tolerant: passing None returns {}."""
@@ -60,6 +100,7 @@ def quote_dict(q: models.Quote) -> dict:
         "companyId": q.company_id,
         "clientContactId": q.client_contact_id,
         "projectId": q.project_id,
+        "projectIds": doc_project_ids(q),
         "status": q.status,
         "sentDate": q.sent_date,
         "customStartDate": q.custom_start_date,
@@ -84,6 +125,7 @@ def invoice_dict(inv: models.Invoice) -> dict:
         "companyId": inv.company_id,
         "clientContactId": inv.client_contact_id,
         "projectId": inv.project_id,
+        "projectIds": doc_project_ids(inv),
         "quoteId": inv.quote_id,
         "status": inv.status,
         "invoiceDate": inv.invoice_date,

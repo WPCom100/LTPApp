@@ -59,7 +59,9 @@
     return {
       id: null,
       clientType: "company",        // "company" | "contact"
-      projectId: null, companyId: null, clientContactId: null,
+      // projectId is the PRIMARY project; projectIds is every project this quote
+      // bills work for (see window.LTP_docProjectIds in theme.js).
+      projectId: null, projectIds: [], companyId: null, clientContactId: null,
       customName: "", customStartDate: todayISO(), customEndDate: todayISO(),
       rentalStartDate: null, rentalEndDate: null,
       status: "draft", createdDate: todayISO(), sentDate: null,
@@ -77,12 +79,20 @@
       shareToken: q.shareToken || null,
       clientType: q.clientType || (q.companyId ? "company" : "contact"),
       projectId: q.projectId, companyId: q.companyId, clientContactId: q.clientContactId,
+      // Normalized here (not passed through raw) so a legacy row without the
+      // field still round-trips a correct list instead of saving back an empty
+      // one and dropping its "Includes" attribution.
+      projectIds: window.LTP_docProjectIds(q),
       customName: q.customName || "", customStartDate: q.customStartDate || "", customEndDate: q.customEndDate || "",
       rentalStartDate: q.rentalStartDate || null, rentalEndDate: q.rentalEndDate || null,
       status: q.status || "draft", createdDate: q.createdDate || todayISO(), sentDate: q.sentDate || null,
       globalDiscount: Object.assign({ type: "none", value: 0 }, q.globalDiscount || {}),
+      // This rebuild is a whitelist, so every section field must be named here
+      // or editing the quote silently drops it — `projectId` records which job
+      // an appended section came from.
       sections: (q.sections || []).map(function(s) {
         return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+                 projectId: s.projectId != null ? s.projectId : null,
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
       }),
       notes: q.notes || "",
@@ -1897,7 +1907,15 @@
           // (when invoice qty is reduced below it). Extra qty added directly
           // on the invoice sits above linkedQty and is treated as a direct
           // bill, NOT additional draw against the quote.
-          invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0, sourceItemId: it.id, linkedQty: toInvoice }));
+          //
+          // sourceQuoteId names WHICH quote the line draws against. An invoice
+          // can now gather lines from several of a client's quotes (the target
+          // picker below offers any of their draft invoices, not just ones on
+          // this project), so the invoice's own `quoteId` is no longer a safe
+          // stand-in — modules/invoices.js keys every invoicedQty rollback on
+          // this field, falling back to `quoteId` only for legacy lines.
+          invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0,
+                                                sourceItemId: it.id, sourceQuoteId: draft.id, linkedQty: toInvoice }));
           return Object.assign({}, it, { invoicedQty: d });
         });
         if (invItems.length > 0) {
@@ -1945,27 +1963,38 @@
       var targetId;
 
       if (targetInvoiceId) {
-        // Append to existing draft invoice
+        // \u2500\u2500 Append to an existing draft invoice \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        // The incoming lines arrive as NEW sections; nothing already on the
+        // invoice is touched. This used to merge into any section with a
+        // matching label, which quietly pooled a second job's "Labor" into the
+        // first job's section \u2014 losing the per-project provenance a
+        // multi-project invoice exists to record, and editing a section the
+        // user had already arranged. The project name rides in the section
+        // LABEL because that is what survives the public-view scrub
+        // (backend/routes/_shared.py::public_section_items).
         targetId = targetInvoiceId;
+        var quoteProject = draft.projectId != null
+          ? (projects || []).find(function(p) { return p.id === draft.projectId; }) : null;
+        var labeledSections = invSections.map(function(sec) {
+          return Object.assign({}, sec, {
+            label: window.LTP_projectSectionLabel(sec.label, quoteProject ? quoteProject.name : (draft.customName || "")),
+            projectId: draft.projectId != null ? draft.projectId : null,
+          });
+        });
         setInvoices(function(prev) {
           return prev.map(function(inv) {
             if (inv.id !== targetInvoiceId) return inv;
-            // Append items to existing sections or add new sections
-            var newSections = inv.sections.slice();
-            invSections.forEach(function(iSec) {
-              // Try to find matching section label
-              var existing = newSections.find(function(es) { return es.label === iSec.label; });
-              if (existing) {
-                existing = Object.assign({}, existing, { items: existing.items.concat(iSec.items) });
-                newSections = newSections.map(function(es) { return es.id === existing.id ? existing : es; });
-              } else {
-                newSections.push(iSec);
-              }
-            });
+            // Record this quote's project as a contributor. The invoice's
+            // PRIMARY project \u2014 its title on the PDF \u2014 is never rewritten.
+            var link = window.LTP_linkDocProject(inv, draft.projectId);
             var actEntry = { id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "updated",
               message: "Items added from " + window.LTP_QUOTE_REF(draft), user: (window.LTP_CURRENT_USER || "User"),
-              changes: invSections.map(function(s) { return { cat: s.label, detail: s.items.map(function(i) { return i.name + " \u00d7" + i.qty; }).join(", ") }; }) };
-            return Object.assign({}, inv, { sections: newSections, activity: (inv.activity || []).concat([actEntry]) });
+              changes: labeledSections.map(function(s) { return { cat: s.label, detail: s.items.map(function(i) { return i.name + " \u00d7" + i.qty; }).join(", ") }; }) };
+            return Object.assign({}, inv, {
+              projectId: link.projectId, projectIds: link.projectIds,
+              sections: window.LTP_appendDocSections(inv.sections, labeledSections, genId),
+              activity: (inv.activity || []).concat([actEntry]),
+            });
           });
         });
       } else {
@@ -1978,7 +2007,9 @@
           id: targetId, quoteId: draft.id,
           shareToken: window.LTP_genShareToken(),
           clientType: draft.clientType, companyId: draft.companyId, clientContactId: draft.clientContactId,
-          projectId: draft.projectId, customName: "", status: "draft",
+          projectId: draft.projectId,
+          projectIds: draft.projectId != null ? [draft.projectId] : [],
+          customName: "", status: "draft",
           invoiceDate: today, createdDate: today, sentDate: null,
           dueDate: dueDate30, paidDate: null,
           globalDiscount: data.invoiceDiscount,
@@ -2107,6 +2138,12 @@
 
     var refDisplay = draft.id != null ? window.LTP_QUOTE_REF(draft) : "Q-" + (draft.createdDate || "").substring(0, 4) + "-NEW";
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "Untitled Quote");
+    // Every project this quote bills work for, primary first. More than one when
+    // another job's schedule was sent into it (modules/schedule-builder.js).
+    var docProjects = window.LTP_docProjectIds(draft).map(function(id) {
+      var p = (projects || []).find(function(x) { return x.id === id; });
+      return p || { id: id, name: "Project " + id };
+    });
 
     // Section subtotals + margins (per-section display only)
     function sectionTotals(sec) {
@@ -2365,7 +2402,18 @@
               ),
               draft.projectId && selectedProject && h("div", { style: { marginTop: 10, padding: "8px 12px", background: B.raised, borderRadius: "6px", fontSize: "11px", color: B.textMut } },
                 "Project dates: " + fmt(selectedProject.startDate) + " \u2192 " + fmt(selectedProject.endDate) + " \u00b7 rental pricing will use this period."
-              )
+              ),
+              // Every job this quote bills for. Only shown once it covers more
+              // than one \u2014 the Project field above already names a single one.
+              // That field still sets the PRIMARY project, which titles the
+              // printed quote and drives rental dates; this is the full list.
+              docProjects.length > 1 && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+                h("span", null, "Includes:"),
+                docProjects.map(function(p, i) {
+                  return h("span", { key: p.id != null ? p.id : i,
+                    onClick: p.id != null ? function() { nav("projects/" + p.id); } : undefined,
+                    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: "2px 8px", color: p.id === draft.projectId ? B.accent : B.textSec, fontWeight: p.id === draft.projectId ? 700 : 500, cursor: p.id != null ? "pointer" : "default" } }, p.name);
+                }))
             )
       ),
 
@@ -2612,28 +2660,43 @@
       // Invoice target picker
       invPickerData && h(window.LTPModal, { title: "Send to Invoice", onClose: function() { setInvPickerData(null); } },
         h("p", { style: { fontSize: "12px", color: B.textMut, marginBottom: 14 } },
-          "Choose an existing draft invoice or create a new one."),
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 } },
+          "Add these items to one of this client\u2019s draft invoices \u2014 they arrive as new sections, leaving what\u2019s already there untouched \u2014 or create a new invoice."),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
           (function() {
-            var projectInvDrafts = invoices.filter(function(inv) {
-              return inv.status === "draft" && inv.projectId === draft.projectId && inv.projectId;
-            });
-            return projectInvDrafts.length > 0
-              ? projectInvDrafts.map(function(inv) {
+            // Every DRAFT invoice for this client, whichever project it started
+            // on \u2014 the project restriction that used to be here is what stopped
+            // one invoice from covering several jobs. Draft-only is not a
+            // preference: invoices lock as soon as they're sent
+            // (modules/invoices.js), so a sent invoice can't take new lines.
+            // Contact-billed and company-billed invoices never mix, since the
+            // billing party has to match for the totals to mean anything.
+            var clientInvDrafts = (invoices || []).filter(function(inv) {
+              if (!inv || inv.status !== "draft") return false;
+              if ((inv.clientType || "company") !== (draft.clientType || "company")) return false;
+              return (draft.clientType === "contact")
+                ? (inv.clientContactId != null && inv.clientContactId === draft.clientContactId)
+                : (inv.companyId != null && inv.companyId === draft.companyId);
+            }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
+            return clientInvDrafts.length > 0
+              ? clientInvDrafts.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);
                   var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
                   var total = window.LTP_INVOICE_TOTALS(inv);
+                  // Which jobs the invoice already covers \u2014 the reason a draft
+                  // from another project is a legitimate target at all.
+                  var names = window.LTP_docProjectNames(inv, projects);
                   return h("button", { key: inv.id, onClick: function() { executeSendToInvoice(inv.id); },
-                    style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center" },
+                    style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontFamily: "inherit" },
                     onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
                     onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
-                    h("div", null,
+                    h("div", { style: { minWidth: 0 } },
                       h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, ref),
-                      h("div", { style: { fontSize: "10px", color: B.textMut } }, itemCount + " item" + (itemCount !== 1 ? "s" : "") + " \u00b7 " + window.LTP_formatDate(inv.invoiceDate))),
-                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(total.total || 0))
+                      h("div", { style: { fontSize: "10px", color: B.textMut } }, itemCount + " item" + (itemCount !== 1 ? "s" : "") + " \u00b7 " + window.LTP_formatDate(inv.invoiceDate)),
+                      names.length > 0 && h("div", { style: { fontSize: "10px", color: names.length > 1 ? B.info : B.textMut, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, names.join(", "))),
+                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, flexShrink: 0 } }, "$" + window.LTP_money(total.total || 0))
                   );
                 })
-              : [h("div", { key: "_empty", style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } }, "No existing draft invoices for this project.")];
+              : [h("div", { key: "_empty", style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } }, "No draft invoices for this client yet.")];
           })()
         ),
         h(window.Btn, { onClick: function() { executeSendToInvoice(null); } }, "+ Create New Invoice")

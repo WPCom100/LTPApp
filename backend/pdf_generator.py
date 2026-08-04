@@ -447,6 +447,23 @@ class _DocPDF:
         c.drawRightString(self.W - self.M, self.y, ref)
         self.y -= 18
 
+        # "Includes" line — a document can bill work for several projects (a
+        # schedule sends its labor into any of the client's draft quotes /
+        # invoices, whatever project that document started on). The title above
+        # stays the PRIMARY project; this names every job covered, so the client
+        # isn't reading line items for a job the header never mentions. Absent
+        # for the single-project case, which is the overwhelming majority.
+        # Names are resolved by the caller — routes/pdf.py, routes/view.py.
+        project_names = [n for n in (self.entity.get("projectNames") or []) if n]
+        if len(project_names) > 1:
+            c.setFont("Roboto", 9)
+            c.setFillColor(INK_SOFT)
+            for line in _wrap_plain("Includes: " + ", ".join(project_names),
+                                    "Roboto", 9, self.W - 2 * self.M):
+                c.drawString(self.M, self.y, line)
+                self.y -= 11
+            self.y -= 3
+
         # Prepared for / Date generated
         company_name = self.company.get("name") or ""
         contact_name = _contact_full_name(self.contact)
