@@ -51,7 +51,7 @@
 // modules/quotes-client-rates.js), so the shell must be refetched; the new
 // files themselves are picked up by the runtime /data/, /components/ and
 // /modules/ rules below, not precached.
-var CACHE_VERSION = 'ltp-shell-v52';
+var CACHE_VERSION = 'ltp-shell-v53';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

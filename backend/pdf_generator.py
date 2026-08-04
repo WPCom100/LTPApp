@@ -188,7 +188,7 @@ def _calc_totals(entity):
     gv = gd.get("value", 0) or 0
     if gt == "percent":
         after = adj * (1 - gv / 100)
-    elif gt in ("amount", "flat"):   # quotes use "amount", invoices use "flat"
+    elif gt in ("amount", "flat"):   # "amount" is current; "flat" a legacy alias
         after = adj - gv
     elif gt == "target":
         after = gv

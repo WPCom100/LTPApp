@@ -2044,11 +2044,25 @@ window.LTP_INVOICE_TOTALS = function(inv) {
       subtotal += price * (it.qty || 0);
     });
   });
+  // Global discount. A fixed-dollar discount is "amount" — that is what BOTH
+  // builders' "$" option writes (modules/invoices.js, modules/quotes-builder.js).
+  // "flat" is a LEGACY ALIAS, accepted forever but never written: it was this
+  // function's original spelling and never matched what the invoice UI actually
+  // saved, so a "$" discount computed as $0 here (and in the QuickBooks payload)
+  // while the client's PDF and share link — which already accepted both — showed
+  // it applied. Three parties saw three totals. All four readers now agree:
+  // here, backend/qbo_sync.py::_build_sales_lines,
+  // backend/pdf_generator.py::_calc_totals, modules/client-view.js::calcTotals.
   var gd = inv.globalDiscount || {};
   var discount = 0;
   if (gd.type === "percent") discount = subtotal * (gd.value || 0) / 100;
-  else if (gd.type === "flat") discount = gd.value || 0;
+  else if (gd.type === "amount" || gd.type === "flat") discount = gd.value || 0;
   else if (gd.type === "target") discount = Math.max(0, subtotal - (gd.value || 0));
+  // Never discount past zero — an over-large amount or a >100% rate would
+  // otherwise show a NEGATIVE total here while the PDF and client view (both
+  // of which clamp) showed 0. Same rule as LTP_QUOTE_TOTALS below.
+  if (discount > subtotal) discount = subtotal;
+  if (discount < 0) discount = 0;
   var afterDiscount = subtotal - discount;
   // Tax is QuickBooks-authoritative: once the invoice has been pushed, QB
   // computes the sales tax (qbTaxTotal) and the whole-invoice total reflects it
@@ -2138,8 +2152,12 @@ window.LTP_QUOTE_TOTALS = function(q) {
   });
   var afterDiscount = adjusted;
   var gd = q.globalDiscount || { type: "none", value: 0 };
+  // "amount" is the fixed-dollar discount; "flat" is the legacy alias accepted
+  // by every reader (see LTP_INVOICE_TOTALS above). Quotes have only ever
+  // written "amount", but accepting both here keeps the two totals functions
+  // literally interchangeable, which is the property that broke last time.
   if (gd.type === "percent") afterDiscount = adjusted * (1 - (Number(gd.value) || 0) / 100);
-  else if (gd.type === "amount") afterDiscount = adjusted - (Number(gd.value) || 0);
+  else if (gd.type === "amount" || gd.type === "flat") afterDiscount = adjusted - (Number(gd.value) || 0);
   else if (gd.type === "target") afterDiscount = Number(gd.value) || 0;
   if (afterDiscount < 0) afterDiscount = 0;
   // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB

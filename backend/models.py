@@ -187,7 +187,10 @@ class Quote(Base):
     custom_start_date = Column(String(10), default="") # overrides project's startDate on the printed quote
     custom_end_date = Column(String(10), default="")   # overrides project's endDate on the printed quote
     custom_name = Column(String(255), default="")      # overrides project.name on the printed quote
-    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
+    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"amount"|"target", value: float}
+                                                        # "amount" = fixed dollars off, "target" = discount TO this
+                                                        # total. "flat" is a legacy alias for "amount", still read
+                                                        # by every consumer but no longer written by any UI.
     sections = Column(JSON, default=list)               # list[{id: str, label: str, customDates: bool,
                                                         #       startDate: str, endDate: str,
                                                         #       projectId: int|null,   (set on sections appended from
@@ -267,7 +270,10 @@ class Invoice(Base):
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     custom_name = Column(String(255), default="")       # names a project-less invoice; falls back to project.name on the printed doc (mirrors Quote.custom_name)
     paid_date = Column(String(10), default="")          # ISO YYYY-MM-DD, set when fully paid
-    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
+    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"amount"|"target", value: float}
+                                                        # "amount" = fixed dollars off, "target" = discount TO this
+                                                        # total. "flat" is a legacy alias for "amount", still read
+                                                        # by every consumer but no longer written by any UI.
     sections = Column(JSON, default=list)               # list[{id, label, items: list[InvoiceLineItem]}]
                                                         # InvoiceLineItem = {id, type, name, qty, unitPrice, adjustedPrice,
                                                         #                    rateType, productVariantId, feeId,
