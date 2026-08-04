@@ -638,7 +638,9 @@
       var today = todayISO();
       return {
         id: null, quoteId: null,
-        clientType: "company", companyId: null, clientContactId: null, projectId: null,
+        // projectId is the PRIMARY project; projectIds is every project this
+        // invoice bills work for (see window.LTP_docProjectIds in theme.js).
+        clientType: "company", companyId: null, clientContactId: null, projectId: null, projectIds: [],
         customName: "", status: "draft",
         invoiceDate: today, createdDate: today, sentDate: null, dueDate: net30(today), paidDate: null,
         globalDiscount: { type: "none", value: 0 },
@@ -662,14 +664,24 @@
         id: inv.id, quoteId: inv.quoteId || null,
         shareToken: inv.shareToken || null,
         clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
-        projectId: inv.projectId, customName: inv.customName || "",
+        projectId: inv.projectId,
+        // Normalized (not passed through raw) so a legacy row without the field
+        // still round-trips a correct list instead of saving back an empty one
+        // and dropping its "Includes" attribution.
+        projectIds: window.LTP_docProjectIds(inv),
+        customName: inv.customName || "",
         status: inv.status || "draft",
         invoiceDate: inv.invoiceDate || inv.createdDate || todayISO(),
         createdDate: inv.createdDate || todayISO(), sentDate: inv.sentDate || null,
         dueDate: inv.dueDate || "", paidDate: inv.paidDate || null,
         globalDiscount: Object.assign({ type: "none", value: 0 }, inv.globalDiscount || {}),
+        // A whitelist rebuild, so every section field must be named here or
+        // editing the invoice silently drops it — `projectId` records which job
+        // an appended section came from. (Items are spread, so sourceQuoteId /
+        // linkedQty survive automatically.)
         sections: (inv.sections || []).map(function(s) {
           return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+                   projectId: s.projectId != null ? s.projectId : null,
                    items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
         }),
         notes: inv.notes || "",
@@ -1236,6 +1248,12 @@
     }, [services, clientRates, draft.clientType, draft.companyId, draft.clientContactId]);
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "New Invoice");
     var linkedQuote = draft.quoteId ? quotes.find(function(q) { return q.id === draft.quoteId; }) : null;
+    // Every project this invoice bills work for, primary first. More than one
+    // when a schedule (or a quote) from another job was added to it.
+    var docProjects = window.LTP_docProjectIds(draft).map(function(id) {
+      var p = (projects || []).find(function(x) { return x.id === id; });
+      return p || { id: id, name: "Project " + id };
+    });
     var t = window.LTP_INVOICE_TOTALS(draft);
 
     // QuickBooks display state. Directly-billed contacts are always taxable;
@@ -1289,18 +1307,31 @@
         })});
       });
     }
+    // Which quote a converted line draws against. An invoice can gather lines
+    // from several of a client's quotes (the send-to-invoice picker offers any
+    // of their draft invoices, whatever project it started on), so the line's
+    // own sourceQuoteId is authoritative; `draft.quoteId` is the fallback for
+    // lines converted before that field existed. Returns null for a direct
+    // bill — a hand-added line or one generated from a project schedule.
+    function sourceQuoteOf(it) {
+      if (!it || !it.sourceItemId) return null;
+      if (it.sourceQuoteId != null) return it.sourceQuoteId;
+      return draft.quoteId != null ? draft.quoteId : null;
+    }
+
     function deleteItem(secId, itemId) {
       if (!isDraft) return;
       // Track deleted linked items for quote rollback on save
       (draft.sections || []).forEach(function(sec) {
         if (sec.id !== secId) return;
         (sec.items || []).forEach(function(it) {
-          if (it.id === itemId && it.sourceItemId && draft.quoteId) {
+          var srcQuote = sourceQuoteOf(it);
+          if (it.id === itemId && srcQuote != null) {
             // Only the linked portion (capped at original conversion qty)
             // counts against the quote; legacy items without linkedQty fall
             // back to the full qty.
             var linked = it.linkedQty != null ? (Number(it.linkedQty) || 0) : (Number(it.qty) || 0);
-            pendingRollbacks.current.push({ sourceItemId: it.sourceItemId, qty: linked, name: it.name || "" });
+            pendingRollbacks.current.push({ quoteId: srcQuote, sourceItemId: it.sourceItemId, qty: linked, name: it.name || "" });
           }
         });
       });
@@ -1568,7 +1599,7 @@
       }
       var rollbacks = pendingRollbacks.current.slice();
       var cleanSnap = cleanRef.current || {};
-      if (draft.quoteId && Array.isArray(cleanSnap.sections)) {
+      if (Array.isArray(cleanSnap.sections)) {
         var cleanLinkedItems = {};
         cleanSnap.sections.forEach(function(sec) {
           (sec.items || []).forEach(function(it) {
@@ -1584,38 +1615,47 @@
         Object.keys(cleanLinkedItems).forEach(function(itemId) {
           // Deletes are already covered by pendingRollbacks; skip here to avoid double-counting.
           if (!(itemId in draftLinkedItems)) return;
+          var srcQuote = sourceQuoteOf(cleanLinkedItems[itemId]);
+          if (srcQuote == null) return;
           var oldLinked = linkedOf(cleanLinkedItems[itemId]);
           var newLinked = linkedOf(draftLinkedItems[itemId]);
           var delta = oldLinked - newLinked;
           if (delta > 0) {
-            rollbacks.push({ sourceItemId: cleanLinkedItems[itemId].sourceItemId, qty: delta, name: cleanLinkedItems[itemId].name || "" });
+            rollbacks.push({ quoteId: srcQuote, sourceItemId: cleanLinkedItems[itemId].sourceItemId,
+                             qty: delta, name: cleanLinkedItems[itemId].name || "" });
           }
         });
       }
-      if (rollbacks.length > 0 && draft.quoteId && setQuotes) {
-        var reductions = {};
-        var rollbackDetails = [];
+      if (rollbacks.length > 0 && setQuotes) {
+        // Group by SOURCE QUOTE, not by this invoice's quoteId \u2014 an invoice
+        // that gathered lines from several quotes has to credit each one back
+        // its own quantities, or that quote stays permanently marked invoiced.
+        var byQuote = {};            // quoteId \u2192 { itemId: qtyReduced }
+        var detailsByQuote = {};     // quoteId \u2192 [{cat, detail}]
         rollbacks.forEach(function(rb) {
-          if (rb.qty > 0) {
-            reductions[rb.sourceItemId] = (reductions[rb.sourceItemId] || 0) + rb.qty;
-            rollbackDetails.push({ cat: "Invoiced Qty Reduced", detail: (rb.name || "Item") + ": -" + rb.qty });
-          }
+          if (!(rb.qty > 0) || rb.quoteId == null) return;
+          var k = String(rb.quoteId);
+          (byQuote[k] = byQuote[k] || {});
+          byQuote[k][rb.sourceItemId] = (byQuote[k][rb.sourceItemId] || 0) + rb.qty;
+          (detailsByQuote[k] = detailsByQuote[k] || []).push({ cat: "Invoiced Qty Reduced", detail: (rb.name || "Item") + ": -" + rb.qty });
         });
-        if (Object.keys(reductions).length > 0) {
+        if (Object.keys(byQuote).length > 0) {
           setQuotes(function(prevQuotes) {
             return prevQuotes.map(function(q) {
-              if (q.id !== draft.quoteId) return q;
-              var updatedSections = q.sections.map(function(sec) {
-                return Object.assign({}, sec, { items: sec.items.map(function(qi) {
+              var reductions = byQuote[String(q.id)];
+              if (!reductions) return q;
+              var details = detailsByQuote[String(q.id)].slice();
+              var updatedSections = (q.sections || []).map(function(sec) {
+                return Object.assign({}, sec, { items: (sec.items || []).map(function(qi) {
                   if (!reductions[qi.id]) return qi;
                   return Object.assign({}, qi, { invoicedQty: Math.max(0, (Number(qi.invoicedQty) || 0) - reductions[qi.id]) });
                 })});
               });
               var newStatus = q.status === "converted" ? "accepted" : q.status;
-              if (newStatus !== q.status) rollbackDetails.push({ cat: "Status", detail: q.status + " \u2192 " + newStatus });
+              if (newStatus !== q.status) details.push({ cat: "Status", detail: q.status + " \u2192 " + newStatus });
               var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5),
                 type: "invoiced", user: (window.LTP_CURRENT_USER || "User"), message: "Invoiced quantities reduced from " + refDisplay,
- changes: rollbackDetails };
+                changes: details };
               return Object.assign({}, q, { sections: updatedSections, status: newStatus, activity: (q.activity || []).concat([actEntry]) });
             });
           });
@@ -1655,7 +1695,22 @@
         ? "\n\nThis invoice has " + draft.payments.length + " recorded payment" + (draft.payments.length > 1 ? "s" : "") + " totaling $" + window.LTP_money((draft.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0)) + ". Deleting will erase the payment records."
         : "";
       var qbWarning = draft.qbInvoiceId ? "\n\nThis invoice will also be deleted from QuickBooks." : "";
-      setDlg({ title: "Delete Invoice", message: "Permanently delete " + refDisplay + "?" + (draft.quoteId ? " This will reduce invoiced quantities on the source quote." : "") + qbWarning + paymentWarning, variant: "danger", confirmLabel: hasPayments ? "Delete with Payments" : "Delete",
+      // Count the DISTINCT quotes this invoice draws from — it can be more than
+      // one, so "the source quote" isn't always accurate.
+      var srcQuoteCount = (function() {
+        var seen = {};
+        (draft.sections || []).forEach(function(sec) {
+          (sec.items || []).forEach(function(it) {
+            var sq = sourceQuoteOf(it);
+            if (sq != null) seen[String(sq)] = true;
+          });
+        });
+        return Object.keys(seen).length;
+      })();
+      var quoteWarning = srcQuoteCount > 0
+        ? " This will reduce invoiced quantities on " + (srcQuoteCount === 1 ? "the source quote" : srcQuoteCount + " source quotes") + "."
+        : "";
+      setDlg({ title: "Delete Invoice", message: "Permanently delete " + refDisplay + "?" + quoteWarning + qbWarning + paymentWarning, variant: "danger", confirmLabel: hasPayments ? "Delete with Payments" : "Delete",
         onConfirm: function() {
           // For a synced invoice, delete it from QuickBooks FIRST; only remove
           // it locally if that succeeds, so we never orphan it in QuickBooks.
@@ -1676,25 +1731,33 @@
           }
           doLocalDelete();
           function doLocalDelete() {
-          // If linked to a quote, reduce invoicedQty on matching quote items
-          if (draft.quoteId && setQuotes) {
+          // Credit every source quote back the quantities this invoice drew.
+          // Grouped by each LINE's source quote, not the invoice's `quoteId`:
+          // an invoice can gather lines from several of the client's quotes, and
+          // crediting only one would leave the others permanently marked
+          // invoiced with no invoice behind the quantity.
+          var deleteReductions = {};   // quoteId → { sourceItemId: qty }
+          (draft.sections || []).forEach(function(sec) {
+            (sec.items || []).forEach(function(it) {
+              if (it.type === "note") return;
+              var srcQuote = sourceQuoteOf(it);
+              if (srcQuote == null) return;
+              // Use linkedQty (fallback qty for legacy items) so direct-added
+              // qty above the linked baseline doesn't double-decrement.
+              var linked = it.linkedQty != null ? (Number(it.linkedQty) || 0) : (Number(it.qty) || 0);
+              var k = String(srcQuote);
+              (deleteReductions[k] = deleteReductions[k] || {});
+              deleteReductions[k][it.sourceItemId] = (deleteReductions[k][it.sourceItemId] || 0) + linked;
+            });
+          });
+          if (Object.keys(deleteReductions).length > 0 && setQuotes) {
             setQuotes(function(prevQuotes) {
               return prevQuotes.map(function(q) {
-                if (q.id !== draft.quoteId) return q;
-                // Build a map of sourceItemId → qty to reduce. Use linkedQty
-                // (fallback qty for legacy items) so direct-added qty above
-                // the linked baseline doesn't double-decrement the quote.
-                var reductions = {};
-                (draft.sections || []).forEach(function(sec) {
-                  (sec.items || []).forEach(function(it) {
-                    if (it.type === "note" || !it.sourceItemId) return;
-                    var linked = it.linkedQty != null ? (Number(it.linkedQty) || 0) : (Number(it.qty) || 0);
-                    reductions[it.sourceItemId] = (reductions[it.sourceItemId] || 0) + linked;
-                  });
-                });
+                var reductions = deleteReductions[String(q.id)];
+                if (!reductions) return q;
                 // Apply reductions to quote sections
-                var updatedSections = q.sections.map(function(sec) {
-                  var updatedItems = sec.items.map(function(qi) {
+                var updatedSections = (q.sections || []).map(function(sec) {
+                  var updatedItems = (sec.items || []).map(function(qi) {
                     if (!reductions[qi.id]) return qi;
                     var newInvQty = Math.max(0, (Number(qi.invoicedQty) || 0) - reductions[qi.id]);
                     return Object.assign({}, qi, { invoicedQty: newInvQty });
@@ -1710,15 +1773,15 @@
                 Object.keys(reductions).forEach(function(srcId) {
                   // Find the item name from the quote sections
                   var itemName = "";
-                  q.sections.forEach(function(sec) {
-                    sec.items.forEach(function(qi) { if (qi.id === srcId) itemName = qi.name; });
+                  (q.sections || []).forEach(function(sec) {
+                    (sec.items || []).forEach(function(qi) { if (qi.id === srcId) itemName = qi.name; });
                   });
                   actChanges.push({ cat: "Invoiced Qty Reduced", detail: (itemName || "Item") + ": -" + reductions[srcId] });
                 });
-                if (newStatus !== q.status) actChanges.push({ cat: "Status", detail: q.status + " \u2192 " + newStatus });
+                if (newStatus !== q.status) actChanges.push({ cat: "Status", detail: q.status + " → " + newStatus });
                 var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5),
-                  type: "invoiced", user: (window.LTP_CURRENT_USER || "User"), message: "Invoice " + refDisplay + " deleted \u2014 invoiced quantities reduced",
- changes: actChanges.length > 0 ? actChanges : null };
+                  type: "invoiced", user: (window.LTP_CURRENT_USER || "User"), message: "Invoice " + refDisplay + " deleted — invoiced quantities reduced",
+                  changes: actChanges.length > 0 ? actChanges : null };
                 return Object.assign({}, q, {
                   sections: updatedSections,
                   status: newStatus,
@@ -1970,7 +2033,18 @@
                   )
                 ),
             linkedQuote && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut } },
-              "Linked to: ", h("span", { style: { color: B.accent, cursor: "pointer", fontWeight: 600 }, onClick: function() { nav("quotes/" + linkedQuote.id); } }, window.LTP_QUOTE_REF(linkedQuote)))
+              "Linked to: ", h("span", { style: { color: B.accent, cursor: "pointer", fontWeight: 600 }, onClick: function() { nav("quotes/" + linkedQuote.id); } }, window.LTP_QUOTE_REF(linkedQuote))),
+            // Every job this invoice bills for. Only shown once it covers more
+            // than one — the Project field above already names a single one.
+            // The project picker still sets the PRIMARY, which is what titles
+            // the printed invoice; this is the full list.
+            docProjects.length > 1 && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+              h("span", null, "Includes:"),
+              docProjects.map(function(p, i) {
+                return h("span", { key: p.id != null ? p.id : i,
+                  onClick: p.id != null ? function() { nav("projects/" + p.id); } : undefined,
+                  style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: "2px 8px", color: p.id === draft.projectId ? B.accent : B.textSec, fontWeight: p.id === draft.projectId ? 700 : 500, cursor: p.id != null ? "pointer" : "default" } }, p.name);
+              }))
           ),
 
           // Sections

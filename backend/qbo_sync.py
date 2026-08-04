@@ -553,6 +553,15 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
         raise InvoiceNotSyncable("no billable line items to push to QuickBooks")
 
     # Global discount → a single discount line after the item lines.
+    #
+    # A fixed-dollar discount is "amount" — what both builders' "$" option
+    # writes. "flat" is a legacy alias, accepted but never written: this branch
+    # used to match ONLY "flat", so a "$" discount pushed no discount line at
+    # all and QuickBooks billed the full amount while the client's PDF showed
+    # the discounted total. The client would pay the PDF figure, QB would keep
+    # a phantom balance open, and the auto-receipt poller
+    # (backend/qbo_receipts.py::_process_invoice) would never mark it paid.
+    # Keep in step with window.LTP_INVOICE_TOTALS (theme.js).
     gd = entity.global_discount or {}
     gtype = gd.get("type")
     if gtype == "percent" and gd.get("value"):
@@ -560,11 +569,14 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
             "DetailType": "DiscountLineDetail",
             "DiscountLineDetail": {"PercentBased": True, "DiscountPercent": float(gd["value"])},
         })
-    elif gtype in ("flat", "target"):
-        if gtype == "flat":
-            amount = float(gd.get("value") or 0)
-        else:  # target total → equivalent flat discount (matches theme.js)
+    elif gtype in ("amount", "flat", "target"):
+        if gtype == "target":  # target total → equivalent fixed discount (matches theme.js)
             amount = max(0.0, subtotal - float(gd.get("value") or 0))
+        else:
+            amount = float(gd.get("value") or 0)
+        # Never discount past the line total: QuickBooks rejects a discount
+        # larger than the invoice, and theme.js clamps the same way.
+        amount = min(amount, subtotal)
         if amount > 0:
             lines.append({
                 "DetailType": "DiscountLineDetail",

@@ -34,6 +34,8 @@ from backend.pdf_generator import doc_ref, generate_pdf
 from backend.routes._shared import (
     quote_dict as _quote_dict,
     invoice_dict as _invoice_dict,
+    doc_project_ids as _doc_project_ids,
+    load_project_names as _load_project_names,
     load_related as _load_related,
     load_settings as _load_settings,
     safe_pdf_filename as _safe_filename,
@@ -71,6 +73,11 @@ async def _generate_and_archive(
     """Shared implementation for both POST endpoints. Returns the response
     body that the route handler will return verbatim."""
     company, contact, project = await _load_related(db, *related_lookups)
+    # Display names of every project the document bills for, primary first.
+    # Passed on the entity dict (rather than as another generate_pdf argument)
+    # so the generator signature stays put; it renders them as the "Includes"
+    # line when the document covers more than one job.
+    entity_dict["projectNames"] = await _load_project_names(db, _doc_project_ids(entity_row))
     settings = await _load_settings(db)
 
     # Render PDF in a worker thread — reportlab is synchronous and slow

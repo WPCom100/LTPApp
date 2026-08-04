@@ -31,10 +31,29 @@ inv = { sections: items([line({ unitPrice: 100, qty: 2, adjustedPrice: 80 }), li
 near("I2 adjustedPrice used + note skipped", IT(inv).subtotal, 160);
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "percent", value: 10 } };
 near("I3 percent discount", IT(inv).discount, 20); near("I3 total after %", IT(inv).total, 180);
+// "amount" is what the invoice builder's "$" option actually writes. This
+// function used to match only "flat", so a $ discount computed as $0 here while
+// the client's PDF and share link showed it applied — three parties, three
+// totals. The "flat" case below is the legacy alias, which must keep working.
+inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "amount", value: 30 } };
+near("I4 amount discount (what the $ option writes)", IT(inv).discount, 30);
+near("I4 total after amount", IT(inv).total, 170);
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "flat", value: 30 } };
-near("I4 flat discount", IT(inv).discount, 30); near("I4 total after flat", IT(inv).total, 170);
+near("I4b flat is a legacy alias for amount", IT(inv).discount, 30);
+near("I4b total after flat", IT(inv).total, 170);
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "target", value: 150 } };
 near("I5 target discount = subtotal-target", IT(inv).discount, 50); near("I5 total = target", IT(inv).total, 150);
+// Clamped the same way quotes are (Q5) and the same way the PDF + client view
+// clamp — otherwise an over-discount shows a NEGATIVE total in the app while
+// the customer-facing documents show 0.
+inv = { sections: items([line({ unitPrice: 50 })]), globalDiscount: { type: "amount", value: 999 } };
+near("I5b over-large amount can't go negative", IT(inv).total, 0);
+near("I5b discount capped at subtotal", IT(inv).discount, 50);
+inv = { sections: items([line({ unitPrice: 50 })]), globalDiscount: { type: "percent", value: 150 } };
+near("I5c over-100% can't go negative", IT(inv).total, 0);
+// An unrecognized type is a no-op, never a silent partial discount.
+inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "bogus", value: 30 } };
+near("I5d unknown discount type is ignored", IT(inv).total, 200);
 window.LTP_TAX_RATE = 10;
 inv = { sections: items([line({ unitPrice: 100 })]) };
 near("I6 tax via rate", IT(inv).tax, 10); near("I6 total with tax", IT(inv).total, 110);
@@ -63,6 +82,10 @@ q = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "targ
 near("Q4 target discount", QT(q).preTax, 120);
 q = { sections: items([line({ unitPrice: 50 })]), globalDiscount: { type: "amount", value: 999 } };
 near("Q5 discount can't go negative", QT(q).preTax, 0);
+// The two totals functions must stay interchangeable on discount vocabulary —
+// that's the property whose absence produced the invoice "$" bug.
+q = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "flat", value: 30 } };
+near("Q5b quotes also read the legacy flat alias", QT(q).preTax, 170);
 // Quotes are QuickBooks-tax-authoritative: the flat LTP_TAX_RATE is IGNORED;
 // tax comes from qbTaxTotal (set by the temporary-estimate flow). Null → $0.
 window.LTP_TAX_RATE = 8;
