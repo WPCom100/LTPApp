@@ -73,8 +73,31 @@
     // Note click handler — opens viewer
     function onNoteClick(noteId) { ctx.setViewNote({ projectId: project.id, noteId: noteId }); }
 
-    var projectQuotes = (ctx.quotes || []).filter(function(q) { return q.projectId === project.id; });
-    var projectInvoices = (ctx.invoices || []).filter(function(inv) { return inv.projectId === project.id; });
+    // Every document this project bills work for — including ones where it's a
+    // contributor rather than the primary, which is how a schedule sent into
+    // another job's draft still shows up here.
+    var projectQuotes = (ctx.quotes || []).filter(function(q) { return window.LTP_docHasProject(q, project.id); });
+    var projectInvoices = (ctx.invoices || []).filter(function(inv) { return window.LTP_docHasProject(inv, project.id); });
+    // Shared documents count their full total on every project they touch, so
+    // these notes say so rather than letting the numbers quietly overlap.
+    var quoteShareNote = window.LTP_sharedDocNote(project, projectQuotes, ctx.projects);
+    var invoiceShareNote = window.LTP_sharedDocNote(project, projectInvoices, ctx.projects);
+    // Per-row marker: the OTHER jobs a given document also bills for.
+    function otherProjectNames(doc) {
+      return window.LTP_docProjectIds(doc)
+        .filter(function(id) { return String(id) !== String(project.id); })
+        .map(function(id) {
+          var p = (ctx.projects || []).find(function(x) { return x.id === id; });
+          return (p && p.name) ? p.name : ("Project " + id);
+        });
+    }
+    function sharedChip(doc) {
+      var others = otherProjectNames(doc);
+      if (others.length === 0) return null;
+      return h("span", { title: "This document also bills work for " + others.join(", ") + ". Its full total is counted on each.",
+        style: { fontSize: "9px", fontWeight: 700, color: B.info, background: B.info + "1a", border: "1px solid " + B.info + "44", borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap" } },
+        "+ " + others.join(", "));
+    }
     var localNav = window.LTPRouter.navigate;
 
     return h(window.LTPModal, { title: project.name, onClose: function() { ctx.setSelectedProjectId(null); }, wide: true },
@@ -91,7 +114,8 @@
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } },
             h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, headline.quoted ? "Total Quoted" : "Total Budget"),
             h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent } }, "$" + Math.round(headline.total).toLocaleString()),
-            headline.quoted && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "across " + headline.count + " quote" + (headline.count !== 1 ? "s" : ""))),
+            headline.quoted && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "across " + headline.count + " quote" + (headline.count !== 1 ? "s" : "")),
+            headline.quoted && quoteShareNote && h("div", { style: { fontSize: "9px", color: B.info, marginTop: 3, lineHeight: 1.35 } }, quoteShareNote)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Category"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: CAT_COLORS[project.category] } }, project.category)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px" } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Contacts"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, projContacts.length)),
           h("div", { style: { background: B.raised, borderRadius: "8px", padding: "14px", cursor: "pointer" }, onClick: function() { setProjTab("quotes"); } }, h("div", { style: { fontSize: "11px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Quotes"), h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.accent } }, projectQuotes.length))
@@ -202,11 +226,12 @@
                   style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
                   onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                   onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
-                  h("div", null,
-                    h("div", { style: { fontSize: "14px", fontWeight: 700 } },
+                  h("div", { style: { minWidth: 0 } },
+                    h("div", { style: { fontSize: "14px", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                       h("span", { style: { color: B.accent } }, ref),
-                      h("span", { style: { color: B.textMut, margin: "0 8px" } }, "\u00b7"),
-                      h("span", { style: { color: B.text } }, project.name)
+                      h("span", { style: { color: B.textMut } }, "\u00b7"),
+                      h("span", { style: { color: B.text } }, project.name),
+                      sharedChip(qt)
                     ),
                     h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, itemCount + " line items \u00b7 " + (qt.sections || []).length + " sections \u00b7 " + fmt(qt.createdDate))
                   ),
@@ -229,6 +254,7 @@
                 h(window.StatCard, { label: "Outstanding", value: "$" + projectInvoices.filter(function(i) { return i.status === "sent" || i.status === "partial"; }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).balance || 0); }, 0).toLocaleString(), accent: B.danger }),
                 h(window.StatCard, { label: "Draft", value: projectInvoices.filter(function(i) { return i.status === "draft"; }).length })
               ),
+              invoiceShareNote && h("div", { style: { fontSize: "10px", color: B.info, marginTop: -6, marginBottom: 12, lineHeight: 1.4 } }, invoiceShareNote),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
                 projectInvoices.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);
@@ -239,9 +265,10 @@
                     style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
                     onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                     onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
-                    h("div", null,
-                      h("div", { style: { fontSize: "14px", fontWeight: 700 } },
-                        h("span", { style: { color: B.accent } }, ref)),
+                    h("div", { style: { minWidth: 0 } },
+                      h("div", { style: { fontSize: "14px", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                        h("span", { style: { color: B.accent } }, ref),
+                        sharedChip(inv)),
                       h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
                         itemCount + " items \u00b7 " + fmt(inv.invoiceDate) + (inv.dueDate ? " \u00b7 Due: " + fmt(inv.dueDate) : ""))),
                     h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },

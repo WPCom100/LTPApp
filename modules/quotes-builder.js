@@ -1919,7 +1919,11 @@
           return Object.assign({}, it, { invoicedQty: d });
         });
         if (invItems.length > 0) {
-          invSections.push({ id: genId("sec"), label: sec.label, customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems });
+          // projectId rides along so a section's job attribution survives the
+          // quote → invoice hop; without it a multi-project quote's sections
+          // would arrive on the invoice with no idea which job they billed.
+          invSections.push({ id: genId("sec"), label: sec.label, projectId: sec.projectId != null ? sec.projectId : null,
+                             customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems });
         }
         return Object.assign({}, sec, { items: updatedItems });
       });
@@ -1975,15 +1979,20 @@
         targetId = targetInvoiceId;
         var quoteProject = draft.projectId != null
           ? (projects || []).find(function(p) { return p.id === draft.projectId; }) : null;
-        var labeledSections = invSections.map(function(sec) {
-          return Object.assign({}, sec, {
-            label: window.LTP_projectSectionLabel(sec.label, quoteProject ? quoteProject.name : (draft.customName || "")),
-            projectId: draft.projectId != null ? draft.projectId : null,
-          });
-        });
         setInvoices(function(prev) {
           return prev.map(function(inv) {
             if (inv.id !== targetInvoiceId) return inv;
+            // A quote whose job runs on different dates than the target invoice
+            // brings its own rental window on its sections, so equipment lines
+            // keep pricing on the period they were quoted for. Null when the
+            // windows already agree or this is the invoice's primary job.
+            var dateStamp = window.LTP_sectionDateStamp(inv, quoteProject, projects);
+            var labeledSections = invSections.map(function(sec) {
+              return Object.assign({}, sec, {
+                label: window.LTP_projectSectionLabel(sec.label, quoteProject ? quoteProject.name : (draft.customName || "")),
+                projectId: draft.projectId != null ? draft.projectId : null,
+              }, dateStamp || {});
+            });
             // Record this quote's project as a contributor. The invoice's
             // PRIMARY project \u2014 its title on the PDF \u2014 is never rewritten.
             var link = window.LTP_linkDocProject(inv, draft.projectId);
@@ -2358,26 +2367,33 @@
                 // affordance. Clearing the chip is the old "(no project \u2014 use
                 // custom name)" option. A project created here inherits the
                 // quote's company and dates.
-                h(window.ProjectSearchField, { label: "Linked Project",
-                  projectId: draft.projectId || null,
+                h(window.ProjectSearchField, { label: "Linked Projects",
+                  projectIds: docProjects.map(function(p) { return p.id; }),
                   projects: projects, companies: companies,
                   placeholder: "Search projects \u2014 or leave empty for a custom name",
                   filter: function(p) {
                     if (p.internal) return false;                       // manual shift, not quotable
-                    if (p.status === "completed" && p.id !== draft.projectId) return false;
+                    // Already-linked projects are chips, not dropdown rows, so a
+                    // completed one stays visible without needing an exception.
+                    if (p.status === "completed") return false;
                     if (draft.clientType === "company" && draft.companyId && p.companyId !== draft.companyId) return false;
                     return true;
                   },
-                  setProjectId: function(pid) {
-                    if (pid && draft.companyId) {
+                  // The FIRST id is the primary \u2014 it titles the printed quote,
+                  // drives rental dates and names the QuickBooks memo \u2014 so it's
+                  // mirrored onto the scalar projectId the rest of the app reads.
+                  setProjectIds: function(pids) {
+                    var added = pids.filter(function(id) { return !docProjects.some(function(p) { return p.id === id; }); });
+                    added.forEach(function(pid) {
+                      if (!draft.companyId) return;
                       var proj = projects.find(function(p) { return p.id === pid; });
                       if (proj && proj.companyId && proj.companyId !== draft.companyId) {
                         var projComp = companies.find(function(c) { return c.id === proj.companyId; });
                         var quoteComp = companies.find(function(c) { return c.id === draft.companyId; });
                         showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this quote is for " + (quoteComp ? quoteComp.name : "another company") + ". You may want to update the company.", "info");
                       }
-                    }
-                    patchDraft({ projectId: pid });
+                    });
+                    patchDraft({ projectId: pids.length ? pids[0] : null, projectIds: pids });
                   },
                   createKind: "project", allowEdit: true,
                   // Carry over what the quote already knows. contactIds matters
@@ -2401,19 +2417,13 @@
                 h(window.LTPInput, { label: "End Date",   value: draft.customEndDate,   onChange: function(v) { patchDraft({ customEndDate: v   }); }, type: "date" })
               ),
               draft.projectId && selectedProject && h("div", { style: { marginTop: 10, padding: "8px 12px", background: B.raised, borderRadius: "6px", fontSize: "11px", color: B.textMut } },
-                "Project dates: " + fmt(selectedProject.startDate) + " \u2192 " + fmt(selectedProject.endDate) + " \u00b7 rental pricing will use this period."
-              ),
-              // Every job this quote bills for. Only shown once it covers more
-              // than one \u2014 the Project field above already names a single one.
-              // That field still sets the PRIMARY project, which titles the
-              // printed quote and drives rental dates; this is the full list.
-              docProjects.length > 1 && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
-                h("span", null, "Includes:"),
-                docProjects.map(function(p, i) {
-                  return h("span", { key: p.id != null ? p.id : i,
-                    onClick: p.id != null ? function() { nav("projects/" + p.id); } : undefined,
-                    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: "2px 8px", color: p.id === draft.projectId ? B.accent : B.textSec, fontWeight: p.id === draft.projectId ? 700 : 500, cursor: p.id != null ? "pointer" : "default" } }, p.name);
-                }))
+                "Project dates: " + fmt(selectedProject.startDate) + " \u2192 " + fmt(selectedProject.endDate) + " \u00b7 rental pricing will use this period.",
+                // A second job usually runs on its own dates. Rental lines price
+                // off the SECTION's dates when it sets its own, so the fix is
+                // per-section custom dates \u2014 which the send flows stamp
+                // automatically \u2014 not a re-interpretation of the quote's window.
+                docProjects.length > 1 && h("div", { style: { marginTop: 4, color: B.info } },
+                  "Other linked jobs keep their own dates on their own sections."))
             )
       ),
 

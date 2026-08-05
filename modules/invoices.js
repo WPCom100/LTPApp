@@ -1902,8 +1902,12 @@
                       selectedCompany ? selectedCompany.name :
                       draft.clientContactId ? ((contacts.find(function(c) { return c.id === draft.clientContactId; }) || {}).firstName || "") + " " + ((contacts.find(function(c) { return c.id === draft.clientContactId; }) || {}).lastName || "") : "\u2014")),
                   h("div", null,
-                    h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4 } }, "Project"),
-                    h("div", { style: { fontSize: "12px", color: B.text, fontWeight: 600 } }, selectedProject ? selectedProject.name : (draft.customName || "\u2014"))),
+                    h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4 } },
+                      docProjects.length > 1 ? "Projects" : "Project"),
+                    // A locked invoice has no picker, so every job it bills
+                    // for has to be named here. Primary first.
+                    h("div", { style: { fontSize: "12px", color: B.text, fontWeight: 600 } },
+                      docProjects.length ? docProjects.map(function(p) { return p.name; }).join(", ") : (draft.customName || "\u2014"))),
                   h("div", null,
                     h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4 } }, "Invoice Date"),
                     h("div", { style: { fontSize: "11px", color: B.text } }, draft.invoiceDate ? fmt(draft.invoiceDate) : "\u2014")),
@@ -1973,13 +1977,15 @@
                     // the chip is the old "(no project — use custom name)"
                     // option; a project created here inherits this invoice's
                     // company. Mirrors the quote builder's field.
-                    h(window.ProjectSearchField, { label: "Linked Project",
-                      projectId: draft.projectId || null,
+                    h(window.ProjectSearchField, { label: "Linked Projects",
+                      projectIds: docProjects.map(function(p) { return p.id; }),
                       projects: projects, companies: companies,
                       placeholder: "Search projects — or leave empty for a custom name",
                       filter: function(p) {
                         if (p.internal) return false;                   // manual shift, not invoiceable
-                        if (p.status === "completed" && p.id !== draft.projectId) return false;
+                        // Already-linked projects render as chips, not dropdown
+                        // rows, so a completed one needs no exception here.
+                        if (p.status === "completed") return false;
                         if (draft.clientType === "company" && draft.companyId && p.companyId !== draft.companyId) return false;
                         return true;
                       },
@@ -1987,16 +1993,21 @@
                       createPrefill: Object.assign({},
                         draft.companyId ? { companyId: draft.companyId } : null,
                         draft.clientContactId ? { contactIds: [draft.clientContactId] } : null),
-                      setProjectId: function(pid) {
-                        if (pid && draft.companyId) {
+                      // First id is the PRIMARY — it titles the printed invoice
+                      // and names the QuickBooks memo — so it's mirrored onto the
+                      // scalar projectId that the rest of the app reads.
+                      setProjectIds: function(pids) {
+                        var added = pids.filter(function(id) { return !docProjects.some(function(p) { return p.id === id; }); });
+                        added.forEach(function(pid) {
+                          if (!draft.companyId) return;
                           var proj = projects.find(function(p) { return p.id === pid; });
                           if (proj && proj.companyId && proj.companyId !== draft.companyId) {
                             var projComp = companies.find(function(c) { return c.id === proj.companyId; });
                             var invComp = companies.find(function(c) { return c.id === draft.companyId; });
                             showAlert("Company Mismatch", "This project belongs to " + (projComp ? projComp.name : "a different company") + " but this invoice is for " + (invComp ? invComp.name : "another company") + ".", "info");
                           }
-                        }
-                        patchDraft({ projectId: pid });
+                        });
+                        patchDraft({ projectId: pids.length ? pids[0] : null, projectIds: pids });
                       }
                     }),
                     // Custom name when no project
@@ -2034,17 +2045,6 @@
                 ),
             linkedQuote && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut } },
               "Linked to: ", h("span", { style: { color: B.accent, cursor: "pointer", fontWeight: 600 }, onClick: function() { nav("quotes/" + linkedQuote.id); } }, window.LTP_QUOTE_REF(linkedQuote))),
-            // Every job this invoice bills for. Only shown once it covers more
-            // than one — the Project field above already names a single one.
-            // The project picker still sets the PRIMARY, which is what titles
-            // the printed invoice; this is the full list.
-            docProjects.length > 1 && h("div", { style: { marginTop: 10, fontSize: "10px", color: B.textMut, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
-              h("span", null, "Includes:"),
-              docProjects.map(function(p, i) {
-                return h("span", { key: p.id != null ? p.id : i,
-                  onClick: p.id != null ? function() { nav("projects/" + p.id); } : undefined,
-                  style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: "2px 8px", color: p.id === draft.projectId ? B.accent : B.textSec, fontWeight: p.id === draft.projectId ? 700 : 500, cursor: p.id != null ? "pointer" : "default" } }, p.name);
-              }))
           ),
 
           // Sections
