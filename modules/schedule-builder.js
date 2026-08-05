@@ -385,16 +385,20 @@
         // arranged in that document is left exactly as it was and each job's
         // work stays identifiable on the printed doc. The project name goes in
         // the section LABEL because that is what survives the public-view scrub.
-        var labeled = sections.map(function(sec) {
-          return Object.assign({}, sec, {
-            label: window.LTP_projectSectionLabel(sec.label, project.name),
-            projectId: project.id,
-          });
-        });
         var setList = kind === "quote" ? setQuotes : setInvoices;
         setList(function(prev) {
           return prev.map(function(doc) {
             if (doc.id !== targetId) return doc;
+            // This job usually runs on different dates than the document's, so
+            // its sections carry their own rental window (null when they match,
+            // or when this IS the document's primary job).
+            var dateStamp = window.LTP_sectionDateStamp(doc, project, projects);
+            var labeled = sections.map(function(sec) {
+              return Object.assign({}, sec, {
+                label: window.LTP_projectSectionLabel(sec.label, project.name),
+                projectId: project.id,
+              }, dateStamp || {});
+            });
             // Records this project as a contributor; the document's PRIMARY
             // project (its title on the PDF) is never rewritten.
             var link = window.LTP_linkDocProject(doc, project.id);

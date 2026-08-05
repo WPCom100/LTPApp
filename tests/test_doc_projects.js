@@ -9,6 +9,9 @@
 //   * LTP_projectSectionLabel — project stamping, no double-stamping
 //   * LTP_appendDocSections — append-only semantics + id-collision regeneration
 //   * LTP_scheduleLaborSections — day-rate/OT aggregation, grouping, margin
+//   * LTP_docHasProject     — contributor links count, not just the primary
+//   * LTP_sharedDocNote     — the overlap warning on project money figures
+//   * LTP_sectionDateStamp  — per-section rental window for another job's work
 //
 //   Run:  node tests/test_doc_projects.js
 "use strict";
@@ -287,6 +290,110 @@ const day = (id, date, time, endTime, positions, breaks) =>
   const twice = APPEND(merged, labelled, window.LTP_genId);
   eq("Z6 re-sending appends a further section", twice.length, 3);
   eq("Z7 earlier sections still untouched", twice.slice(0, 2), merged);
+}
+
+// ── LTP_docHasProject ────────────────────────────────────────────────────────
+// The whole point: a project's Quotes/Invoices tabs must find documents where
+// it's a CONTRIBUTOR, not only ones it's primary on.
+const HAS = window.LTP_docHasProject;
+eq("D0 primary matches", HAS({ projectId: 7, projectIds: [7, 9] }, 7), true);
+eq("D1 contributor matches", HAS({ projectId: 7, projectIds: [7, 9] }, 9), true);
+eq("D2 unrelated project doesn't", HAS({ projectId: 7, projectIds: [7, 9] }, 11), false);
+eq("D3 legacy row still matches its one project", HAS({ projectId: 7 }, 7), true);
+eq("D4 null project id never matches", HAS({ projectId: 7 }, null), false);
+eq("D5 null entity never matches", HAS(null, 7), false);
+eq("D6 string/number id still matches", HAS({ projectId: 7, projectIds: [7] }, "7"), true);
+
+// ── LTP_sharedDocNote ────────────────────────────────────────────────────────
+// Each project counts a shared document's FULL total, so its pages read right in
+// isolation but can't be summed. This note is what says so.
+const NOTE = window.LTP_sharedDocNote;
+const P7 = { id: 7, name: "Riverfront Gala" };
+{
+  const solo = [{ projectId: 7, projectIds: [7] }, { projectId: 7 }];
+  eq("W0 nothing shared -> no note", NOTE(P7, solo, PROJECTS), null);
+  eq("W1 no documents -> no note", NOTE(P7, [], PROJECTS), null);
+  eq("W2 null project -> no note", NOTE(null, solo, PROJECTS), null);
+}
+{
+  const mixed = [{ projectId: 7, projectIds: [7] }, { projectId: 7, projectIds: [7, 9] }];
+  const note = NOTE(P7, mixed, PROJECTS);
+  ok("W3 names the other job", /Summit Keynote/.test(note), note);
+  ok("W4 counts only the shared one", /Includes 1 /.test(note), note);
+  ok("W5 says the total is counted twice", /counted in full/.test(note), note);
+  ok("W6 never names the project itself", !/Riverfront/.test(note), note);
+}
+{
+  // Several other jobs collapse into a readable phrase rather than a long list.
+  const many = [{ projectId: 7, projectIds: [7, 9, 11, 12, 13] }];
+  const all = PROJECTS.concat([{ id: 11, name: "Autumn Mixer" }, { id: 12, name: "Trade Show" }, { id: 13, name: "Winter Ball" }]);
+  const note = NOTE(P7, many, all);
+  ok("W7 first two named", /Summit Keynote, Autumn Mixer/.test(note), note);
+  ok("W8 remainder counted", /and 2 more/.test(note), note);
+}
+{
+  // A deleted contributing project degrades rather than dropping out.
+  const note = NOTE(P7, [{ projectId: 7, projectIds: [7, 404] }], PROJECTS);
+  ok("W9 deleted project still named", /Project 404/.test(note), note);
+}
+
+// ── LTP_projectHeadlineTotal counts contributor quotes ───────────────────────
+{
+  const HEAD = window.LTP_projectHeadlineTotal;
+  const money = (n) => ({ sections: [{ items: [{ type: "service", qty: 1, unitPrice: n }] }] });
+  const primary = Object.assign({ id: 1, projectId: 7, projectIds: [7], status: "sent" }, money(1000));
+  const shared = Object.assign({ id: 2, projectId: 9, projectIds: [9, 7], status: "sent" }, money(2100));
+  const other = Object.assign({ id: 3, projectId: 11, projectIds: [11], status: "sent" }, money(500));
+  const declined = Object.assign({ id: 4, projectId: 7, projectIds: [7], status: "declined" }, money(9999));
+  const r = HEAD({ id: 7, budget: {} }, [primary, shared, other, declined]);
+  eq("V0 counts primary + contributor quotes", r.count, 2);
+  near("V1 shared quote counts its FULL total", r.total, 3100);
+  eq("V2 flagged as quoted", r.quoted, true);
+  // The other project sees the same shared quote at full value — deliberate,
+  // and exactly what LTP_sharedDocNote exists to disclose.
+  near("V3 the other job counts it in full too", HEAD({ id: 9, budget: {} }, [primary, shared, other]).total, 2100);
+  // A project with only declined quotes falls back to its preliminary budget.
+  eq("V4 declined-only falls back to budget",
+     HEAD({ id: 7, budget: { gear: 400, labor: 100 } }, [declined]).quoted, false);
+  near("V5 budget total", HEAD({ id: 7, budget: { gear: 400, labor: 100 } }, [declined]).total, 500);
+}
+
+// ── LTP_sectionDateStamp ─────────────────────────────────────────────────────
+// Work appended from another job carries that job's rental window on its own
+// sections, so equipment lines price on the right dates.
+const STAMP = window.LTP_sectionDateStamp;
+const GALA = { id: 7, name: "Riverfront Gala", startDate: "2026-08-10", endDate: "2026-08-11" };
+const SUMMIT = { id: 9, name: "Summit Keynote", startDate: "2026-09-01", endDate: "2026-09-02" };
+const ALLP = [GALA, SUMMIT];
+{
+  const doc = { projectId: 7, projectIds: [7] };
+  eq("T0 the doc's own primary job needs no override", STAMP(doc, GALA, ALLP), null);
+  eq("T1 a different job gets its own window", STAMP(doc, SUMMIT, ALLP),
+     { customDates: true, startDate: "2026-09-01", endDate: "2026-09-02" });
+}
+{
+  // Same dates → nothing to override, even for a different job.
+  const twin = { id: 11, name: "Twin Job", startDate: "2026-08-10", endDate: "2026-08-11" };
+  eq("T2 matching windows need no override", STAMP({ projectId: 7, projectIds: [7] }, twin, ALLP.concat([twin])), null);
+}
+{
+  eq("T3 undated project can't stamp anything", STAMP({ projectId: 7 }, { id: 9, name: "No Dates" }, ALLP), null);
+  eq("T4 null project is a no-op", STAMP({ projectId: 7 }, null, ALLP), null);
+  // A project-less document falls back to its custom dates for the comparison.
+  eq("T5 custom-dated doc, different job", STAMP({ projectId: null, customStartDate: "2026-01-01", customEndDate: "2026-01-02" }, SUMMIT, ALLP),
+     { customDates: true, startDate: "2026-09-01", endDate: "2026-09-02" });
+  eq("T6 custom dates already match", STAMP({ projectId: null, customStartDate: "2026-09-01", customEndDate: "2026-09-02" }, SUMMIT, ALLP), null);
+}
+{
+  // The stamp is applied on top of a built section — the section keeps its
+  // items and label, and gains only the window.
+  const built = { id: "s1", label: "Labor — Summit Keynote", customDates: false, startDate: "", endDate: "",
+                  items: [{ id: "i1", name: "A1", qty: 1 }] };
+  const stamped = Object.assign({}, built, STAMP({ projectId: 7, projectIds: [7] }, SUMMIT, ALLP) || {});
+  eq("T7 section keeps its label", stamped.label, "Labor — Summit Keynote");
+  eq("T8 section keeps its items", stamped.items.length, 1);
+  eq("T9 section gains the job's window", [stamped.customDates, stamped.startDate, stamped.endDate],
+     [true, "2026-09-01", "2026-09-02"]);
 }
 
 console.log("doc-projects suite — PASS: " + pass + "   FAIL: " + fail);

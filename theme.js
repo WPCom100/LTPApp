@@ -2228,6 +2228,49 @@ window.LTP_docProjectNames = function(entity, projects) {
   });
 };
 
+// Does this quote/invoice bill work for `projectId`? True for the PRIMARY
+// project and for every other contributor equally — a document that gathered a
+// second job's schedule belongs on that job's page too, which is the whole
+// point of the contributor list. Every "this project's quotes/invoices" filter
+// goes through here rather than comparing `.projectId` directly.
+window.LTP_docHasProject = function(entity, projectId) {
+  if (projectId == null) return false;
+  return window.LTP_docProjectIds(entity).some(function(id) { return String(id) === String(projectId); });
+};
+
+// Note for a project's money figures when some of the documents behind them are
+// shared with other jobs. Each project counts a shared document's FULL total —
+// so its own page reads correctly in isolation — which means summing across
+// projects would over-count. This is the sentence that says so out loud, naming
+// the other jobs involved. Returns null when nothing is shared, i.e. for the
+// overwhelmingly common single-project case.
+//
+//   docs      the quotes (or invoices) already filtered to this project
+//   projects  the full project list, for name resolution
+window.LTP_sharedDocNote = function(project, docs, projects) {
+  if (!project) return null;
+  var otherIds = [], seen = {}, shared = 0;
+  (docs || []).forEach(function(d) {
+    var ids = window.LTP_docProjectIds(d);
+    if (ids.length < 2) return;
+    shared++;
+    ids.forEach(function(id) {
+      if (String(id) === String(project.id) || seen[String(id)]) return;
+      seen[String(id)] = true;
+      otherIds.push(id);
+    });
+  });
+  if (!shared) return null;
+  var names = otherIds.map(function(id) {
+    var p = (projects || []).find(function(x) { return x.id === id; });
+    return (p && p.name) ? p.name : ("Project " + id);
+  });
+  var withWhom = names.length <= 2
+    ? names.join(" and ")
+    : names.slice(0, 2).join(", ") + " and " + (names.length - 2) + " more";
+  return "Includes " + shared + " combined with " + withWhom + " — counted in full here and there.";
+};
+
 // Label for a section appended to an existing document. The project name goes
 // in the LABEL specifically because `label` is one of the few section fields
 // that survives the public-view scrub (backend/routes/_shared.py::
@@ -2239,6 +2282,32 @@ window.LTP_projectSectionLabel = function(baseLabel, projectName) {
   if (!proj) return base;
   if (base.toLowerCase().indexOf(proj.toLowerCase()) !== -1) return base;  // don't double-stamp
   return base + " — " + proj;
+};
+
+// Per-section date override for work appended from a DIFFERENT job.
+//
+// A document's rental window comes from its primary project (or its custom
+// dates when it has none), and equipment lines price off that window. A second
+// job almost always runs on other dates, so its sections carry their own —
+// sections already support `customDates` + startDate/endDate, and both the
+// builder's repricing and the PDF's "Rental Period" honor them, so this needs
+// no new machinery.
+//
+// Returns the {customDates, startDate, endDate} patch to merge into each
+// appended section, or null when nothing needs overriding: the work belongs to
+// the document's own primary project, the project has no dates, or its dates
+// already match the document's window.
+window.LTP_sectionDateStamp = function(doc, project, projects) {
+  if (!project || !project.startDate || !project.endDate) return null;
+  var ids = window.LTP_docProjectIds(doc);
+  var primaryId = ids.length ? ids[0] : (doc && doc.projectId != null ? doc.projectId : null);
+  // Sections for the document's own primary job inherit the document window.
+  if (primaryId != null && String(primaryId) === String(project.id)) return null;
+  var prim = primaryId != null ? (projects || []).find(function(p) { return p.id === primaryId; }) : null;
+  var start = prim ? (prim.startDate || "") : ((doc && doc.customStartDate) || "");
+  var end   = prim ? (prim.endDate   || "") : ((doc && doc.customEndDate)   || "");
+  if (start === project.startDate && end === project.endDate) return null;
+  return { customDates: true, startDate: project.startDate, endDate: project.endDate };
 };
 
 // Append sections to a document WITHOUT touching what's already in it.
@@ -2356,8 +2425,12 @@ window.LTP_collectQboFaults = function(invoices, quotes) {
 // quoted=true means `total` is the sum of the live quotes' totals (and `count`
 // how many), quoted=false means `total` is the preliminary budget sum.
 window.LTP_projectHeadlineTotal = function(project, quotes) {
+  // Any quote this project contributes to, not just ones it's primary on — a
+  // quote that absorbed this job's schedule bills this job's work and belongs
+  // in its headline. A quote shared with another project counts its FULL total
+  // on both; LTP_sharedDocNote is what tells the reader that's happening.
   var live = (quotes || []).filter(function(q) {
-    return q && q.projectId === project.id && q.status !== "declined";
+    return q && window.LTP_docHasProject(q, project.id) && q.status !== "declined";
   });
   if (live.length === 0) {
     var budget = project.budget || {};
