@@ -614,14 +614,30 @@ async def test_repoint_refuses_foreign_item():
     _check("foreign item NOT written to", qbo_sync.quickbooks.update_item.await_count == 0)
     _check("foreign item NOT revived", qbo_sync.quickbooks.update_item.await_count == 0)
 
-    # Our own item, deleted in the QB UI (which appends "(deleted)") → still ours.
+    # Our own item, deleted in the QB UI (which appends "(deleted)") → still ours,
+    # and the revive puts the real name back so find-or-create matches it again.
     qbo_sync.quickbooks.get_item = AsyncMock(return_value={
-        "Id": "20", "Name": "L1 — Lead Lighting Tech (deleted)", "SyncToken": "3",
+        "Id": "20", "Name": "Equipment Rental (deleted)", "SyncToken": "3",
         "Active": False, "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
     ok, changed, stale = await _real_repoint_item_income_account(
-        object(), db, "20", "42", expected_name="L1 — Lead Lighting Tech",
+        object(), db, "20", "42", expected_name="Equipment Rental",
         client_id="c", client_secret="s")
     _check("our own deleted item still matches", stale is False and ok is True)
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive restores the name QB mangled",
+           payload.get("Name") == "Equipment Rental" and payload.get("Active") is True)
+
+    # An ACTIVE item already holds the name → the revive is abandoned, not
+    # forced, and the caller re-resolves onto the active one.
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="Equipment Rental",
+        client_id="c", client_secret="s")
+    _check("name already taken → stale, no retry",
+           stale is True and ok is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
 
     # No such item in this company at all → stale, so the caller re-resolves.
     qbo_sync.quickbooks.get_item = AsyncMock(side_effect=QboApiError(

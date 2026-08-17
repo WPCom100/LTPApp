@@ -460,11 +460,23 @@ async def _repoint_item_income_account(conn, db, item_id, account_id, *, expecte
         }
         if deleted:
             payload["Active"] = True
+            # Deleting in the QB UI renames the item ("X" → "X (deleted)"), and
+            # a sparse revive would leave that name in place — where the next
+            # find-or-create wouldn't match it and would build a duplicate. Put
+            # the real name back as part of the same write.
+            if expected_name and (current.get("Name") or "") != _safe_name(expected_name, 100):
+                payload["Name"] = _safe_name(expected_name, 100)
         try:
             await quickbooks.update_item(
                 conn, db, payload, client_id=client_id, client_secret=client_secret
             )
         except QboApiError as e:
+            if e.fault_code == "6240":
+                # Something ACTIVE already owns the name — that item is the real
+                # one now. Abandon this id; the caller re-resolves onto it.
+                print(f"[LTP] qbo: item {item_id} revive abandoned — "
+                      f"'{expected_name}' is already taken by an active item", flush=True)
+                return False, False, True
             if deleted or not _is_deleted_element_fault(e):
                 raise
             # The read didn't say deleted (stale/raced) but the write did.
