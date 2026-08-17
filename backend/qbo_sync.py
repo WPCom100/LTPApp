@@ -26,9 +26,11 @@ Decisions baked in (confirmed with the owner):
     equipment item) makes the check free until a mapping actually changes.
     Re-points only move FUTURE postings — but re-pushing an old invoice
     re-posts its lines at the item's current account, which is why re-points
-    are stamped into the invoice activity. An item deleted on the QB side is
-    revived (Active=true) rather than abandoned: QB reserves a deleted list
-    element's name forever, so the cached id is the only way back to it.
+    are stamped into the invoice activity. Before any item write, the cached id
+    is checked against the name it was cached for: QB item ids are per-company
+    and get reused, so a stale id (swapped realm, merged item) would otherwise
+    rewrite an unrelated item. A mismatch re-resolves by name; an item that IS
+    ours but was deleted in QB is revived (Active=true) rather than abandoned.
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
@@ -376,6 +378,19 @@ def _is_deleted_element_fault(e: QboApiError) -> bool:
     return "list element that has been deleted" in (e.safe_message or "").lower()
 
 
+def _same_item_name(actual: str, expected: str) -> bool:
+    """Whether a QB item's Name is the one we cached an id for. Deleting an item
+    in the QuickBooks UI appends "(deleted)" (and a merge/rename changes it
+    outright), so the suffix is stripped before comparing — a deleted item that
+    is still recognisably ours stays ours."""
+    def norm(s: str) -> str:
+        s = (s or "").strip().casefold()
+        while s.endswith("(deleted)"):
+            s = s[: -len("(deleted)")].strip()
+        return s
+    return bool(norm(actual)) and norm(actual) == norm(expected)
+
+
 async def _revive_deleted_item(conn, db, name, income_account_id, *, client_id, client_secret) -> str | None:
     """Un-delete the QB Item named `name`, pointing it at `income_account_id`.
     QB never hard-deletes list elements — a "deleted" item is Active=false, is
@@ -404,28 +419,39 @@ async def _revive_deleted_item(conn, db, name, income_account_id, *, client_id, 
     return str(rows[0].get("Id"))
 
 
-async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_id, client_secret) -> tuple[bool, bool]:
-    """Ensure the QB Item posts to `account_id`. Returns (ok, changed):
+async def _repoint_item_income_account(conn, db, item_id, account_id, *, expected_name=None, client_id, client_secret) -> tuple[bool, bool, bool]:
+    """Ensure the QB Item posts to `account_id`. Returns (ok, changed, stale):
     ok=True when the item is confirmed on the account (already there, or
     successfully re-pointed via a sparse update); changed=True only when we
-    actually rewrote IncomeAccountRef. Best-effort — never raises. A hiccup
-    returns (False, False) so the caller leaves its synced cache stale and the
-    next push retries.
+    actually rewrote IncomeAccountRef; stale=True when `item_id` is NOT the item
+    we cached it for and the caller must re-resolve by name. Best-effort — never
+    raises. A hiccup returns (False, False, False) so the caller leaves its
+    synced cache stale and the next push retries.
 
-    A cached item that was DELETED in QuickBooks is revived as part of the same
-    sparse update (Active=true): QB rejects every other edit to a deleted list
-    element, and an invoice line can't reference one either, so leaving it
-    deleted would fail the push a moment later anyway."""
+    `expected_name` is the name the cached id is supposed to belong to. A cached
+    id can outlive the item it named — the QB company was swapped, the item was
+    merged into another, the id was carried over from a different (e.g. sandbox)
+    realm — and ids are reused across companies, so writing to it unchecked
+    would rewrite a STRANGER'S item. Nothing is written unless the name matches.
+
+    A cached item that is genuinely ours but DELETED in QuickBooks is revived as
+    part of the same sparse update (Active=true): QB rejects every other edit to
+    a deleted list element."""
     try:
         current = await quickbooks.get_item(
             conn, db, item_id, client_id=client_id, client_secret=client_secret
         )
         if not current.get("Id"):
-            return False, False
+            return False, False, True
+        if expected_name and not _same_item_name(current.get("Name") or "", expected_name):
+            print(f"[LTP] qbo: cached item {item_id} is "
+                  f"'{current.get('Name')}', expected '{expected_name}' — "
+                  f"re-resolving by name, leaving that item untouched", flush=True)
+            return False, False, True
         have = str(((current.get("IncomeAccountRef") or {}).get("value")) or "")
         deleted = current.get("Active") is False
         if have == str(account_id) and not deleted:
-            return True, False
+            return True, False, False
         payload = {
             "Id": str(current["Id"]),
             "SyncToken": str(current.get("SyncToken", "0")),
@@ -447,10 +473,13 @@ async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_
                 conn, db, payload, client_id=client_id, client_secret=client_secret
             )
         # Reviving alone is not an account change — don't stamp it on the invoice.
-        return True, have != str(account_id)
+        return True, have != str(account_id), False
     except QboApiError as e:
-        print(f"[LTP] qbo: item {item_id} income-account re-point skipped ({e.safe_message})", flush=True)
-        return False, False
+        # 610 / "Object Not Found" — the id doesn't exist in this company at all.
+        stale = e.fault_code == "610" or "object not found" in (e.safe_message or "").lower()
+        print(f"[LTP] qbo: item {item_id} → account {account_id} re-point "
+              f"{'abandoned (no such item)' if stale else 'skipped'} ({e.safe_message})", flush=True)
+        return False, False, stale
 
 
 async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repoints=None) -> str:
@@ -470,9 +499,23 @@ async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repo
         )
         await _settings_set(db, "qboEquipmentItemId", item_id)
     if desired and desired != str(await _settings_get(db, "qboEquipmentItemAccountSynced") or ""):
-        ok, changed = await _repoint_item_income_account(
-            conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+        ok, changed, stale = await _repoint_item_income_account(
+            conn, db, item_id, desired, expected_name="Equipment Rental",
+            client_id=client_id, client_secret=client_secret,
         )
+        if stale:
+            # The cached id isn't our rental item (swapped QB company, merged or
+            # renamed item). Re-resolve by name and re-cache before pushing any
+            # line against it.
+            item_id = await _find_or_create_named_item(
+                conn, db, "Equipment Rental", None,
+                income_account_id=desired, client_id=client_id, client_secret=client_secret,
+            )
+            await _settings_set(db, "qboEquipmentItemId", item_id)
+            ok, changed, stale = await _repoint_item_income_account(
+                conn, db, item_id, desired, expected_name="Equipment Rental",
+                client_id=client_id, client_secret=client_secret,
+            )
         if ok:
             await _settings_set(db, "qboEquipmentItemAccountSynced", desired)
             if changed and repoints is not None:
@@ -536,9 +579,24 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
         # change (or a previously failed re-point) triggers the QB round-trip.
         # Also covers items FOUND by name whose pre-existing account differs.
         if desired and desired != (catalog_row.qb_income_account_synced or ""):
-            ok, changed = await _repoint_item_income_account(
-                conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+            expected = _safe_name(name or "Line item", 100)
+            ok, changed, stale = await _repoint_item_income_account(
+                conn, db, item_id, desired, expected_name=expected,
+                client_id=client_id, client_secret=client_secret,
             )
+            if stale:
+                # The cached qb_item_id names something else in this QB company
+                # (or nothing at all) — re-resolve by name so the line can't post
+                # against a stranger's item, and re-cache the id we verified.
+                item_id = await _find_or_create_named_item(
+                    conn, db, name or "Line item", eff_price,
+                    income_account_id=desired, client_id=client_id, client_secret=client_secret,
+                )
+                catalog_row.qb_item_id = item_id
+                ok, changed, stale = await _repoint_item_income_account(
+                    conn, db, item_id, desired, expected_name=expected,
+                    client_id=client_id, client_secret=client_secret,
+                )
             if ok:
                 catalog_row.qb_income_account_synced = desired
                 if changed and repoints is not None:
