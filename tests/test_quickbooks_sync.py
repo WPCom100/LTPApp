@@ -762,8 +762,8 @@ async def test_find_or_create_revives_deleted_name():
 
     async def _query(conn, _db, sql, **kw):
         queries.append(sql)
-        # Deleted items are invisible to an ordinary query; only the explicit
-        # Active = false lookup finds the item still holding the name.
+        # Only the explicit Active = false lookup finds the deleted item still
+        # holding the name — the active-scoped lookup must not surface it.
         if "Active = false" in sql:
             return [{"Id": "20", "SyncToken": "7"}]
         return []
@@ -785,6 +785,53 @@ async def test_find_or_create_revives_deleted_name():
            payload["IncomeAccountRef"]["value"] == "42")
     _check("deleted lookup scoped to the item name",
            any("Active = false" in q and "Equipment Rental" in q for q in queries))
+    _check("name lookup is scoped to ACTIVE items",
+           all("Active = true" in q for q in queries if "Active = false" not in q))
+
+
+async def test_deleted_item_never_lands_on_a_line():
+    print("test_deleted_item_never_lands_on_a_line")
+    # QB's Item query returns deleted items too. Handing one to an invoice line
+    # gets the push rejected ("You need to activate this item before updating
+    # the quantity"), so the lookup must never return it — the deleted item is
+    # revived first and the line references an ACTIVE id.
+    db = MagicMock(); db.flush = AsyncMock()
+    seen: list[str] = []
+
+    async def _query(conn, _db, sql, **kw):
+        seen.append(sql)
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7"}]      # the deleted namesake
+        return []                                        # nothing active
+
+    qbo_sync.quickbooks.query = _query
+    qbo_sync.quickbooks.create_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    out = await _real_find_or_create_named_item(
+        object(), db, "L1 — Lead Lighting Tech", 432,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("deleted namesake reused only after being revived", out == "20")
+    _check("the revive ran before the id was handed back",
+           qbo_sync.quickbooks.update_item.await_args.args[2].get("Active") is True)
+    _check("no unscoped item lookup anywhere",
+           not any("Active" not in q for q in seen))
+
+    # An ACTIVE namesake is used as-is — no create, no revive.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    qbo_sync.quickbooks.update_item.reset_mock()
+
+    async def _active_query(conn, _db, sql, **kw):
+        return [{"Id": "31", "Name": "L1 — Lead Lighting Tech"}] if "Active = true" in sql else []
+
+    qbo_sync.quickbooks.query = _active_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "L1 — Lead Lighting Tech", 432,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("active namesake reused untouched",
+           out == "31" and qbo_sync.quickbooks.create_item.await_count == 0 and
+           qbo_sync.quickbooks.update_item.await_count == 0)
 
     # Duplicate name with no deleted item behind it → the fault still surfaces.
     async def _empty_query(conn, _db, sql, **kw):
@@ -937,7 +984,7 @@ def main():
         test_income_account_resolution, test_item_created_with_mapped_account,
         test_repoint_item_income_account, test_repoint_revives_deleted_item,
         test_repoint_refuses_foreign_item, test_resolve_line_reresolves_stale_item_id,
-        test_find_or_create_revives_deleted_name,
+        test_find_or_create_revives_deleted_name, test_deleted_item_never_lands_on_a_line,
         test_resolve_line_repoints_on_mapping_change,
         test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
     ]

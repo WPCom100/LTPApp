@@ -320,11 +320,17 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
     """Find a QB Service item by Name, creating it if absent. New items are
     backed by `income_account_id` when the caller resolved one from the mapping
     (see _desired_income_account_id), else by the legacy default resolution.
-    Returns the item id."""
+    Returns the item id.
+
+    The lookup is scoped to ACTIVE items on purpose: an Item query returns
+    deleted items too, and handing a deleted one to an invoice line gets the
+    whole push rejected ("You need to activate this item before updating the
+    quantity"). A name held only by a deleted item is recovered by reviving it
+    below — QB keeps the name reserved, so creating a fresh one is impossible."""
     safe = _safe_name(name, 100)
     found = await quickbooks.query(
         conn, db,
-        f"SELECT Id, Name FROM Item WHERE Name = '{escape_query_value(safe)}'",
+        f"SELECT Id, Name FROM Item WHERE Name = '{escape_query_value(safe)}' AND Active = true",
         client_id=client_id, client_secret=client_secret,
     )
     if found:
@@ -351,14 +357,14 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
         )
         return str((resp.get("Item") or {}).get("Id"))
     except QboApiError as e:
-        if e.fault_code == "6240":  # duplicate name race
+        if e.fault_code == "6240":  # name already taken
             again = await quickbooks.query(
                 conn, db,
-                f"SELECT Id FROM Item WHERE Name = '{escape_query_value(safe)}'",
+                f"SELECT Id FROM Item WHERE Name = '{escape_query_value(safe)}' AND Active = true",
                 client_id=client_id, client_secret=client_secret,
             )
             if again:
-                return str(again[0].get("Id"))
+                return str(again[0].get("Id"))   # created by a racing push
             # Nothing active owns the name, yet QB says it's taken: a DELETED
             # item still holds it. Revive that one instead of failing forever.
             revived = await _revive_deleted_item(
