@@ -818,6 +818,41 @@ async def test_deleted_item_never_lands_on_a_line():
     _check("no unscoped item lookup anywhere",
            not any("Active" not in q for q in seen))
 
+    # A deleted INVENTORY namesake belongs to the bookkeeper: never reactivated,
+    # never re-pointed — the user gets an actionable message instead.
+    qbo_sync.quickbooks.update_item.reset_mock()
+
+    async def _inventory_query(conn, _db, sql, **kw):
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7", "Type": "Inventory"}]
+        return []
+
+    qbo_sync.quickbooks.query = _inventory_query
+    err = None
+    try:
+        await _real_find_or_create_named_item(
+            object(), db, "V-Show - Aura (Wash)", 0,
+            income_account_id="42", client_id="c", client_secret="s")
+    except qbo_sync.InvoiceNotSyncable as e:
+        err = str(e)
+    _check("deleted Inventory namesake → actionable error, not a 6240",
+           err is not None and "Inventory" in err and "V-Show - Aura (Wash)" in err)
+    _check("the bookkeeper's item is left untouched",
+           qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Same guard on the re-point path: a deleted Inventory item is reported
+    # stale (→ re-resolve → the message above), never revived in place.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "Name": "V-Show - Aura (Wash)", "SyncToken": "7",
+        "Type": "Inventory", "Active": False, "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="V-Show - Aura (Wash)",
+        client_id="c", client_secret="s")
+    _check("deleted Inventory item not revived by the re-point",
+           stale is True and ok is False and
+           qbo_sync.quickbooks.update_item.await_count == 0)
+
     # An ACTIVE namesake is used as-is — no create, no revive.
     qbo_sync.quickbooks.create_item.reset_mock()
     qbo_sync.quickbooks.update_item.reset_mock()
@@ -832,6 +867,38 @@ async def test_deleted_item_never_lands_on_a_line():
     _check("active namesake reused untouched",
            out == "31" and qbo_sync.quickbooks.create_item.await_count == 0 and
            qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Name is unique per PARENT, so a top-level item and a sub-item filed under
+    # a category answer to the same Name. Pick the top-level one — the kind this
+    # app creates — rather than whichever row QB happened to return first.
+    async def _subitem_first_query(conn, _db, sql, **kw):
+        if "Active = true" not in sql:
+            return []
+        return [
+            {"Id": "25", "Name": "V-Show - Aura (Wash)",
+             "FullyQualifiedName": "Lighting Equipment:V-Show - Aura (Wash)"},
+            {"Id": "88", "Name": "V-Show - Aura (Wash)",
+             "FullyQualifiedName": "V-Show - Aura (Wash)"},
+        ]
+
+    qbo_sync.quickbooks.query = _subitem_first_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "V-Show - Aura (Wash)", 150,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("top-level item wins over a same-named sub-item", out == "88")
+
+    # Only a sub-item carries the name → still deterministic, still used.
+    async def _only_subitem_query(conn, _db, sql, **kw):
+        if "Active = true" not in sql:
+            return []
+        return [{"Id": "25", "Name": "V-Show - Aura (Wash)",
+                 "FullyQualifiedName": "Lighting Equipment:V-Show - Aura (Wash)"}]
+
+    qbo_sync.quickbooks.query = _only_subitem_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "V-Show - Aura (Wash)", 150,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("lone sub-item still resolves", out == "25")
 
     # Duplicate name with no deleted item behind it → the fault still surfaces.
     async def _empty_query(conn, _db, sql, **kw):

@@ -26,11 +26,13 @@ Decisions baked in (confirmed with the owner):
     equipment item) makes the check free until a mapping actually changes.
     Re-points only move FUTURE postings — but re-pushing an old invoice
     re-posts its lines at the item's current account, which is why re-points
-    are stamped into the invoice activity. Before any item write, the cached id
-    is checked against the name it was cached for: QB item ids are per-company
-    and get reused, so a stale id (swapped realm, merged item) would otherwise
-    rewrite an unrelated item. A mismatch re-resolves by name; an item that IS
-    ours but was deleted in QB is revived (Active=true) rather than abandoned.
+    are stamped into the invoice activity. Item lookups are scoped to ACTIVE
+    items — a QB Item query happily returns deleted ones, and a deleted item on
+    a line fails the whole push. Before any item write the cached id is checked
+    against the name it was cached for, so a stale id can't rewrite an unrelated
+    item. A name held only by a deleted SERVICE item (one of ours) is recovered
+    by reviving it; a deleted Inventory/NonInventory namesake belongs to the
+    bookkeeper, so that raises InvoiceNotSyncable instead of touching it.
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
@@ -316,6 +318,19 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
 
 # ── Item find-or-create ──────────────────────────────────────────────────────
 
+def _prefer_top_level(rows: list[dict], name: str) -> dict:
+    """Pick which of several same-named QB items to use. `Name` is only unique
+    per parent, so a top-level "V-Show - Aura (Wash)" and a sub-item
+    "Lighting Equipment:V-Show - Aura (Wash)" both answer to that Name. This app
+    creates top-level items (_safe_name strips the ':' separator), so a row whose
+    FullyQualifiedName is exactly the name we searched is ours; anything else is
+    a sub-item someone filed under a category. Prefer ours, else keep the first
+    row — the point is that the choice is deterministic either way."""
+    for row in rows:
+        if (row.get("FullyQualifiedName") or row.get("Name") or "") == name:
+            return row
+    return rows[0]
+
 async def _find_or_create_named_item(conn, db, name, unit_price, *, income_account_id=None, client_id, client_secret) -> str:
     """Find a QB Service item by Name, creating it if absent. New items are
     backed by `income_account_id` when the caller resolved one from the mapping
@@ -330,11 +345,12 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
     safe = _safe_name(name, 100)
     found = await quickbooks.query(
         conn, db,
-        f"SELECT Id, Name FROM Item WHERE Name = '{escape_query_value(safe)}' AND Active = true",
+        f"SELECT Id, Name, FullyQualifiedName FROM Item "
+        f"WHERE Name = '{escape_query_value(safe)}' AND Active = true",
         client_id=client_id, client_secret=client_secret,
     )
     if found:
-        return str(found[0].get("Id"))
+        return str(_prefer_top_level(found, safe).get("Id"))
     if income_account_id:
         income_account_id = str(income_account_id)
     else:
@@ -399,18 +415,31 @@ def _same_item_name(actual: str, expected: str) -> bool:
 
 async def _revive_deleted_item(conn, db, name, income_account_id, *, client_id, client_secret) -> str | None:
     """Un-delete the QB Item named `name`, pointing it at `income_account_id`.
-    QB never hard-deletes list elements — a "deleted" item is Active=false, is
-    filtered out of ordinary queries, and still reserves its name — so once an
-    app-created item is deleted in QuickBooks the name can never be re-created
-    and reviving is the only way back. Returns the item id, or None when no
-    deleted item carries that name."""
+    QB never hard-deletes list elements — a "deleted" item is Active=false and
+    still reserves its name — so once an app-created item is deleted in
+    QuickBooks the name can never be re-created and reviving is the only way
+    back. Returns the item id, or None when no deleted item carries that name.
+
+    ONLY Service items are revived. Those are the ones this app creates; an
+    Inventory / NonInventory namesake is the bookkeeper's own record (with its
+    own asset account and quantities), and quietly reactivating it — then
+    rewriting its income account — is not ours to do. That case raises
+    InvoiceNotSyncable so the user gets a real choice instead of a 6240."""
     rows = await quickbooks.query(
         conn, db,
-        f"SELECT Id, SyncToken FROM Item WHERE Name = '{escape_query_value(name)}' AND Active = false",
+        f"SELECT Id, SyncToken, Type FROM Item WHERE Name = '{escape_query_value(name)}' AND Active = false",
         client_id=client_id, client_secret=client_secret,
     )
     if not rows:
         return None
+    itype = str(rows[0].get("Type") or "").strip()
+    if itype and itype.lower() != "service":
+        raise InvoiceNotSyncable(
+            f'QuickBooks has a deleted {itype} item named "{name}", so that name '
+            f"is taken and a new item can't be created. In QuickBooks → Sales → "
+            f"Products & Services (filter: Deleted), either make that item active "
+            f"again or rename it — then push again."
+        )
     payload = {
         "Id": str(rows[0].get("Id")),
         "SyncToken": str(rows[0].get("SyncToken", "0")),
@@ -458,6 +487,11 @@ async def _repoint_item_income_account(conn, db, item_id, account_id, *, expecte
         deleted = current.get("Active") is False
         if have == str(account_id) and not deleted:
             return True, False, False
+        if deleted and str(current.get("Type") or "").strip().lower() not in ("", "service"):
+            # A deleted Inventory/NonInventory item is the bookkeeper's record,
+            # not ours to reactivate. Re-resolve by name instead — that path
+            # raises a message telling the user how to unblock it.
+            return False, False, True
         payload = {
             "Id": str(current["Id"]),
             "SyncToken": str(current.get("SyncToken", "0")),
