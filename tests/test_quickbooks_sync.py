@@ -595,6 +595,116 @@ async def test_repoint_item_income_account():
     _check("QB error swallowed (best-effort)", ok is False and changed is False)
 
 
+def _deleted_element_fault(status=400):
+    """The Fault QB returns for a write against a deleted list element."""
+    return QboApiError(status, (
+        '{"Fault": {"Error": [{"Message": "A business validation error has '
+        'occurred while processing your request", "Detail": "Business '
+        'Validation Error: You cannot modify a list element that has been '
+        'deleted.", "code": "6000"}], "type": "ValidationFault"}}'
+    ), "6000")
+
+
+async def test_repoint_revives_deleted_item():
+    print("test_repoint_revives_deleted_item")
+    db = MagicMock(); db.flush = AsyncMock()
+
+    # Item deleted (Active=false) in QB → the sparse update revives it too,
+    # because QB refuses every other edit to a deleted list element.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": False,
+        "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted item re-pointed instead of skipped", ok is True and changed is True)
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive rides along with the re-point", payload.get("Active") is True)
+    _check("revive keeps the new account", payload["IncomeAccountRef"]["value"] == "42")
+
+    # Deleted, but already on the right account → revived, and NOT reported as
+    # an account change (nothing to stamp into the invoice activity).
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": False,
+        "IncomeAccountRef": {"value": "42"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted item revived even when the account matches",
+           ok is True and changed is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
+
+    # Read said active, write said deleted (raced / stale read) → retried once
+    # with Active=true rather than logged and left stale forever.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": True,
+        "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=[_deleted_element_fault(), {"Item": {"Id": "20"}}])
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted-element fault retried with Active=true", ok is True and changed is True)
+    _check("retry sent exactly one extra update",
+           qbo_sync.quickbooks.update_item.await_count == 2)
+    _check("retry payload carries the revive",
+           qbo_sync.quickbooks.update_item.await_args.args[2].get("Active") is True)
+
+    # A different validation fault is NOT retried — still best-effort.
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=QboApiError(400, "boom", "6000"))
+    ok, changed = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("unrelated fault not retried",
+           ok is False and changed is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
+
+
+async def test_find_or_create_revives_deleted_name():
+    print("test_find_or_create_revives_deleted_name")
+    db = MagicMock(); db.flush = AsyncMock()
+    queries: list[str] = []
+
+    async def _query(conn, _db, sql, **kw):
+        queries.append(sql)
+        # Deleted items are invisible to an ordinary query; only the explicit
+        # Active = false lookup finds the item still holding the name.
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7"}]
+        return []
+
+    qbo_sync.quickbooks.query = _query
+    qbo_sync.quickbooks.create_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    out = await _real_find_or_create_named_item(
+        object(), db, "Equipment Rental", None,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("duplicate name owned by a deleted item → revived id returned", out == "20")
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive is a sparse Active=true update",
+           payload.get("sparse") is True and payload.get("Active") is True and
+           payload.get("SyncToken") == "7")
+    _check("revived item re-pointed at the mapped account",
+           payload["IncomeAccountRef"]["value"] == "42")
+    _check("deleted lookup scoped to the item name",
+           any("Active = false" in q and "Equipment Rental" in q for q in queries))
+
+    # Duplicate name with no deleted item behind it → the fault still surfaces.
+    async def _empty_query(conn, _db, sql, **kw):
+        return []
+
+    qbo_sync.quickbooks.query = _empty_query
+    raised = False
+    try:
+        await _real_find_or_create_named_item(
+            object(), db, "Gaff Tape", None,
+            income_account_id="42", client_id="c", client_secret="s")
+    except QboApiError:
+        raised = True
+    _check("unexplained duplicate name still raises", raised)
+
+
 def _db_returning_row(row):
     db = MagicMock()
     result = MagicMock(); result.scalar_one_or_none = MagicMock(return_value=row)
@@ -728,7 +838,9 @@ def main():
         test_estimate_tax_creates_reads_deletes, test_estimate_tax_exempt_skips_qb,
         test_estimate_tax_stale_token_delete_retry,
         test_income_account_resolution, test_item_created_with_mapped_account,
-        test_repoint_item_income_account, test_resolve_line_repoints_on_mapping_change,
+        test_repoint_item_income_account, test_repoint_revives_deleted_item,
+        test_find_or_create_revives_deleted_name,
+        test_resolve_line_repoints_on_mapping_change,
         test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
     ]
     for t in sync_tests:

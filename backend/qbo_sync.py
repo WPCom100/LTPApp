@@ -26,7 +26,9 @@ Decisions baked in (confirmed with the owner):
     equipment item) makes the check free until a mapping actually changes.
     Re-points only move FUTURE postings — but re-pushing an old invoice
     re-posts its lines at the item's current account, which is why re-points
-    are stamped into the invoice activity.
+    are stamped into the invoice activity. An item deleted on the QB side is
+    revived (Active=true) rather than abandoned: QB reserves a deleted list
+    element's name forever, so the cached id is the only way back to it.
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
@@ -355,7 +357,51 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
             )
             if again:
                 return str(again[0].get("Id"))
+            # Nothing active owns the name, yet QB says it's taken: a DELETED
+            # item still holds it. Revive that one instead of failing forever.
+            revived = await _revive_deleted_item(
+                conn, db, safe, income_account_id,
+                client_id=client_id, client_secret=client_secret,
+            )
+            if revived:
+                return revived
         raise
+
+
+def _is_deleted_element_fault(e: QboApiError) -> bool:
+    """True when QB refused a write because the target list element is deleted
+    ("You cannot modify a list element that has been deleted."). Intuit reports
+    it as a generic business-validation fault, so the message is the only
+    reliable signal — the code is shared with every other validation error."""
+    return "list element that has been deleted" in (e.safe_message or "").lower()
+
+
+async def _revive_deleted_item(conn, db, name, income_account_id, *, client_id, client_secret) -> str | None:
+    """Un-delete the QB Item named `name`, pointing it at `income_account_id`.
+    QB never hard-deletes list elements — a "deleted" item is Active=false, is
+    filtered out of ordinary queries, and still reserves its name — so once an
+    app-created item is deleted in QuickBooks the name can never be re-created
+    and reviving is the only way back. Returns the item id, or None when no
+    deleted item carries that name."""
+    rows = await quickbooks.query(
+        conn, db,
+        f"SELECT Id, SyncToken FROM Item WHERE Name = '{escape_query_value(name)}' AND Active = false",
+        client_id=client_id, client_secret=client_secret,
+    )
+    if not rows:
+        return None
+    payload = {
+        "Id": str(rows[0].get("Id")),
+        "SyncToken": str(rows[0].get("SyncToken", "0")),
+        "sparse": True,
+        "Active": True,
+    }
+    if income_account_id:
+        payload["IncomeAccountRef"] = {"value": str(income_account_id)}
+    await quickbooks.update_item(
+        conn, db, payload, client_id=client_id, client_secret=client_secret
+    )
+    return str(rows[0].get("Id"))
 
 
 async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_id, client_secret) -> tuple[bool, bool]:
@@ -364,7 +410,12 @@ async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_
     successfully re-pointed via a sparse update); changed=True only when we
     actually rewrote IncomeAccountRef. Best-effort — never raises. A hiccup
     returns (False, False) so the caller leaves its synced cache stale and the
-    next push retries."""
+    next push retries.
+
+    A cached item that was DELETED in QuickBooks is revived as part of the same
+    sparse update (Active=true): QB rejects every other edit to a deleted list
+    element, and an invoice line can't reference one either, so leaving it
+    deleted would fail the push a moment later anyway."""
     try:
         current = await quickbooks.get_item(
             conn, db, item_id, client_id=client_id, client_secret=client_secret
@@ -372,19 +423,31 @@ async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_
         if not current.get("Id"):
             return False, False
         have = str(((current.get("IncomeAccountRef") or {}).get("value")) or "")
-        if have == str(account_id):
+        deleted = current.get("Active") is False
+        if have == str(account_id) and not deleted:
             return True, False
-        await quickbooks.update_item(
-            conn, db,
-            {
-                "Id": str(current["Id"]),
-                "SyncToken": str(current.get("SyncToken", "0")),
-                "sparse": True,
-                "IncomeAccountRef": {"value": str(account_id)},
-            },
-            client_id=client_id, client_secret=client_secret,
-        )
-        return True, True
+        payload = {
+            "Id": str(current["Id"]),
+            "SyncToken": str(current.get("SyncToken", "0")),
+            "sparse": True,
+            "IncomeAccountRef": {"value": str(account_id)},
+        }
+        if deleted:
+            payload["Active"] = True
+        try:
+            await quickbooks.update_item(
+                conn, db, payload, client_id=client_id, client_secret=client_secret
+            )
+        except QboApiError as e:
+            if deleted or not _is_deleted_element_fault(e):
+                raise
+            # The read didn't say deleted (stale/raced) but the write did.
+            payload["Active"] = True
+            await quickbooks.update_item(
+                conn, db, payload, client_id=client_id, client_secret=client_secret
+            )
+        # Reviving alone is not an account change — don't stamp it on the invoice.
+        return True, have != str(account_id)
     except QboApiError as e:
         print(f"[LTP] qbo: item {item_id} income-account re-point skipped ({e.safe_message})", flush=True)
         return False, False
