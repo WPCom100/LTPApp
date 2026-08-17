@@ -591,7 +591,12 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
     if eff_price is None:
         eff_price = line.get("unitPrice")
 
-    if ltype == "equipment":
+    # Rentals NEVER become QuickBooks products. Every rental line — whatever the
+    # line calls itself — posts against the one "Equipment Rental" item, with the
+    # fixture and its rental period carried in the line description (see
+    # _build_sales_lines). `equipmentId` is checked too so a rental that was
+    # added as some other line type can't mint an item from the rental catalog.
+    if ltype == "equipment" or line.get("equipmentId"):
         return await _generic_equipment_item_id(
             conn, db, client_id=client_id, client_secret=client_secret, repoints=repoints
         )
@@ -673,6 +678,70 @@ def _line_taxable(line: dict, customer_taxable: bool) -> bool:
     return bool(customer_taxable)
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _period_label(start: str, end: str) -> str:
+    """Human rental period from two ISO dates: "Jul 9 – Jul 10, 2026", collapsed
+    to "Jul 9, 2026" for a single day. Empty when the dates are missing or
+    malformed — a bad date must never cost us the line."""
+    def parts(iso):
+        bits = (iso or "").strip().split("-")
+        if len(bits) != 3:
+            return None
+        try:
+            y, m, d = int(bits[0]), int(bits[1]), int(bits[2])
+        except ValueError:
+            return None
+        if not (1 <= m <= 12):
+            return None
+        return y, m, d
+
+    a, b = parts(start), parts(end)
+    if a is None:
+        return ""
+    if b is None or a == b:
+        return f"{_MONTHS[a[1] - 1]} {a[2]}, {a[0]}"
+    if a[0] == b[0]:
+        return f"{_MONTHS[a[1] - 1]} {a[2]} – {_MONTHS[b[1] - 1]} {b[2]}, {a[0]}"
+    return (f"{_MONTHS[a[1] - 1]} {a[2]}, {a[0]} – "
+            f"{_MONTHS[b[1] - 1]} {b[2]}, {b[0]}")
+
+
+async def _entity_period(db, entity) -> tuple[str, str]:
+    """The default rental window for an entity's sections: a quote's custom
+    override if set, else the project's dates. Sections that tick their own
+    `customDates` override this per section (mirrors quotes-builder.js)."""
+    start = (getattr(entity, "custom_start_date", "") or "").strip()
+    end = (getattr(entity, "custom_end_date", "") or "").strip()
+    if start and end:
+        return start, end
+    if getattr(entity, "project_id", None):
+        r = await db.execute(select(models.Project).where(models.Project.id == entity.project_id))
+        proj = r.scalar_one_or_none()
+        if proj:
+            return (proj.start_date or "").strip(), (proj.end_date or "").strip()
+    return "", ""
+
+
+def _section_period(section: dict, fallback: tuple[str, str]) -> tuple[str, str]:
+    """A section billing its own rental window wins over the entity's."""
+    if section.get("customDates") and section.get("startDate") and section.get("endDate"):
+        return str(section["startDate"]), str(section["endDate"])
+    return fallback
+
+
+def _rental_description(item: dict, start: str, end: str) -> str:
+    """The QB line description for a rental. Every rental posts against the one
+    "Equipment Rental" item, so the description is what identifies it on the
+    invoice: what was rented, for how long, and on which rate."""
+    bits = [b for b in (_period_label(start, end),
+                        (item.get("rentalLabel") or "").strip()) if b]
+    name = (item.get("name") or "").strip() or "Equipment rental"
+    return f"{name} — {' · '.join(bits)}" if bits else name
+
+
 async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_tax_code, *, client_id, client_secret, repoints=None) -> tuple[list[dict], float]:
     """Build the QB sales lines (item lines with per-line TaxCodeRef + a trailing
     global-discount line) from any entity carrying `.sections` and
@@ -681,7 +750,9 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
     item lines. Shared so quote tax codes match the eventual invoice exactly."""
     lines: list[dict] = []
     subtotal = 0.0
+    entity_period = await _entity_period(db, entity)
     for section in (entity.sections or []):
+        period_start, period_end = _section_period(section, entity_period)
         for item in (section.get("items") or []):
             itype = item.get("type")
             if itype == "note":
@@ -706,7 +777,12 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
                 conn, db, item, client_id=client_id, client_secret=client_secret,
                 repoints=repoints,
             )
-            description = (item.get("name") or "").strip()
+            # A rental line's QB item is the shared "Equipment Rental" one, so
+            # the description carries what was actually rented and for how long.
+            if itype == "equipment" or item.get("equipmentId"):
+                description = _rental_description(item, period_start, period_end)
+            else:
+                description = (item.get("name") or "").strip()
             if (item.get("notes") or "").strip():
                 description = (description + " — " + item["notes"].strip())[:4000]
             taxable = _line_taxable(item, customer_taxable)

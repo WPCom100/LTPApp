@@ -362,6 +362,88 @@ async def test_payload_fee_line():
     _check("taxable fee → TAX code", sales[1]["SalesItemLineDetail"]["TaxCodeRef"]["value"] == "TAX")
 
 
+def _db_returning_project(start, end):
+    proj = types.SimpleNamespace(id=4, name="Auditorium Maintenance", start_date=start, end_date=end)
+    result = MagicMock(); result.scalar_one_or_none = MagicMock(return_value=proj)
+    db = MagicMock(); db.execute = AsyncMock(return_value=result); db.flush = AsyncMock()
+    return db
+
+
+async def test_rentals_never_become_qb_products():
+    print("test_rentals_never_become_qb_products")
+    # Rentals all post against the one shared "Equipment Rental" item, so the
+    # line description is what identifies the fixture and its rental window.
+    qbo_sync._resolve_line_item_id = AsyncMock(return_value="EQ-GENERIC")
+    entity = types.SimpleNamespace(
+        project_id=4, global_discount={"type": "none"},
+        sections=[{"id": "s1", "label": "Equipment", "customDates": False,
+                   "items": [{"type": "equipment", "equipmentId": 12,
+                              "name": "V-Show - Aura (Wash)", "rentalLabel": "3-Day rate",
+                              "qty": 4, "unitPrice": 150, "adjustedPrice": None}]}])
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("2026-07-09", "2026-07-11"), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    desc = lines[0]["Description"]
+    _check("rental line posts against the shared equipment item",
+           lines[0]["SalesItemLineDetail"]["ItemRef"]["value"] == "EQ-GENERIC")
+    _check("description names the fixture", "V-Show - Aura (Wash)" in desc)
+    _check("description carries the rental period", "Jul 9 – Jul 11, 2026" in desc)
+    _check("description carries the rate basis", "3-Day rate" in desc)
+
+    # A section billing its own window overrides the project's dates.
+    entity.sections[0].update({"customDates": True, "startDate": "2026-08-01",
+                               "endDate": "2026-08-01"})
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("2026-07-09", "2026-07-11"), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("section dates win over the project window",
+           "Aug 1, 2026" in lines[0]["Description"])
+
+    # Item notes still ride along after the period.
+    entity.sections[0]["items"][0]["notes"] = "Ships Wed"
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("", ""), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("notes preserved on rental lines", lines[0]["Description"].endswith("Ships Wed"))
+
+    # No dates anywhere → the fixture name alone, never a stray dash.
+    entity.sections[0].update({"customDates": False})
+    entity.sections[0]["items"][0].pop("notes")
+    entity.sections[0]["items"][0].pop("rentalLabel")
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("", ""), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("dateless rental → bare name", lines[0]["Description"] == "V-Show - Aura (Wash)")
+
+    # A rental added as some other line type still routes to the shared item —
+    # it must never mint a QB product from the rental catalog.
+    qbo_sync._resolve_line_item_id = _real_resolve_line_item_id
+    qbo_sync._generic_equipment_item_id = AsyncMock(return_value="EQ-GENERIC")
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "NEW"}})
+    out = await _real_resolve_line_item_id(
+        None, MagicMock(), {"type": "product", "productId": 5, "equipmentId": 12,
+                            "name": "V-Show - Aura (Wash)", "unitPrice": 150},
+        client_id="c", client_secret="s")
+    _check("equipmentId routes to the shared item whatever the line type",
+           out == "EQ-GENERIC")
+    _check("no QB product created for a rental",
+           qbo_sync.quickbooks.create_item.await_count == 0)
+    qbo_sync._generic_equipment_item_id = _real_generic_equipment_item_id
+
+
+def test_period_label():
+    print("test_period_label")
+    _check("multi-day same year", qbo_sync._period_label("2026-07-09", "2026-07-11") == "Jul 9 – Jul 11, 2026")
+    _check("single day collapses", qbo_sync._period_label("2026-07-09", "2026-07-09") == "Jul 9, 2026")
+    _check("open end collapses to start", qbo_sync._period_label("2026-07-09", "") == "Jul 9, 2026")
+    _check("year boundary spelled out",
+           qbo_sync._period_label("2026-12-30", "2027-01-02") == "Dec 30, 2026 – Jan 2, 2027")
+    _check("missing start → empty", qbo_sync._period_label("", "2026-07-11") == "")
+    _check("malformed date → empty", qbo_sync._period_label("not-a-date", "2026-07-11") == "")
+    _check("out-of-range month → empty", qbo_sync._period_label("2026-13-09", "2026-07-11") == "")
+
+
 async def test_payload_recall_note():
     print("test_payload_recall_note")
     payload = await _build(_fake_invoice(status="draft", sent_date="2026-06-21"))
@@ -1039,12 +1121,14 @@ async def test_accounts_refresh_route():
 
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
+                  test_period_label,
                   test_customer_billaddr_and_fields, test_income_account_readonly_columns]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
         test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
         test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
+        test_rentals_never_become_qb_products,
         test_delete_not_synced, test_delete_synced_calls_qb,
         test_estimate_tax_creates_reads_deletes, test_estimate_tax_exempt_skips_qb,
         test_estimate_tax_stale_token_delete_retry,
