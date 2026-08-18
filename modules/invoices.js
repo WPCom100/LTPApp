@@ -884,7 +884,13 @@
       };
       setSendRecipients(initSendRecipients());
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — Payment Received", vars));
-      setSendMessage(resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars));
+      // Collapse an orphaned "()" the template leaves when projectName is empty
+      // (a project-less invoice with no custom name): "...for {{refNumber}}
+      // ({{projectName}})." would otherwise render "...for INV-2026-002 ()".
+      // Mirrors backend/qbo_receipts.py::_strip_empty_parens so the manual and
+      // auto receipts read identically.
+      var receiptBody = resolve(tmpl.body || "{{header}}\n\nHi {{clientName}},\n\nThank you for your payment.\n\n{{lineItems}}\n\nBalance: $0.00\n\n{{signature}}", vars);
+      setSendMessage(receiptBody.replace(/ ?\(\s*\)/g, ""));
       // headerVars feed both the editor preview and the send-time
       // expansion in sendReceipt. viewUrl blank — backend resolves
       // per-recipient if the receipt body uses {{viewUrl}}.

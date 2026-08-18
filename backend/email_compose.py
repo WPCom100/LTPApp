@@ -117,6 +117,12 @@ def render_masthead(brand: dict) -> str:
     of every email — the masthead is NOT a body token; a stray {{masthead}} left
     in a template body is stripped by email_shell, never substituted.
 
+    The logo image is emitted ONLY when brand["logo"] is an absolute http(s)
+    URL. When the app origin is unknown (LTP_OAUTH_REDIRECT_URI unset), _email_brand
+    yields a relative logo path that no email client can resolve — which is what
+    put a broken-image box at the top of the receipt this fixes — so we fall back
+    to the styled text wordmark instead of shipping a broken <img>.
+
     The rule is the logo cell's OWN border-bottom (no separate row to leak a
     seam); border-collapse + font-size/line-height:0 kill the residual gap some
     email clients (Gmail) render below a scaled image; the img's -1px bottom
@@ -126,8 +132,16 @@ def render_masthead(brand: dict) -> str:
     preview); tests/test_masthead_block.py pins both via substring checks.
     """
     company = escape(brand["company"])
-    if brand["logo"]:
-        logo = ('<img src="' + escape(brand["logo"]) + '" alt="' + company + '" width="380" '
+    # Only emit the <img> when we have an ABSOLUTE (http/https) logo URL. A
+    # relative src (which _email_brand produces when the app origin is unknown —
+    # e.g. LTP_OAUTH_REDIRECT_URI unset) can't be resolved by an email client and
+    # renders as a broken-image box. The web client-view masthead handles this
+    # with an <img onError> text fallback (modules/client-view.js); email has no
+    # JS, so we decide up front and degrade to the text wordmark instead of
+    # shipping a broken image. An absolute URL is served straight through.
+    logo_url = (brand.get("logo") or "").strip()
+    if logo_url.startswith(("http://", "https://")):
+        logo = ('<img src="' + escape(logo_url) + '" alt="' + company + '" width="380" '
                 'style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0">')
     else:
         logo = ('<span style="display:inline-block;padding-bottom:6px;font-size:22px;font-weight:bold;'
