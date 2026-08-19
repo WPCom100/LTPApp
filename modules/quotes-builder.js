@@ -96,6 +96,17 @@
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
       }),
       notes: q.notes || "",
+      // Server-managed, read-only: the QuickBooks-computed sales tax and the
+      // signature that says which version of the quote it was computed for.
+      // This whitelist predates quote tax and never gained them, so the builder
+      // rebuilt every draft without them: the Totals panel's tax row was gated
+      // on a field that was always undefined, TOTAL rendered tax-exclusive, and
+      // `taxFresh` could never be true. The client's PDF and share link show the
+      // tax, so the app was quoting a SMALLER total than the customer's copy.
+      // (modules/invoices.js::cloneInvoice spreads the source first for exactly
+      // this reason — see its comment.)
+      qbTaxTotal: q.qbTaxTotal != null ? q.qbTaxTotal : null,
+      qbTaxSignature: q.qbTaxSignature || null,
       activity: (q.activity || []).map(function(a) { return Object.assign({}, a); }),
     };
   }

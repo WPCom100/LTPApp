@@ -396,6 +396,41 @@ const ALLP = [GALA, SUMMIT];
      [true, "2026-09-01", "2026-09-02"]);
 }
 
+// ── Quote draft clone: server-managed fields must survive the whitelist ──────
+// modules/quotes-builder.js::cloneDraft rebuilds every draft from an explicit
+// whitelist, so a field it does not name is silently dropped when a quote is
+// opened. That is what hid the QuickBooks sales tax: the builder's Totals panel
+// gated its tax row on a field the clone had already thrown away, so the app
+// showed a tax-EXCLUSIVE total while the client's PDF and share link (which
+// read the row directly) showed the tax. Extract the real function and run it.
+{
+  const src = fs.readFileSync(path.join(__dirname, "..", "modules", "quotes-builder.js"), "utf8");
+  const start = src.indexOf("function cloneDraft(");
+  let i = src.indexOf("{", start), depth = 0, end = -1;
+  for (let j = i; j < src.length; j++) {
+    if (src[j] === "{") depth++;
+    else if (src[j] === "}") { depth--; if (depth === 0) { end = j + 1; break; } }
+  }
+  ok("C0 cloneDraft located in the module", start !== -1 && end !== -1);
+  // cloneDraft closes over two module-scope helpers; supply them.
+  globalThis.todayISO = () => "2026-08-19";
+  const cloneDraft = (0, eval)("(" + src.slice(start, end) + ")");
+
+  const q = { id: 4, clientType: "company", companyId: 2, status: "sent",
+              sections: [{ id: "s1", label: "Crew", items: [{ id: "i1", unitPrice: 5000, qty: 2 }] }],
+              globalDiscount: { type: "none", value: 0 },
+              qbTaxTotal: 825, qbTaxSignature: "sig-abc" };
+  const d = cloneDraft(q);
+  eq("C1 clone keeps qbTaxTotal", d.qbTaxTotal, 825);
+  eq("C2 clone keeps qbTaxSignature", d.qbTaxSignature, "sig-abc");
+  // The panel gates on `!= null`, so an uncalculated quote must clone to null,
+  // not undefined-by-omission — and a real $0 (exempt client) must stay 0.
+  eq("C3 uncalculated tax clones as null", cloneDraft({ id: 5, sections: [] }).qbTaxTotal, null);
+  eq("C4 an exempt client's $0 survives", cloneDraft({ id: 6, sections: [], qbTaxTotal: 0 }).qbTaxTotal, 0);
+  // And the totals helper agrees with what the PDF would compute.
+  eq("C5 cloned draft totals are tax-inclusive", window.LTP_QUOTE_TOTALS(d).total, 10825);
+}
+
 console.log("doc-projects suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
