@@ -20,7 +20,7 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId }) {
+  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId }) {
     var isMobile = window.LTP_useIsMobile();
     var company = companies.find(function(c) { return c.id === project.companyId; });
 
@@ -68,7 +68,11 @@
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);
     var [viewActivity, setViewActivity] = useState(null);
-    var [quoteGroupDlg, setQuoteGroupDlg] = useState(false);  // "Send to Quote" grouping picker
+    // "Send to Quote" / "Send to Invoice". One two-step dialog drives both:
+    //   { kind: "quote"|"invoice", step: "grouping" }             → how to organize the lines
+    //   { kind, step: "target", grouping, sections }              → which document receives them
+    // null when closed. See openSend / chooseGrouping / executeSend below.
+    var [sendDlg, setSendDlg] = useState(null);
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
 
@@ -296,158 +300,171 @@
       w.document.close(); w.print();
     }
 
-    // ── Send to Quote ────────────────────────────────────────────────────────
-    // Validate, then ask how to organize the line items (one section vs. split
-    // by department) before building the quote.
-    function openSendToQuote() {
-      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a quote."); return; }
-      if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a quote."); return; }
-      var hasPositions = draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
-      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days before creating a quote."); return; }
-      setQuoteGroupDlg(true);
+    // ── Send to Quote / Send to Invoice ──────────────────────────────────────
+    // Both destinations bill the same lines off window.LTP_scheduleLaborSections
+    // (theme.js), which owns the per-role day-rate aggregation — a divergence
+    // between the two would be an invisible pricing bug. The only thing that
+    // differs is the document literal built around those lines. Flow:
+    //   openSend(kind) → grouping picker → target picker → executeSend(target).
+    //
+    // The target is either a NEW document or any of this client's existing DRAFT
+    // quotes / invoices, whichever project that document started on — which is
+    // what lets one quote or invoice cover several jobs.
+
+    var KIND = {
+      quote:   { label: "Quote",   noun: "quote",   route: "quotes",   ref: window.LTP_QUOTE_REF,
+                 totals: window.LTP_QUOTE_TOTALS,   date: function(d) { return d.createdDate; } },
+      invoice: { label: "Invoice", noun: "invoice", route: "invoices", ref: window.LTP_INVOICE_REF,
+                 totals: window.LTP_INVOICE_TOTALS, date: function(d) { return d.invoiceDate || d.createdDate; } },
+    };
+
+    // This client's draft documents of the given kind, across ALL projects.
+    // A project is always billed to its COMPANY (window.LTP_clientRef), so a
+    // contact-billed quote/invoice can never be a target; and a project with no
+    // company has no client at all, so its only option is a new document.
+    // Draft-only is a hard requirement on the invoice side — invoices lock as
+    // soon as they're sent (modules/invoices.js) — and is applied to quotes too
+    // so a document the client has already received never changes underneath
+    // them.
+    function clientDrafts(kind) {
+      if (project.companyId == null) return [];
+      var list = (kind === "quote" ? quotes : invoices) || [];
+      return list.filter(function(d) {
+        return d && d.status === "draft" && d.clientType !== "contact" && d.companyId === project.companyId;
+      }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
     }
 
-    function sendToQuote(grouping) {
-      setQuoteGroupDlg(false);
-      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a quote."); return; }
-      if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a quote."); return; }
+    function openSend(kind) {
+      var noun = KIND[kind].noun;
+      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a " + noun + "."); return; }
+      // Lines are priced off `draft`, not the persisted project — sending an
+      // unsaved schedule would bill times the project doesn't have.
+      if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a " + noun + "."); return; }
+      var hasPositions = draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
+      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days before creating a " + noun + "."); return; }
+      setSendDlg({ kind: kind, step: "grouping" });
+    }
 
-      // Group by date for day-level rate calculation
-      var dateGroups = {};
-      draft.schedule.forEach(function(s) {
-        var d = s.date || "_unscheduled";
-        if (!dateGroups[d]) dateGroups[d] = { dayCall: null, dayWrap: null, items: [], date: d };
-        var g = dateGroups[d];
-        if (s.time && (!g.dayCall || s.time < g.dayCall)) g.dayCall = s.time;
-        if (s.endTime && (!g.dayWrap || s.endTime > g.dayWrap)) g.dayWrap = s.endTime;
-        g.items.push(s);
-      });
+    // grouping === "one" → a single "Labor" section; otherwise one section per
+    // department. Per-crew negotiated minimums flow into unit cost via crewMins
+    // so the document's margin reflects the higher payout, while the price
+    // billed to the client stays the role rate.
+    function chooseGrouping(grouping) {
+      var kind = sendDlg.kind;
+      var sections = window.LTP_scheduleLaborSections(
+        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId);
+      if (sections.length === 0) {
+        setSendDlg(null);
+        // Positions exist (openSend checked) but nothing priced — every day is
+        // missing a start or end time. Say that precisely instead of repeating
+        // the "no positions" guard, which sent people looking in the wrong place.
+        showAlert("Nothing to bill", "No schedule day has both a start and an end time, so there's nothing to price.");
+        return;
+      }
+      setSendDlg({ kind: kind, step: "target", grouping: grouping, sections: sections });
+    }
 
-      // Bill each day per ROLE (not per position): a role on several items is
-      // one day rate sized by its MAX count on any single item, rated over the
-      // role's actual worked span. LTP_calcDayLabor owns that model; here we
-      // just aggregate its per-role output across days into quote line items —
-      // day rates keyed by role+tier, OT pooled by role.
-      var dayRateItems = {};
-      var otItems = {};
-      // Per-crew negotiated minimums flow into unit cost (u.dayCost / u.otCost),
-      // so the quote's margin reflects the higher payout — while unitPrice/OT rate
-      // billed to the client stays the role rate.
-      var crewMins = window.LTP_crewMinMap(contacts);
+    function executeSend(targetId) {
+      if (!sendDlg || sendDlg.step !== "target") return;
+      var kind = sendDlg.kind, sections = sendDlg.sections;
+      var K = KIND[kind];
+      var today = todayISO();
+      var now = new Date().toTimeString().substring(0, 5);
+      setSendDlg(null);
 
-      Object.keys(dateGroups).forEach(function(dateKey) {
-        var g = dateGroups[dateKey];
-        if (!g.dayCall || !g.dayWrap) return;
-        var fmtDate = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
-
-        window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
-          // Each unit is one person. The day-rate line aggregates units of the
-          // same role+tier (qty = how many people); costAccum adds $0 for a
-          // full-margin unit so its rate is pure margin. Per-unit cost is
-          // blended at build time so a single line stays correct.
-          var drKey = u.serviceId + "|" + u.tier;
-          if (!dayRateItems[drKey]) {
-            dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other",
-                                    minHours: u.minHours || 0, minApplied: false };
-          }
-          // A day billed up to the client's contract minimum says so on the
-          // quote line — otherwise "Full day" against a 4-hour call reads as a
-          // mistake to whoever reviews it.
-          if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
-          dayRateItems[drKey].qty += 1;
-          dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
-          if (dayRateItems[drKey].dates.indexOf(fmtDate) === -1) dayRateItems[drKey].dates.push(fmtDate);
-
-          // OT line item — this person's own OT hours (cost $0 if full margin)
-          if (u.otHours > 0) {
-            var otKey = u.serviceId;
-            if (!otItems[otKey]) {
-              otItems[otKey] = { svc: u.svc, otRate: u.otRate, rateHours: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
-            }
-            otItems[otKey].rateHours = Math.round((otItems[otKey].rateHours + u.otHours) * 100) / 100;
-            otItems[otKey].costAccum = Math.round((otItems[otKey].costAccum + (u.fullMargin ? 0 : u.otCost * u.otHours)) * 100) / 100;
-            if (otItems[otKey].dates.indexOf(fmtDate) === -1) otItems[otKey].dates.push(fmtDate);
-          }
-        });
-      });
-
-      // Build the labor line items once (identical for both groupings); each
-      // carries its department so we can either split by department or pool
-      // everything into a single section.
-      var laborItems = [];  // [{ dept, item }]
-
-      // Day rate line items. Per-unit cost is the blended cost across the qty
-      // (full-margin positions contribute $0), so one line carries the right
-      // margin without splitting paid vs owner crew.
-      Object.keys(dayRateItems).forEach(function(key) {
-        var li = dayRateItems[key];
-        var dayList = li.dates.length <= 4 ? li.dates.join(", ") : li.dates.slice(0, 3).join(", ") + " + " + (li.dates.length - 3) + " more";
-        laborItems.push({ dept: li.dept, item: {
-          id: genId("item"), type: "service", serviceId: li.svc.id,
-          name: li.svc.role + " \u2014 " + li.svc.description,
-          rateType: li.tier === "half" ? "half" : "day",
-          qty: li.qty, unitPrice: li.rate, adjustedPrice: null,
-          cost: li.qty > 0 ? Math.round((li.costAccum / li.qty) * 100) / 100 : 0,
-          notes: dayList + (li.minApplied ? " \u00b7 " + li.minHours + "-hour contract minimum applied" : ""),
-          deliveredQty: 0, invoicedQty: 0
-        } });
-      });
-
-      // OT line items (blended per-hour cost; margin OT hours cost $0)
-      Object.keys(otItems).forEach(function(key) {
-        var li = otItems[key];
-        if (li.rateHours <= 0) return;
-        var dayList = li.dates.length <= 4 ? li.dates.join(", ") : li.dates.slice(0, 3).join(", ") + " + " + (li.dates.length - 3) + " more";
-        laborItems.push({ dept: li.dept, item: {
-          id: genId("item"), type: "service", serviceId: li.svc.id,
-          name: li.svc.role + " \u2014 " + li.svc.description,
-          rateType: "ot",
-          qty: li.rateHours, unitPrice: li.otRate, adjustedPrice: null,
-          cost: li.rateHours > 0 ? Math.round((li.costAccum / li.rateHours) * 100) / 100 : 0,
-          notes: "Overtime hours: " + dayList, deliveredQty: 0, invoicedQty: 0
-        } });
-      });
-
-      if (laborItems.length === 0) { showAlert("No Positions", "Add positions to schedule days before creating a quote."); return; }
-
-      // grouping === "one" \u2192 a single "Labor" section; otherwise split by
-      // department (one section each), the legacy behavior.
-      var quoteSections;
-      if (grouping === "one") {
-        quoteSections = [{ id: genId("sec"), label: "Labor", customDates: false, startDate: "", endDate: "", items: laborItems.map(function(x) { return x.item; }) }];
-      } else {
-        var sectionMap = {};
-        laborItems.forEach(function(x) { (sectionMap[x.dept] = sectionMap[x.dept] || []).push(x.item); });
-        quoteSections = Object.keys(sectionMap).map(function(dept) {
-          return { id: genId("sec"), label: dept, customDates: false, startDate: "", endDate: "", items: sectionMap[dept] };
+      function changeList(secs) {
+        return secs.map(function(sec) {
+          return { cat: sec.label, detail: sec.items.map(function(i) { return i.name + " ×" + i.qty; }).join(", ") };
         });
       }
 
-      // Create the quote
-      var quoteId = getNextQuoteId();
-      var today = todayISO();
-      var newQuote = {
-        id: quoteId,
+      if (targetId != null) {
+        // ── Append into an existing draft ──────────────────────────────────
+        // Deliberately NOT a merge: the incoming lines arrive as NEW sections
+        // stamped with this project's name, so whatever the user already
+        // arranged in that document is left exactly as it was and each job's
+        // work stays identifiable on the printed doc. The project name goes in
+        // the section LABEL because that is what survives the public-view scrub.
+        var setList = kind === "quote" ? setQuotes : setInvoices;
+        setList(function(prev) {
+          return prev.map(function(doc) {
+            if (doc.id !== targetId) return doc;
+            // This job usually runs on different dates than the document's, so
+            // its sections carry their own rental window (null when they match,
+            // or when this IS the document's primary job).
+            var dateStamp = window.LTP_sectionDateStamp(doc, project, projects);
+            var labeled = sections.map(function(sec) {
+              return Object.assign({}, sec, {
+                label: window.LTP_projectSectionLabel(sec.label, project.name),
+                projectId: project.id,
+              }, dateStamp || {});
+            });
+            // Records this project as a contributor; the document's PRIMARY
+            // project (its title on the PDF) is never rewritten.
+            var link = window.LTP_linkDocProject(doc, project.id);
+            return Object.assign({}, doc, {
+              projectId: link.projectId, projectIds: link.projectIds,
+              sections: window.LTP_appendDocSections(doc.sections, labeled, genId),
+              activity: (doc.activity || []).concat([{
+                id: genId("act"), date: today, time: now, type: "updated",
+                user: (window.LTP_CURRENT_USER || "User"),
+                message: "Labor added from " + project.name + " schedule",
+                changes: changeList(labeled),
+              }]),
+            });
+          });
+        });
+        nav(K.route + "/" + targetId);
+        return;
+      }
+
+      // ── Create a new document ────────────────────────────────────────────
+      var stamped = sections.map(function(sec) { return Object.assign({}, sec, { projectId: project.id }); });
+      var common = {
         clientType: "company", companyId: project.companyId, clientContactId: null,
-        projectId: project.id, customName: "",
-        customStartDate: "", customEndDate: "",
-        rentalStartDate: null, rentalEndDate: null,
+        projectId: project.id, projectIds: [project.id], customName: "",
         status: "draft", createdDate: today, sentDate: null,
         globalDiscount: { type: "none", value: 0 },
-        sections: quoteSections,
+        sections: stamped,
         notes: "Generated from " + project.name + " schedule.",
         activity: [{
-          id: genId("act"), date: today, time: new Date().toTimeString().substring(0, 5),
-          type: "created", user: (window.LTP_CURRENT_USER || "User"), message: "Quote created from project schedule",
-
-          changes: quoteSections.map(function(sec) {
-            return { cat: sec.label, detail: sec.items.map(function(i) { return i.name + " \u00d7" + i.qty; }).join(", ") };
-          })
-        }]
+          id: genId("act"), date: today, time: now, type: "created",
+          user: (window.LTP_CURRENT_USER || "User"),
+          message: K.label + " created from project schedule",
+          changes: changeList(stamped),
+        }],
       };
 
-      setQuotes(function(prev) { return prev.concat([newQuote]); });
-      nav("quotes/" + quoteId);
+      var newId;
+      if (kind === "quote") {
+        newId = getNextQuoteId();
+        setQuotes(function(prev) {
+          return prev.concat([Object.assign({}, common, {
+            id: newId,
+            customStartDate: "", customEndDate: "",
+            rentalStartDate: null, rentalEndDate: null,
+          })]);
+        });
+      } else {
+        newId = getNextInvoiceId();
+        // Schedule-billed lines carry no sourceItemId / sourceQuoteId — there is
+        // no quote line behind them — so they are a direct bill and the
+        // invoicedQty rollback in modules/invoices.js correctly skips them.
+        var due = new Date();
+        due.setDate(due.getDate() + (window.LTP_DEFAULT_TERMS || 30));
+        setInvoices(function(prev) {
+          return prev.concat([Object.assign({}, common, {
+            id: newId, quoteId: null,
+            // Minted client-side so Preview works without a server round-trip,
+            // matching the other two invoice-creation sites.
+            shareToken: window.LTP_genShareToken(),
+            invoiceDate: today, dueDate: due.toISOString().substring(0, 10), paidDate: null,
+            payments: [],
+            notes: window.LTP_DEFAULT_INVOICE_NOTES || common.notes,
+          })]);
+        });
+      }
+      nav(K.route + "/" + newId);
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
@@ -465,8 +482,12 @@
               (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
         h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
-          h("button", { onClick: openSendToQuote,
+          h("button", { onClick: function() { openSend("quote"); },
             style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
+          // Bills the schedule straight to the client, skipping the quote's
+          // delivered/invoiced ledger entirely \u2014 these are direct-bill lines.
+          h("button", { onClick: function() { openSend("invoice"); },
+            style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Invoice"),
           h("button", { onClick: printSchedule,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
@@ -630,21 +651,62 @@
       // Confirm dialog
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
-      // "Send to Quote" — choose how to organize the schedule's labor lines.
-      quoteGroupDlg && h(window.LTPModal, { title: "Send to Quote", onClose: function() { setQuoteGroupDlg(false); } },
+      // Send to Quote / Send to Invoice — step 1: how to organize the lines.
+      sendDlg && sendDlg.step === "grouping" && h(window.LTPModal, { title: "Send to " + KIND[sendDlg.kind].label, onClose: function() { setSendDlg(null); } },
         h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 16, lineHeight: 1.5 } },
-          "How should the labor lines be organized in the quote?"),
+          "How should the labor lines be organized in the " + KIND[sendDlg.kind].noun + "?"),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-          h("button", { onClick: function() { sendToQuote("one"); },
+          h("button", { onClick: function() { chooseGrouping("one"); },
             style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 14px", textAlign: "left", cursor: "pointer", fontFamily: "inherit" } },
             h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "One section"),
             h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "All roles in a single “Labor” section.")),
-          h("button", { onClick: function() { sendToQuote("split"); },
+          h("button", { onClick: function() { chooseGrouping("split"); },
             style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "12px 14px", textAlign: "left", cursor: "pointer", fontFamily: "inherit" } },
             h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Split by department"),
             h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } }, "One section per department (Lighting, Audio, …).")),
-          h("button", { onClick: function() { setQuoteGroupDlg(false); },
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 14px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "Cancel")))
+          h("button", { onClick: function() { setSendDlg(null); },
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 14px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "Cancel"))),
+
+      // Step 2: which document receives them — a new one, or any of this
+      // client's existing drafts regardless of which project it started on.
+      sendDlg && sendDlg.step === "target" && function() {
+        var K = KIND[sendDlg.kind];
+        var drafts = clientDrafts(sendDlg.kind);
+        var lineCount = sendDlg.sections.reduce(function(n, s) { return n + s.items.length; }, 0);
+        return h(window.LTPModal, { title: "Send to " + K.label, onClose: function() { setSendDlg(null); } },
+          h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 4, lineHeight: 1.5 } },
+            lineCount + " labor line" + (lineCount !== 1 ? "s" : "") + " from " + project.name + "."),
+          h("p", { style: { fontSize: "11px", color: B.textMut, marginBottom: 14, lineHeight: 1.5 } },
+            drafts.length > 0
+              ? "Add them to one of " + (company ? company.name + "’s" : "this client’s") + " draft " + K.noun + "s — they’ll arrive as new sections, leaving what’s already there untouched — or start a new " + K.noun + "."
+              : (project.companyId == null
+                  ? "This project has no client company, so there are no existing " + K.noun + "s to add to."
+                  : "No draft " + K.noun + "s for " + (company ? company.name : "this client") + " yet.")),
+          drafts.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
+            drafts.map(function(d) {
+              var itemCount = (d.sections || []).reduce(function(n, s) {
+                return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
+              // Which jobs this document already covers — the reason a draft
+              // from another project is a legitimate target at all.
+              var names = window.LTP_docProjectNames(d, projects);
+              var total = (K.totals(d) || {}).total || 0;
+              return h("button", { key: d.id, onClick: function() { executeSend(d.id); },
+                style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontFamily: "inherit" },
+                onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
+                onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+                h("div", { style: { minWidth: 0 } },
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, K.ref(d)),
+                  h("div", { style: { fontSize: "10px", color: B.textMut } },
+                    itemCount + " item" + (itemCount !== 1 ? "s" : "") + " · " + (fmt(K.date(d)) || "—")),
+                  names.length > 0 && h("div", { style: { fontSize: "10px", color: names.length > 1 ? B.info : B.textMut, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+                    names.join(", "))),
+                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, flexShrink: 0 } }, "$" + window.LTP_money(total)));
+            })),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" } },
+            h("button", { onClick: function() { setSendDlg({ kind: sendDlg.kind, step: "grouping" }); },
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 14px", color: B.textMut, fontSize: "11px", cursor: "pointer", fontFamily: "inherit" } }, "← Back"),
+            h(window.Btn, { onClick: function() { executeSend(null); } }, "+ Create New " + K.label)));
+      }()
     );
   };
 })();

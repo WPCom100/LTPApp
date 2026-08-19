@@ -174,13 +174,30 @@ class Quote(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Every project this quote bills work for, primary first. A schedule can be
+    # sent into any of the client's draft quotes regardless of which project that
+    # quote started on, so one document may cover several jobs. `project_id`
+    # above stays the PRIMARY — it still names the document on the PDF and in
+    # notifications — and this list is what the "Includes" line renders from.
+    # Legacy rows have NULL/[]; readers must fall back to [project_id].
+    # See window.LTP_docProjectIds in theme.js (the frontend mirror).
+    project_ids = Column(JSON, default=list)            # list[int]
     status = Column(String(20), default="draft")        # {draft, sent, accepted, declined, converted}
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     custom_start_date = Column(String(10), default="") # overrides project's startDate on the printed quote
     custom_end_date = Column(String(10), default="")   # overrides project's endDate on the printed quote
     custom_name = Column(String(255), default="")      # overrides project.name on the printed quote
-    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
-    sections = Column(JSON, default=list)               # list[{id: str, label: str, items: list[QuoteLineItem]}]
+    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"amount"|"target", value: float}
+                                                        # "amount" = fixed dollars off, "target" = discount TO this
+                                                        # total. "flat" is a legacy alias for "amount", still read
+                                                        # by every consumer but no longer written by any UI.
+    sections = Column(JSON, default=list)               # list[{id: str, label: str, customDates: bool,
+                                                        #       startDate: str, endDate: str,
+                                                        #       projectId: int|null,   (set on sections appended from
+                                                        #         another project; the label also names it, because
+                                                        #         label is what survives the public-view scrub —
+                                                        #         see routes/_shared.py::public_section_items)
+                                                        #       items: list[QuoteLineItem]}]
                                                         # QuoteLineItem = {
                                                         #   id: str, type: "equipment"|"service"|"product"|"fee"|"note",
                                                         #   name: str, qty: float, unitPrice: float, adjustedPrice: float|null,
@@ -236,6 +253,16 @@ class Invoice(Base):
     company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
     client_contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="SET NULL"), nullable=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Every project this invoice bills work for, primary first — same contract as
+    # Quote.project_ids above. Populated when a schedule sends labor into an
+    # existing draft invoice, or when a quote for another project converts into
+    # one. `project_id` remains the primary.
+    project_ids = Column(JSON, default=list)            # list[int]
+    # The quote this invoice was FIRST converted from. An invoice may now draw
+    # lines from several quotes (the send-to-invoice picker offers any of the
+    # client's draft invoices), so this is a convenience back-pointer, not the
+    # authority: each line carries its own `sourceQuoteId` and the frontend's
+    # invoicedQty rollback keys on that. See modules/invoices.js::save().
     quote_id = Column(Integer, ForeignKey("quotes.id", ondelete="SET NULL"), nullable=True, index=True)
     status = Column(String(20), default="draft")        # {draft, sent, partial, paid, overdue}
     invoice_date = Column(String(10), default="")       # ISO YYYY-MM-DD
@@ -243,12 +270,22 @@ class Invoice(Base):
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
     custom_name = Column(String(255), default="")       # names a project-less invoice; falls back to project.name on the printed doc (mirrors Quote.custom_name)
     paid_date = Column(String(10), default="")          # ISO YYYY-MM-DD, set when fully paid
-    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"flat", value: float}
+    global_discount = Column(JSON, default=dict)        # {type: "none"|"percent"|"amount"|"target", value: float}
+                                                        # "amount" = fixed dollars off, "target" = discount TO this
+                                                        # total. "flat" is a legacy alias for "amount", still read
+                                                        # by every consumer but no longer written by any UI.
     sections = Column(JSON, default=list)               # list[{id, label, items: list[InvoiceLineItem]}]
                                                         # InvoiceLineItem = {id, type, name, qty, unitPrice, adjustedPrice,
                                                         #                    rateType, productVariantId, feeId,
                                                         #                    serviceId|equipmentId|productId,
-                                                        #                    sourceItemId: str}  (source = quote line id)
+                                                        #                    sourceItemId: str,      (source = quote line id)
+                                                        #                    sourceQuoteId: int,     (which quote that line is on)
+                                                        #                    linkedQty: float}       (how much draws against it)
+                                                        # sourceItemId/sourceQuoteId/linkedQty are set only on lines
+                                                        # converted from a quote; a directly-billed line (added by
+                                                        # hand, or generated from a project schedule) has none and is
+                                                        # skipped by the invoicedQty rollback. Sections appended from
+                                                        # another project carry `projectId` (see Quote.sections).
                                                         # See Quote.sections for the "fee" line type (edits unitPrice
                                                         # directly, never adjustedPrice).
     notes = Column(Text, default="")

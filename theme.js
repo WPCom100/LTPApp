@@ -659,6 +659,136 @@ window.LTP_crewMinMap = function(contacts) {
   return m;
 };
 
+// Build quote/invoice line-item sections from a project schedule — the whole
+// of "Send to Quote" / "Send to Invoice" except the document literal itself.
+// Lives here rather than in ScheduleBuilder so both destinations bill off ONE
+// implementation (a divergence between them would be an invisible pricing bug)
+// and so the aggregation is unit-testable — tests/test_schedule_billing.js.
+//
+// Billing model, unchanged from the original Send-to-Quote: each DAY is priced
+// per ROLE, not per position. A role spread over several items on one day is
+// one day rate sized by its max concurrent count, rated over the role's actual
+// worked span. LTP_calcDayLabor owns that math; this function only aggregates
+// its per-role output across days into line items — day rates keyed role+tier,
+// OT pooled by role.
+//
+//   schedule  the project's schedule rows (already saved — the caller gates on
+//             dirty state, since a day's times drive its price)
+//   svcs      the CLIENT-resolved rate card (LTP_servicesForClient), never the
+//             raw catalog, so a negotiated rate lands on the document
+//   crewMins  LTP_crewMinMap(contacts) — per-crew payout floors, cost side only
+//   grouping  "one" → a single "Labor" section; anything else → one section per
+//             department
+//   fmtDate   date formatter for each line's "which days" note (LTP_formatDate)
+//
+// Returns [] when the schedule bills nothing — no dated+timed day carries a
+// position with a serviceId. Callers treat that as "nothing to send".
+window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId) {
+  var gen = genId || window.LTP_genId;
+  var fmt = fmtDate || function(d) { return d; };
+
+  // Group by date for day-level rate calculation.
+  var dateGroups = {};
+  (schedule || []).forEach(function(s) {
+    var d = s.date || "_unscheduled";
+    if (!dateGroups[d]) dateGroups[d] = { dayCall: null, dayWrap: null, items: [], date: d };
+    var g = dateGroups[d];
+    if (s.time && (!g.dayCall || s.time < g.dayCall)) g.dayCall = s.time;
+    if (s.endTime && (!g.dayWrap || s.endTime > g.dayWrap)) g.dayWrap = s.endTime;
+    g.items.push(s);
+  });
+
+  var dayRateItems = {};
+  var otItems = {};
+
+  Object.keys(dateGroups).forEach(function(dateKey) {
+    var g = dateGroups[dateKey];
+    if (!g.dayCall || !g.dayWrap) return;
+    var dayLabel = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
+
+    window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
+      // Each unit is one person. The day-rate line aggregates units of the same
+      // role+tier (qty = how many people); costAccum adds $0 for a full-margin
+      // unit so its rate is pure margin. Per-unit cost is blended at build time
+      // so a single line stays correct.
+      var drKey = u.serviceId + "|" + u.tier;
+      if (!dayRateItems[drKey]) {
+        dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [],
+                                dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
+      }
+      // A day billed up to the client's contract minimum says so on the line —
+      // otherwise "Full day" against a 4-hour call reads as a mistake to
+      // whoever reviews it.
+      if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
+      dayRateItems[drKey].qty += 1;
+      dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
+      if (dayRateItems[drKey].dates.indexOf(dayLabel) === -1) dayRateItems[drKey].dates.push(dayLabel);
+
+      // OT line item — this person's own OT hours (cost $0 if full margin).
+      if (u.otHours > 0) {
+        var otKey = u.serviceId;
+        if (!otItems[otKey]) {
+          otItems[otKey] = { svc: u.svc, otRate: u.otRate, rateHours: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
+        }
+        otItems[otKey].rateHours = Math.round((otItems[otKey].rateHours + u.otHours) * 100) / 100;
+        otItems[otKey].costAccum = Math.round((otItems[otKey].costAccum + (u.fullMargin ? 0 : u.otCost * u.otHours)) * 100) / 100;
+        if (otItems[otKey].dates.indexOf(dayLabel) === -1) otItems[otKey].dates.push(dayLabel);
+      }
+    });
+  });
+
+  function dayList(dates) {
+    return dates.length <= 4 ? dates.join(", ") : dates.slice(0, 3).join(", ") + " + " + (dates.length - 3) + " more";
+  }
+
+  // Build the labor line items once (identical for both groupings); each
+  // carries its department so we can either split by department or pool
+  // everything into a single section.
+  var laborItems = [];  // [{ dept, item }]
+
+  // Day-rate lines. Per-unit cost is the blended cost across the qty
+  // (full-margin positions contribute $0), so one line carries the right margin
+  // without splitting paid vs owner crew.
+  Object.keys(dayRateItems).forEach(function(key) {
+    var li = dayRateItems[key];
+    laborItems.push({ dept: li.dept, item: {
+      id: gen("item"), type: "service", serviceId: li.svc.id,
+      name: li.svc.role + " — " + li.svc.description,
+      rateType: li.tier === "half" ? "half" : "day",
+      qty: li.qty, unitPrice: li.rate, adjustedPrice: null,
+      cost: li.qty > 0 ? Math.round((li.costAccum / li.qty) * 100) / 100 : 0,
+      notes: dayList(li.dates) + (li.minApplied ? " · " + li.minHours + "-hour contract minimum applied" : ""),
+      deliveredQty: 0, invoicedQty: 0
+    } });
+  });
+
+  // OT lines (blended per-hour cost; margin OT hours cost $0).
+  Object.keys(otItems).forEach(function(key) {
+    var li = otItems[key];
+    if (li.rateHours <= 0) return;
+    laborItems.push({ dept: li.dept, item: {
+      id: gen("item"), type: "service", serviceId: li.svc.id,
+      name: li.svc.role + " — " + li.svc.description,
+      rateType: "ot",
+      qty: li.rateHours, unitPrice: li.otRate, adjustedPrice: null,
+      cost: li.rateHours > 0 ? Math.round((li.costAccum / li.rateHours) * 100) / 100 : 0,
+      notes: "Overtime hours: " + dayList(li.dates), deliveredQty: 0, invoicedQty: 0
+    } });
+  });
+
+  if (laborItems.length === 0) return [];
+
+  if (grouping === "one") {
+    return [{ id: gen("sec"), label: "Labor", customDates: false, startDate: "", endDate: "",
+              items: laborItems.map(function(x) { return x.item; }) }];
+  }
+  var sectionMap = {};
+  laborItems.forEach(function(x) { (sectionMap[x.dept] = sectionMap[x.dept] || []).push(x.item); });
+  return Object.keys(sectionMap).map(function(dept) {
+    return { id: gen("sec"), label: dept, customDates: false, startDate: "", endDate: "", items: sectionMap[dept] };
+  });
+};
+
 // ── Manual / one-off shift (warehouse labor not tied to a client job) ────────
 //
 // Build a lightweight "internal" project row from the Labor > Manual Shift
@@ -1914,11 +2044,25 @@ window.LTP_INVOICE_TOTALS = function(inv) {
       subtotal += price * (it.qty || 0);
     });
   });
+  // Global discount. A fixed-dollar discount is "amount" — that is what BOTH
+  // builders' "$" option writes (modules/invoices.js, modules/quotes-builder.js).
+  // "flat" is a LEGACY ALIAS, accepted forever but never written: it was this
+  // function's original spelling and never matched what the invoice UI actually
+  // saved, so a "$" discount computed as $0 here (and in the QuickBooks payload)
+  // while the client's PDF and share link — which already accepted both — showed
+  // it applied. Three parties saw three totals. All four readers now agree:
+  // here, backend/qbo_sync.py::_build_sales_lines,
+  // backend/pdf_generator.py::_calc_totals, modules/client-view.js::calcTotals.
   var gd = inv.globalDiscount || {};
   var discount = 0;
   if (gd.type === "percent") discount = subtotal * (gd.value || 0) / 100;
-  else if (gd.type === "flat") discount = gd.value || 0;
+  else if (gd.type === "amount" || gd.type === "flat") discount = gd.value || 0;
   else if (gd.type === "target") discount = Math.max(0, subtotal - (gd.value || 0));
+  // Never discount past zero — an over-large amount or a >100% rate would
+  // otherwise show a NEGATIVE total here while the PDF and client view (both
+  // of which clamp) showed 0. Same rule as LTP_QUOTE_TOTALS below.
+  if (discount > subtotal) discount = subtotal;
+  if (discount < 0) discount = 0;
   var afterDiscount = subtotal - discount;
   // Tax is QuickBooks-authoritative: once the invoice has been pushed, QB
   // computes the sales tax (qbTaxTotal) and the whole-invoice total reflects it
@@ -2008,8 +2152,12 @@ window.LTP_QUOTE_TOTALS = function(q) {
   });
   var afterDiscount = adjusted;
   var gd = q.globalDiscount || { type: "none", value: 0 };
+  // "amount" is the fixed-dollar discount; "flat" is the legacy alias accepted
+  // by every reader (see LTP_INVOICE_TOTALS above). Quotes have only ever
+  // written "amount", but accepting both here keeps the two totals functions
+  // literally interchangeable, which is the property that broke last time.
   if (gd.type === "percent") afterDiscount = adjusted * (1 - (Number(gd.value) || 0) / 100);
-  else if (gd.type === "amount") afterDiscount = adjusted - (Number(gd.value) || 0);
+  else if (gd.type === "amount" || gd.type === "flat") afterDiscount = adjusted - (Number(gd.value) || 0);
   else if (gd.type === "target") afterDiscount = Number(gd.value) || 0;
   if (afterDiscount < 0) afterDiscount = 0;
   // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB
@@ -2023,6 +2171,173 @@ window.LTP_QUOTE_TOTALS = function(q) {
 window.LTP_QUOTE_REF = function(q) {
   var year = (q.createdDate || "").substring(0, 4) || String(new Date().getFullYear());
   return "Q-" + year + "-" + String(q.id).padStart(3, "0");
+};
+
+// ── Multi-project quotes & invoices ─────────────────────────────────────────
+// A quote or invoice can gather work from more than one project: a schedule
+// sends its labor into any of the client's existing DRAFT documents, whatever
+// project that document started on.
+//
+// The scalar `projectId` survives as the PRIMARY project and keeps its old
+// meaning everywhere it's already read — the PDF title (pdf_generator.py), the
+// QuickBooks CustomerMemo (qbo_sync.py), the push-notification label
+// (routes/_shared.py::doc_display_name), the project-delete wizard
+// (modules/projects.js) and the CRM project's Quotes tab. `projectIds` is the
+// full contributing set, primary first, and is what the "Includes" line on the
+// document renders from.
+//
+// Rows written before this existed have no `projectIds` at all, so EVERY read
+// goes through LTP_docProjectIds rather than touching the field directly.
+window.LTP_docProjectIds = function(entity) {
+  if (!entity) return [];
+  var out = [], seen = {};
+  function push(id) {
+    if (id == null || id === "") return;
+    var k = String(id);
+    if (seen[k]) return;
+    seen[k] = true;
+    out.push(id);
+  }
+  push(entity.projectId);
+  if (Array.isArray(entity.projectIds)) entity.projectIds.forEach(push);
+  return out;
+};
+
+// The { projectId, projectIds } patch that records `projectId` as a contributor
+// to `entity`. The primary is never rewritten when the document already has one
+// — a quote the client has seen doesn't rename itself because a second job was
+// added to it — and is adopted when it doesn't. Idempotent: linking a project
+// that's already there just normalizes a legacy row's list.
+window.LTP_linkDocProject = function(entity, projectId) {
+  var ids = window.LTP_docProjectIds(entity);
+  if (projectId != null && !ids.some(function(id) { return String(id) === String(projectId); })) {
+    ids = ids.concat([projectId]);
+  }
+  var primary = (entity && entity.projectId != null) ? entity.projectId : (ids.length ? ids[0] : null);
+  return { projectId: primary, projectIds: ids };
+};
+
+// Display names for a document's contributing projects, primary first. A
+// project that's since been deleted (FKs are ON DELETE SET NULL, but the id can
+// still sit in the list) degrades to "Project <id>" rather than vanishing —
+// silently dropping it would understate what the document covers.
+window.LTP_docProjectNames = function(entity, projects) {
+  return window.LTP_docProjectIds(entity).map(function(id) {
+    var p = (projects || []).find(function(x) { return x.id === id; });
+    return (p && p.name) ? p.name : ("Project " + id);
+  });
+};
+
+// Does this quote/invoice bill work for `projectId`? True for the PRIMARY
+// project and for every other contributor equally — a document that gathered a
+// second job's schedule belongs on that job's page too, which is the whole
+// point of the contributor list. Every "this project's quotes/invoices" filter
+// goes through here rather than comparing `.projectId` directly.
+window.LTP_docHasProject = function(entity, projectId) {
+  if (projectId == null) return false;
+  return window.LTP_docProjectIds(entity).some(function(id) { return String(id) === String(projectId); });
+};
+
+// Note for a project's money figures when some of the documents behind them are
+// shared with other jobs. Each project counts a shared document's FULL total —
+// so its own page reads correctly in isolation — which means summing across
+// projects would over-count. This is the sentence that says so out loud, naming
+// the other jobs involved. Returns null when nothing is shared, i.e. for the
+// overwhelmingly common single-project case.
+//
+//   docs      the quotes (or invoices) already filtered to this project
+//   projects  the full project list, for name resolution
+window.LTP_sharedDocNote = function(project, docs, projects) {
+  if (!project) return null;
+  var otherIds = [], seen = {}, shared = 0;
+  (docs || []).forEach(function(d) {
+    var ids = window.LTP_docProjectIds(d);
+    if (ids.length < 2) return;
+    shared++;
+    ids.forEach(function(id) {
+      if (String(id) === String(project.id) || seen[String(id)]) return;
+      seen[String(id)] = true;
+      otherIds.push(id);
+    });
+  });
+  if (!shared) return null;
+  var names = otherIds.map(function(id) {
+    var p = (projects || []).find(function(x) { return x.id === id; });
+    return (p && p.name) ? p.name : ("Project " + id);
+  });
+  var withWhom = names.length <= 2
+    ? names.join(" and ")
+    : names.slice(0, 2).join(", ") + " and " + (names.length - 2) + " more";
+  return "Includes " + shared + " combined with " + withWhom + " — counted in full here and there.";
+};
+
+// Label for a section appended to an existing document. The project name goes
+// in the LABEL specifically because `label` is one of the few section fields
+// that survives the public-view scrub (backend/routes/_shared.py::
+// public_section_items) — so the client sees which job each block of work
+// belongs to without us widening that whitelist.
+window.LTP_projectSectionLabel = function(baseLabel, projectName) {
+  var base = String(baseLabel == null ? "" : baseLabel).trim() || "Items";
+  var proj = String(projectName == null ? "" : projectName).trim();
+  if (!proj) return base;
+  if (base.toLowerCase().indexOf(proj.toLowerCase()) !== -1) return base;  // don't double-stamp
+  return base + " — " + proj;
+};
+
+// Per-section date override for work appended from a DIFFERENT job.
+//
+// A document's rental window comes from its primary project (or its custom
+// dates when it has none), and equipment lines price off that window. A second
+// job almost always runs on other dates, so its sections carry their own —
+// sections already support `customDates` + startDate/endDate, and both the
+// builder's repricing and the PDF's "Rental Period" honor them, so this needs
+// no new machinery.
+//
+// Returns the {customDates, startDate, endDate} patch to merge into each
+// appended section, or null when nothing needs overriding: the work belongs to
+// the document's own primary project, the project has no dates, or its dates
+// already match the document's window.
+window.LTP_sectionDateStamp = function(doc, project, projects) {
+  if (!project || !project.startDate || !project.endDate) return null;
+  var ids = window.LTP_docProjectIds(doc);
+  var primaryId = ids.length ? ids[0] : (doc && doc.projectId != null ? doc.projectId : null);
+  // Sections for the document's own primary job inherit the document window.
+  if (primaryId != null && String(primaryId) === String(project.id)) return null;
+  var prim = primaryId != null ? (projects || []).find(function(p) { return p.id === primaryId; }) : null;
+  var start = prim ? (prim.startDate || "") : ((doc && doc.customStartDate) || "");
+  var end   = prim ? (prim.endDate   || "") : ((doc && doc.customEndDate)   || "");
+  if (start === project.startDate && end === project.endDate) return null;
+  return { customDates: true, startDate: project.startDate, endDate: project.endDate };
+};
+
+// Append sections to a document WITHOUT touching what's already in it.
+// Deliberately NOT a merge-by-label: pooling a second job's "Labor" into the
+// first job's "Labor" section destroys exactly the per-project provenance a
+// multi-project document exists to record, and silently edits a section the
+// user already arranged. Section and item ids are regenerated on collision so
+// lines copied out of one document can never clobber the target's own.
+window.LTP_appendDocSections = function(existing, incoming, genId) {
+  var gen = genId || window.LTP_genId;
+  var used = {};
+  (existing || []).forEach(function(sec) {
+    if (sec && sec.id != null) used[sec.id] = true;
+    (sec && sec.items || []).forEach(function(it) { if (it && it.id != null) used[it.id] = true; });
+  });
+  var added = (incoming || []).map(function(sec) {
+    var secId = sec.id;
+    while (secId == null || used[secId]) secId = gen("sec");
+    used[secId] = true;
+    return Object.assign({}, sec, {
+      id: secId,
+      items: (sec.items || []).map(function(it) {
+        var itId = it.id;
+        while (itId == null || used[itId]) itId = gen("item");
+        used[itId] = true;
+        return Object.assign({}, it, { id: itId });
+      })
+    });
+  });
+  return (existing || []).concat(added);
 };
 
 // Fee quick-pick names — the one-tap "custom fee" name suggestions in the
@@ -2110,8 +2425,12 @@ window.LTP_collectQboFaults = function(invoices, quotes) {
 // quoted=true means `total` is the sum of the live quotes' totals (and `count`
 // how many), quoted=false means `total` is the preliminary budget sum.
 window.LTP_projectHeadlineTotal = function(project, quotes) {
+  // Any quote this project contributes to, not just ones it's primary on — a
+  // quote that absorbed this job's schedule bills this job's work and belongs
+  // in its headline. A quote shared with another project counts its FULL total
+  // on both; LTP_sharedDocNote is what tells the reader that's happening.
   var live = (quotes || []).filter(function(q) {
-    return q && q.projectId === project.id && q.status !== "declined";
+    return q && window.LTP_docHasProject(q, project.id) && q.status !== "declined";
   });
   if (live.length === 0) {
     var budget = project.budget || {};

@@ -1,5 +1,5 @@
 // Projects Module — top-level view (formerly nested under CRM)
-window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, route }) {
+window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var isMobile = window.LTP_useIsMobile();
@@ -37,6 +37,9 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var [editNote,        setEditNote]        = useState(null);
   var [deleteConfirm,   setDeleteConfirm]   = useState(null);
   var [deleteWizard,    setDeleteWizard]    = useState(null); // { projectId, name, steps completed tracking }
+  // Blocks a delete while other jobs' quotes/invoices still list this project
+  // as a contributor: { name, docs: [{ref, kind, id}] }. See handleDelete.
+  var [sharedLinkBlock, setSharedLinkBlock] = useState(null);
 
   // Full-screen schedule builder. This conditional return MUST stay below every
   // hook above: an early return placed before the useState calls changes the
@@ -50,7 +53,10 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         project: schedProject, projects: projects, setProjects: setProjects,
         contacts: contacts, setContacts: setContacts, services: services,
         clientRates: clientRates, companies: companies,
-        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId
+        quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId,
+        // Send to Invoice bills a schedule straight to the client, bypassing
+        // the quote's delivered/invoiced ledger — see sendToDoc there.
+        invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId
       });
     }
   }
@@ -85,8 +91,26 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
 
   function handleDelete(dc) {
     if (dc.type === "project") {
+      // Documents this project is PRIMARY on — the wizard's unlink-or-delete
+      // steps operate on these.
       var projQuotes = (quotes || []).filter(function(q) { return q.projectId === dc.id; });
       var projInvoices = (invoices || []).filter(function(i) { return i.projectId === dc.id; });
+      // Documents this project merely CONTRIBUTES to: it's one of several jobs
+      // they bill, and they belong to someone else's primary. Deleting the
+      // project would strand its id inside their projectIds with no row behind
+      // it, and neither "unlink" nor "delete" is the right call on a document
+      // that's mostly another job's work — so this blocks the delete and hands
+      // the decision back, naming the documents to detach first.
+      var sharedDocs = []
+        .concat((quotes || []).filter(function(q) { return q.projectId !== dc.id && window.LTP_docHasProject(q, dc.id); })
+          .map(function(q) { return { ref: window.LTP_QUOTE_REF(q), kind: "quote", id: q.id }; }))
+        .concat((invoices || []).filter(function(i) { return i.projectId !== dc.id && window.LTP_docHasProject(i, dc.id); })
+          .map(function(i) { return { ref: window.LTP_INVOICE_REF(i), kind: "invoice", id: i.id }; }));
+      if (sharedDocs.length > 0) {
+        setDeleteConfirm(null);
+        setSharedLinkBlock({ name: dc.name, docs: sharedDocs });
+        return;
+      }
       var proj = projects.find(function(p) { return p.id === dc.id; });
       var crewPositions = [];
       var buckets = {};  // "crewId:template" — one notify-tray notice per person + type
@@ -153,12 +177,20 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     setDeleteWizard(Object.assign({}, deleteWizard, { crewReleased: true }));
   }
 
+  // Drop the project from a document's links entirely — the scalar AND the
+  // contributor list. Leaving it in projectIds would keep the deleted project
+  // "linked" to a document that no longer has a row behind it.
+  function _unlinkDoc(doc, projectId) {
+    var ids = window.LTP_docProjectIds(doc).filter(function(id) { return String(id) !== String(projectId); });
+    return Object.assign({}, doc, { projectId: ids.length ? ids[0] : null, projectIds: ids });
+  }
+
   function wizardUnlinkQuotes() {
     if (!deleteWizard) return;
     setQuotes(function(prev) {
       return prev.map(function(q) {
         if (q.projectId !== deleteWizard.projectId) return q;
-        return Object.assign({}, q, { projectId: null });
+        return _unlinkDoc(q, deleteWizard.projectId);
       });
     });
     setDeleteWizard(Object.assign({}, deleteWizard, { quotesHandled: true }));
@@ -176,7 +208,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     setInvoices(function(prev) {
       return prev.map(function(i) {
         if (i.projectId !== deleteWizard.projectId) return i;
-        return Object.assign({}, i, { projectId: null });
+        return _unlinkDoc(i, deleteWizard.projectId);
       });
     });
     setDeleteWizard(Object.assign({}, deleteWizard, { invoicesHandled: true }));
@@ -290,6 +322,28 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     viewNote       && h(window.CRMNoteViewer, { ctx: ctx }),
     editNote       && h(window.CRMNoteEditor, { ctx: ctx }),
     deleteConfirm  && h(window.LTPConfirmDialog, { dlg: { title: "Confirm Delete", message: 'Are you sure you want to delete "' + deleteConfirm.name + '"? This cannot be undone.', variant: "danger", confirmLabel: "Delete", onConfirm: function() { handleDelete(deleteConfirm); } }, onCancel: function() { setDeleteConfirm(null); } }),
+
+    // Blocked delete: other jobs' documents still bill work for this project.
+    // Deliberately offers no bulk "unlink all" — each of these belongs to
+    // another project, and removing this one from it is an edit to THAT
+    // document, made deliberately on it.
+    sharedLinkBlock && h(window.LTPModal, { title: "Can’t delete “" + sharedLinkBlock.name + "” yet", onClose: function() { setSharedLinkBlock(null); } },
+      h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 12 } },
+        sharedLinkBlock.docs.length === 1
+          ? "One document belonging to another project also bills work for this one. Remove this project from it first, then delete."
+          : sharedLinkBlock.docs.length + " documents belonging to other projects also bill work for this one. Remove this project from each first, then delete."),
+      h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
+        sharedLinkBlock.docs.map(function(d) {
+          return h("button", { key: d.kind + d.id,
+            onClick: function() { setSharedLinkBlock(null); setDeleteConfirm(null); nav((d.kind === "quote" ? "quotes/" : "invoices/") + d.id); },
+            style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontFamily: "inherit" },
+            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
+            onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
+            h("span", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, d.ref),
+            h("span", { style: { fontSize: "10px", color: B.accent } }, "Open " + d.kind + " →"));
+        })),
+      h("div", { style: { display: "flex", justifyContent: "flex-end" } },
+        h(window.Btn, { variant: "ghost", onClick: function() { setSharedLinkBlock(null); } }, "Close"))),
 
     // Guided project deletion wizard
     deleteWizard && function() {

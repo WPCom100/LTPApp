@@ -466,11 +466,35 @@ async def test_payload_discounts():
     _check("percent discount line present", len(disc) == 1 and disc[0]["DiscountLineDetail"]["PercentBased"] is True)
     _check("percent value carried", disc[0]["DiscountLineDetail"]["DiscountPercent"] == 10)
 
-    # subtotal = 400 + 450 = 850; target 600 → flat discount of 250.
+    # subtotal = 400 + 450 = 850; target 600 → fixed discount of 250.
     tgt = await _build(_fake_invoice(global_discount={"type": "target", "value": 600}))
     tdisc = [l for l in tgt["Line"] if l["DetailType"] == "DiscountLineDetail"]
-    _check("target converted to flat discount", len(tdisc) == 1 and tdisc[0]["Amount"] == 250)
-    _check("flat discount not percent-based", tdisc[0]["DiscountLineDetail"]["PercentBased"] is False)
+    _check("target converted to fixed discount", len(tdisc) == 1 and tdisc[0]["Amount"] == 250)
+    _check("fixed discount not percent-based", tdisc[0]["DiscountLineDetail"]["PercentBased"] is False)
+
+    # "amount" is what the invoice builder's "$" option writes. This branch used
+    # to match only "flat", so a $ discount pushed NO discount line — QuickBooks
+    # billed the full amount while the client's PDF showed the discounted total,
+    # leaving a phantom balance the receipt poller could never close.
+    amt = await _build(_fake_invoice(global_discount={"type": "amount", "value": 100}))
+    adisc = [l for l in amt["Line"] if l["DetailType"] == "DiscountLineDetail"]
+    _check("amount discount reaches QuickBooks", len(adisc) == 1 and adisc[0]["Amount"] == 100)
+    _check("amount discount not percent-based", adisc[0]["DiscountLineDetail"]["PercentBased"] is False)
+
+    # "flat" is the legacy alias and must keep pushing the same line.
+    flat = await _build(_fake_invoice(global_discount={"type": "flat", "value": 100}))
+    fdisc = [l for l in flat["Line"] if l["DetailType"] == "DiscountLineDetail"]
+    _check("legacy flat alias still pushes", len(fdisc) == 1 and fdisc[0]["Amount"] == 100)
+
+    # QuickBooks rejects a discount larger than the invoice; clamp like theme.js.
+    over = await _build(_fake_invoice(global_discount={"type": "amount", "value": 99999}))
+    odisc = [l for l in over["Line"] if l["DetailType"] == "DiscountLineDetail"]
+    _check("over-large discount clamped to subtotal", len(odisc) == 1 and odisc[0]["Amount"] == 850)
+
+    # An unrecognized type must be a no-op, not a partial discount.
+    bogus = await _build(_fake_invoice(global_discount={"type": "bogus", "value": 100}))
+    _check("unknown discount type pushes nothing",
+           not [l for l in bogus["Line"] if l["DetailType"] == "DiscountLineDetail"])
 
 
 async def test_payload_project_memo():

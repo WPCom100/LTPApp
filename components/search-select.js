@@ -178,55 +178,112 @@
     );
   };
 
-  // Single-select inline chip search for a project. Mirrors the two above.
+  // Inline chip search for a project. Mirrors the two above, but supports
+  // selecting SEVERAL projects — a quote or invoice can bill work for more than
+  // one job (see window.LTP_docProjectIds in theme.js).
   //
   // Replaces the native <select> the quote and invoice builders used for
   // "Linked Project": that select got unusable as the project list grew, and it
   // had no room for a create affordance. `emptyLabel` is the placeholder shown
   // when nothing is picked (the old select's "(no project — use custom name)"
   // option, which is now the chip's × instead).
-  window.ProjectSearchField = function({ label, projectId, setProjectId, projects, companies, filter, placeholder, emptyLabel, onClear, createKind, createPrefill, allowEdit }) {
+  //
+  // Two modes, chosen by which setter you pass:
+  //   setProjectId  (+ projectId)   single — at most one chip, legacy behavior
+  //   setProjectIds (+ projectIds)  multi  — the FIRST id is the primary
+  //
+  // The primary is fixed by selection order: it titles the PDF, names the
+  // QuickBooks memo and drives rental dates, so it isn't quietly reassignable.
+  // Removing it promotes whichever project is next in the list, which is the
+  // deliberate way to change it.
+  window.ProjectSearchField = function({ label, projectId, setProjectId, projectIds, setProjectIds, projects, companies, filter, placeholder, emptyLabel, onClear, createKind, createPrefill, allowEdit }) {
     var [query, setQuery] = useState("");
     var [focused, setFocused] = useState(false);
     var all = projects || [];
-    var list = typeof filter === "function" ? all.filter(filter) : all;
-    // Chip resolves against the full list — a completed or reassigned project
+    var multi = typeof setProjectIds === "function";
+    // Normalized selection, primary first. Single mode is just "at most one".
+    var ids = multi
+      ? (Array.isArray(projectIds) ? projectIds.filter(function(x) { return x != null; }) : [])
+      : (projectId != null ? [projectId] : []);
+    // Chips resolve against the FULL list — a completed or reassigned project
     // that the filter now excludes must still show its name while selected.
-    var selProject = projectId ? all.find(function(p) { return p.id === projectId; }) : null;
+    var selected = ids.map(function(id) {
+      return all.find(function(p) { return p.id === id; }) || { id: id, name: "Project " + id };
+    });
+    var atCapacity = !multi && selected.length > 0;   // single mode fills up at one
+
+    function commit(next) {
+      if (multi) setProjectIds(next);
+      else setProjectId(next.length ? next[0] : null);
+    }
+    function add(id) {
+      if (ids.some(function(x) { return String(x) === String(id); })) return;
+      commit(multi ? ids.concat([id]) : [id]);
+      setQuery(""); setFocused(false);
+    }
+    function remove(id) {
+      var next = ids.filter(function(x) { return String(x) !== String(id); });
+      commit(next);
+      setQuery("");
+      if (next.length === 0 && onClear) onClear();
+    }
+
+    var list = typeof filter === "function" ? all.filter(filter) : all;
     var q = query.toLowerCase();
     var compName = function(p) {
       var c = p.companyId != null && companies ? companies.find(function(x) { return x.id === p.companyId; }) : null;
       return c ? c.name : "";
     };
     var filtered = list.filter(function(p) {
+      // Already-selected projects are chips, not dropdown rows.
+      if (ids.some(function(x) { return String(x) === String(p.id); })) return false;
       return ((p.name || "") + " " + compName(p)).toLowerCase().indexOf(q) !== -1;
     });
-    function onCreated(rec) { if (rec && rec.id != null) { setProjectId(rec.id); setQuery(""); setFocused(false); } }
-    var showCreate = !!createKind && focused && !selProject && query.length > 0;
+    function onCreated(rec) { if (rec && rec.id != null) add(rec.id); }
+    var showCreate = !!createKind && focused && !atCapacity && query.length > 0;
+    // The quick-action edits the PRIMARY — it's the one project the document is
+    // actually titled by, so it's the only unambiguous edit target.
+    var primary = selected.length ? selected[0] : null;
+
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
       label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
       h("div", { style: { position: "relative" } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 12px", minHeight: 37 } },
-          selProject && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, flexShrink: 0, maxWidth: "100%", overflow: "hidden" } },
-            h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, selProject.name),
-            h("button", { onClick: function(e) { e.stopPropagation(); setProjectId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1, flexShrink: 0 } }, "×")
-          ),
-          h("input", { type: "text", value: selProject ? "" : query,
-            placeholder: selProject ? "" : (placeholder || emptyLabel || "Search projects..."),
-            onChange: function(e) { if (!selProject) setQuery(e.target.value); },
-            onFocus: function() { if (!selProject) setFocused(true); },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 12px", minHeight: 37 } },
+          selected.map(function(p, i) {
+            // The primary wears the solid accent chip; the rest are outlined, so
+            // which project titles the document is readable at a glance.
+            var isPrimary = i === 0;
+            return h("span", { key: p.id,
+              title: multi ? (isPrimary ? p.name + " — primary: titles the document and drives its dates" : p.name) : p.name,
+              style: { display: "inline-flex", alignItems: "center", gap: 4, margin: "3px 0",
+                       background: isPrimary ? B.accent : "transparent",
+                       border: isPrimary ? "1px solid " + B.accent : "1px solid " + B.border,
+                       color: isPrimary ? B.btnInk : B.textSec,
+                       fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, flexShrink: 0, maxWidth: "100%", overflow: "hidden" } },
+              h("span", { style: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, p.name),
+              h("button", { "aria-label": "Remove " + p.name,
+                onClick: function(e) { e.stopPropagation(); remove(p.id); },
+                style: { background: "none", border: "none", color: isPrimary ? B.btnInk : B.textMut, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1, flexShrink: 0 } }, "×")
+            );
+          }),
+          h("input", { type: "text", value: atCapacity ? "" : query,
+            placeholder: selected.length ? (multi ? "Add another…" : "") : (placeholder || emptyLabel || "Search projects..."),
+            onChange: function(e) { if (!atCapacity) setQuery(e.target.value); },
+            onFocus: function() { if (!atCapacity) setFocused(true); },
             onBlur: function() { setTimeout(function() { setFocused(false); }, 200); },
-            onClick: function() { if (selProject) { setProjectId(null); setQuery(""); setFocused(true); if (onClear) onClear(); } },
-            style: { background: "transparent", border: "none", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", minWidth: 60, cursor: selProject ? "pointer" : "text" }
+            // Single mode keeps the old "click the field to clear and re-pick"
+            // shortcut. Multi mode has nothing to clear — chips have their own ×.
+            onClick: function() { if (atCapacity) { commit([]); setQuery(""); setFocused(true); if (onClear) onClear(); } },
+            style: { background: "transparent", border: "none", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", minWidth: 60, cursor: atCapacity ? "pointer" : "text" }
           }),
           createKind && h(window.LTPEntityQuickAction, {
-            kind: createKind, id: (allowEdit && selProject) ? selProject.id : null,
+            kind: createKind, id: (allowEdit && primary) ? primary.id : null,
             prefill: createPrefill, onSaved: onCreated })
         ),
-        (focused && !selProject && (filtered.length > 0 || showCreate)) && dropdown(
+        (focused && !atCapacity && (filtered.length > 0 || showCreate)) && dropdown(
           capped(filtered).map(function(p) {
             var cn = compName(p);
-            return h("div", { key: p.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setProjectId(p.id); setQuery(""); setFocused(false); },
+            return h("div", { key: p.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { add(p.id); },
               style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } },
               h("div", { style: { fontWeight: 600 } }, p.name),
               h("div", { style: { fontSize: "10px", color: B.textMut } },
@@ -234,7 +291,10 @@
             );
           })
             .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0)))
-      )
+      ),
+      // Says out loud what the chip styling implies, but only once it matters.
+      multi && selected.length > 1 && h("div", { style: { fontSize: "9px", color: B.textMut, lineHeight: 1.4 } },
+        selected[0].name + " is the primary — it titles the document and drives its dates. Remove it to promote the next.")
     );
   };
 })();

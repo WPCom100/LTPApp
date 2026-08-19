@@ -118,7 +118,7 @@
     var gt = gd.type || "none";
     var gv = Number(gd.value) || 0;
     if (gt === "percent") after = adj * (1 - gv / 100);
-    else if (gt === "amount" || gt === "flat") after = adj - gv;  // quotes: amount, invoices: flat
+    else if (gt === "amount" || gt === "flat") after = adj - gv;  // "amount" is current; "flat" a legacy alias
     else if (gt === "target") after = gv;
     after = Math.max(after, 0);
     // QuickBooks-computed sales tax (invoices only) makes the total tax-inclusive,
