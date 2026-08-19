@@ -83,6 +83,29 @@ _TAX_INPUT_COLS = ("sections", "global_discount", "client_type",
                    "company_id", "client_contact_id")
 
 
+def _merge_activity(stored: list | None, incoming: list | None) -> list:
+    """Union stored and incoming activity entries, keyed by entry id.
+
+    The frontend PUTs its whole in-memory row, and its `activity` array is a
+    snapshot taken before any SERVER-side stamp landed — `email_sent`
+    (routes/email.py), `qbo_synced` (qbo_sync.py), `qbo_estimate_tax`. Writing
+    that array back verbatim erased them, so a document's own history never
+    recorded that it had been emailed, and view_tracking._recent_email_sent lost
+    the signal it uses to tell an email scanner's prefetch from a real client
+    open (logging phantom "client viewed" entries).
+
+    Nothing in the app deletes an activity entry, so a union can never resurrect
+    an intentional removal. Recovered entries append at the end — they are the
+    most recent events at the time of the write, and the feed renders the array
+    in order (modules/invoices.js: `activity.slice().reverse()`).
+    """
+    incoming_list = [e for e in (incoming or []) if isinstance(e, dict)]
+    stored_list = [e for e in (stored or []) if isinstance(e, dict)]
+    seen = {e.get("id") for e in incoming_list if e.get("id")}
+    recovered = [e for e in stored_list if e.get("id") and e.get("id") not in seen]
+    return incoming_list + recovered if recovered else incoming_list
+
+
 def _tax_inputs_fingerprint(row) -> str:
     """Stable serialization of everything a stored sales tax depends on."""
     return json.dumps([getattr(row, c, None) for c in _TAX_INPUT_COLS],
@@ -301,6 +324,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        # Keep server-stamped history the client's snapshot doesn't know about.
+        if has_activity and "activity" in mapped:
+            mapped["activity"] = _merge_activity(row.activity, mapped["activity"])
         tracks_tax = model_cls in (models.Quote, models.Invoice)
         tax_inputs_before = _tax_inputs_fingerprint(row) if tracks_tax else None
         for key, val in mapped.items():
