@@ -263,6 +263,58 @@ def test_public_view_exposes_names_not_ids():
     _check("cost still scrubbed", "cost" not in sec["items"][0], str(sec["items"][0].keys()))
 
 
+def test_emailed_invoice_pdf_carries_the_project_names():
+    """The ATTACHED PDF is the copy the client actually opens.
+
+    pdf_generator renders the "Includes:" line from `projectNames`, which the
+    route has to resolve — the generator cannot reach the database. routes/pdf.py
+    and routes/view.py both do; the email attach path did not, so a client billed
+    for two jobs received line items for a job its header never named, while the
+    copy we downloaded named it.
+    """
+    client, _ = _setup()
+    from backend import gmail
+    from backend.routes import email as email_route
+
+    created = client.post("/api/invoices", json={
+        "clientType": "company", "status": "draft",
+        "projectId": PROJ_A, "projectIds": [PROJ_A, PROJ_B],
+        "sections": [{"id": "s1", "label": "Labor",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies=_cookies()).json()
+
+    captured = {}
+
+    def _fake_generate_pdf(buf, kind, entity, *a, **k):
+        captured["kind"] = kind
+        captured["entity"] = entity
+        buf.write(b"%PDF-1.4 test\n")
+
+    async def _fake_send(*a, **k):
+        return {"id": "fake-msg-id"}
+
+    real_pdf, real_send = email_route.generate_pdf, gmail.send
+    email_route.generate_pdf, gmail.send = _fake_generate_pdf, _fake_send
+    try:
+        r = client.post("/api/email/send", json={
+            "entityType": "invoice", "entityId": created["id"],
+            "to": "client@example.com", "subject": "Your invoice",
+            "bodyHtml": "<p>Attached.</p>", "attachPdf": True,
+        }, cookies=_cookies())
+    finally:
+        email_route.generate_pdf, gmail.send = real_pdf, real_send
+
+    _check("send reached the PDF attach step", "entity" in captured,
+           f"HTTP {r.status_code}: {r.text[:200]}")
+    _check("attached PDF is the invoice", captured.get("kind") == "invoice", str(captured.get("kind")))
+    _check("attached PDF carries both project names",
+           captured["entity"].get("projectNames") == ["Riverfront Gala", "Summit Keynote"],
+           str(captured["entity"].get("projectNames")))
+    # Same dict still carries the tax the client's total depends on.
+    _check("attached PDF dict still exposes qbTaxTotal",
+           "qbTaxTotal" in captured["entity"], str(sorted(captured["entity"])[:6]))
+
+
 def test_public_section_items_whitelist():
     # Guards the scrub directly: a new section-level field must be a deliberate
     # addition to the whitelist, never an accidental leak.
@@ -291,6 +343,7 @@ def main() -> int:
         test_dict_converters_expose_project_ids,
         test_load_project_names,
         test_public_view_exposes_names_not_ids,
+        test_emailed_invoice_pdf_carries_the_project_names,
         test_public_section_items_whitelist,
     ]
     failed = 0
