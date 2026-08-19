@@ -27,8 +27,18 @@ eq("I0 null invoice -> zeros", IT(null).total, 0);
 let inv = { sections: items([line({ unitPrice: 100, qty: 2 }), line({ unitPrice: 50, qty: 1 })]) };
 near("I1 subtotal", IT(inv).subtotal, 250);
 near("I1 total (no tax)", IT(inv).total, 250);
+// `subtotal` is the ORIGINAL list price and `adjusted` the re-priced sum — the
+// same split quotes, the client view and the PDF use. This function used to
+// report only the adjusted figure, under the name `subtotal`, with no `adjusted`
+// key at all; the invoice editor's "Adjustments" row compared subtotal against
+// that missing key (always unequal) and so rendered "-$0.00" on every invoice.
 inv = { sections: items([line({ unitPrice: 100, qty: 2, adjustedPrice: 80 }), line({ type: "note", unitPrice: 999 })]) };
-near("I2 adjustedPrice used + note skipped", IT(inv).subtotal, 160);
+near("I2 subtotal is the original list price", IT(inv).subtotal, 200);
+near("I2 adjusted reflects the re-priced line", IT(inv).adjusted, 160);
+near("I2 note rows carry no amount", IT(inv).total, 160);
+// With no per-line override the two agree, so the adjustments row stays hidden.
+inv = { sections: items([line({ unitPrice: 100, qty: 2 })]) };
+eq("I2b no adjustment -> subtotal === adjusted", IT(inv).subtotal === IT(inv).adjusted, true);
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "percent", value: 10 } };
 near("I3 percent discount", IT(inv).discount, 20); near("I3 total after %", IT(inv).total, 180);
 // "amount" is what the invoice builder's "$" option actually writes. This
@@ -54,11 +64,20 @@ near("I5c over-100% can't go negative", IT(inv).total, 0);
 // An unrecognized type is a no-op, never a silent partial discount.
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "bogus", value: 30 } };
 near("I5d unknown discount type is ignored", IT(inv).total, 200);
+// Invoices are QuickBooks-tax-authoritative, exactly like quotes (Q6 below):
+// the legacy flat LTP_TAX_RATE is IGNORED. It used to apply here as a pre-push
+// estimate, which made this function alone claim a tax that pdf_generator.py
+// ::_calc_totals and client-view.js::calcTotals both reported as zero — and the
+// invoice editor folded it into the TOTAL without ever drawing a tax row to
+// explain it. Null qbTaxTotal now means $0 tax on all four surfaces.
 window.LTP_TAX_RATE = 10;
 inv = { sections: items([line({ unitPrice: 100 })]) };
-near("I6 tax via rate", IT(inv).tax, 10); near("I6 total with tax", IT(inv).total, 110);
+near("I6 flat rate ignored — tax is QuickBooks-only", IT(inv).tax, 0);
+near("I6 total carries no estimated tax", IT(inv).total, 100);
 inv = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 7.25 };
-near("I7 qbTaxTotal overrides rate", IT(inv).tax, 7.25); near("I7 total", IT(inv).total, 107.25);
+near("I7 qbTaxTotal is the tax", IT(inv).tax, 7.25); near("I7 total", IT(inv).total, 107.25);
+inv = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 0 };
+near("I7b an explicit $0 tax (exempt client) stays $0", IT(inv).tax, 0);
 window.LTP_TAX_RATE = 0;
 inv = { sections: items([line({ unitPrice: 100 })]), payments: [{ amount: 40 }, { amount: 25 }] };
 near("I8 paid sums payments", IT(inv).paid, 65); near("I8 balance", IT(inv).balance, 35);
@@ -93,6 +112,17 @@ q = { sections: items([line({ unitPrice: 100 })]) };
 near("Q6 flat rate ignored on quotes", QT(q).tax, 0); near("Q6 total no QB tax", QT(q).total, 100);
 q = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 8.25 };
 near("Q6b qbTaxTotal applied", QT(q).tax, 8.25); near("Q6b total with QB tax", QT(q).total, 108.25);
+// `preTax` is the money the business actually keeps, and it is what the builder
+// derives its discount row and its margin from. Reading those off `total`
+// instead made an undiscounted quote show a NEGATIVE discount (−tax) the moment
+// tax was calculated, and counted sales tax as profit.
+near("Q6c preTax excludes tax", QT(q).preTax, 100);
+eq("Q6c discount row base is tax-free", QT(q).adjusted - QT(q).preTax, 0);
+q = { sections: items([line({ unitPrice: 200, cost: 50 })]), globalDiscount: { type: "amount", value: 40 }, qbTaxTotal: 13.2 };
+near("Q6d preTax is discounted but untaxed", QT(q).preTax, 160);
+near("Q6d margin ignores sales tax", QT(q).preTax - QT(q).cost, 110);
+near("Q6d discount amount is tax-free", QT(q).adjusted - QT(q).preTax, 40);
+near("Q6d customer still pays tax-inclusive", QT(q).total, 173.2);
 eq("Q7 quote ref Q-YYYY-NNN", QREF({ id: 3, createdDate: "2026-02-09" }), "Q-2026-003");
 eq("Q8 note rows skipped", (function () { window.LTP_TAX_RATE = 0; return QT({ sections: items([line({ type: "note", unitPrice: 500 }), line({ unitPrice: 25 })]) }).subtotal; })(), 25);
 // Fees are ordinary priced lines that edit unitPrice directly and never set

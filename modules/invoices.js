@@ -596,7 +596,11 @@
             h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", padding: "3px 6px", textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)
           ),
       // Adjusted price \u2014 not shown for fees (empty spacer keeps total aligned).
-      isFee
+      // Once the invoice leaves draft the price can no longer be adjusted, so an
+      // unadjusted line has nothing to report — render the spacer instead of an
+      // "adj" heading over an em-dash. In draft the input always shows: it is
+      // the control for MAKING an adjustment, not a report of one.
+      isFee || (!isDraft && item.adjustedPrice == null)
         ? h("div", { style: { width: 75 } })
         : h("div", { style: { width: 75 } },
             h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
@@ -1033,7 +1037,61 @@
         showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
         return;
       }
-      var isResend = draft.status !== "draft";
+      // Sales tax is QuickBooks-authoritative, and the PDF the customer receives
+      // is rendered server-side from the SAVED row (backend/routes/email.py) —
+      // so the push that computes the tax has to land BEFORE the email goes out.
+      // This used to run in the send's success handler, which mailed a
+      // tax-exclusive PDF and only then learned the tax, leaving the customer's
+      // copy permanently disagreeing with the app. Quotes already work this way
+      // (modules/quotes-builder.js::executeSendQuote).
+      var party = billingParty();
+      var taxable = draft.clientType === "contact" ? !!party : !!(party && party.taxable);
+      // `invoice.status` reaches the QuickBooks payload in exactly one place: a
+      // draft that carries a sentDate is a RECALL, which prepends a warning line
+      // to the QB invoice (backend/qbo_sync.py::build_invoice_payload). Pushing
+      // BEFORE the send means that push still sees "draft", so a recalled invoice
+      // has to be pushed again afterwards — once it is "sent" — to clear the
+      // line. For every other invoice the second push is a no-op we can skip.
+      var isRecalledDraft = draft.status === "draft" && !!String(draft.sentDate || "").trim();
+      // A taxable invoice whose tax nobody can compute must not go out quietly
+      // under-billed: without QuickBooks there is no tax figure at all, and the
+      // customer's PDF would show a total the books later disagree with.
+      if (taxable && !(isAdmin && qbConnected)) {
+        showAlert("Sales Tax Unavailable",
+          (qbConnected
+            ? "This invoice is for a taxable customer, and only an admin can calculate its sales tax in QuickBooks."
+            : "This invoice is for a taxable customer, and QuickBooks — which calculates the sales tax — is not connected.")
+          + "\n\nThe invoice was NOT sent. "
+          + (qbConnected ? "Ask an admin to send it, " : "Connect QuickBooks in Settings, ")
+          + "or untick “Customer is taxable” if no tax applies.");
+        return;
+      }
+      if (isAdmin && qbConnected && taxable) {
+        setSending(true);
+        persistAndPushQbo(draft, { quiet: true }).then(function(res) {
+          if (!res || !res.ok) {
+            setSending(false);
+            // A taxable invoice must not go out with an unknown tax figure.
+            showAlert("Sales Tax Unavailable",
+              "QuickBooks calculates the sales tax on this invoice, and it could not be reached: "
+              + ((res && res.error) || "unknown error")
+              + "\n\nThe invoice was NOT sent. Fix the QuickBooks connection and send again, "
+              + "or untick “Customer is taxable” if no tax applies.");
+            return;
+          }
+          sendInvoiceEmail(res.invoice, !isRecalledDraft);
+        });
+        return;
+      }
+      sendInvoiceEmail(draft, false);
+    }
+
+    // Build + POST the invoice email for `baseDraft` (the freshest invoice,
+    // which carries the just-pushed qbTaxTotal). Kept separate from executeSend
+    // so the QuickBooks push can resolve first. `alreadyPushed` suppresses the
+    // redundant post-send export for invoices we pushed on the way in.
+    function sendInvoiceEmail(baseDraft, alreadyPushed) {
+      var isResend = baseDraft.status !== "draft";
       setSending(true);
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
@@ -1041,7 +1099,15 @@
       // Paragraph-wrap BEFORE injecting the header so the header's <table>
       // doesn't trip textToHtml's block-detection and collapse the body's
       // plain-text paragraph breaks; re-flatten {{signature}} to block level.
-      var headerHtml = window.LTP_renderHeader("invoice", sendHeaderVars || {});
+      // Re-derive the header total from baseDraft so the emailed figure includes
+      // the tax QuickBooks just returned — sendHeaderVars was built when the
+      // modal opened, before the push.
+      var hv = sendHeaderVars || {};
+      if (sendHeaderVars) {
+        var nt = window.LTP_INVOICE_TOTALS(baseDraft);
+        hv = Object.assign({}, sendHeaderVars, { total: "$" + window.LTP_money(nt.total) });
+      }
+      var headerHtml = window.LTP_renderHeader("invoice", hv);
       var bodyWithHeader = window.LTP_injectBlock(window.LTP_textToHtml(String(sendMessage)), "{{header}}", headerHtml);
       bodyWithHeader = window.LTP_injectBlock(bodyWithHeader, "{{signature}}", "{{signature}}");
       fetch("/api/email/send", {
@@ -1049,7 +1115,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           entityType: "invoice",
-          entityId: draft.id,
+          entityId: baseDraft.id,
           to: (sendRecipients.to || []).join(", "),
           cc: (sendRecipients.cc || []).join(", ") || null,
           subject: sendSubject,
@@ -1062,16 +1128,17 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
-            var updated = Object.assign({}, draft, {
-              status: isResend ? draft.status : "sent",
-              sentDate: isResend ? draft.sentDate : today,
+            var updated = Object.assign({}, baseDraft, {
+              status: isResend ? baseDraft.status : "sent",
+              sentDate: isResend ? baseDraft.sentDate : today,
               sendRecipients: sendRecipients,  // remember who this went to
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-            // Auto-export to QuickBooks on every send (first time + resends). The
-            // invoice is now "sent", which is what makes it eligible to export.
-            if (isAdmin && qbConnected) { persistAndPushQbo(updated); }
+            // Auto-export to QuickBooks on every send (first time + resends).
+            // Skipped when we already pushed on the way in to price the tax —
+            // that export is done and re-pushing would be a wasted round-trip.
+            if (isAdmin && qbConnected && !alreadyPushed) { persistAndPushQbo(updated); }
             setShowSendModal(false);
             window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
@@ -1178,7 +1245,15 @@
     // from the server, so the new status/sentDate must be saved first (e.g. the
     // recall banner depends on the persisted status=draft). Best-effort — a sync
     // failure toasts but never blocks the send/recall.
-    function persistAndPushQbo(invoiceObj) {
+    // Saves the invoice, then pushes it to QuickBooks. Resolves to
+    // { ok, invoice, reason, error } so the SEND path can gate on the result —
+    // QuickBooks owns the sales tax number, and the PDF the customer receives is
+    // rendered server-side from the saved row, so a send that outruns this push
+    // mails a tax-exclusive PDF that the app then contradicts.
+    // `opts.quiet` suppresses the toasts for callers that report failure
+    // themselves (the send path shows a blocking dialog instead).
+    function persistAndPushQbo(invoiceObj, opts) {
+      opts = opts || {};
       var party = (invoiceObj.clientType === "contact")
         ? (invoiceObj.clientContactId ? contacts.find(function(c) { return c.id === invoiceObj.clientContactId; }) : null)
         : (invoiceObj.companyId ? companies.find(function(c) { return c.id === invoiceObj.companyId; }) : null);
@@ -1202,16 +1277,27 @@
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
             setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
             if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;
-            window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
-              { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
-            return;
+            if (!opts.quiet) {
+              window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
+                { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
+            }
+            return { ok: true, invoice: withQb };
           }
           var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") { window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" }); return; }
-          if (resp.status === 409 && d.reason === "not_connected") { return; }
-          window.LTP_toast("QuickBooks sync failed", { message: (d.error || ("HTTP " + resp.status)) + " — open the invoice and use Update QuickBooks to retry.", variant: "error" });
+          if (resp.status === 409 && d.reason === "reconnect") {
+            if (!opts.quiet) window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" });
+            return { ok: false, reason: "reconnect", error: d.error || "The QuickBooks connection expired. Reconnect it in Settings." };
+          }
+          if (resp.status === 409 && d.reason === "not_connected") {
+            return { ok: false, reason: "not_connected", error: d.error || "QuickBooks is not connected." };
+          }
+          if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: (d.error || ("HTTP " + resp.status)) + " — open the invoice and use Update QuickBooks to retry.", variant: "error" });
+          return { ok: false, reason: d.reason || "error", error: d.error || ("HTTP " + resp.status) };
         })
-        .catch(function(e) { window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
+        .catch(function(e) {
+          if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" });
+          return { ok: false, reason: "network", error: "Network or server error: " + String(e.message || e) };
+        });
     }
 
     function billingParty() {
@@ -2091,8 +2177,11 @@
           h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", color: B.textSec } },
               h("span", null, "Subtotal"), h("span", null, "$" + window.LTP_money(t.subtotal))),
-            t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
-              h("span", null, "Adjustments"), h("span", null, "-$" + window.LTP_money(t.subtotal - t.adjusted))),
+            // Only once a line has actually been re-priced. Epsilon-guarded (not
+            // !==) so float residue can't surface an "Adjustments -$0.00" row —
+            // same 1¢ threshold the PDF and client view use.
+            Math.abs(t.subtotal - t.adjusted) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "11px", color: B.textMut } },
+              h("span", null, "Adjustments"), h("span", null, (t.subtotal > t.adjusted ? "-$" : "+$") + window.LTP_money(Math.abs(t.subtotal - t.adjusted)))),
             // Global discount (editable in draft)
             isDraft && h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 0", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "11px", color: B.textMut } }, "Discount:"),

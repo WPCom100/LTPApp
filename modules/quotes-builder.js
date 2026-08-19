@@ -690,6 +690,10 @@
             ? h("div", null, h("div", { style: qlbl }, "price ($)"),
                 isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, "$" + unitP)
                          : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00", onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); }, style: qfld }))
+            : (isLocked && item.adjustedPrice == null)
+            // Locked and never adjusted — the field would be a label over an
+            // em-dash, so drop it entirely (desktop row does the same).
+            ? null
             : h("div", null, h("div", { style: qlbl }, "adj price"),
                 isLocked ? h("div", { style: { fontSize: "15px", color: adjusted ? B.accent : B.textMut, padding: "6px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—")
                          : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, qfld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) })),
@@ -793,7 +797,11 @@
           ),
       // Adjusted price — locked when accepted/converted
       // Not shown for fees (an empty spacer keeps the total column aligned).
-      isFee
+      // A locked quote can no longer be adjusted, so an unadjusted line has
+      // nothing to say here — render the spacer rather than an "adj" heading
+      // over an em-dash. While editable the input always shows: it is the
+      // control for MAKING an adjustment, not a report of one.
+      isFee || (isLocked && item.adjustedPrice == null)
         ? h("div", { style: { width: 80 } })
         : h("div", { style: { width: 80 } },
             h("div", { style: { fontSize: "9px", color: B.textMut, textAlign: "right" } }, "adj"),
@@ -927,9 +935,13 @@
     var hasTax = draft.qbTaxTotal != null;
     var canCalcTax = isAdmin && qbConnected && (customerTaxable || hasTax) && !isLocked;
     var autoAdjustment = t.subtotal - t.adjusted; // positive = client got a discount
-    var globalDiscountAmount = t.adjusted - t.total;
-    var marginTotal = t.total - t.cost;
-    var marginPct = t.total > 0 ? Math.round((marginTotal / t.total) * 100) : 0;
+    // Both of these measure money BEFORE sales tax. t.total is tax-INCLUSIVE
+    // (theme.js::LTP_QUOTE_TOTALS), so using it here made the discount row read
+    // (discount − tax) — a negative amount on an undiscounted quote the moment
+    // tax was calculated — and inflated margin by tax the business never keeps.
+    var globalDiscountAmount = t.adjusted - t.preTax;
+    var marginTotal = t.preTax - t.cost;
+    var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
     var gd = draft.globalDiscount || { type: "none", value: 0 };
 
     var row = function(label, value, opts) {
@@ -943,7 +955,7 @@
     return h("div", { style: { background: B.raised, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border, padding: "14px 18px" } },
       h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.accent, textTransform: "uppercase", letterSpacing: "0.14em", margin: "0 0 8px" } }, "Totals"),
       row("Subtotal", "$" + window.LTP_money(t.subtotal)),
-      autoAdjustment !== 0 && row("Line adjustments",
+      Math.abs(autoAdjustment) > 0.01 && row("Line adjustments",
         (autoAdjustment > 0 ? "\u2212" : "+") + "$" + window.LTP_money(Math.abs(autoAdjustment)),
         { color: autoAdjustment > 0 ? B.success : B.danger }),
 
@@ -967,7 +979,7 @@
               h("span", null, "Global Discount"),
               h("span", null, gd.type === "percent" ? gd.value + "%" : "$" + gd.value)
             ),
-        globalDiscountAmount !== 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut } },
+        Math.abs(globalDiscountAmount) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", color: B.textMut } },
           h("span", null, gd.type === "percent" ? "(\u2212" + gd.value + "%)" : gd.type === "target" ? "(target)" : "(\u2212$" + gd.value + ")"),
           h("span", null, "\u2212$" + window.LTP_money(globalDiscountAmount))
         )
@@ -1677,9 +1689,34 @@
       // Auto-calc QuickBooks sales tax before sending so the client's PDF +
       // email show an accurate tax-inclusive total, then send with the
       // freshened draft. Skipped when tax is already fresh or N/A.
+      // A taxable client's quote must not go out with a tax figure nobody can
+      // vouch for. The customer's copy is rendered server-side from the saved
+      // row, so sending on a failed or skipped calculation mails either a stale
+      // tax (computed against lines that have since changed) or none at all,
+      // while the app shows something else.
+      if (customerTaxable && !(isAdmin && qbConnected)) {
+        showAlert("Sales Tax Unavailable",
+          (qbConnected
+            ? "This quote is for a taxable client, and only an admin can calculate its sales tax in QuickBooks."
+            : "This quote is for a taxable client, and QuickBooks — which calculates the sales tax — is not connected.")
+          + "\n\nThe quote was NOT sent. "
+          + (qbConnected ? "Ask an admin to send it." : "Connect QuickBooks in Settings and try again."));
+        return;
+      }
       if (isAdmin && qbConnected && customerTaxable && !taxFresh) {
         setSending(true);
-        calcQuoteTax().then(function(updated) { sendQuoteEmail(updated || draft); });
+        calcQuoteTax().then(function(updated) {
+          if (!updated) {
+            setSending(false);
+            // calcQuoteTax already toasted the reason; make the consequence
+            // explicit rather than sending with the old number.
+            showAlert("Sales Tax Unavailable",
+              "The sales tax for this quote could not be calculated, so the quote was NOT sent.\n\n"
+              + "Try again, or untick the client's taxable flag if no tax applies.");
+            return;
+          }
+          sendQuoteEmail(updated);
+        });
         return;
       }
       sendQuoteEmail(draft);
@@ -2484,12 +2521,14 @@
             // Totals summary
             function() {
               var t = window.LTP_QUOTE_TOTALS(draft);
-              var marginTotal = t.total - t.cost;
-              var marginPct = t.total > 0 ? Math.round((marginTotal / t.total) * 100) : 0;
+              // Pre-tax, like the Totals panel — sales tax is collected for the
+              // state, not revenue, so it must not count toward margin.
+              var marginTotal = t.preTax - t.cost;
+              var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
               return h("div", { style: { marginTop: 8 } },
-                t.subtotal !== t.adjusted && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
+                Math.abs(t.subtotal - t.adjusted) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
                   h("span", null, "Adjustments"),
-                  h("span", null, "-$" + window.LTP_money(t.subtotal - t.adjusted))
+                  h("span", null, (t.subtotal > t.adjusted ? "-$" : "+$") + window.LTP_money(Math.abs(t.subtotal - t.adjusted)))
                 ),
                 draft.globalDiscount && draft.globalDiscount.type !== "none" && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
                   h("span", null, "Discount"),

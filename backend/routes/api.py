@@ -1,3 +1,4 @@
+import json
 import secrets
 from datetime import datetime, timezone
 
@@ -70,6 +71,22 @@ _READONLY_COLS = {
     "qb_balance", "receipt_email_status", "receipt_email_sent_at",
     "share_token",
 }
+
+
+# QuickBooks computes sales tax against a SPECIFIC set of lines, a specific
+# discount and a specific customer. Change any of those and the stored figure
+# becomes a claim about a document that no longer exists — yet it is handed
+# verbatim to the PDF generator and the public share link, neither of which can
+# tell a fresh number from a stale one. (The builders can: they compare a
+# client-side signature. The customer-facing surfaces have no such check.)
+_TAX_INPUT_COLS = ("sections", "global_discount", "client_type",
+                   "company_id", "client_contact_id")
+
+
+def _tax_inputs_fingerprint(row) -> str:
+    """Stable serialization of everything a stored sales tax depends on."""
+    return json.dumps([getattr(row, c, None) for c in _TAX_INPUT_COLS],
+                      sort_keys=True, default=str)
 
 
 def _row_to_dict(row):
@@ -284,9 +301,20 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        tracks_tax = model_cls in (models.Quote, models.Invoice)
+        tax_inputs_before = _tax_inputs_fingerprint(row) if tracks_tax else None
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)
+        # Re-pricing a line, changing the discount or switching the client
+        # invalidates any tax QuickBooks previously computed. Drop it rather than
+        # let the PDF and the share link keep quoting a confidently wrong number;
+        # they render no tax row until it is recalculated, and the send flow
+        # recalculates before anything reaches the customer.
+        if tracks_tax and _tax_inputs_fingerprint(row) != tax_inputs_before:
+            row.qb_tax_total = None
+            if hasattr(row, "qb_tax_signature"):
+                row.qb_tax_signature = None
         await db.flush()
         # Crew-request integrity (Project only): a schedule edit may have removed
         # positions/days that crew requests still reference. Trim each affected

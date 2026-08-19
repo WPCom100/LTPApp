@@ -111,6 +111,13 @@ def quote_dict(q: models.Quote) -> dict:
         "notes": q.notes,
         "activity": q.activity or [],
         "shareToken": q.share_token,
+        # QuickBooks-computed sales tax (read-only), from the temporary-estimate
+        # flow in qbo_sync.get_quote_estimate_tax. Same contract as invoice_dict:
+        # it drives the tax line + the tax-inclusive total on the client view and
+        # the PDF, so all three agree with the app. Omitting it silently zeroed
+        # the tax on every quote PDF and share link.
+        "qbTaxTotal": q.qb_tax_total,
+        "qbTaxSignature": q.qb_tax_signature,
         # `createdDate` not in our model — the generator falls back to created_at
         "createdDate": q.created_at.isoformat()[:10] if q.created_at else "",
     }
