@@ -26,6 +26,15 @@ Covers:
   - a null tax means $0 and a tax-exclusive total (nothing invented).
   - an explicit $0 (tax-exempt client) is preserved, not treated as "unknown".
   - the adjustments/tax rows' visibility thresholds.
+  - a RENDERED PDF really draws "Sales Tax:" and a tax-inclusive TOTAL for both
+    document kinds, and really omits both rows when there is nothing to show.
+    These drive generate_pdf and record the draw calls, so they exercise the
+    guards rather than restating them.
+  - a customer's tax exemption outranks the `taxable: true` both builders stamp
+    on every line.
+  - a push whose response carries no TotalTax clears the previous tax instead of
+    leaving it beside a refreshed grand total it contradicts.
+  - editing the lines, the discount or the client invalidates a stored tax.
 
 Runs both as pytest and as a plain script:
     python tests/test_sales_tax_plumbing.py
@@ -215,6 +224,67 @@ def test_editing_the_document_invalidates_the_stored_tax():
         _check(f"{label} invalidates the tax", _tax_inputs_fingerprint(changed) != before)
 
 
+# ── End to end: what the rendered PDF actually draws ─────────────────────────
+
+def _render_and_capture(kind, entity):
+    """Render a real PDF and return every string the generator drew.
+
+    Exercises pdf_generator's actual drawing path — the row guards included —
+    rather than restating their predicates in the test. reportlab compresses its
+    page streams, so we record the draw calls instead of parsing the output.
+    """
+    import io
+
+    from reportlab.pdfgen.canvas import Canvas
+
+    from backend import pdf_generator
+
+    drawn = []
+    orig_str, orig_right = Canvas.drawString, Canvas.drawRightString
+
+    def spy_str(self, x, y, text, *a, **k):
+        drawn.append(str(text))
+        return orig_str(self, x, y, text, *a, **k)
+
+    def spy_right(self, x, y, text, *a, **k):
+        drawn.append(str(text))
+        return orig_right(self, x, y, text, *a, **k)
+
+    Canvas.drawString, Canvas.drawRightString = spy_str, spy_right
+    try:
+        buf = io.BytesIO()
+        pdf_generator.generate_pdf(buf, kind, entity, None, None, None, {}, "Tester")
+        assert buf.getvalue().startswith(b"%PDF"), "generator produced no PDF"
+    finally:
+        Canvas.drawString, Canvas.drawRightString = orig_str, orig_right
+    return drawn
+
+
+def test_the_rendered_pdf_draws_the_tax_row_for_both_kinds():
+    for kind, d in (("quote", quote_dict(_quote(qb_tax_total=812.50))),
+                    ("invoice", invoice_dict(_invoice(qb_tax_total=812.50)))):
+        drawn = _render_and_capture(kind, d)
+        _check(f"{kind} PDF draws a Sales Tax label", "Sales Tax:" in drawn, str(drawn[-14:]))
+        _check(f"{kind} PDF prints the tax amount", "$812.50" in drawn, str(drawn[-14:]))
+        _check(f"{kind} PDF prints the tax-inclusive total", "$10,812.50" in drawn, str(drawn[-14:]))
+
+
+def test_the_rendered_pdf_omits_the_tax_row_when_there_is_no_tax():
+    for kind, d in (("quote", quote_dict(_quote())), ("invoice", invoice_dict(_invoice()))):
+        drawn = _render_and_capture(kind, d)
+        _check(f"{kind} PDF draws no Sales Tax row", "Sales Tax:" not in drawn)
+        _check(f"{kind} PDF total excludes tax", "$10,000.00" in drawn, str(drawn[-10:]))
+
+
+def test_the_rendered_pdf_shows_adjustments_only_once_one_exists():
+    plain = _render_and_capture("invoice", invoice_dict(_invoice()))
+    _check("no adjustment → no Line Adjustments row", "Line Adjustments:" not in plain)
+
+    repriced = _render_and_capture("invoice", invoice_dict(_invoice(sections=_sections(adjusted=900))))
+    _check("a re-priced line → Line Adjustments row", "Line Adjustments:" in repriced)
+    _check("and it prints the difference", "-$1,000.00" in repriced, str(repriced[-14:]))
+
+
 def main() -> int:
     tests = [
         test_both_serializers_carry_the_tax,
@@ -226,6 +296,9 @@ def main() -> int:
         test_a_customer_exemption_outranks_a_per_line_flag,
         test_a_push_without_tax_clears_the_previous_tax,
         test_editing_the_document_invalidates_the_stored_tax,
+        test_the_rendered_pdf_draws_the_tax_row_for_both_kinds,
+        test_the_rendered_pdf_omits_the_tax_row_when_there_is_no_tax,
+        test_the_rendered_pdf_shows_adjustments_only_once_one_exists,
     ]
     for t in tests:
         print(f"\n{t.__name__}:")
