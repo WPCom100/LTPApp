@@ -26,7 +26,13 @@ Decisions baked in (confirmed with the owner):
     equipment item) makes the check free until a mapping actually changes.
     Re-points only move FUTURE postings — but re-pushing an old invoice
     re-posts its lines at the item's current account, which is why re-points
-    are stamped into the invoice activity.
+    are stamped into the invoice activity. Item lookups are scoped to ACTIVE
+    items — a QB Item query happily returns deleted ones, and a deleted item on
+    a line fails the whole push. Before any item write the cached id is checked
+    against the name it was cached for, so a stale id can't rewrite an unrelated
+    item. A name held only by a deleted SERVICE item (one of ours) is recovered
+    by reviving it; a deleted Inventory/NonInventory namesake belongs to the
+    bookkeeper, so that raises InvoiceNotSyncable instead of touching it.
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
@@ -312,19 +318,39 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
 
 # ── Item find-or-create ──────────────────────────────────────────────────────
 
+def _prefer_top_level(rows: list[dict], name: str) -> dict:
+    """Pick which of several same-named QB items to use. `Name` is only unique
+    per parent, so a top-level "V-Show - Aura (Wash)" and a sub-item
+    "Lighting Equipment:V-Show - Aura (Wash)" both answer to that Name. This app
+    creates top-level items (_safe_name strips the ':' separator), so a row whose
+    FullyQualifiedName is exactly the name we searched is ours; anything else is
+    a sub-item someone filed under a category. Prefer ours, else keep the first
+    row — the point is that the choice is deterministic either way."""
+    for row in rows:
+        if (row.get("FullyQualifiedName") or row.get("Name") or "") == name:
+            return row
+    return rows[0]
+
 async def _find_or_create_named_item(conn, db, name, unit_price, *, income_account_id=None, client_id, client_secret) -> str:
     """Find a QB Service item by Name, creating it if absent. New items are
     backed by `income_account_id` when the caller resolved one from the mapping
     (see _desired_income_account_id), else by the legacy default resolution.
-    Returns the item id."""
+    Returns the item id.
+
+    The lookup is scoped to ACTIVE items on purpose: an Item query returns
+    deleted items too, and handing a deleted one to an invoice line gets the
+    whole push rejected ("You need to activate this item before updating the
+    quantity"). A name held only by a deleted item is recovered by reviving it
+    below — QB keeps the name reserved, so creating a fresh one is impossible."""
     safe = _safe_name(name, 100)
     found = await quickbooks.query(
         conn, db,
-        f"SELECT Id, Name FROM Item WHERE Name = '{escape_query_value(safe)}'",
+        f"SELECT Id, Name, FullyQualifiedName FROM Item "
+        f"WHERE Name = '{escape_query_value(safe)}' AND Active = true",
         client_id=client_id, client_secret=client_secret,
     )
     if found:
-        return str(found[0].get("Id"))
+        return str(_prefer_top_level(found, safe).get("Id"))
     if income_account_id:
         income_account_id = str(income_account_id)
     else:
@@ -347,47 +373,165 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
         )
         return str((resp.get("Item") or {}).get("Id"))
     except QboApiError as e:
-        if e.fault_code == "6240":  # duplicate name race
+        if e.fault_code == "6240":  # name already taken
             again = await quickbooks.query(
                 conn, db,
-                f"SELECT Id FROM Item WHERE Name = '{escape_query_value(safe)}'",
+                f"SELECT Id FROM Item WHERE Name = '{escape_query_value(safe)}' AND Active = true",
                 client_id=client_id, client_secret=client_secret,
             )
             if again:
-                return str(again[0].get("Id"))
+                return str(again[0].get("Id"))   # created by a racing push
+            # Nothing active owns the name, yet QB says it's taken: a DELETED
+            # item still holds it. Revive that one instead of failing forever.
+            revived = await _revive_deleted_item(
+                conn, db, safe, income_account_id,
+                client_id=client_id, client_secret=client_secret,
+            )
+            if revived:
+                return revived
         raise
 
 
-async def _repoint_item_income_account(conn, db, item_id, account_id, *, client_id, client_secret) -> tuple[bool, bool]:
-    """Ensure the QB Item posts to `account_id`. Returns (ok, changed):
+def _is_deleted_element_fault(e: QboApiError) -> bool:
+    """True when QB refused a write because the target list element is deleted
+    ("You cannot modify a list element that has been deleted."). Intuit reports
+    it as a generic business-validation fault, so the message is the only
+    reliable signal — the code is shared with every other validation error."""
+    return "list element that has been deleted" in (e.safe_message or "").lower()
+
+
+def _same_item_name(actual: str, expected: str) -> bool:
+    """Whether a QB item's Name is the one we cached an id for. Deleting an item
+    in the QuickBooks UI appends "(deleted)" (and a merge/rename changes it
+    outright), so the suffix is stripped before comparing — a deleted item that
+    is still recognisably ours stays ours."""
+    def norm(s: str) -> str:
+        s = (s or "").strip().casefold()
+        while s.endswith("(deleted)"):
+            s = s[: -len("(deleted)")].strip()
+        return s
+    return bool(norm(actual)) and norm(actual) == norm(expected)
+
+
+async def _revive_deleted_item(conn, db, name, income_account_id, *, client_id, client_secret) -> str | None:
+    """Un-delete the QB Item named `name`, pointing it at `income_account_id`.
+    QB never hard-deletes list elements — a "deleted" item is Active=false and
+    still reserves its name — so once an app-created item is deleted in
+    QuickBooks the name can never be re-created and reviving is the only way
+    back. Returns the item id, or None when no deleted item carries that name.
+
+    ONLY Service items are revived. Those are the ones this app creates; an
+    Inventory / NonInventory namesake is the bookkeeper's own record (with its
+    own asset account and quantities), and quietly reactivating it — then
+    rewriting its income account — is not ours to do. That case raises
+    InvoiceNotSyncable so the user gets a real choice instead of a 6240."""
+    rows = await quickbooks.query(
+        conn, db,
+        f"SELECT Id, SyncToken, Type FROM Item WHERE Name = '{escape_query_value(name)}' AND Active = false",
+        client_id=client_id, client_secret=client_secret,
+    )
+    if not rows:
+        return None
+    itype = str(rows[0].get("Type") or "").strip()
+    if itype and itype.lower() != "service":
+        raise InvoiceNotSyncable(
+            f'QuickBooks has a deleted {itype} item named "{name}", so that name '
+            f"is taken and a new item can't be created. In QuickBooks → Sales → "
+            f"Products & Services (filter: Deleted), either make that item active "
+            f"again or rename it — then push again."
+        )
+    payload = {
+        "Id": str(rows[0].get("Id")),
+        "SyncToken": str(rows[0].get("SyncToken", "0")),
+        "sparse": True,
+        "Active": True,
+    }
+    if income_account_id:
+        payload["IncomeAccountRef"] = {"value": str(income_account_id)}
+    await quickbooks.update_item(
+        conn, db, payload, client_id=client_id, client_secret=client_secret
+    )
+    return str(rows[0].get("Id"))
+
+
+async def _repoint_item_income_account(conn, db, item_id, account_id, *, expected_name=None, client_id, client_secret) -> tuple[bool, bool, bool]:
+    """Ensure the QB Item posts to `account_id`. Returns (ok, changed, stale):
     ok=True when the item is confirmed on the account (already there, or
     successfully re-pointed via a sparse update); changed=True only when we
-    actually rewrote IncomeAccountRef. Best-effort — never raises. A hiccup
-    returns (False, False) so the caller leaves its synced cache stale and the
-    next push retries."""
+    actually rewrote IncomeAccountRef; stale=True when `item_id` is NOT the item
+    we cached it for and the caller must re-resolve by name. Best-effort — never
+    raises. A hiccup returns (False, False, False) so the caller leaves its
+    synced cache stale and the next push retries.
+
+    `expected_name` is the name the cached id is supposed to belong to. A cached
+    id can outlive the item it named — the QB company was swapped, the item was
+    merged into another, the id was carried over from a different (e.g. sandbox)
+    realm — and ids are reused across companies, so writing to it unchecked
+    would rewrite a STRANGER'S item. Nothing is written unless the name matches.
+
+    A cached item that is genuinely ours but DELETED in QuickBooks is revived as
+    part of the same sparse update (Active=true): QB rejects every other edit to
+    a deleted list element."""
     try:
         current = await quickbooks.get_item(
             conn, db, item_id, client_id=client_id, client_secret=client_secret
         )
         if not current.get("Id"):
-            return False, False
+            return False, False, True
+        if expected_name and not _same_item_name(current.get("Name") or "", expected_name):
+            print(f"[LTP] qbo: cached item {item_id} is "
+                  f"'{current.get('Name')}', expected '{expected_name}' — "
+                  f"re-resolving by name, leaving that item untouched", flush=True)
+            return False, False, True
         have = str(((current.get("IncomeAccountRef") or {}).get("value")) or "")
-        if have == str(account_id):
-            return True, False
-        await quickbooks.update_item(
-            conn, db,
-            {
-                "Id": str(current["Id"]),
-                "SyncToken": str(current.get("SyncToken", "0")),
-                "sparse": True,
-                "IncomeAccountRef": {"value": str(account_id)},
-            },
-            client_id=client_id, client_secret=client_secret,
-        )
-        return True, True
+        deleted = current.get("Active") is False
+        if have == str(account_id) and not deleted:
+            return True, False, False
+        if deleted and str(current.get("Type") or "").strip().lower() not in ("", "service"):
+            # A deleted Inventory/NonInventory item is the bookkeeper's record,
+            # not ours to reactivate. Re-resolve by name instead — that path
+            # raises a message telling the user how to unblock it.
+            return False, False, True
+        payload = {
+            "Id": str(current["Id"]),
+            "SyncToken": str(current.get("SyncToken", "0")),
+            "sparse": True,
+            "IncomeAccountRef": {"value": str(account_id)},
+        }
+        if deleted:
+            payload["Active"] = True
+            # Deleting in the QB UI renames the item ("X" → "X (deleted)"), and
+            # a sparse revive would leave that name in place — where the next
+            # find-or-create wouldn't match it and would build a duplicate. Put
+            # the real name back as part of the same write.
+            if expected_name and (current.get("Name") or "") != _safe_name(expected_name, 100):
+                payload["Name"] = _safe_name(expected_name, 100)
+        try:
+            await quickbooks.update_item(
+                conn, db, payload, client_id=client_id, client_secret=client_secret
+            )
+        except QboApiError as e:
+            if e.fault_code == "6240":
+                # Something ACTIVE already owns the name — that item is the real
+                # one now. Abandon this id; the caller re-resolves onto it.
+                print(f"[LTP] qbo: item {item_id} revive abandoned — "
+                      f"'{expected_name}' is already taken by an active item", flush=True)
+                return False, False, True
+            if deleted or not _is_deleted_element_fault(e):
+                raise
+            # The read didn't say deleted (stale/raced) but the write did.
+            payload["Active"] = True
+            await quickbooks.update_item(
+                conn, db, payload, client_id=client_id, client_secret=client_secret
+            )
+        # Reviving alone is not an account change — don't stamp it on the invoice.
+        return True, have != str(account_id), False
     except QboApiError as e:
-        print(f"[LTP] qbo: item {item_id} income-account re-point skipped ({e.safe_message})", flush=True)
-        return False, False
+        # 610 / "Object Not Found" — the id doesn't exist in this company at all.
+        stale = e.fault_code == "610" or "object not found" in (e.safe_message or "").lower()
+        print(f"[LTP] qbo: item {item_id} → account {account_id} re-point "
+              f"{'abandoned (no such item)' if stale else 'skipped'} ({e.safe_message})", flush=True)
+        return False, False, stale
 
 
 async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repoints=None) -> str:
@@ -407,9 +551,23 @@ async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repo
         )
         await _settings_set(db, "qboEquipmentItemId", item_id)
     if desired and desired != str(await _settings_get(db, "qboEquipmentItemAccountSynced") or ""):
-        ok, changed = await _repoint_item_income_account(
-            conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+        ok, changed, stale = await _repoint_item_income_account(
+            conn, db, item_id, desired, expected_name="Equipment Rental",
+            client_id=client_id, client_secret=client_secret,
         )
+        if stale:
+            # The cached id isn't our rental item (swapped QB company, merged or
+            # renamed item). Re-resolve by name and re-cache before pushing any
+            # line against it.
+            item_id = await _find_or_create_named_item(
+                conn, db, "Equipment Rental", None,
+                income_account_id=desired, client_id=client_id, client_secret=client_secret,
+            )
+            await _settings_set(db, "qboEquipmentItemId", item_id)
+            ok, changed, stale = await _repoint_item_income_account(
+                conn, db, item_id, desired, expected_name="Equipment Rental",
+                client_id=client_id, client_secret=client_secret,
+            )
         if ok:
             await _settings_set(db, "qboEquipmentItemAccountSynced", desired)
             if changed and repoints is not None:
@@ -433,7 +591,12 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
     if eff_price is None:
         eff_price = line.get("unitPrice")
 
-    if ltype == "equipment":
+    # Rentals NEVER become QuickBooks products. Every rental line — whatever the
+    # line calls itself — posts against the one "Equipment Rental" item, with the
+    # fixture and its rental period carried in the line description (see
+    # _build_sales_lines). `equipmentId` is checked too so a rental that was
+    # added as some other line type can't mint an item from the rental catalog.
+    if ltype == "equipment" or line.get("equipmentId"):
         return await _generic_equipment_item_id(
             conn, db, client_id=client_id, client_secret=client_secret, repoints=repoints
         )
@@ -473,9 +636,24 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
         # change (or a previously failed re-point) triggers the QB round-trip.
         # Also covers items FOUND by name whose pre-existing account differs.
         if desired and desired != (catalog_row.qb_income_account_synced or ""):
-            ok, changed = await _repoint_item_income_account(
-                conn, db, item_id, desired, client_id=client_id, client_secret=client_secret
+            expected = _safe_name(name or "Line item", 100)
+            ok, changed, stale = await _repoint_item_income_account(
+                conn, db, item_id, desired, expected_name=expected,
+                client_id=client_id, client_secret=client_secret,
             )
+            if stale:
+                # The cached qb_item_id names something else in this QB company
+                # (or nothing at all) — re-resolve by name so the line can't post
+                # against a stranger's item, and re-cache the id we verified.
+                item_id = await _find_or_create_named_item(
+                    conn, db, name or "Line item", eff_price,
+                    income_account_id=desired, client_id=client_id, client_secret=client_secret,
+                )
+                catalog_row.qb_item_id = item_id
+                ok, changed, stale = await _repoint_item_income_account(
+                    conn, db, item_id, desired, expected_name=expected,
+                    client_id=client_id, client_secret=client_secret,
+                )
             if ok:
                 catalog_row.qb_income_account_synced = desired
                 if changed and repoints is not None:
@@ -509,6 +687,70 @@ def _line_taxable(line: dict, customer_taxable: bool) -> bool:
     return True
 
 
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def _period_label(start: str, end: str) -> str:
+    """Human rental period from two ISO dates: "Jul 9 – Jul 10, 2026", collapsed
+    to "Jul 9, 2026" for a single day. Empty when the dates are missing or
+    malformed — a bad date must never cost us the line."""
+    def parts(iso):
+        bits = (iso or "").strip().split("-")
+        if len(bits) != 3:
+            return None
+        try:
+            y, m, d = int(bits[0]), int(bits[1]), int(bits[2])
+        except ValueError:
+            return None
+        if not (1 <= m <= 12):
+            return None
+        return y, m, d
+
+    a, b = parts(start), parts(end)
+    if a is None:
+        return ""
+    if b is None or a == b:
+        return f"{_MONTHS[a[1] - 1]} {a[2]}, {a[0]}"
+    if a[0] == b[0]:
+        return f"{_MONTHS[a[1] - 1]} {a[2]} – {_MONTHS[b[1] - 1]} {b[2]}, {a[0]}"
+    return (f"{_MONTHS[a[1] - 1]} {a[2]}, {a[0]} – "
+            f"{_MONTHS[b[1] - 1]} {b[2]}, {b[0]}")
+
+
+async def _entity_period(db, entity) -> tuple[str, str]:
+    """The default rental window for an entity's sections: a quote's custom
+    override if set, else the project's dates. Sections that tick their own
+    `customDates` override this per section (mirrors quotes-builder.js)."""
+    start = (getattr(entity, "custom_start_date", "") or "").strip()
+    end = (getattr(entity, "custom_end_date", "") or "").strip()
+    if start and end:
+        return start, end
+    if getattr(entity, "project_id", None):
+        r = await db.execute(select(models.Project).where(models.Project.id == entity.project_id))
+        proj = r.scalar_one_or_none()
+        if proj:
+            return (proj.start_date or "").strip(), (proj.end_date or "").strip()
+    return "", ""
+
+
+def _section_period(section: dict, fallback: tuple[str, str]) -> tuple[str, str]:
+    """A section billing its own rental window wins over the entity's."""
+    if section.get("customDates") and section.get("startDate") and section.get("endDate"):
+        return str(section["startDate"]), str(section["endDate"])
+    return fallback
+
+
+def _rental_description(item: dict, start: str, end: str) -> str:
+    """The QB line description for a rental. Every rental posts against the one
+    "Equipment Rental" item, so the description is what identifies it on the
+    invoice: what was rented, for how long, and on which rate."""
+    bits = [b for b in (_period_label(start, end),
+                        (item.get("rentalLabel") or "").strip()) if b]
+    name = (item.get("name") or "").strip() or "Equipment rental"
+    return f"{name} — {' · '.join(bits)}" if bits else name
+
+
 async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_tax_code, *, client_id, client_secret, repoints=None) -> tuple[list[dict], float]:
     """Build the QB sales lines (item lines with per-line TaxCodeRef + a trailing
     global-discount line) from any entity carrying `.sections` and
@@ -517,7 +759,9 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
     item lines. Shared so quote tax codes match the eventual invoice exactly."""
     lines: list[dict] = []
     subtotal = 0.0
+    entity_period = await _entity_period(db, entity)
     for section in (entity.sections or []):
+        period_start, period_end = _section_period(section, entity_period)
         for item in (section.get("items") or []):
             itype = item.get("type")
             if itype == "note":
@@ -542,7 +786,12 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
                 conn, db, item, client_id=client_id, client_secret=client_secret,
                 repoints=repoints,
             )
-            description = (item.get("name") or "").strip()
+            # A rental line's QB item is the shared "Equipment Rental" one, so
+            # the description carries what was actually rented and for how long.
+            if itype == "equipment" or item.get("equipmentId"):
+                description = _rental_description(item, period_start, period_end)
+            else:
+                description = (item.get("name") or "").strip()
             if (item.get("notes") or "").strip():
                 description = (description + " — " + item["notes"].strip())[:4000]
             taxable = _line_taxable(item, customer_taxable)
