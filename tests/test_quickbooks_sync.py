@@ -362,6 +362,88 @@ async def test_payload_fee_line():
     _check("taxable fee → TAX code", sales[1]["SalesItemLineDetail"]["TaxCodeRef"]["value"] == "TAX")
 
 
+def _db_returning_project(start, end):
+    proj = types.SimpleNamespace(id=4, name="Auditorium Maintenance", start_date=start, end_date=end)
+    result = MagicMock(); result.scalar_one_or_none = MagicMock(return_value=proj)
+    db = MagicMock(); db.execute = AsyncMock(return_value=result); db.flush = AsyncMock()
+    return db
+
+
+async def test_rentals_never_become_qb_products():
+    print("test_rentals_never_become_qb_products")
+    # Rentals all post against the one shared "Equipment Rental" item, so the
+    # line description is what identifies the fixture and its rental window.
+    qbo_sync._resolve_line_item_id = AsyncMock(return_value="EQ-GENERIC")
+    entity = types.SimpleNamespace(
+        project_id=4, global_discount={"type": "none"},
+        sections=[{"id": "s1", "label": "Equipment", "customDates": False,
+                   "items": [{"type": "equipment", "equipmentId": 12,
+                              "name": "V-Show - Aura (Wash)", "rentalLabel": "3-Day rate",
+                              "qty": 4, "unitPrice": 150, "adjustedPrice": None}]}])
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("2026-07-09", "2026-07-11"), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    desc = lines[0]["Description"]
+    _check("rental line posts against the shared equipment item",
+           lines[0]["SalesItemLineDetail"]["ItemRef"]["value"] == "EQ-GENERIC")
+    _check("description names the fixture", "V-Show - Aura (Wash)" in desc)
+    _check("description carries the rental period", "Jul 9 – Jul 11, 2026" in desc)
+    _check("description carries the rate basis", "3-Day rate" in desc)
+
+    # A section billing its own window overrides the project's dates.
+    entity.sections[0].update({"customDates": True, "startDate": "2026-08-01",
+                               "endDate": "2026-08-01"})
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("2026-07-09", "2026-07-11"), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("section dates win over the project window",
+           "Aug 1, 2026" in lines[0]["Description"])
+
+    # Item notes still ride along after the period.
+    entity.sections[0]["items"][0]["notes"] = "Ships Wed"
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("", ""), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("notes preserved on rental lines", lines[0]["Description"].endswith("Ships Wed"))
+
+    # No dates anywhere → the fixture name alone, never a stray dash.
+    entity.sections[0].update({"customDates": False})
+    entity.sections[0]["items"][0].pop("notes")
+    entity.sections[0]["items"][0].pop("rentalLabel")
+    lines, _sub = await qbo_sync._build_sales_lines(
+        None, _db_returning_project("", ""), entity,
+        True, "TAX", "NON", client_id="c", client_secret="s")
+    _check("dateless rental → bare name", lines[0]["Description"] == "V-Show - Aura (Wash)")
+
+    # A rental added as some other line type still routes to the shared item —
+    # it must never mint a QB product from the rental catalog.
+    qbo_sync._resolve_line_item_id = _real_resolve_line_item_id
+    qbo_sync._generic_equipment_item_id = AsyncMock(return_value="EQ-GENERIC")
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "NEW"}})
+    out = await _real_resolve_line_item_id(
+        None, MagicMock(), {"type": "product", "productId": 5, "equipmentId": 12,
+                            "name": "V-Show - Aura (Wash)", "unitPrice": 150},
+        client_id="c", client_secret="s")
+    _check("equipmentId routes to the shared item whatever the line type",
+           out == "EQ-GENERIC")
+    _check("no QB product created for a rental",
+           qbo_sync.quickbooks.create_item.await_count == 0)
+    qbo_sync._generic_equipment_item_id = _real_generic_equipment_item_id
+
+
+def test_period_label():
+    print("test_period_label")
+    _check("multi-day same year", qbo_sync._period_label("2026-07-09", "2026-07-11") == "Jul 9 – Jul 11, 2026")
+    _check("single day collapses", qbo_sync._period_label("2026-07-09", "2026-07-09") == "Jul 9, 2026")
+    _check("open end collapses to start", qbo_sync._period_label("2026-07-09", "") == "Jul 9, 2026")
+    _check("year boundary spelled out",
+           qbo_sync._period_label("2026-12-30", "2027-01-02") == "Dec 30, 2026 – Jan 2, 2027")
+    _check("missing start → empty", qbo_sync._period_label("", "2026-07-11") == "")
+    _check("malformed date → empty", qbo_sync._period_label("not-a-date", "2026-07-11") == "")
+    _check("out-of-range month → empty", qbo_sync._period_label("2026-13-09", "2026-07-11") == "")
+
+
 async def test_payload_recall_note():
     print("test_payload_recall_note")
     payload = await _build(_fake_invoice(status="draft", sent_date="2026-06-21"))
@@ -594,7 +676,7 @@ async def test_repoint_item_income_account():
     qbo_sync.quickbooks.get_item = AsyncMock(return_value={
         "Id": "I1", "SyncToken": "3", "IncomeAccountRef": {"value": "42"}})
     qbo_sync.quickbooks.update_item = AsyncMock()
-    ok, changed = await _real_repoint_item_income_account(
+    ok, changed, stale = await _real_repoint_item_income_account(
         object(), db, "I1", "42", client_id="c", client_secret="s")
     _check("already-correct item confirmed", ok is True and changed is False)
     _check("no update when already correct", qbo_sync.quickbooks.update_item.await_count == 0)
@@ -602,7 +684,7 @@ async def test_repoint_item_income_account():
     # Different account → sparse update rewrites IncomeAccountRef.
     qbo_sync.quickbooks.get_item = AsyncMock(return_value={
         "Id": "I1", "SyncToken": "3", "IncomeAccountRef": {"value": "11"}})
-    ok, changed = await _real_repoint_item_income_account(
+    ok, changed, stale = await _real_repoint_item_income_account(
         object(), db, "I1", "42", client_id="c", client_secret="s")
     _check("mismatched item re-pointed", ok is True and changed is True)
     payload = qbo_sync.quickbooks.update_item.await_args.args[2]
@@ -611,12 +693,332 @@ async def test_repoint_item_income_account():
            payload.get("Id") == "I1" and payload.get("SyncToken") == "3")
     _check("re-point sets the new account", payload["IncomeAccountRef"]["value"] == "42")
 
-    # QB hiccup → best-effort (False, False), never raises.
+    # QB hiccup → best-effort (False, False, False), never raises. NOT stale:
+    # a transient error must not throw away a good cached id.
     qbo_sync.quickbooks.get_item = AsyncMock(
         side_effect=QboApiError(500, "boom"))
-    ok, changed = await _real_repoint_item_income_account(
+    ok, changed, stale = await _real_repoint_item_income_account(
         object(), db, "I1", "42", client_id="c", client_secret="s")
-    _check("QB error swallowed (best-effort)", ok is False and changed is False)
+    _check("QB error swallowed (best-effort)",
+           ok is False and changed is False and stale is False)
+
+
+async def test_repoint_refuses_foreign_item():
+    print("test_repoint_refuses_foreign_item")
+    db = MagicMock(); db.flush = AsyncMock()
+
+    # The cached id now names something else in this QB company (swapped realm,
+    # merged item, reused id). Nothing may be written to it.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "Name": "Scissor Lift Rental (deleted)", "SyncToken": "3",
+        "Active": False, "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="L1 — Lead Lighting Tech",
+        client_id="c", client_secret="s")
+    _check("foreign item reported stale", stale is True and ok is False)
+    _check("foreign item NOT written to", qbo_sync.quickbooks.update_item.await_count == 0)
+    _check("foreign item NOT revived", qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Our own item, deleted in the QB UI (which appends "(deleted)") → still ours,
+    # and the revive puts the real name back so find-or-create matches it again.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "Name": "Equipment Rental (deleted)", "SyncToken": "3",
+        "Active": False, "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="Equipment Rental",
+        client_id="c", client_secret="s")
+    _check("our own deleted item still matches", stale is False and ok is True)
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive restores the name QB mangled",
+           payload.get("Name") == "Equipment Rental" and payload.get("Active") is True)
+
+    # An ACTIVE item already holds the name → the revive is abandoned, not
+    # forced, and the caller re-resolves onto the active one.
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="Equipment Rental",
+        client_id="c", client_secret="s")
+    _check("name already taken → stale, no retry",
+           stale is True and ok is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
+
+    # No such item in this company at all → stale, so the caller re-resolves.
+    qbo_sync.quickbooks.get_item = AsyncMock(side_effect=QboApiError(
+        404, '{"Fault":{"Error":[{"Message":"Object Not Found","code":"610"}]}}', "610"))
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="L1 — Lead Lighting Tech",
+        client_id="c", client_secret="s")
+    _check("missing item reported stale", stale is True and ok is False)
+
+    # No expected_name (legacy callers) → name check skipped, behaviour intact.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "Name": "Anything", "SyncToken": "3",
+        "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("unnamed call still re-points", ok is True and changed is True and stale is False)
+
+
+async def test_resolve_line_reresolves_stale_item_id():
+    print("test_resolve_line_reresolves_stale_item_id")
+    settings = {"qboServiceIncomeAccountId": "42"}
+    qbo_sync._settings_get = AsyncMock(side_effect=lambda db, key: settings.get(key))
+    row = types.SimpleNamespace(id=3, role="L1", description="Lead Lighting Tech",
+                                qb_item_id="20", qb_income_account_id=None,
+                                qb_income_account_synced="11")
+    conn = types.SimpleNamespace(income_accounts=[{"id": "42", "name": "Labor Income"}])
+    # Item 20 is a stranger's deleted rental item — the cached id is bad.
+    qbo_sync.quickbooks.get_item = AsyncMock(side_effect=[
+        {"Id": "20", "Name": "Scissor Lift Rental (deleted)", "SyncToken": "1",
+         "Active": False, "IncomeAccountRef": {"value": "11"}},
+        {"Id": "77", "Name": "L1 — Lead Lighting Tech", "SyncToken": "0",
+         "IncomeAccountRef": {"value": "42"}},
+    ])
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])          # no item by that name
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "77"}})
+
+    line = {"type": "service", "serviceId": 3, "name": "L1 — Lead Lighting Tech",
+            "unitPrice": 432}
+    repoints = []
+    item_id = await _real_resolve_line_item_id(
+        conn, _db_returning_row(row), line, client_id="c", client_secret="s",
+        repoints=repoints)
+    _check("line posts against the re-resolved item, not the stranger", item_id == "77")
+    _check("bad cached id replaced on the row", row.qb_item_id == "77")
+    _check("stranger's item never written to", qbo_sync.quickbooks.update_item.await_count == 0)
+    _check("replacement created against the mapped account",
+           qbo_sync.quickbooks.create_item.await_args.args[2]["IncomeAccountRef"]["value"] == "42")
+    _check("synced cache confirmed on the verified item",
+           row.qb_income_account_synced == "42")
+
+
+def _deleted_element_fault(status=400):
+    """The Fault QB returns for a write against a deleted list element."""
+    return QboApiError(status, (
+        '{"Fault": {"Error": [{"Message": "A business validation error has '
+        'occurred while processing your request", "Detail": "Business '
+        'Validation Error: You cannot modify a list element that has been '
+        'deleted.", "code": "6000"}], "type": "ValidationFault"}}'
+    ), "6000")
+
+
+async def test_repoint_revives_deleted_item():
+    print("test_repoint_revives_deleted_item")
+    db = MagicMock(); db.flush = AsyncMock()
+
+    # Item deleted (Active=false) in QB → the sparse update revives it too,
+    # because QB refuses every other edit to a deleted list element.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": False,
+        "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted item re-pointed instead of skipped", ok is True and changed is True)
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive rides along with the re-point", payload.get("Active") is True)
+    _check("revive keeps the new account", payload["IncomeAccountRef"]["value"] == "42")
+
+    # Deleted, but already on the right account → revived, and NOT reported as
+    # an account change (nothing to stamp into the invoice activity).
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": False,
+        "IncomeAccountRef": {"value": "42"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted item revived even when the account matches",
+           ok is True and changed is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
+
+    # Read said active, write said deleted (raced / stale read) → retried once
+    # with Active=true rather than logged and left stale forever.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "SyncToken": "3", "Active": True,
+        "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=[_deleted_element_fault(), {"Item": {"Id": "20"}}])
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("deleted-element fault retried with Active=true", ok is True and changed is True)
+    _check("retry sent exactly one extra update",
+           qbo_sync.quickbooks.update_item.await_count == 2)
+    _check("retry payload carries the revive",
+           qbo_sync.quickbooks.update_item.await_args.args[2].get("Active") is True)
+
+    # A different validation fault is NOT retried — still best-effort.
+    qbo_sync.quickbooks.update_item = AsyncMock(
+        side_effect=QboApiError(400, "boom", "6000"))
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", client_id="c", client_secret="s")
+    _check("unrelated fault not retried",
+           ok is False and changed is False and
+           qbo_sync.quickbooks.update_item.await_count == 1)
+
+
+async def test_find_or_create_revives_deleted_name():
+    print("test_find_or_create_revives_deleted_name")
+    db = MagicMock(); db.flush = AsyncMock()
+    queries: list[str] = []
+
+    async def _query(conn, _db, sql, **kw):
+        queries.append(sql)
+        # Only the explicit Active = false lookup finds the deleted item still
+        # holding the name — the active-scoped lookup must not surface it.
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7"}]
+        return []
+
+    qbo_sync.quickbooks.query = _query
+    qbo_sync.quickbooks.create_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    out = await _real_find_or_create_named_item(
+        object(), db, "Equipment Rental", None,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("duplicate name owned by a deleted item → revived id returned", out == "20")
+    payload = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("revive is a sparse Active=true update",
+           payload.get("sparse") is True and payload.get("Active") is True and
+           payload.get("SyncToken") == "7")
+    _check("revived item re-pointed at the mapped account",
+           payload["IncomeAccountRef"]["value"] == "42")
+    _check("deleted lookup scoped to the item name",
+           any("Active = false" in q and "Equipment Rental" in q for q in queries))
+    _check("name lookup is scoped to ACTIVE items",
+           all("Active = true" in q for q in queries if "Active = false" not in q))
+
+
+async def test_deleted_item_never_lands_on_a_line():
+    print("test_deleted_item_never_lands_on_a_line")
+    # QB's Item query returns deleted items too. Handing one to an invoice line
+    # gets the push rejected ("You need to activate this item before updating
+    # the quantity"), so the lookup must never return it — the deleted item is
+    # revived first and the line references an ACTIVE id.
+    db = MagicMock(); db.flush = AsyncMock()
+    seen: list[str] = []
+
+    async def _query(conn, _db, sql, **kw):
+        seen.append(sql)
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7"}]      # the deleted namesake
+        return []                                        # nothing active
+
+    qbo_sync.quickbooks.query = _query
+    qbo_sync.quickbooks.create_item = AsyncMock(
+        side_effect=QboApiError(400, "duplicate", "6240"))
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    out = await _real_find_or_create_named_item(
+        object(), db, "L1 — Lead Lighting Tech", 432,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("deleted namesake reused only after being revived", out == "20")
+    _check("the revive ran before the id was handed back",
+           qbo_sync.quickbooks.update_item.await_args.args[2].get("Active") is True)
+    _check("no unscoped item lookup anywhere",
+           not any("Active" not in q for q in seen))
+
+    # A deleted INVENTORY namesake belongs to the bookkeeper: never reactivated,
+    # never re-pointed — the user gets an actionable message instead.
+    qbo_sync.quickbooks.update_item.reset_mock()
+
+    async def _inventory_query(conn, _db, sql, **kw):
+        if "Active = false" in sql:
+            return [{"Id": "20", "SyncToken": "7", "Type": "Inventory"}]
+        return []
+
+    qbo_sync.quickbooks.query = _inventory_query
+    err = None
+    try:
+        await _real_find_or_create_named_item(
+            object(), db, "V-Show - Aura (Wash)", 0,
+            income_account_id="42", client_id="c", client_secret="s")
+    except qbo_sync.InvoiceNotSyncable as e:
+        err = str(e)
+    _check("deleted Inventory namesake → actionable error, not a 6240",
+           err is not None and "Inventory" in err and "V-Show - Aura (Wash)" in err)
+    _check("the bookkeeper's item is left untouched",
+           qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Same guard on the re-point path: a deleted Inventory item is reported
+    # stale (→ re-resolve → the message above), never revived in place.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "20", "Name": "V-Show - Aura (Wash)", "SyncToken": "7",
+        "Type": "Inventory", "Active": False, "IncomeAccountRef": {"value": "11"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    ok, changed, stale = await _real_repoint_item_income_account(
+        object(), db, "20", "42", expected_name="V-Show - Aura (Wash)",
+        client_id="c", client_secret="s")
+    _check("deleted Inventory item not revived by the re-point",
+           stale is True and ok is False and
+           qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # An ACTIVE namesake is used as-is — no create, no revive.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    qbo_sync.quickbooks.update_item.reset_mock()
+
+    async def _active_query(conn, _db, sql, **kw):
+        return [{"Id": "31", "Name": "L1 — Lead Lighting Tech"}] if "Active = true" in sql else []
+
+    qbo_sync.quickbooks.query = _active_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "L1 — Lead Lighting Tech", 432,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("active namesake reused untouched",
+           out == "31" and qbo_sync.quickbooks.create_item.await_count == 0 and
+           qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # Name is unique per PARENT, so a top-level item and a sub-item filed under
+    # a category answer to the same Name. Pick the top-level one — the kind this
+    # app creates — rather than whichever row QB happened to return first.
+    async def _subitem_first_query(conn, _db, sql, **kw):
+        if "Active = true" not in sql:
+            return []
+        return [
+            {"Id": "25", "Name": "V-Show - Aura (Wash)",
+             "FullyQualifiedName": "Lighting Equipment:V-Show - Aura (Wash)"},
+            {"Id": "88", "Name": "V-Show - Aura (Wash)",
+             "FullyQualifiedName": "V-Show - Aura (Wash)"},
+        ]
+
+    qbo_sync.quickbooks.query = _subitem_first_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "V-Show - Aura (Wash)", 150,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("top-level item wins over a same-named sub-item", out == "88")
+
+    # Only a sub-item carries the name → still deterministic, still used.
+    async def _only_subitem_query(conn, _db, sql, **kw):
+        if "Active = true" not in sql:
+            return []
+        return [{"Id": "25", "Name": "V-Show - Aura (Wash)",
+                 "FullyQualifiedName": "Lighting Equipment:V-Show - Aura (Wash)"}]
+
+    qbo_sync.quickbooks.query = _only_subitem_query
+    out = await _real_find_or_create_named_item(
+        object(), db, "V-Show - Aura (Wash)", 150,
+        income_account_id="42", client_id="c", client_secret="s")
+    _check("lone sub-item still resolves", out == "25")
+
+    # Duplicate name with no deleted item behind it → the fault still surfaces.
+    async def _empty_query(conn, _db, sql, **kw):
+        return []
+
+    qbo_sync.quickbooks.query = _empty_query
+    raised = False
+    try:
+        await _real_find_or_create_named_item(
+            object(), db, "Gaff Tape", None,
+            income_account_id="42", client_id="c", client_secret="s")
+    except QboApiError:
+        raised = True
+    _check("unexplained duplicate name still raises", raised)
 
 
 def _db_returning_row(row):
@@ -637,7 +1039,8 @@ async def test_resolve_line_repoints_on_mapping_change():
     db = _db_returning_row(row)
     conn = types.SimpleNamespace(income_accounts=[{"id": "42", "name": "Labor Income"}])
     qbo_sync.quickbooks.get_item = AsyncMock(return_value={
-        "Id": "I9", "SyncToken": "0", "IncomeAccountRef": {"value": "11"}})
+        "Id": "I9", "Name": "L1 — Lead Tech", "SyncToken": "0",
+        "IncomeAccountRef": {"value": "11"}})
     qbo_sync.quickbooks.update_item = AsyncMock()
 
     repoints = []
@@ -676,7 +1079,7 @@ async def test_equipment_item_uses_rentals_mapping():
     stored = {}
     qbo_sync._settings_set = AsyncMock(side_effect=lambda db, key, value: stored.__setitem__(key, value))
     qbo_sync._find_or_create_named_item = AsyncMock(return_value="EQ1")
-    qbo_sync._repoint_item_income_account = AsyncMock(return_value=(True, True))
+    qbo_sync._repoint_item_income_account = AsyncMock(return_value=(True, True, False))
     conn = types.SimpleNamespace(income_accounts=[{"id": "77", "name": "Rental Income"}])
     db = MagicMock(); db.flush = AsyncMock()
 
@@ -742,17 +1145,22 @@ async def test_accounts_refresh_route():
 
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
+                  test_period_label,
                   test_customer_billaddr_and_fields, test_income_account_readonly_columns]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
         test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
         test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
+        test_rentals_never_become_qb_products,
         test_delete_not_synced, test_delete_synced_calls_qb,
         test_estimate_tax_creates_reads_deletes, test_estimate_tax_exempt_skips_qb,
         test_estimate_tax_stale_token_delete_retry,
         test_income_account_resolution, test_item_created_with_mapped_account,
-        test_repoint_item_income_account, test_resolve_line_repoints_on_mapping_change,
+        test_repoint_item_income_account, test_repoint_revives_deleted_item,
+        test_repoint_refuses_foreign_item, test_resolve_line_reresolves_stale_item_id,
+        test_find_or_create_revives_deleted_name, test_deleted_item_never_lands_on_a_line,
+        test_resolve_line_repoints_on_mapping_change,
         test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
     ]
     for t in sync_tests:
