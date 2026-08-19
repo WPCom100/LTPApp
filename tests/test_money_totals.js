@@ -22,7 +22,6 @@ function items(arr) { return [{ items: arr }]; }
 const line = (o) => Object.assign({ type: "service", qty: 1, unitPrice: 0 }, o);
 
 // ── Invoice totals ───────────────────────────────────────────────────────────
-window.LTP_TAX_RATE = 0;
 eq("I0 null invoice -> zeros", IT(null).total, 0);
 let inv = { sections: items([line({ unitPrice: 100, qty: 2 }), line({ unitPrice: 50, qty: 1 })]) };
 near("I1 subtotal", IT(inv).subtotal, 250);
@@ -64,13 +63,13 @@ near("I5c over-100% can't go negative", IT(inv).total, 0);
 // An unrecognized type is a no-op, never a silent partial discount.
 inv = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "bogus", value: 30 } };
 near("I5d unknown discount type is ignored", IT(inv).total, 200);
-// Invoices are QuickBooks-tax-authoritative, exactly like quotes (Q6 below):
-// the legacy flat LTP_TAX_RATE is IGNORED. It used to apply here as a pre-push
-// estimate, which made this function alone claim a tax that pdf_generator.py
-// ::_calc_totals and client-view.js::calcTotals both reported as zero — and the
-// invoice editor folded it into the TOTAL without ever drawing a tax row to
-// explain it. Null qbTaxTotal now means $0 tax on all four surfaces.
-window.LTP_TAX_RATE = 10;
+// Invoices are QuickBooks-tax-authoritative, exactly like quotes (Q6 below).
+// A flat percentage used to apply here as a pre-push estimate, which made this
+// function alone claim a tax that pdf_generator.py::_calc_totals and
+// client-view.js::calcTotals both reported as zero — and the invoice editor
+// folded it into the TOTAL without ever drawing a tax row to explain it. The
+// setting is gone; a stray global must not bring the behaviour back.
+window.LTP_TAX_RATE = 10;   // deliberately hostile: nothing may read this
 inv = { sections: items([line({ unitPrice: 100 })]) };
 near("I6 flat rate ignored — tax is QuickBooks-only", IT(inv).tax, 0);
 near("I6 total carries no estimated tax", IT(inv).total, 100);
@@ -78,7 +77,6 @@ inv = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 7.25 };
 near("I7 qbTaxTotal is the tax", IT(inv).tax, 7.25); near("I7 total", IT(inv).total, 107.25);
 inv = { sections: items([line({ unitPrice: 100 })]), qbTaxTotal: 0 };
 near("I7b an explicit $0 tax (exempt client) stays $0", IT(inv).tax, 0);
-window.LTP_TAX_RATE = 0;
 inv = { sections: items([line({ unitPrice: 100 })]), payments: [{ amount: 40 }, { amount: 25 }] };
 near("I8 paid sums payments", IT(inv).paid, 65); near("I8 balance", IT(inv).balance, 35);
 inv = { sections: items([line({ unitPrice: 100 })]), payments: [{ amount: 150 }] };
@@ -87,7 +85,6 @@ eq("I10 invoice ref", IREF({ id: 7, invoiceDate: "2026-05-01" }), "INV-2026-007"
 eq("I11 invoice ref null", IREF(null), "INV-?");
 
 // ── Quote totals ─────────────────────────────────────────────────────────────
-window.LTP_TAX_RATE = 0;
 let q = { sections: items([line({ unitPrice: 100, qty: 2, cost: 60 }), line({ unitPrice: 50, adjustedPrice: 40 })]) };
 near("Q1 subtotal (orig)", QT(q).subtotal, 250);
 near("Q1 adjusted (uses adjustedPrice)", QT(q).adjusted, 240);
@@ -105,8 +102,8 @@ near("Q5 discount can't go negative", QT(q).preTax, 0);
 // that's the property whose absence produced the invoice "$" bug.
 q = { sections: items([line({ unitPrice: 200 })]), globalDiscount: { type: "flat", value: 30 } };
 near("Q5b quotes also read the legacy flat alias", QT(q).preTax, 170);
-// Quotes are QuickBooks-tax-authoritative: the flat LTP_TAX_RATE is IGNORED;
-// tax comes from qbTaxTotal (set by the temporary-estimate flow). Null → $0.
+// Quotes are QuickBooks-tax-authoritative: tax comes from qbTaxTotal (set by
+// the temporary-estimate flow). Null → $0. Same hostile global as above.
 window.LTP_TAX_RATE = 8;
 q = { sections: items([line({ unitPrice: 100 })]) };
 near("Q6 flat rate ignored on quotes", QT(q).tax, 0); near("Q6 total no QB tax", QT(q).total, 100);
@@ -124,11 +121,10 @@ near("Q6d margin ignores sales tax", QT(q).preTax - QT(q).cost, 110);
 near("Q6d discount amount is tax-free", QT(q).adjusted - QT(q).preTax, 40);
 near("Q6d customer still pays tax-inclusive", QT(q).total, 173.2);
 eq("Q7 quote ref Q-YYYY-NNN", QREF({ id: 3, createdDate: "2026-02-09" }), "Q-2026-003");
-eq("Q8 note rows skipped", (function () { window.LTP_TAX_RATE = 0; return QT({ sections: items([line({ type: "note", unitPrice: 500 }), line({ unitPrice: 25 })]) }).subtotal; })(), 25);
+eq("Q8 note rows skipped", (function () { return QT({ sections: items([line({ type: "note", unitPrice: 500 }), line({ unitPrice: 25 })]) }).subtotal; })(), 25);
 // Fees are ordinary priced lines that edit unitPrice directly and never set
 // adjustedPrice — so a fee's subtotal == its adjusted (no line-adjustment delta),
 // and it sums alongside other line types.
-window.LTP_TAX_RATE = 0;
 let qf = { sections: items([line({ type: "fee", unitPrice: 250, qty: 2 }), line({ type: "service", unitPrice: 100, qty: 1 })]) };
 near("Q9 fee sums into subtotal", QT(qf).subtotal, 600);
 near("Q9 fee never creates adjustment delta (adjusted == subtotal)", QT(qf).adjusted, 600);
@@ -143,7 +139,6 @@ eq("S1 overdue when past + unpaid sent", window.LTP_isOverdue({ dueDate: past, s
 eq("S2 not overdue when draft", window.LTP_isOverdue({ dueDate: past, status: "draft" }), false);
 eq("S3 not overdue when paid", window.LTP_isOverdue({ dueDate: past, status: "paid" }), false);
 eq("S4 not overdue when future", window.LTP_isOverdue({ dueDate: future, status: "sent" }), false);
-window.LTP_TAX_RATE = 0;
 eq("S5 displayStatus paid", window.LTP_displayStatus({ status: "paid" }), "paid");
 eq("S6 displayStatus partial", window.LTP_displayStatus({ status: "sent", sections: items([line({ unitPrice: 100 })]), payments: [{ amount: 40 }] }), "partial");
 eq("S7 displayStatus overdue", window.LTP_displayStatus({ status: "sent", dueDate: past, sections: items([line({ unitPrice: 100 })]) }), "overdue");

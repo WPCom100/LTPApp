@@ -2079,9 +2079,10 @@ window.LTP_INVOICE_TOTALS = function(inv) {
   // Tax is QuickBooks-authoritative: QB computes the sales tax (qbTaxTotal) on
   // push and the whole-invoice total reflects it everywhere LTP_INVOICE_TOTALS is
   // consumed (builder, list, dashboard, client view, PDF). Before any push it is
-  // null and tax is 0 — NOT an estimate off the legacy flat LTP_TAX_RATE, which
-  // made this function alone claim a tax the PDF and client view both showed as
-  // zero. Same rule as LTP_QUOTE_TOTALS below.
+  // null and tax is 0 — never an estimate off a configured flat rate. This
+  // function alone used to apply one, claiming a tax the PDF and the client view
+  // both showed as zero; the setting behind it is gone. Same rule as
+  // LTP_QUOTE_TOTALS below.
   var tax = (inv.qbTaxTotal != null) ? (Number(inv.qbTaxTotal) || 0) : 0;
   var total = afterDiscount + tax;
   var paid = (inv.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
@@ -2177,7 +2178,7 @@ window.LTP_QUOTE_TOTALS = function(q) {
   // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB
   // estimate (backend/qbo_sync.py::get_quote_estimate_tax), stored read-only as
   // qbTaxTotal. Null until calculated → $0, exactly like invoices + the client
-  // view. The legacy flat LTP_TAX_RATE no longer applies to quotes.
+  // view. There is no flat-rate fallback anywhere — QuickBooks owns the number.
   var tax = (q.qbTaxTotal != null) ? (Number(q.qbTaxTotal) || 0) : 0;
   return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + tax, preTax: afterDiscount, tax: tax, taxAmount: tax, cost: cost };
 };

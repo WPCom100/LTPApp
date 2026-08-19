@@ -550,10 +550,15 @@
 
       // ── Document Defaults ───────────────────────────────────────────────────
       h(AccordionSection, { title: "Document Defaults" },
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 } },
+        // No tax-rate field: sales tax is QuickBooks-authoritative end to end.
+        // QuickBooks computes it from the customer and the addresses (see
+        // backend/qbo_sync.py), and every reader — the builders, the client view
+        // and the PDF — takes the figure it returns. A flat percentage here
+        // would have nothing to apply itself to, and offering one invited an
+        // admin to set a rate that silently did nothing.
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPSelect, { label: "Default Payment Terms", value: String(draft.defaultPaymentTerms || 30), onChange: function(v) { set("defaultPaymentTerms", Number(v)); },
             options: [{ value: "0", label: "Due on Receipt" }, { value: "15", label: "Net 15" }, { value: "20", label: "Net 20" }, { value: "30", label: "Net 30" }, { value: "45", label: "Net 45" }, { value: "60", label: "Net 60" }] }),
-          h(window.LTPInput, { label: "Tax Rate (%)", value: draft.taxRate || "", onChange: function(v) { set("taxRate", Number(v) || 0); }, type: "number", placeholder: "0" }),
           h(window.LTPInput, { label: "Quote Validity (days)", value: draft.defaultQuoteValidity || "", onChange: function(v) { set("defaultQuoteValidity", Number(v) || 30); }, type: "number" })
         ),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
