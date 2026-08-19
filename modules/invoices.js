@@ -1085,7 +1085,9 @@
               + "or untick “Customer is taxable” if no tax applies.");
             return;
           }
-          sendInvoiceEmail(res.invoice, !isRecalledDraft);
+          // Hand the send what it needs to undo this push if the email fails.
+          sendInvoiceEmail(res.invoice, !isRecalledDraft,
+            res.action === "created" ? res.qbInvoiceId : null);
         });
         return;
       }
@@ -1096,7 +1098,10 @@
     // which carries the just-pushed qbTaxTotal). Kept separate from executeSend
     // so the QuickBooks push can resolve first. `alreadyPushed` suppresses the
     // redundant post-send export for invoices we pushed on the way in.
-    function sendInvoiceEmail(baseDraft, alreadyPushed) {
+    // `unwindableQbId` is the QB invoice this send CREATED moments ago — passed
+    // only for a create, and used to delete it again if the send fails, so a
+    // failure leaves nothing stranded in QuickBooks (see unwindQboPush).
+    function sendInvoiceEmail(baseDraft, alreadyPushed, unwindableQbId) {
       var isResend = baseDraft.status !== "draft";
       setSending(true);
       // Expand {{header}} into rendered HTML JUST before send. See
@@ -1149,8 +1154,15 @@
             window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
           }
+          // Our own server answered, so the email definitively did not go out:
+          // /api/email/send validates before sending and rolls its recipient
+          // rows back on both Gmail failure paths (backend/routes/email.py).
+          // That makes it safe to undo the QuickBooks invoice this send created.
           if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
+            unwindQboPush(baseDraft, unwindableQbId, function(tail) {
+              showAlert("Reconnect Google",
+                "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect." + tail);
+            });
             return;
           }
           var msg = "Send failed (HTTP " + resp.status + ").";
@@ -1160,12 +1172,57 @@
             else if (d.error) msg = d.error;
             else if (d.reason) msg = d.reason;
           }
-          showAlert("Send Failed", msg);
+          unwindQboPush(baseDraft, unwindableQbId, function(tail) { showAlert("Send Failed", msg + tail); });
         })
         .catch(function(e) {
           setSending(false);
-          showAlert("Send Failed", "Network or server error: " + String(e.message || e));
+          // A network error is NOT proof the send didn't happen — the server may
+          // have sent and the response been lost. Deleting the QuickBooks invoice
+          // here could erase one the customer is holding, so report what exists
+          // instead of guessing.
+          showAlert("Send Failed", "Network or server error: " + String(e.message || e)
+            + (unwindableQbId
+                ? "\n\nThis invoice WAS exported to QuickBooks before the error, and we cannot tell whether the email went out. "
+                  + "Check with the recipient before resending — sending again updates that same QuickBooks invoice rather than duplicating it."
+                : ""));
         });
+    }
+
+    // Delete the QuickBooks invoice a failed send created, so the failure leaves
+    // nothing to clean up by hand. Only ever called with a CREATE's id (an
+    // update's record pre-existed and isn't ours to delete) and only when the
+    // server told us the send didn't happen. Always calls back — with a sentence
+    // to append to the failure dialog saying what became of the QuickBooks
+    // invoice — so a failed unwind is reported rather than silently stranded.
+    function unwindQboPush(invoiceObj, qbInvoiceId, done) {
+      if (!qbInvoiceId) { done(""); return; }
+      var stranded = function(why) {
+        return "\n\nWARNING: this invoice WAS exported to QuickBooks (id " + qbInvoiceId
+          + ") and could not be removed automatically: " + why
+          + "\nDelete it in QuickBooks, or use Remove from QuickBooks here.";
+      };
+      fetch("/api/qbo/invoices/" + invoiceObj.id + "/unwind-send", {
+        method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
+        body: JSON.stringify({ qbInvoiceId: String(qbInvoiceId) }),
+      })
+        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(resp) {
+          if (resp.status === 200 && resp.body && resp.body.unwound) {
+            // Mirror the cleared link locally so the UI stops claiming a sync
+            // that no longer exists.
+            var cleared = Object.assign({}, invoiceObj, {
+              qbInvoiceId: null, qbSyncToken: null, qbSyncStatus: null, qbSyncedAt: null,
+              qbSyncedSignature: null, qbLastError: null, qbTaxTotal: null, qbTotalAmt: null,
+            });
+            setInvoices(function(prev) { return prev.map(function(i) { return i.id === cleared.id ? cleared : i; }); });
+            setDraftRaw(function(d) { return (d && d.id === cleared.id) ? cleared : d; });
+            if (cleanRef.current && cleanRef.current.id === cleared.id) cleanRef.current = cleared;
+            done("\n\nNothing was left behind in QuickBooks — the export was undone automatically.");
+            return;
+          }
+          done(stranded((resp.body && resp.body.error) || ("HTTP " + resp.status)));
+        })
+        .catch(function(e) { done(stranded(String(e.message || e))); });
     }
 
     function recallToDraft() {
@@ -1287,7 +1344,11 @@
               window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
                 { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
             }
-            return { ok: true, invoice: withQb };
+            // `action` decides whether a failed send may unwind this push: only
+            // a create is ours to delete. An update means the QB invoice existed
+            // before this send (a resend, or an earlier push) — deleting it
+            // would destroy a record the customer may already hold.
+            return { ok: true, invoice: withQb, action: b.action, qbInvoiceId: b.qbInvoiceId };
           }
           var d = resp.body || {};
           if (resp.status === 409 && d.reason === "reconnect") {
