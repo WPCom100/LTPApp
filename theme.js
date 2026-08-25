@@ -2035,13 +2035,23 @@ window.LTP_money = function(n) {
 };
 
 window.LTP_INVOICE_TOTALS = function(inv) {
-  if (!inv) return { subtotal: 0, discount: 0, tax: 0, total: 0, paid: 0, balance: 0 };
+  if (!inv) return { subtotal: 0, adjusted: 0, discount: 0, tax: 0, total: 0, paid: 0, balance: 0 };
+  // `subtotal` is the ORIGINAL list price and `adjusted` the sum after per-line
+  // price overrides — the same split LTP_QUOTE_TOTALS, client-view.js::calcTotals
+  // and pdf_generator.py::_calc_totals use, so the "Adjustments" line means the
+  // same thing on all four surfaces. This function used to report only the
+  // adjusted figure, under the name `subtotal`, with no `adjusted` at all; the
+  // invoice editor's adjustments row compared against that missing key and so
+  // rendered on every invoice (see modules/invoices.js).
   var subtotal = 0;
+  var adjusted = 0;
   (inv.sections || []).forEach(function(sec) {
     (sec.items || []).forEach(function(it) {
       if (it.type === "note") return;
+      var qty = it.qty || 0;
       var price = it.adjustedPrice != null ? it.adjustedPrice : (it.unitPrice || 0);
-      subtotal += price * (it.qty || 0);
+      subtotal += (it.unitPrice || 0) * qty;
+      adjusted += price * qty;
     });
   });
   // Global discount. A fixed-dollar discount is "amount" — that is what BOTH
@@ -2053,26 +2063,31 @@ window.LTP_INVOICE_TOTALS = function(inv) {
   // it applied. Three parties saw three totals. All four readers now agree:
   // here, backend/qbo_sync.py::_build_sales_lines,
   // backend/pdf_generator.py::_calc_totals, modules/client-view.js::calcTotals.
+  // The discount applies to the ADJUSTED figure, not the original list price —
+  // same base as the other three readers.
   var gd = inv.globalDiscount || {};
   var discount = 0;
-  if (gd.type === "percent") discount = subtotal * (gd.value || 0) / 100;
+  if (gd.type === "percent") discount = adjusted * (gd.value || 0) / 100;
   else if (gd.type === "amount" || gd.type === "flat") discount = gd.value || 0;
-  else if (gd.type === "target") discount = Math.max(0, subtotal - (gd.value || 0));
+  else if (gd.type === "target") discount = Math.max(0, adjusted - (gd.value || 0));
   // Never discount past zero — an over-large amount or a >100% rate would
   // otherwise show a NEGATIVE total here while the PDF and client view (both
   // of which clamp) showed 0. Same rule as LTP_QUOTE_TOTALS below.
-  if (discount > subtotal) discount = subtotal;
+  if (discount > adjusted) discount = adjusted;
   if (discount < 0) discount = 0;
-  var afterDiscount = subtotal - discount;
-  // Tax is QuickBooks-authoritative: once the invoice has been pushed, QB
-  // computes the sales tax (qbTaxTotal) and the whole-invoice total reflects it
-  // everywhere LTP_INVOICE_TOTALS is consumed (builder, list, dashboard, client
-  // view, PDF). Before any push, qbTaxTotal is null and tax is 0.
-  var taxRate = window.LTP_TAX_RATE || 0;
-  var tax = (inv.qbTaxTotal != null) ? (Number(inv.qbTaxTotal) || 0) : (afterDiscount * taxRate / 100);
+  var afterDiscount = adjusted - discount;
+  // Tax is QuickBooks-authoritative: QB computes the sales tax (qbTaxTotal) on
+  // push and the whole-invoice total reflects it everywhere LTP_INVOICE_TOTALS is
+  // consumed (builder, list, dashboard, client view, PDF). Before any push it is
+  // null and tax is 0 — never an estimate off a configured flat rate. This
+  // function alone used to apply one, claiming a tax the PDF and the client view
+  // both showed as zero; the setting behind it is gone. Same rule as
+  // LTP_QUOTE_TOTALS below.
+  var tax = (inv.qbTaxTotal != null) ? (Number(inv.qbTaxTotal) || 0) : 0;
   var total = afterDiscount + tax;
   var paid = (inv.payments || []).reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
-  return { subtotal: subtotal, discount: discount, tax: tax, total: total, paid: paid, balance: Math.max(0, total - paid) };
+  return { subtotal: subtotal, adjusted: adjusted, discount: discount, tax: tax,
+           preTax: afterDiscount, total: total, paid: paid, balance: Math.max(0, total - paid) };
 };
 
 window.LTP_isOverdue = function(inv) {
@@ -2163,7 +2178,7 @@ window.LTP_QUOTE_TOTALS = function(q) {
   // Tax is QuickBooks-authoritative: a quote's tax comes from a temporary QB
   // estimate (backend/qbo_sync.py::get_quote_estimate_tax), stored read-only as
   // qbTaxTotal. Null until calculated → $0, exactly like invoices + the client
-  // view. The legacy flat LTP_TAX_RATE no longer applies to quotes.
+  // view. There is no flat-rate fallback anywhere — QuickBooks owns the number.
   var tax = (q.qbTaxTotal != null) ? (Number(q.qbTaxTotal) || 0) : 0;
   return { subtotal: subtotal, adjusted: adjusted, total: afterDiscount + tax, preTax: afterDiscount, tax: tax, taxAmount: tax, cost: cost };
 };

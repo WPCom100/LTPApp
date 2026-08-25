@@ -55,6 +55,7 @@ helpers in routes/email.py and routes/crew.py so an auto-receipt is
 byte-for-byte the same shape as a manually sent one.
 """
 import os
+import re
 import secrets
 from datetime import datetime, timezone
 from html import escape
@@ -176,6 +177,19 @@ def _resolve(template: str, vars: dict) -> str:
     return out
 
 
+# An empty parenthetical " ()" left after a placeholder resolved to "" — the
+# paymentReceipt template reads "...payment for {{refNumber}} ({{projectName}})."
+# and a project-less invoice with no custom name leaves "{{projectName}}" empty.
+# Collapse the orphaned parens (and the single space before them) so the receipt
+# never shows a bare "()". Kept in sync with the same cleanup in
+# modules/invoices.js::openReceiptModal (the manual "Send Receipt" flow).
+_EMPTY_PARENS_RE = re.compile(r" ?\(\s*\)")
+
+
+def _strip_empty_parens(text: str) -> str:
+    return _EMPTY_PARENS_RE.sub("", text or "")
+
+
 def build_receipt_email(settings_data: dict, sender: models.User, text_vars: dict,
                         header_html: str) -> tuple[str, str]:
     """Pure composition: resolve the paymentReceipt template against ``text_vars``,
@@ -185,7 +199,7 @@ def build_receipt_email(settings_data: dict, sender: models.User, text_vars: dic
     templates = (settings_data.get("emailTemplates") or {})
     tmpl = templates.get("paymentReceipt") or {}
     subject = _resolve(tmpl.get("subject") or _FALLBACK_SUBJECT, text_vars)
-    body = _resolve(tmpl.get("body") or _FALLBACK_BODY, text_vars)
+    body = _strip_empty_parens(_resolve(tmpl.get("body") or _FALLBACK_BODY, text_vars))
 
     signature_html = _render_signature(sender, settings_data)
     inner = _paragraphs_to_html(body, {
@@ -413,13 +427,14 @@ async def _process_invoice(db, conn, invoice, sender, settings_data, *,
         await db.flush()
         return "failed"
 
-    # Compose.
-    project_name = ""
-    if invoice.project_id:
-        pr = await db.execute(select(models.Project).where(models.Project.id == invoice.project_id))
-        proj = pr.scalar_one_or_none()
-        if proj:
-            project_name = proj.name or ""
+    # Compose. Resolve the invoice's display name the SAME way the manual
+    # "Send Receipt" flow does (modules/invoices.js openReceiptModal): its
+    # custom_name if set, else the linked project's name, else "". Using the
+    # project name alone (the old behavior here) left a project-less invoice —
+    # the common shape for a QuickBooks-driven receipt — with an empty
+    # projectName, which the template's "({{projectName}})" rendered as a bare
+    # "()" next to the invoice number.
+    project_name = await doc_display_name(db, invoice)
     total_str = _money(total_amt)
     text_vars = {
         "companyName": (settings_data.get("companyName") or "LTP"),

@@ -671,11 +671,20 @@ def _invoice_ref(invoice: models.Invoice) -> str:
 
 
 def _line_taxable(line: dict, customer_taxable: bool) -> bool:
-    """Per-line override wins; otherwise inherit the customer's taxable flag."""
+    """Per-line override can only EXEMPT a line, never tax one the customer is
+    exempt from. A tax-exempt party (non-profit, reseller) is exempt on
+    everything they buy, which is why both builders only offer the per-line
+    checkbox when the customer is taxable (modules/invoices.js,
+    modules/quotes-builder.js). The builders nevertheless stamp
+    `taxable: true` onto every line they create, and that used to read as an
+    explicit override that outranked the exemption — so an exempt client's
+    lines went to QuickBooks coded TAX and got billed sales tax."""
+    if not customer_taxable:
+        return False
     override = line.get("taxable")
     if isinstance(override, bool):
         return override
-    return bool(customer_taxable)
+    return True
 
 
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -1024,12 +1033,18 @@ def _apply_qb_result(invoice, resp_inv: dict) -> None:
         invoice.qb_invoice_id = str(resp_inv["Id"])
     if resp_inv.get("SyncToken") is not None:
         invoice.qb_sync_token = str(resp_inv["SyncToken"])
+    # Tax and grand total come from the SAME response and must be applied
+    # together. Skipping the tax write when the response carries no TotalTax
+    # (an untaxed push: the customer went exempt, the lines went non-taxable,
+    # the address left the taxable area) left the previous tax on the row while
+    # TotalAmt below was refreshed — a row asserting a grand total its own tax
+    # figure contradicts, which then flows to the app, the PDF and the client
+    # view. No TotalTax means QuickBooks computed no tax: that is 0.00.
     tax = (resp_inv.get("TxnTaxDetail") or {}).get("TotalTax")
-    if tax is not None:
-        try:
-            invoice.qb_tax_total = float(tax)
-        except (TypeError, ValueError):
-            pass
+    try:
+        invoice.qb_tax_total = float(tax) if tax is not None else 0.0
+    except (TypeError, ValueError):
+        invoice.qb_tax_total = 0.0
     if resp_inv.get("TotalAmt") is not None:
         try:
             invoice.qb_total_amt = float(resp_inv["TotalAmt"])

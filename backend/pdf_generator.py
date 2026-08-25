@@ -193,8 +193,9 @@ def _calc_totals(entity):
     elif gt == "target":
         after = gv
     after = max(after, 0)
-    # QuickBooks-computed sales tax (invoices only; quotes carry none). The grand
-    # total is tax-inclusive so the PDF matches the app + client view.
+    # QuickBooks-computed sales tax. Invoices get it from the push response;
+    # quotes from the temporary-estimate flow. The grand total is tax-inclusive
+    # so the PDF matches the app + client view.
     tax_val = entity.get("qbTaxTotal")
     try:
         tax = float(tax_val) if tax_val is not None else 0.0
@@ -743,7 +744,7 @@ class _DocPDF:
             c.drawRightString(xv, self.y, f"-{_fmt_money(disc)}")
             self.y -= 18
 
-        # Sales tax (QuickBooks-computed; invoices only)
+        # Sales tax (QuickBooks-computed; quotes and invoices alike)
         if t["tax"] > 0.005:
             c.setFont("Roboto", 10)
             c.setFillColor(MUTED)

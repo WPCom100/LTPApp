@@ -59,7 +59,7 @@ window.LTP_DATA_SETTINGS = {
 
   // Business Defaults
   defaultPaymentTerms: 30,        // Net 30
-  taxRate: 0,                     // percentage
+  // No taxRate: sales tax is QuickBooks-authoritative (backend/qbo_sync.py).
   defaultQuoteValidity: 30,       // days
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",

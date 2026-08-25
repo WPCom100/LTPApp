@@ -121,8 +121,8 @@
     else if (gt === "amount" || gt === "flat") after = adj - gv;  // "amount" is current; "flat" a legacy alias
     else if (gt === "target") after = gv;
     after = Math.max(after, 0);
-    // QuickBooks-computed sales tax (invoices only) makes the total tax-inclusive,
-    // matching the app + PDF.
+    // QuickBooks-computed sales tax (quotes and invoices alike) makes the total
+    // tax-inclusive, matching the app + PDF.
     var tax = (entity.qbTaxTotal != null) ? (Number(entity.qbTaxTotal) || 0) : 0;
     return { subtotal: sub, adjusted: adj, preTax: after, tax: tax, total: after + tax };
   }
