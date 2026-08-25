@@ -50,6 +50,38 @@ def test_render_masthead_block():
         assert pin in html, f"masthead missing: {pin}"
 
 
+def test_masthead_falls_back_to_text_without_absolute_logo():
+    """A relative or empty logo URL — what _email_brand yields when the app
+    origin is unknown (LTP_OAUTH_REDIRECT_URI unset) — can't be resolved by an
+    email client, so it must render the styled text wordmark instead of a broken
+    <img>. Regression: the receipt in the bug report showed a broken-image box at
+    the top because the masthead emitted an <img> with a relative src."""
+    from backend import email_compose
+    for bad_logo in ("/assets/logos/luminary-masthead.png", "", "assets/logos/x.png"):
+        brand = {"logo": bad_logo, "company": "Luminary Technology & Productions",
+                 "website": "ltp.example"}
+        html = email_compose.render_masthead(brand)
+        assert "<img" not in html, f"broken <img> emitted for logo={bad_logo!r}"
+        assert "Luminary Technology &amp; Productions" in html  # text wordmark
+        assert "border-bottom:4px solid #f15927" in html         # rule still present
+    # An absolute https logo is served through as an <img> (unchanged path).
+    ok = email_compose.render_masthead(_brand())
+    assert "<img" in ok and "luminary-masthead.png" in ok
+
+
+def test_email_brand_relative_logo_degrades_in_shell(monkeypatch):
+    """End to end: with no app origin, _email_brand's relative logo must not
+    reach the sent email as a broken <img> — email_shell renders the text
+    wordmark."""
+    monkeypatch.delenv("LTP_OAUTH_REDIRECT_URI", raising=False)
+    monkeypatch.delenv("LTP_FORCE_HTTPS", raising=False)
+    from backend import email_compose
+    brand = email_compose._email_brand({"companyName": "Luminary Technology & Productions"})
+    assert not brand["logo"].startswith(("http://", "https://"))  # relative in this env
+    shell = email_compose.email_shell("<p>BODY</p>", brand)
+    assert "<img" not in shell
+
+
 def test_email_shell_wraps_with_masthead_on_top_and_footer_below():
     from backend import email_compose
     shell = email_compose.email_shell("<p>HELLO BODY</p>", _brand())

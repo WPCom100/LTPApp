@@ -172,7 +172,6 @@ function LTPSignedInApp(props) {
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
   window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
   window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
-  window.LTP_TAX_RATE = settings.taxRate || 0;
   // Resolved fee quick-pick names for the Add-Item → Fees tab (edited in
   // Quotes → Fees). Recomputed each render so edits flow to the pickers.
   window.LTP_FEE_QUICKNAMES = window.LTP_feeQuickNames(settings);

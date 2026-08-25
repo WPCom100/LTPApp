@@ -357,6 +357,83 @@ async def push_invoice_route(
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
 
 
+class UnwindSendRequest(BaseModel):
+    # The QB invoice the caller believes it created moments ago. The unwind is
+    # refused if the row no longer points at it — someone else re-pushed in
+    # between, and that invoice is not ours to delete.
+    qbInvoiceId: str
+
+
+@qbo_router.post("/invoices/{invoice_id}/unwind-send")
+async def unwind_send_route(
+    invoice_id: int,
+    body: UnwindSendRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: models.User = Depends(require_admin),
+):
+    """Admin-only. Undo a QuickBooks push whose send then failed.
+
+    Sending a taxable invoice pushes to QuickBooks FIRST, because QuickBooks
+    computes the sales tax and the emailed PDF is rendered from the saved row
+    (see modules/invoices.js::executeSend). If the email then fails, that push
+    has already created a live invoice in QuickBooks for a document nobody
+    received. This deletes it and returns the row to never-pushed, so the failure
+    leaves nothing behind to clean up by hand.
+
+    The caller must only reach here when the push CREATED the invoice (never an
+    update — that record pre-existed and is not ours to delete) and when the send
+    definitively did not happen. A network error is not that: the server may have
+    sent successfully and lost the response, so those are reported, not unwound.
+
+    Unlike /delete, the local row survives — only its QuickBooks link is cleared.
+    Idempotent, and safe to fail: a QB invoice that is already gone counts as
+    deleted, and any other QuickBooks error leaves the link intact so the caller
+    can tell the user exactly what is still out there.
+    """
+    result = await db.execute(select(models.Invoice).where(models.Invoice.id == invoice_id))
+    invoice = result.scalar_one_or_none()
+    if invoice is None:
+        raise HTTPException(status_code=404, detail=f"invoice {invoice_id} not found")
+    if not invoice.qb_invoice_id:
+        return {"ok": True, "unwound": False, "reason": "not_synced"}
+    if str(invoice.qb_invoice_id) != str(body.qbInvoiceId):
+        return JSONResponse(status_code=409, content={
+            "reason": "moved",
+            "error": "This invoice now points at a different QuickBooks invoice; not deleting it.",
+            "qbInvoiceId": invoice.qb_invoice_id,
+        })
+
+    deleted_id = invoice.qb_invoice_id
+    try:
+        await qbo_sync.delete_from_quickbooks(db, invoice)
+    except quickbooks.QboNotConnected:
+        return JSONResponse(status_code=409, content={"reason": "not_connected",
+                            "error": "QuickBooks is not connected.", "qbInvoiceId": deleted_id})
+    except quickbooks.QboReconnectRequired:
+        return JSONResponse(status_code=409, content={"reason": "reconnect",
+                            "error": "QuickBooks connection expired. Reconnect it in Settings.",
+                            "qbInvoiceId": deleted_id})
+    except quickbooks.QboApiError as e:
+        return JSONResponse(status_code=502, content={"reason": "qbo_error",
+                            "error": e.safe_message, "qbInvoiceId": deleted_id})
+
+    # Back to never-pushed. Leaving any of these set would have the app believe
+    # it is still synced to an invoice that no longer exists — the next push
+    # would try to UPDATE a deleted id instead of creating a fresh invoice.
+    invoice.qb_invoice_id = None
+    invoice.qb_sync_token = None
+    invoice.qb_sync_status = None
+    invoice.qb_synced_at = None
+    invoice.qb_synced_signature = None
+    invoice.qb_last_error = None
+    invoice.qb_tax_total = None
+    invoice.qb_total_amt = None
+    qbo_sync._stamp(invoice, admin, "qbo_unwound",
+                    "QuickBooks export undone — the email failed, so the invoice was removed",
+                    [{"cat": "QB Invoice Id", "detail": deleted_id}])
+    return {"ok": True, "unwound": True, "qbInvoiceId": deleted_id}
+
+
 @qbo_router.post("/invoices/{invoice_id}/delete")
 async def delete_invoice_route(
     invoice_id: int,

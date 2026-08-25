@@ -78,7 +78,7 @@ from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
 from backend.pdf_generator import doc_ref, generate_pdf
 from backend.routes._shared import (
-    invoice_dict, load_related, load_settings,
+    doc_project_ids, invoice_dict, load_project_names, load_related, load_settings,
     safe_pdf_filename as _pdf_filename,
 )
 from backend.sanitize import email_html
@@ -275,6 +275,14 @@ async def send_email(
             db, entity.company_id, entity.client_contact_id, entity.project_id,
         )
         inv_dict = invoice_dict(entity)
+        # Display names of every project this invoice bills for, primary first —
+        # the generator's "Includes" line (pdf_generator.py:458), which only
+        # renders when a document covers more than one job. The other two PDF
+        # routes resolve this (routes/pdf.py:80, routes/view.py:527); without it
+        # the ATTACHED copy — the one the client actually opens — silently
+        # dropped the line, leaving them line items for a job its header never
+        # named while the copy we download named it.
+        inv_dict["projectNames"] = await load_project_names(db, doc_project_ids(entity))
         buf = io.BytesIO()
         # reportlab is synchronous + slow enough to block the event loop.
         await asyncio.to_thread(

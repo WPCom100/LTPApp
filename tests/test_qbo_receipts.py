@@ -121,6 +121,31 @@ def test_resolve_and_compose():
     _check("finalize wraps in email shell", "f1f3f5" in final or "max-width:580px" in final)
 
 
+def test_empty_project_name_no_orphan_parens():
+    print("test_empty_project_name_no_orphan_parens")
+    # The default template reads "...payment for {{refNumber}} ({{projectName}})."
+    # A project-less invoice with no custom name leaves projectName empty; the
+    # composed body must NOT show a bare "()" (the bug from the reported receipt).
+    _check("strip helper collapses ' ()'", qr._strip_empty_parens("for INV-2026-002 ().") == "for INV-2026-002.")
+    _check("strip helper leaves filled parens", qr._strip_empty_parens("for INV (Gala).") == "for INV (Gala).")
+
+    sender = models.User(name="Jane Boss", email="jane@ltp.com")
+    sender.picture_url = ""
+    tv = {"companyName": "LTP", "refNumber": "INV-2026-002", "projectName": "",
+          "clientName": "Zach", "total": "$5,938.43", "lineItems": "Payments Received:"}
+    header = qr.render_receipt_header("INV-2026-002", "", "$5,938.43")
+    _, inner = qr.build_receipt_email({"emailTemplates": {}, "companyName": "LTP"},
+                                      sender, tv, header)
+    _check("no orphan '()' in composed body", "()" not in inner)
+    _check("clean sentence for nameless invoice", "payment for INV-2026-002." in inner)
+
+    # With a name present, the parenthetical is preserved.
+    tv2 = dict(tv, projectName="Downtown Gala")
+    _, inner2 = qr.build_receipt_email({"emailTemplates": {}, "companyName": "LTP"},
+                                       sender, tv2, header)
+    _check("named invoice keeps '(project)'", "INV-2026-002 (Downtown Gala)" in inner2)
+
+
 def test_fallback_matches_settings_default():
     print("test_fallback_matches_settings_default")
     import re
@@ -368,6 +393,52 @@ async def test_poll_company_contact_resolution():
     _check("resolved company's contact email", captured.get("to") == ["bob@acme.com"])
 
 
+async def _set_invoice_fields(inv_id, **fields):
+    from sqlalchemy import select
+    async with async_session() as db:
+        r = await db.execute(select(models.Invoice).where(models.Invoice.id == inv_id))
+        inv = r.scalar_one()
+        for k, v in fields.items():
+            setattr(inv, k, v)
+        await db.commit()
+
+
+async def test_poll_receipt_name_and_no_orphan_parens():
+    """A QuickBooks-driven receipt is usually for a project-LESS invoice. Its
+    name must resolve the SAME way the manual Send Receipt flow does — custom_name
+    first (matching modules/invoices.js openReceiptModal / doc_display_name) — and
+    when there is no name at all the body must not show a bare '()'."""
+    print("test_poll_receipt_name_and_no_orphan_parens")
+
+    async def _run_and_capture():
+        captured = {}
+
+        async def _fake_send(**kwargs):
+            captured["html"] = kwargs.get("html_body")
+            return {"id": "gmail-msg"}
+        quickbooks.get_invoice = AsyncMock(return_value={
+            "Id": "QB-42", "SyncToken": "4", "Balance": 0, "TotalAmt": 1000.0})
+        gmail.send = AsyncMock(side_effect=_fake_send)
+        await qr.run_receipt_poll()
+        return captured.get("html", "")
+
+    # (1) Project-less invoice WITH a custom name → the name shows in the receipt.
+    await _reset_schema()
+    inv_id = await _seed(sender_has_gmail=True)
+    await _set_invoice_fields(inv_id, project_id=None, custom_name="Downtown Gala")
+    html = await _run_and_capture()
+    _check("receipt shows custom name", "Downtown Gala" in html, html[:200])
+    _check("named receipt has no orphan '()'", "()" not in html)
+
+    # (2) Project-less invoice with NO name → clean sentence, no bare '()'.
+    await _reset_schema()
+    inv_id = await _seed(sender_has_gmail=True)
+    await _set_invoice_fields(inv_id, project_id=None, custom_name="")
+    html2 = await _run_and_capture()
+    _check("nameless receipt has no orphan '()'", "()" not in html2, html2[:200])
+    _check("nameless receipt keeps the invoice number", "INV" in html2 or "Invoice" in html2)
+
+
 async def test_poll_uses_google_creds_for_gmail():
     """Regression: the QB API fetch must get the QuickBooks OAuth client while
     the Gmail send must get the GOOGLE OAuth client. Handing QB creds to Gmail's
@@ -509,13 +580,16 @@ def test_send_request_receipt_flag():
 
 def main():
     sync_tests = [test_money_and_lines, test_receipt_header, test_resolve_and_compose,
+                  test_empty_project_name_no_orphan_parens,
                   test_fallback_matches_settings_default, test_reconcile_paid_idempotent,
                   test_send_request_receipt_flag]
     async_tests = [
         test_poll_sends_receipt_when_paid, test_poll_skips_unpaid,
         test_poll_caches_when_no_gmail, test_poll_caches_on_gmail_reconnect_error,
         test_poll_caches_on_gmail_auth_error,
-        test_poll_company_contact_resolution, test_poll_uses_google_creds_for_gmail,
+        test_poll_company_contact_resolution,
+        test_poll_receipt_name_and_no_orphan_parens,
+        test_poll_uses_google_creds_for_gmail,
         test_poll_failed_receipt_not_restamped, test_poll_records_qbo_connection_error,
         test_poll_clears_qbo_connection_error_on_clean_cycle,
         test_poll_skipped_when_not_connected,
