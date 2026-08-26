@@ -302,9 +302,9 @@
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, props.style) },
       // An empty-string label still reserves the row — the manual-shift form
       // labels only its first row and relies on the rest lining up under it.
-      (props.label != null || props.labelAction) && h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: props.labelAction ? 26 : undefined } },
-        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, props.label || ""),
-        props.labelAction || null),
+      // Shared with every other field so a control here starts at the same y as
+      // an LTPInput beside it in a grid (window.LTPFieldLabel in ui.js).
+      (props.label != null || props.labelAction) && h(window.LTPFieldLabel, { label: props.label || "", action: props.labelAction }),
       h("div", { ref: rootRef, style: { position: "relative", minWidth: 0 } },
         h("button", {
           type: "button", onClick: toggle, disabled: disabled,

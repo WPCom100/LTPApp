@@ -184,6 +184,14 @@ class Quote(Base):
     project_ids = Column(JSON, default=list)            # list[int]
     status = Column(String(20), default="draft")        # {draft, sent, accepted, declined, converted}
     sent_date = Column(String(10), default="")          # ISO YYYY-MM-DD
+    # The date this quote's pricing stops being good for. "" means "not set" —
+    # every reader then falls back to the workspace default (Settings →
+    # defaultQuoteValidity, 30 days) counted from the sent date, which is the
+    # only rule that existed before this column. The builder stamps a concrete
+    # date on send so a quote's terms can't silently move afterwards, and a
+    # producer can override it per quote for a client who needs longer.
+    # Shown in the builder, the printed PDF's terms, and the client's view.
+    expiry_date = Column(String(10), default="")        # ISO YYYY-MM-DD
     custom_start_date = Column(String(10), default="") # overrides project's startDate on the printed quote
     custom_end_date = Column(String(10), default="")   # overrides project's endDate on the printed quote
     custom_name = Column(String(255), default="")      # overrides project.name on the printed quote

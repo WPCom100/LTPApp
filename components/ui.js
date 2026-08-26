@@ -120,6 +120,36 @@
     return digits.length === 7 || digits.length === 10 || digits.length === 11;
   };
 
+  // ── Shared field label ────────────────────────────────────────────────────
+  // Every labelled form control in the app — LTPInput, LTPSelect,
+  // LTPSearchSelect and the chip search fields in components/search-select.js —
+  // renders its label through here.
+  //
+  // WHY IT'S SHARED, AND WHY THE HEIGHT IS FIXED
+  //   Fields sit side by side in CSS grids (the Company / Primary Contact row
+  //   on a quote, Invoice Date / Due Date, half the entity forms). A grid cell
+  //   starts at the top of the row, so two neighbours line up only if their
+  //   LABELS are exactly the same height. Each component used to spell its own
+  //   label out inline, and they had drifted: some rendered a bare <label>
+  //   (whose height is whatever line-height the loaded font happens to give an
+  //   11px string), and the ones carrying a ＋/✎ action grew a 26px row to fit
+  //   the button — which pushed that field's control ~13px below its
+  //   neighbour's and made the quote/invoice header read as staggered.
+  //
+  //   So: one explicit LABEL_H for the row, and `action` is scaled to fit
+  //   INSIDE it rather than being allowed to stretch it. A field needing a
+  //   bigger action affordance should put it in the control (the way the chip
+  //   fields do), not in the label.
+  var LABEL_H = 16;
+  var LABEL_TEXT = { fontSize: "11px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", lineHeight: LABEL_H + "px" };
+  window.LTP_FIELD_LABEL_HEIGHT = LABEL_H;
+  window.LTPFieldLabel = function({ label, action, color }) {
+    if (label == null && !action) return null;
+    return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, height: LABEL_H } },
+      h("label", { style: Object.assign({}, LABEL_TEXT, { color: color || B.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }) }, label || ""),
+      action || null);
+  };
+
   // inputMode/step/enterKeyHint/autoComplete pass straight through to the
   // control so callers can request the right iOS keyboard (inputMode:"decimal"
   // for currency, "numeric" for counts, "tel"/"email"), without every field
@@ -148,7 +178,7 @@
     var shownValue = (isNum && (value === 0 || value === "0")) ? "" : value;
     var shownPlaceholder = (isNum && (placeholder == null || placeholder === "")) ? "0" : placeholder;
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
-      label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: error ? B.danger : B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
+      label && h(window.LTPFieldLabel, { label: label, color: error ? B.danger : B.textMut }),
       textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: Object.assign({}, fs, { resize: "vertical" }) })
                : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, inputMode: inputMode, step: step, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
@@ -294,12 +324,12 @@
   // labelAction renders a small control (typically the ＋ / ✎ affordance from
   // components/entity-quick-form.js) at the right end of the label row. A
   // native <select> can't host a "create new" row that opens a form, so the
-  // entity-backed selects hang that action off the label instead.
+  // entity-backed selects hang that action off the label instead. Size it to
+  // LTP_FIELD_LABEL_HEIGHT or smaller — the label row no longer grows to fit,
+  // because growing is what knocked neighbouring fields out of alignment.
   window.LTPSelect = function({ label, value, onChange, options, style: sx, labelAction }) {
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
-      (label || labelAction) && h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: labelAction ? 26 : undefined } },
-        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label || ""),
-        labelAction || null),
+      (label != null || labelAction) && h(window.LTPFieldLabel, { label: label || "", action: labelAction }),
       h("select", { value: value, onChange: function(e) { onChange(e.target.value); },
         onFocus: function(e) { e.target.style.borderColor = B.accent; },
         onBlur: function(e) { e.target.style.borderColor = B.border; },

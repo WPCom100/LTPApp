@@ -115,6 +115,13 @@
           var name = proj ? proj.name : (qt.customName || "Untitled Quote");
           var tot  = computeTotals(qt);
           var contact = (qt.clientType !== "contact" && qt.companyId) ? contactName(qt) : null;
+          // A sent quote's shelf life, on the row so the list can be scanned for
+          // the ones that have gone stale — those need their pricing re-checked
+          // (and their expiry pushed out in the builder) before they're honoured.
+          // Only "sent" carries one: a draft was never promised to anyone, and
+          // accepted/declined/converted are settled.
+          var expiry = qt.status === "sent" ? window.LTP_quoteExpiry(qt) : "";
+          var expired = window.LTP_isQuoteExpired(qt);
           return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
             // Ref (left) + price/status (right) stay on the top row.
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } },
@@ -126,7 +133,10 @@
             ),
             // Full-width project name below \u2014 shows in full (wraps if very long).
             h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 2 } }, name),
-            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate))
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
+              clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate),
+              expiry && h("span", { style: { color: expired ? B.danger : B.textMut, fontWeight: expired ? 700 : 400 } },
+                " \u00b7 " + (expired ? "Expired " : "Expires ") + fmt(expiry)))
           );
         })
       )

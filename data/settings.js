@@ -60,6 +60,10 @@ window.LTP_DATA_SETTINGS = {
   // Business Defaults
   defaultPaymentTerms: 30,        // Net 30
   // No taxRate: sales tax is QuickBooks-authoritative (backend/qbo_sync.py).
+  // Fallback shelf life for a quote that carries no expiry date of its own.
+  // A quote's OWN expiryDate wins wherever it's set (the builder stamps one on
+  // send); this is what the terms block, the PDF and {{quoteValidity}} resolve
+  // to when it isn't. See window.LTP_quoteExpiry in theme.js.
   defaultQuoteValidity: 30,       // days
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
@@ -237,8 +241,11 @@ window.LTP_DATA_SETTINGS = {
 // that expand to HTML; viewUrl is resolved per-recipient by the backend.
 // Kept OUTSIDE LTP_DATA_SETTINGS so it never enters the persisted settings blob.
 window.LTP_TEMPLATE_VARIABLES = {
-  quoteSent:       ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "header", "signature", "viewUrl"],
-  quoteFollowUp:   ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "header", "signature", "viewUrl"],
+  // quoteValidity is the shelf life in DAYS, quoteExpiry the same deadline as a
+  // date — both resolved from the quote's own expiry date, falling back to
+  // defaultQuoteValidity below when it doesn't carry one.
+  quoteSent:       ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "quoteExpiry", "header", "signature", "viewUrl"],
+  quoteFollowUp:   ["companyName", "refNumber", "projectName", "clientName", "total", "quoteValidity", "quoteExpiry", "header", "signature", "viewUrl"],
   invoiceSent:     ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   invoiceReminder: ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],

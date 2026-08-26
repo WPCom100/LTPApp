@@ -103,6 +103,9 @@ def quote_dict(q: models.Quote) -> dict:
         "projectIds": doc_project_ids(q),
         "status": q.status,
         "sentDate": q.sent_date,
+        # "" = never set → readers fall back to the workspace default validity
+        # counted from sentDate (see Quote.expiry_date).
+        "expiryDate": q.expiry_date,
         "customStartDate": q.custom_start_date,
         "customEndDate": q.custom_end_date,
         "customName": q.custom_name,
@@ -311,5 +314,11 @@ def public_settings(settings: dict) -> dict:
         return {}
     keys = ["companyName", "companyShort", "tagline", "phone", "website",
             "street", "suite", "city", "state", "zip",
-            "accentColor", "logoUrl"]
+            "accentColor", "logoUrl",
+            # The fallback shelf life behind a quote with no expiry date of its
+            # own. The client is told this either way (it's in the terms block
+            # and the email), and the view needs it to name the same day the PDF
+            # does — window.LTP_quoteExpiry takes it as an override, since the
+            # public view has no session for app.js to mirror globals from.
+            "defaultQuoteValidity"]
     return {k: settings.get(k, "") for k in keys}

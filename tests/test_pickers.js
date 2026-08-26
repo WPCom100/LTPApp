@@ -7,13 +7,14 @@
 //     fixed lists out of the inline-create feature.
 //   * components/search-dropdown.js  — LTP_crewSelectOptions, the two-tier
 //     "role-tagged crew, then everyone else behind a click" option builder.
-//   * components/helpers.js          — contactSelectOptions / contactPickerTiers.
+//   * components/helpers.js          — contactFieldTiers, the two-tier candidate
+//                                     list behind the Primary Contact pickers.
 //
-// The recurring theme in here is the same latent bug in three places: a native
-// <select> whose value matches none of its options silently renders option 0,
-// so an assigned-but-inactive crew member, or a contact excluded by a narrowed
-// list, LOOKED unassigned while the record still held them. Each builder pins
-// the current selection into the list instead, and these tests hold that line.
+// The recurring theme in here is one latent bug in two places: a picker whose
+// narrowing excludes the record ALREADY selected — an assigned-but-inactive
+// crew member, a contact not linked to this client — leaves the position
+// LOOKING unfilled while the record still holds them. Both builders pin the
+// current selection into tier 1 instead, and these tests hold that line.
 //   Run:  node tests/test_pickers.js
 "use strict";
 const fs = require("fs");
@@ -75,32 +76,6 @@ eq("collapsed inner whitespace doesn't produce empty name parts",
 eq("empty query seeds nothing", prefill("company", "   "), {});
 eq("null query seeds nothing", prefill("contact", null), {});
 
-// ── contactSelectOptions ───────────────────────────────────────────────────
-// A narrowed candidate list can exclude an ALREADY-SELECTED contact (link a
-// project that doesn't list them). A native <select> whose value isn't among
-// its options silently shows the first one, so the field would read "(none)"
-// while the draft still carried that contact's id.
-const ada = { id: 1, firstName: "Ada", lastName: "Lovelace", role: "TD" };
-const bob = { id: 2, firstName: "Bob", lastName: "Stone", role: "" };
-const all = [ada, bob];
-
-eq("candidates map to value/label with role suffix",
-   H.contactSelectOptions([ada], null, all), [{ value: 1, label: "Ada Lovelace — TD" }]);
-eq("no role → no suffix",
-   H.contactSelectOptions([bob], null, all), [{ value: 2, label: "Bob Stone" }]);
-eq("selected contact already in the list isn't duplicated",
-   H.contactSelectOptions([ada, bob], 1, all),
-   [{ value: 1, label: "Ada Lovelace — TD" }, { value: 2, label: "Bob Stone" }]);
-eq("selected contact missing from a narrowed list is appended and flagged",
-   H.contactSelectOptions([bob], 1, all),
-   [{ value: 2, label: "Bob Stone" }, { value: 1, label: "Ada Lovelace — not on this list" }]);
-eq("an empty candidate list still surfaces the selection",
-   H.contactSelectOptions([], 1, all), [{ value: 1, label: "Ada Lovelace — not on this list" }]);
-eq("nothing selected → candidates unchanged", H.contactSelectOptions([], null, all), []);
-eq("a selected id that no longer resolves is dropped rather than faked",
-   H.contactSelectOptions([bob], 99, all), [{ value: 2, label: "Bob Stone" }]);
-eq("null candidates tolerated", H.contactSelectOptions(null, null, all), []);
-
 // ── Crew picker tiers (components/search-dropdown.js) ───────────────────────
 // Crew is SEARCHABLE but never creatable — you pick from a roster, you don't
 // author a crew member from a schedule row.
@@ -161,22 +136,46 @@ const other  = { id: 2, firstName: "Bob", lastName: "Stone", role: "PM" };
 const crewPerson = { id: 3, firstName: "Cal", lastName: "Rig", isCrew: true };
 const allC = [linked, other, crewPerson];
 
-let ct = H.contactPickerTiers([linked], null, allC, [{ value: "", label: "(none)" }]);
-eq("tier 1 is the client's own contacts, under the sentinel",
-   ct.options.map((o) => o.label), ["(none)", "Ada Lovelace — TD"]);
-eq("tier 2 is everyone else", ct.moreOptions.map((o) => o.label), ["Bob Stone"]);
+// The rules that matter are three: this client's people first, crew never
+// offered as someone to bill, and whoever is currently selected reachable
+// WITHOUT first expanding tier 2 — a narrowed list that hides the contact the
+// document already carries is how a quote came to look unaddressed.
+let cf = H.contactFieldTiers([linked], null, allC);
+eq("tier 1 is the client's own contacts", cf.primary.map((c) => c.id), [1]);
+eq("tier 2 is everyone else", cf.rest.map((c) => c.id), [2]);
 ok("crew are not offered as billable contacts",
-   !ct.moreOptions.some((o) => o.label === "Cal Rig"), JSON.stringify(ct.moreOptions));
-ok("second tier is labelled with its count", /Other contacts \(1\)/.test(ct.moreLabel), ct.moreLabel);
+   !cf.rest.some((c) => c.isCrew), JSON.stringify(cf.rest.map((c) => c.id)));
+ok("second tier is labelled with its count", /Other contacts \(1\)/.test(cf.moreLabel), cf.moreLabel);
 
-ct = H.contactPickerTiers([linked, other], null, allC);
-ok("with everyone linked there is no second tier", ct.moreOptions === null);
-ct = H.contactPickerTiers([linked], 2, allC);
-ok("a selected off-list contact stays in tier 1, flagged",
-   ct.options.some((o) => o.label === "Bob Stone — not on this list"),
-   JSON.stringify(ct.options.map((o) => o.label)));
+cf = H.contactFieldTiers([linked, other], null, allC);
+eq("with everyone linked tier 2 is empty", cf.rest, []);
+ok("...and there is no reveal label to render", cf.moreLabel === null, String(cf.moreLabel));
+
+// The chip always shows the selection, so unlike the options version there is
+// no "value with no matching option" hole — but re-opening the list to change
+// your mind must still show who is picked without expanding tier 2 first.
+cf = H.contactFieldTiers([linked], 2, allC);
+eq("a selected off-list contact is lifted into tier 1", cf.primary.map((c) => c.id), [1, 2]);
 ok("...and is not ALSO repeated in tier 2",
-   !(ct.moreOptions || []).some((o) => o.value === 2), JSON.stringify(ct.moreOptions));
+   !cf.rest.some((c) => c.id === 2), JSON.stringify(cf.rest.map((c) => c.id)));
+
+// An id pointing at nobody can't be pinned — better an honest short list than a
+// placeholder row for a contact that no longer exists.
+cf = H.contactFieldTiers([linked], 999, allC);
+eq("an unresolvable selection is dropped rather than faked", cf.primary.map((c) => c.id), [1]);
+
+// Guards for the states the builders actually hit: no company picked yet (no
+// candidates), and a contact list that hasn't loaded.
+cf = H.contactFieldTiers([], null, allC);
+eq("no candidates still offers everyone behind the click", cf.rest.map((c) => c.id), [1, 2]);
+eq("empty tier 1 is empty, not a crash", cf.primary, []);
+cf = H.contactFieldTiers(null, null, null);
+eq("null inputs yield empty tiers", [cf.primary, cf.rest, cf.moreLabel], [[], [], null]);
+
+// Duplicate candidates (a contact linked to both the project and the company)
+// must not render twice — React would collide on the key.
+cf = H.contactFieldTiers([linked, linked], null, allC);
+eq("a duplicated candidate appears once", cf.primary.map((c) => c.id), [1]);
 
 
 console.log("pickers suite — PASS: " + pass + "   FAIL: " + fail);
