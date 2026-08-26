@@ -21,6 +21,29 @@ jobs:
             node "$f"
           done
 
+  # Only meaningful on a pull request: it compares the branch against its base.
+  # A push build has nothing to diff against, so this job is skipped there.
+  shell-version:
+    name: Shell version bumped
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The guard diffs against the merge base, so it needs real history —
+          # the default shallow checkout has none and `git diff base...HEAD`
+          # would fail (exit 2, which fails the job rather than passing blindly).
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # Frontend filenames are un-versioned, so sw.js's CACHE_VERSION is the only
+      # cache-busting lever. Shipping a cached-file change without bumping it
+      # means no update banner AND a stale shell on every device for one more
+      # launch — this has happened twice. No pip install: stdlib only.
+      - name: Require a CACHE_VERSION bump for cached-file changes
+        run: python tests/check_shell_version.py "origin/${{ github.base_ref }}"
+
   backend:
     name: Backend (pytest)
     runs-on: ubuntu-latest

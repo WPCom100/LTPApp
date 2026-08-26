@@ -14,6 +14,8 @@
 //   3. Detect an updated worker that is WAITING and show a persistent
 //      "New version available — tap to refresh" banner. Tapping activates the
 //      new worker (postMessage SKIP_WAITING) and reloads once.
+//   4. window.LTP_SHELL_VERSION — the CACHE_VERSION of the worker currently
+//      controlling the page, published for the app footer to show.
 (function() {
   "use strict";
 
@@ -30,6 +32,31 @@
   };
 
   if (!("serviceWorker" in navigator)) return;  // non-secure context or unsupported
+
+  // ── Which shell is running ────────────────────────────────────────────────
+  // Read off the CONTROLLING worker, because that is the one whose cached files
+  // the page is actually executing — the registration's `waiting` worker may be
+  // a newer version the user hasn't accepted yet, and reporting that as "the
+  // version you're on" would be a lie in exactly the situation where the
+  // question matters. Stays null when nothing controls the page (the very first
+  // load, a browser without service workers, a dev server over plain http); the
+  // footer then shows no version rather than inventing one.
+  window.LTP_SHELL_VERSION = null;
+  function readShellVersion() {
+    var ctrl = navigator.serviceWorker.controller;
+    if (!ctrl) return;
+    var ch;
+    try { ch = new MessageChannel(); } catch (e) { return; }
+    ch.port1.onmessage = function(e) {
+      var v = e.data && e.data.version;
+      if (!v || v === window.LTP_SHELL_VERSION) return;
+      window.LTP_SHELL_VERSION = v;
+      // The footer renders long before the worker answers, so it listens rather
+      // than reading once at mount.
+      window.dispatchEvent(new Event("ltp-shell-version"));
+    };
+    try { ctrl.postMessage({ type: "GET_VERSION" }, [ch.port2]); } catch (e) { /* older worker */ }
+  }
 
   var refreshing = false;
   // When the active worker changes (after the new one skips waiting), reload
@@ -114,6 +141,11 @@
   }
 
   window.addEventListener("load", function() {
+    readShellVersion();
+    // A worker that took control mid-load (first visit, or after activate()
+    // claims) wasn't there for the call above.
+    navigator.serviceWorker.ready.then(readShellVersion).catch(function() {});
+
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(function(reg) {
       // Case 1: a worker is already waiting (update installed on a prior visit).
       if (reg.waiting && navigator.serviceWorker.controller) {
