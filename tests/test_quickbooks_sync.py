@@ -48,6 +48,9 @@ _real_resolve_line_item_id = qbo_sync._resolve_line_item_id
 _real_find_or_create_named_item = qbo_sync._find_or_create_named_item
 _real_generic_equipment_item_id = qbo_sync._generic_equipment_item_id
 _real_repoint_item_income_account = qbo_sync._repoint_item_income_account
+# The estimate-tax tests replace this with an AsyncMock module-wide, so the
+# inactive-reference tests below have to reach for the real one.
+_real_find_or_create_customer = qbo_sync.find_or_create_customer
 
 
 _results: list[tuple[str, bool]] = []
@@ -1143,6 +1146,125 @@ async def test_accounts_refresh_route():
 
 # ── Runner ──────────────────────────────────────────────────────────────────
 
+
+# ── Inactive QuickBooks references ───────────────────────────────────────────
+# A customer or item DEACTIVATED in QuickBooks is still readable by id — QB only
+# refuses it when a transaction references it, answering "Object Not Found ...
+# has been made inactive" and naming nothing. The old code read the customer,
+# saw an Id, swallowed any sync error and returned the stale id anyway, so every
+# send failed with that message forever with no way out from the app.
+
+def _inactive_customer_party():
+    return types.SimpleNamespace(
+        name="Landry Strickland", taxable=True, address="", city="", state="", zip="",
+        qb_customer_id="CUST-DEAD",
+    )
+
+
+async def test_inactive_customer_is_reactivated():
+    print("test_inactive_customer_is_reactivated")
+    party = _inactive_customer_party()
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-DEAD", "SyncToken": "7", "Active": False,
+                      "DisplayName": "Landry Strickland"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    got = await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    _check("cached id is kept", got == "CUST-DEAD")
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("reactivated via sparse update", sent.get("Active") is True)
+    _check("update is sparse", sent.get("sparse") is True)
+    _check("SyncToken carried", sent.get("SyncToken") == "7")
+    # Recreating under the same DisplayName is not an option — QB enforces name
+    # uniqueness across active AND inactive customers.
+    _check("no duplicate customer created",
+           not isinstance(getattr(qbo_sync.quickbooks, "create_customer", None), AsyncMock)
+           or qbo_sync.quickbooks.create_customer.await_count == 0)
+
+
+async def test_failed_reactivation_says_which_customer():
+    print("test_failed_reactivation_says_which_customer")
+    party = _inactive_customer_party()
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-DEAD", "SyncToken": "1", "Active": False,
+                      "DisplayName": "Landry Strickland"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(
+        side_effect=QboApiError(400, '{"Fault":{"Error":[{"Message":"nope"}]}}', "6240"))
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    raised = None
+    try:
+        await _real_find_or_create_customer(
+            object(), db, party, "company", client_id="c", client_secret="s")
+    except qbo_sync.InvoiceNotSyncable as e:
+        raised = e
+    # Silence here is what produced the unexplainable failure: the estimate that
+    # follows is certain to be rejected, so it must say so while it still knows.
+    _check("raises instead of returning a doomed id", raised is not None)
+    _check("names the customer", raised is not None and "Landry Strickland" in str(raised))
+    _check("says how to unblock it", raised is not None and "QuickBooks" in str(raised))
+
+
+async def test_unreadable_cached_customer_is_re_resolved():
+    print("test_unreadable_cached_customer_is_re_resolved")
+    # The id names nothing in this QB company (deleted outright, or carried over
+    # from another realm — ids are reused across companies).
+    party = _inactive_customer_party()
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        side_effect=QboApiError(404, '{"Fault":{"Error":[{"Message":"gone"}]}}', "610"))
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[{"Id": "CUST-NEW"}])
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    got = await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    _check("re-resolved by name", got == "CUST-NEW")
+    _check("cache repointed at the live customer", party.qb_customer_id == "CUST-NEW")
+
+
+async def test_names_the_unusable_reference():
+    print("test_names_the_unusable_reference")
+    lines = [{"DetailType": "SalesItemLineDetail",
+              "SalesItemLineDetail": {"ItemRef": {"value": "ITEM-9"}}}]
+
+    # An inactive ITEM: a query filters inactive rows out, so a referenced id
+    # simply missing from the result is the signal.
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "C1", "Active": True, "DisplayName": "Acme"})
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])
+    detail = await qbo_sync._name_unusable_refs(
+        object(), MagicMock(), "C1", lines, client_id="c", client_secret="s")
+    _check("names the unusable item", "ITEM-9" in detail, detail)
+
+    # An inactive CUSTOMER.
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "C1", "Active": False, "DisplayName": "Landry Strickland"})
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[{"Id": "ITEM-9", "Name": "L1", "Active": True}])
+    detail = await qbo_sync._name_unusable_refs(
+        object(), MagicMock(), "C1", lines, client_id="c", client_secret="s")
+    _check("names the inactive customer", "Landry Strickland" in detail, detail)
+
+    # Healthy payload → nothing to report, so the real error is not replaced.
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "C1", "Active": True, "DisplayName": "Acme"})
+    detail = await qbo_sync._name_unusable_refs(
+        object(), MagicMock(), "C1", lines, client_id="c", client_secret="s")
+    _check("healthy payload reports nothing", detail == "", detail)
+
+    # A diagnostic that itself fails must not mask the original fault.
+    qbo_sync.quickbooks.get_customer = AsyncMock(side_effect=RuntimeError("boom"))
+    detail = await qbo_sync._name_unusable_refs(
+        object(), MagicMock(), "C1", lines, client_id="c", client_secret="s")
+    _check("diagnostic failure is swallowed", detail == "", detail)
+
+
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
                   test_period_label,
@@ -1162,6 +1284,8 @@ def main():
         test_find_or_create_revives_deleted_name, test_deleted_item_never_lands_on_a_line,
         test_resolve_line_repoints_on_mapping_change,
         test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
+        test_inactive_customer_is_reactivated, test_failed_reactivation_says_which_customer,
+        test_unreadable_cached_customer_is_re_resolved, test_names_the_unusable_reference,
     ]
     for t in sync_tests:
         t()
