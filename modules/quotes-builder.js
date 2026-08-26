@@ -55,6 +55,16 @@
     return qbHash(parts.join(""));
   }
 
+  // The date the expiry field starts on. A quote's own date when it has one,
+  // else the workspace default counted from the send date (today, on a draft
+  // that hasn't gone out yet). Filled in when the draft is built rather than
+  // left empty, so the field always shows a real date to adjust instead of a
+  // blank box the producer has to decode. window.LTP_quoteExpiry already
+  // prefers the quote's own value, so this is just "resolve it now".
+  function resolvedExpiry(q) {
+    return window.LTP_quoteExpiry(q || {}, todayISO()) || "";
+  }
+
   function emptyDraft() {
     return {
       id: null,
@@ -65,9 +75,7 @@
       customName: "", customStartDate: todayISO(), customEndDate: todayISO(),
       rentalStartDate: null, rentalEndDate: null,
       status: "draft", createdDate: todayISO(), sentDate: null,
-      // "" until the producer sets one or the quote is sent (which stamps the
-      // workspace default). See window.LTP_quoteExpiry in theme.js.
-      expiryDate: "",
+      expiryDate: resolvedExpiry(null),
       globalDiscount: { type: "none", value: 0 },
       sections: [{ id: genId("sec"), label: "Equipment", items: [], customDates: false, startDate: "", endDate: "" }],
       notes: window.LTP_DEFAULT_QUOTE_NOTES || "",
@@ -89,7 +97,11 @@
       customName: q.customName || "", customStartDate: q.customStartDate || "", customEndDate: q.customEndDate || "",
       rentalStartDate: q.rentalStartDate || null, rentalEndDate: q.rentalEndDate || null,
       status: q.status || "draft", createdDate: q.createdDate || todayISO(), sentDate: q.sentDate || null,
-      expiryDate: q.expiryDate || "",
+      // Resolved, not passed through: a quote saved before this field existed
+      // has no date of its own, and showing the blank box would hide the
+      // deadline it is actually being held to. The clean baseline is this same
+      // clone, so filling it here doesn't mark an untouched quote dirty.
+      expiryDate: resolvedExpiry(q),
       globalDiscount: Object.assign({ type: "none", value: 0 }, q.globalDiscount || {}),
       // This rebuild is a whitelist, so every section field must be named here
       // or editing the quote silently drops it — `projectId` records which job
@@ -2175,40 +2187,15 @@
       : (selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : []);
 
     // ── Expiration ─────────────────────────────────────────────────────────
-    // The date the quote's prices stop being good for. `draft.expiryDate` when
-    // the producer set one; otherwise the workspace default counted from the
-    // send date (today, on a draft that hasn't gone out yet) — see
-    // window.LTP_quoteExpiry in theme.js, which every other reader shares.
+    // What the expiry quick-picks count from: the send date, or today on a
+    // quote that hasn't gone out yet. Same clock resolvedExpiry() prefilled the
+    // field off, so "30 days" lands back on the workspace default.
     var expiryFromDate = draft.sentDate || todayISO();
     function expiryAfter(days) {
       var d = new Date(expiryFromDate);
       d.setDate(d.getDate() + days);
       return d.toISOString().substring(0, 10);
     }
-    // The line beside the field. It has to answer two questions: what happens if
-    // you leave this empty, and — on a quote already out with the client — how
-    // much runway is actually left.
-    var expiryNote = (function() {
-      var effective = window.LTP_quoteExpiry(draft, todayISO());
-      var days = window.LTP_QUOTE_VALIDITY_DAYS();
-      if (!draft.expiryDate) {
-        return { tone: B.textMut,
-                 text: "Not set \u2014 this quote is good for the workspace default of " + days + " days, "
-                     + (draft.sentDate ? "from the day it was sent" : "counted from the day it's sent")
-                     + (effective ? " (" + fmt(effective) + " as of today)" : "") + "." };
-      }
-      if (!draft.sentDate) {
-        return { tone: B.textMut, text: "The client's copy will say this quote is good through " + fmt(draft.expiryDate) + "." };
-      }
-      var today = todayISO();
-      if (draft.expiryDate < today) {
-        return { tone: B.danger, text: "Expired " + fmt(draft.expiryDate) + ". Push the date out to put this quote back in play." };
-      }
-      var left = Math.round((new Date(draft.expiryDate) - new Date(today)) / 86400000);
-      return { tone: left <= 7 ? B.warn : B.textMut,
-               text: "Good through " + fmt(draft.expiryDate) + " \u2014 " + (left === 0 ? "expires today" : left + (left === 1 ? " day" : " days") + " left") + "." };
-    })();
-
     // Quote-level dates (project dates or custom dates) — used as default for all sections
     var quoteDates = selectedProject
       ? { start: selectedProject.startDate, end: selectedProject.endDate }
@@ -2551,20 +2538,15 @@
                     onChange: function(v) { patchDraft({ expiryDate: v }); } }),
                   h("div", { style: { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap", alignItems: "center" } },
                     // Counted from the send date, or from today on a quote that
-                    // hasn't gone out — the same clock the fallback uses, so
-                    // "30 days" means the same thing whether you set it or not.
+                    // hasn't gone out — the same clock the draft was prefilled
+                    // off, so "30 days" lands back on the default.
                     [7, 14, 30, 60].map(function(n) {
                       return h("button", { key: n, onClick: function() { patchDraft({ expiryDate: expiryAfter(n) }); },
                         style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 6px", color: B.accent, fontSize: "9px", fontWeight: 600, cursor: "pointer" } },
                         n + " days");
-                    }).concat([
-                      draft.expiryDate ? h("button", { key: "_clear", onClick: function() { patchDraft({ expiryDate: "" }); },
-                        style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 6px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } },
-                        "Clear") : null
-                    ])
+                    })
                   )
-                ),
-                h("div", { style: { fontSize: "10px", color: expiryNote.tone, lineHeight: 1.5, paddingTop: isMobile ? 0 : 22 } }, expiryNote.text)
+                )
               ),
 
               draft.projectId && selectedProject && h("div", { style: { marginTop: 10, padding: "8px 12px", background: B.raised, borderRadius: "6px", fontSize: "11px", color: B.textMut } },

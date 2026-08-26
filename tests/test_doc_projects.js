@@ -405,16 +405,28 @@ const ALLP = [GALA, SUMMIT];
 // read the row directly) showed the tax. Extract the real function and run it.
 {
   const src = fs.readFileSync(path.join(__dirname, "..", "modules", "quotes-builder.js"), "utf8");
-  const start = src.indexOf("function cloneDraft(");
-  let i = src.indexOf("{", start), depth = 0, end = -1;
-  for (let j = i; j < src.length; j++) {
-    if (src[j] === "{") depth++;
-    else if (src[j] === "}") { depth--; if (depth === 0) { end = j + 1; break; } }
+  // Pull a named function out of the module by brace-matching. Both helpers
+  // below come from SOURCE rather than being re-typed here — a hand-written
+  // stub of resolvedExpiry would happily diverge from the real prefill rule
+  // and this suite would still pass.
+  function extractFn(name) {
+    const start = src.indexOf("function " + name + "(");
+    if (start === -1) return null;
+    let depth = 0;
+    for (let j = src.indexOf("{", start); j < src.length; j++) {
+      if (src[j] === "{") depth++;
+      else if (src[j] === "}") { depth--; if (depth === 0) return src.slice(start, j + 1); }
+    }
+    return null;
   }
-  ok("C0 cloneDraft located in the module", start !== -1 && end !== -1);
-  // cloneDraft closes over two module-scope helpers; supply them.
+  const cloneSrc = extractFn("cloneDraft");
+  const expirySrc = extractFn("resolvedExpiry");
+  ok("C0 cloneDraft located in the module", cloneSrc !== null);
+  ok("C0b resolvedExpiry located in the module", expirySrc !== null);
+  // cloneDraft closes over module-scope helpers; supply them.
   globalThis.todayISO = () => "2026-08-19";
-  const cloneDraft = (0, eval)("(" + src.slice(start, end) + ")");
+  globalThis.resolvedExpiry = (0, eval)("(" + expirySrc + ")");
+  const cloneDraft = (0, eval)("(" + cloneSrc + ")");
 
   const q = { id: 4, clientType: "company", companyId: 2, status: "sent",
               sections: [{ id: "s1", label: "Crew", items: [{ id: "i1", unitPrice: 5000, qty: 2 }] }],
@@ -429,6 +441,28 @@ const ALLP = [GALA, SUMMIT];
   eq("C4 an exempt client's $0 survives", cloneDraft({ id: 6, sections: [], qbTaxTotal: 0 }).qbTaxTotal, 0);
   // And the totals helper agrees with what the PDF would compute.
   eq("C5 cloned draft totals are tax-inclusive", window.LTP_QUOTE_TOTALS(d).total, 10825);
+
+  // ── Expiry prefill ────────────────────────────────────────────────────────
+  // The builder's date field must never open blank: a quote saved before the
+  // column existed still has a deadline (the workspace default counted from its
+  // send date), and showing an empty box hid it. The clean baseline is this
+  // same clone, so filling it here must NOT depend on anything the draft picks
+  // up later — hence resolving inside cloneDraft.
+  window.LTP_DEFAULT_QUOTE_VALIDITY = 30;
+  eq("C6 a quote with its own expiry keeps it",
+     cloneDraft({ id: 7, sections: [], expiryDate: "2026-12-24" }).expiryDate, "2026-12-24");
+  // A SENT quote counts from the day it went out, not from today — the client
+  // was given a deadline and reopening the quote must not silently extend it.
+  eq("C7 a sent quote with no expiry counts from sentDate",
+     cloneDraft({ id: 8, sections: [], sentDate: "2026-07-01" }).expiryDate, "2026-07-31");
+  // An unsent draft has no send date yet, so the field previews off today.
+  eq("C8 an unsent draft previews off today",
+     cloneDraft({ id: 9, sections: [] }).expiryDate, "2026-09-18");
+  // The workspace default is the lever, not a hardcoded 30.
+  window.LTP_DEFAULT_QUOTE_VALIDITY = 45;
+  eq("C9 a non-default workspace validity is honoured",
+     cloneDraft({ id: 10, sections: [] }).expiryDate, "2026-10-03");
+  window.LTP_DEFAULT_QUOTE_VALIDITY = 30;
 }
 
 console.log("doc-projects suite — PASS: " + pass + "   FAIL: " + fail);

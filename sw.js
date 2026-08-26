@@ -51,7 +51,14 @@
 // modules/quotes-client-rates.js), so the shell must be refetched; the new
 // files themselves are picked up by the runtime /data/, /components/ and
 // /modules/ rules below, not precached.
-var CACHE_VERSION = 'ltp-shell-v54';
+// v55: shared field labels + chip-field restyle, the per-quote expiry date, and
+// the LTPApp hook-order fix. index.html is untouched, so it would have been easy
+// to assume no bump was needed — but theme.js and app.js are BOTH precached and
+// runtime-cached, so without a new version every device serves the whole old
+// shell for one more launch and no worker installs, meaning no refresh banner
+// either. The rule is the header above, not "did index.html change": any
+// precached or runtime-cached file moving needs this string to move.
+var CACHE_VERSION = 'ltp-shell-v55';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
