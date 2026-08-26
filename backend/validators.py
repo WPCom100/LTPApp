@@ -157,6 +157,7 @@ def _build_rules():
             "clientType":      _enum("client_type"),
             "status":          _enum("quote_status"),
             "sentDate":        _iso_date,
+            "expiryDate":      _iso_date,
             "customStartDate": _iso_date,
             "customEndDate":   _iso_date,
             "customName":      _str_max(255),

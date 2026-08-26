@@ -26,7 +26,7 @@ half-populated quote still renders.
 """
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.lib.colors import HexColor, white
@@ -151,6 +151,40 @@ def _fmt_date(iso_str):
         return d.strftime(f"%B {day}{sfx}, %Y")
     except (ValueError, TypeError):
         return str(iso_str)
+
+
+def _quote_validity_days(settings):
+    """Workspace fallback shelf life in days. Anything unparseable or
+    non-positive falls back to 30, the value the terms block used to hardcode."""
+    try:
+        n = int(float((settings or {}).get("defaultQuoteValidity") or 0))
+    except (TypeError, ValueError):
+        return 30
+    return n if n > 0 else 30
+
+
+def _quote_expiry(entity, settings):
+    """The ISO date this quote's prices stop being good for, or "" when there's
+    nothing to count from (an unsent quote with no expiry of its own has no
+    clock running yet).
+
+    Mirrors window.LTP_quoteExpiry in theme.js — the app, this PDF and the
+    client's view all have to name the same day, so the rule lives in both
+    languages rather than being re-derived per surface: the quote's own
+    expiryDate when it has one, else sentDate + the workspace default validity.
+    """
+    entity = entity or {}
+    own = (entity.get("expiryDate") or "").strip()
+    if own:
+        return own
+    sent = (entity.get("sentDate") or "").strip()
+    if not sent:
+        return ""
+    try:
+        d = datetime.strptime(sent, "%Y-%m-%d") + timedelta(days=_quote_validity_days(settings))
+    except (ValueError, TypeError):
+        return ""
+    return d.strftime("%Y-%m-%d")
 
 
 def _doc_ref(kind, entity):
@@ -787,8 +821,17 @@ class _DocPDF:
                 "Please include the invoice reference number with your payment.",
             ]
         else:
+            # Names the actual day whenever the quote has one to name — the
+            # builder stamps a date on send, so a client reading this PDF and a
+            # producer reading the quote see the same deadline. The "N days from
+            # issue" wording is the fallback for a quote with no expiry stamped
+            # (every quote sent before the field existed), which is exactly what
+            # this line used to say unconditionally — with 30 hardcoded, ignoring
+            # even the workspace setting.
+            expiry = _quote_expiry(self.entity, self.settings)
             lines = [
-                "This quote is valid for 30 days from the date of issue.",
+                f"This quote is valid through {_fmt_date(expiry)}." if expiry
+                else f"This quote is valid for {_quote_validity_days(self.settings)} days from the date of issue.",
                 "Prices are subject to equipment availability at time of booking.",
                 "All equipment rentals are subject to a damage waiver fee.",
                 "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",

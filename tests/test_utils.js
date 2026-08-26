@@ -456,6 +456,53 @@ eq("NS6 empty note digests to empty", NS(""), "");
 eq("NSTY1 pre-wrap", window.LTP_NOTE_TEXT_STYLE.whiteSpace, "pre-wrap");
 ok("NSTY2 long tokens can break", !!window.LTP_NOTE_TEXT_STYLE.overflowWrap);
 
+// ── Quote expiration (LTP_quoteExpiry / LTP_isQuoteExpired) ─────────────────
+// The rule is duplicated in Python (backend/pdf_generator._quote_expiry) because
+// the app, the PDF and the client's browser all render this deadline. If these
+// two ever disagree, a client's copy says a different day than the producer's —
+// so tests/test_quote_expiry.py holds the same table on the other side.
+const QE = window.LTP_quoteExpiry, QX = window.LTP_isQuoteExpired;
+window.LTP_DEFAULT_QUOTE_VALIDITY = 30;
+
+eq("QE1 the quote's own date wins",
+   QE({ expiryDate: "2026-11-05", sentDate: "2026-10-01" }), "2026-11-05");
+eq("QE2 unset falls back to sentDate + validity",
+   QE({ sentDate: "2026-10-01" }), "2026-10-31");
+eq("QE3 an unsent draft previews off the asOf date",
+   QE({ sentDate: null }, "2026-10-01"), "2026-10-31");
+eq("QE4 sentDate beats asOf — the clock started when it went out",
+   QE({ sentDate: "2026-09-01" }, "2026-10-01"), "2026-10-01");
+eq("QE5 nothing to count from yields no date", QE({}), "");
+eq("QE6 null quote tolerated", QE(null), "");
+eq("QE7 a garbage date yields no date, not NaN", QE({ sentDate: "whenever" }), "");
+eq("QE8 an explicit validity override wins over the global",
+   QE({ sentDate: "2026-10-01" }, "", 45), "2026-11-15");
+
+// The override is what the public client view passes (it loads without a
+// session, so app.js never mirrored the workspace default onto window).
+const VD = window.LTP_QUOTE_VALIDITY_DAYS;
+eq("QV1 override used when given", VD(45), 45);
+eq("QV2 numeric string accepted", VD("60"), 60);
+eq("QV3 junk falls back to 30", VD("soon"), 30);
+eq("QV4 zero falls back to 30", VD(0), 30);
+eq("QV5 empty string falls through to the global", VD(""), 30);
+
+// Only a SENT quote can be expired: a draft was never promised to anyone, and
+// accepted / declined / converted are settled — an accepted quote does not
+// un-accept itself because a date passed.
+const past = "2000-01-01", future = "2999-01-01";
+eq("QX1 a sent quote past its date is expired", QX({ status: "sent", expiryDate: past }), true);
+eq("QX2 a sent quote inside its window is not", QX({ status: "sent", expiryDate: future }), false);
+eq("QX3 a draft is never expired", QX({ status: "draft", expiryDate: past }), false);
+eq("QX4 an accepted quote is never expired", QX({ status: "accepted", expiryDate: past }), false);
+eq("QX5 a converted quote is never expired", QX({ status: "converted", expiryDate: past }), false);
+eq("QX6 a declined quote is never expired", QX({ status: "declined", expiryDate: past }), false);
+eq("QX7 a sent quote with nothing to count from is not expired", QX({ status: "sent" }), false);
+eq("QX8 null tolerated", QX(null), false);
+// The fallback path expires too — a legacy quote sent long ago with no date of
+// its own is just as stale as one carrying an explicit date.
+eq("QX9 the sentDate fallback can expire", QX({ status: "sent", sentDate: "2000-01-01" }), true);
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

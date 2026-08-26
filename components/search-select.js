@@ -29,10 +29,23 @@
   var BROWSE_CAP = 50;
   function capped(list) { return list.length > BROWSE_CAP ? list.slice(0, BROWSE_CAP) : list; }
 
+  // The chip well every single-select field wears. Matches window.LTPInput's box
+  // exactly — same fill, same radius, same border — because these sit directly
+  // beside plain inputs in the quote and invoice headers (Linked Projects next
+  // to Custom Quote Name, Company next to a date), and two fills on one row is
+  // the thing that made those rows read as unfinished. The chips inside carry
+  // the accent, so nothing is lost by letting the well recede like every other
+  // field does.
+  var WELL = {
+    display: "flex", alignItems: "center", gap: 6, boxSizing: "border-box",
+    background: B.bg, border: "1px solid " + B.border, borderRadius: "8px",
+    padding: "0 8px 0 12px", minHeight: 37,
+  };
+
   // Shared dropdown shell so all four fields drop their results in the same
   // box, and so the create row always sits at the bottom in the same place.
   function dropdown(children, maxHeight) {
-    return h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 6px 6px", maxHeight: maxHeight || 180, overflow: "auto", zIndex: 10 } }, children);
+    return h("div", { style: { position: "absolute", top: "100%", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "0 0 8px 8px", maxHeight: maxHeight || 180, overflow: "auto", zIndex: 10 } }, children);
   }
 
   // Returns a 0- or 1-element array so callers can `.concat()` it onto their
@@ -73,9 +86,11 @@
     }
     var showCreate = !!createKind && focused && query.length > 0;
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-      (label || createKind) && h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: createKind ? 26 : undefined } },
-        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label || ""),
-        createKind && h(window.LTPEntityQuickAction, { kind: createKind, id: null, prefill: createPrefill, onSaved: onCreated })),
+      (label || createKind) && h(window.LTPFieldLabel, { label: label || "",
+        // Sized down to sit INSIDE the shared label height. This field's box is
+        // a chip well with no fixed right edge to hang an action off, so unlike
+        // the single-select fields below it keeps its ＋ on the label.
+        action: createKind ? h(window.LTPEntityQuickAction, { kind: createKind, id: null, prefill: createPrefill, onSaved: onCreated, size: window.LTP_FIELD_LABEL_HEIGHT }) : null }),
       selectedIds.length > 0 && h("div", { style: { display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 } },
         selectedIds.map(function(id) {
           var item = items.find(function(i) { return i.id === id; }); if (!item) return null;
@@ -86,7 +101,7 @@
         })
       ),
       h("div", { style: { position: "relative" } },
-        h("input", { type: "text", value: query, placeholder: "Search...", onChange: function(e) { setQuery(e.target.value); }, onFocus: function() { setFocused(true); }, onBlur: function() { setTimeout(function() { setFocused(false); }, 200); }, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", width: "100%" } }),
+        h("input", { type: "text", value: query, placeholder: "Search...", onChange: function(e) { setQuery(e.target.value); }, onFocus: function() { setFocused(true); }, onBlur: function() { setTimeout(function() { setFocused(false); }, 200); }, style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", width: "100%", boxSizing: "border-box" } }),
         (focused && (filtered.length > 0 || showCreate)) && dropdown(
           capped(filtered).map(function(item) { var id = item.id, isSel = selectedIds.includes(id); return h("div", { key: id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { if (isSel) onChange(selectedIds.filter(function(x) { return x !== id; })); else onChange(selectedIds.concat([id])); setQuery(""); }, style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: isSel ? B.accent : B.text, background: isSel ? B.accentMuted : "transparent", borderBottom: "1px solid " + B.border } }, (isSel ? "✓ " : "") + getName(item)); })
             .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0)))
@@ -104,9 +119,9 @@
     function onCreated(rec) { if (rec && rec.id != null) { setCompId(rec.id); setQuery(""); setFocused(false); } }
     var showCreate = !!createKind && focused && !selCompany && query.length > 0;
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-      label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
+      label != null && h(window.LTPFieldLabel, { label: label }),
       h("div", { style: { position: "relative" } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 12px", minHeight: 37 } },
+        h("div", { style: Object.assign({}, WELL) },
           selCompany && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, flexShrink: 0 } },
             selCompany.name,
             h("button", { onClick: function(e) { e.stopPropagation(); setCompId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "×")
@@ -132,26 +147,54 @@
   // Single-select inline chip search for a contact. Mirrors CompanySearchField.
   // Accepts optional `filter` function to restrict candidates (e.g. only contacts
   // without a company, or contacts belonging to a specific company).
-  window.ContactSearchField = function({ label, contactId, setContactId, contacts, filter, placeholder, onClear, createKind, createPrefill, allowEdit }) {
+  //
+  // TIERS — `tiers`
+  //   Pass LTP_HELPERS.contactFieldTiers(...) — { primary, rest, moreLabel } —
+  //   to split the list the way the quote/invoice "Primary Contact" field wants
+  //   it: this client's people first, everyone else behind a deliberate click.
+  //   Search stays inside tier 1 until tier 2 is opened, so a name match from an
+  //   unrelated client can't bury the handful of people who belong to this one.
+  //   `tiers` supersedes `filter` (it has already done the narrowing); without
+  //   it the field behaves exactly as before — one flat, filtered list.
+  window.ContactSearchField = function({ label, contactId, setContactId, contacts, filter, tiers, placeholder, onClear, createKind, createPrefill, allowEdit }) {
     var [query, setQuery] = useState("");
     var [focused, setFocused] = useState(false);
-    var list = contacts || [];
-    if (typeof filter === "function") list = list.filter(filter);
+    // Tier 2 stays shut until deliberately opened, and re-shuts when the field
+    // closes, so the next visit starts from the short, relevant list again.
+    var [moreOpen, setMoreOpen] = useState(false);
+    var list = tiers ? (tiers.primary || []) : (contacts || []);
+    if (!tiers && typeof filter === "function") list = list.filter(filter);
+    var rest = tiers ? (tiers.rest || []) : [];
     // Resolve the chip against the FULL list, not the filtered one, so a
     // selection that no longer passes the filter still renders its name.
     var selContact = contactId ? (contacts || []).find(function(c) { return c.id === contactId; }) : null;
     var q = query.toLowerCase();
-    var filtered = list.filter(function(c) {
+    function matches(c) {
       var hay = (c.firstName + " " + c.lastName + " " + (c.email || "") + " " + (c.role || "")).toLowerCase();
       return hay.indexOf(q) !== -1;
-    });
+    }
+    var filtered = list.filter(matches);
+    var filteredRest = moreOpen ? rest.filter(matches) : [];
     function fullName(c) { return c.firstName + " " + c.lastName; }
-    function onCreated(rec) { if (rec && rec.id != null) { setContactId(rec.id); setQuery(""); setFocused(false); } }
+    function close() { setFocused(false); setMoreOpen(false); }
+    function onCreated(rec) { if (rec && rec.id != null) { setContactId(rec.id); setQuery(""); close(); } }
+    function pick(id) { setContactId(id); setQuery(""); close(); }
     var showCreate = !!createKind && focused && !selContact && query.length > 0;
+    // The reveal row is offered whenever tier 2 has anyone in it — including
+    // when tier 1 came back empty, which is the case that used to leave a
+    // client with no linked contacts looking like it had nobody to pick at all.
+    var showMoreRow = !!tiers && !moreOpen && rest.length > 0 && focused && !selContact;
+    // One contact row, shared by both tiers.
+    function contactRow(c) {
+      return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { pick(c.id); },
+        style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: c.id === contactId ? B.accent : B.text, borderBottom: "1px solid " + B.border } },
+        h("div", { style: { fontWeight: 600 } }, fullName(c)),
+        c.role && h("div", { style: { fontSize: "10px", color: B.textMut } }, c.role + (c.email ? " · " + c.email : "")));
+    }
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-      label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
+      label != null && h(window.LTPFieldLabel, { label: label }),
       h("div", { style: { position: "relative" } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 12px", minHeight: 37 } },
+        h("div", { style: Object.assign({}, WELL) },
           selContact && h("span", { style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, flexShrink: 0 } },
             fullName(selContact),
             h("button", { onClick: function(e) { e.stopPropagation(); setContactId(null); setQuery(""); if (onClear) onClear(); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 2px", lineHeight: 1 } }, "×")
@@ -159,7 +202,7 @@
           h("input", { type: "text", value: selContact ? "" : query, placeholder: selContact ? "" : (placeholder || "Search contacts..."),
             onChange: function(e) { if (!selContact) setQuery(e.target.value); },
             onFocus: function() { if (!selContact) setFocused(true); },
-            onBlur: function() { setTimeout(function() { setFocused(false); }, 200); },
+            onBlur: function() { setTimeout(function() { close(); }, 200); },
             onClick: function() { if (selContact) { setContactId(null); setQuery(""); setFocused(true); if (onClear) onClear(); } },
             style: { background: "transparent", border: "none", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", minWidth: 60, cursor: selContact ? "pointer" : "text" }
           }),
@@ -167,13 +210,25 @@
             kind: createKind, id: (allowEdit && selContact) ? selContact.id : null,
             prefill: createPrefill, onSaved: onCreated })
         ),
-        (focused && !selContact && (filtered.length > 0 || showCreate)) && dropdown(
-          capped(filtered).map(function(c) { return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { setContactId(c.id); setQuery(""); setFocused(false); },
-            style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } },
-            h("div", { style: { fontWeight: 600 } }, fullName(c)),
-            c.role && h("div", { style: { fontSize: "10px", color: B.textMut } }, c.role + (c.email ? " · " + c.email : ""))
-          ); })
-            .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0)))
+        (focused && !selContact && (filtered.length > 0 || filteredRest.length > 0 || showMoreRow || showCreate)) && dropdown(
+          capped(filtered).map(contactRow)
+            // The tier-2 header doubles as the reveal control, so everyone else
+            // is always one deliberate click away and never mixed into tier 1.
+            .concat(showMoreRow
+              ? [h("div", { key: "_more",
+                  onMouseDown: function(e) { e.preventDefault(); },
+                  onClick: function() { setMoreOpen(true); },
+                  style: { padding: "9px 12px", fontSize: "12px", cursor: "pointer", color: B.accent, fontWeight: 600, background: B.accentMuted,
+                           display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 } },
+                  h("span", null, tiers.moreLabel || "Other contacts…"),
+                  h("span", { style: { fontSize: "11px" } }, "▾"))]
+              : [])
+            .concat(moreOpen && rest.length
+              ? [h("div", { key: "_morehdr", style: { padding: "6px 12px", fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: B.textMut, background: B.raised, borderBottom: "1px solid " + B.border } },
+                  tiers.moreLabel || "Other contacts")]
+              : [])
+            .concat(capped(filteredRest).map(contactRow))
+            .concat(createRows(showCreate, createKind, query, createPrefill, onCreated, filtered.length === 0 && !showMoreRow && filteredRest.length === 0)))
       )
     );
   };
@@ -246,9 +301,9 @@
     var primary = selected.length ? selected[0] : null;
 
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-      label && h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, label),
+      label != null && h(window.LTPFieldLabel, { label: label }),
       h("div", { style: { position: "relative" } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 12px", minHeight: 37 } },
+        h("div", { style: Object.assign({}, WELL, { flexWrap: "wrap" }) },
           selected.map(function(p, i) {
             // The primary wears the solid accent chip; the rest are outlined, so
             // which project titles the document is readable at a glance.
