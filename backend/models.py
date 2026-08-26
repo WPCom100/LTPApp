@@ -218,7 +218,14 @@ class Quote(Base):
                                                         # Consultation, Project Prep). Their price varies per project, so a
                                                         # fee line edits `unitPrice` DIRECTLY and never sets `adjustedPrice`
                                                         # — a fee is never counted as a line-item price adjustment.
-    notes = Column(Text, default="")                    # free-form text shown on the printed quote
+    notes = Column(Text, default="")                    # internal free-form text; never rendered client-side
+    # Client-facing terms & conditions, printed at the foot of the document —
+    # one line per bullet, may carry {{token}} placeholders resolved at render
+    # time (see doc_terms in backend/pdf_generator.py and its twin
+    # window.LTP_docTerms in theme.js). "" = never edited on this document, so
+    # readers fall back to the workspace default and then to the built-in list.
+    # NOT `notes`, which is internal and never leaves the app.
+    terms = Column(Text, default="")
     activity = Column(JSON, default=list)               # list[{id: str, date: str, time: str, type: str, user: str, message: str, changes: list[{cat, detail}]|null}]
     # Remembered email recipients for the send modal: {"to": [email...], "cc":
     # [email...]}. null = not customized yet → derive from the project's contacts
@@ -296,7 +303,9 @@ class Invoice(Base):
                                                         # another project carry `projectId` (see Quote.sections).
                                                         # See Quote.sections for the "fee" line type (edits unitPrice
                                                         # directly, never adjustedPrice).
-    notes = Column(Text, default="")
+    notes = Column(Text, default="")                    # internal free-form text; never rendered client-side
+    # Client-facing terms & conditions. Same contract as Quote.terms.
+    terms = Column(Text, default="")
     payments = Column(JSON, default=list)               # list[{id: str, date: str, amount: float, method: str, reference: str, notes: str}]
     activity = Column(JSON, default=list)               # same shape as Quote.activity
     # Remembered send recipients: {"to": [email...], "cc": [email...]}. null =

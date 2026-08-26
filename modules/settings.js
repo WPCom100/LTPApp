@@ -577,6 +577,27 @@
             h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Default Invoice Notes"),
             h("textarea", { value: draft.defaultInvoiceNotes || "", onChange: function(e) { set("defaultInvoiceNotes", e.target.value); },
               style: { width: "100%", minHeight: 70, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical" } }))
+        ),
+        // House terms — the bullets printed at the foot of every document that
+        // hasn't had its own edited in the builder. Notes above are INTERNAL;
+        // these are the ones the client reads, hence the warning.
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
+          [{ key: "defaultQuoteTerms", label: "Default Quote Terms", kind: "quote" },
+           { key: "defaultInvoiceTerms", label: "Default Invoice Terms", kind: "invoice" }].map(function(t) {
+            var custom = !!(draft[t.key] || "").trim();
+            return h("div", { key: t.key },
+              h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 } },
+                h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600 } }, t.label),
+                h("span", { style: { fontSize: "9px", color: custom ? B.accent : B.textMut } },
+                  custom ? "customized" : "using the built-in")),
+              h("textarea", { value: draft[t.key] || "", onChange: function(e) { set(t.key, e.target.value); },
+                placeholder: window.LTP_BUILTIN_TERMS[t.kind],
+                style: { width: "100%", minHeight: 96, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.6 } }),
+              h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
+                "Printed on the client's copy \u2014 one line per bullet. Leave empty to keep the built-in wording shown above. Available: "
+                + (t.kind === "quote" ? "{{expiryDate}} \u00b7 {{validityDays}}" : "{{dueDate}} \u00b7 {{paymentTerms}}")
+                + " \u00b7 {{companyName}}. A document that has had its own terms edited keeps those."));
+          })
         )
       ),
 
