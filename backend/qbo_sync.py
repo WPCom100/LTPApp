@@ -256,6 +256,61 @@ def _customer_fields(party, kind) -> tuple[str, dict]:
     return display_name, fields
 
 
+async def _name_unusable_refs(conn, db, customer_id, lines, *, client_id, client_secret) -> str:
+    """Best-effort: say WHICH reference in a rejected payload QuickBooks won't
+    accept. Returns a human clause ("the item \u201cL1 \u2014 Lead Lighting Tech\u201d is
+    inactive") or "" when nothing conclusive is found.
+
+    QuickBooks answers a transaction naming a deactivated customer/item with
+    "Object Not Found ... has been made inactive. Check the fields with
+    accounts, customers, items, vendors or employees" — every field it could
+    possibly be, and no id. That message sends people hunting through their whole
+    chart of accounts. We already know exactly which ids we sent, so ask.
+
+    Only runs on the failure path, so the healthy case pays nothing. Never
+    raises: a diagnostic that fails must not replace the real error.
+    """
+    problems: list[str] = []
+    try:
+        if customer_id:
+            cust = await quickbooks.get_customer(
+                conn, db, str(customer_id), client_id=client_id, client_secret=client_secret
+            )
+            if not cust.get("Id"):
+                problems.append("the customer this document bills to no longer exists in QuickBooks")
+            elif cust.get("Active") is False:
+                problems.append(
+                    f"the QuickBooks customer \u201c{cust.get('DisplayName') or customer_id}\u201d is inactive"
+                )
+
+        item_ids = sorted({
+            str(((l.get("SalesItemLineDetail") or {}).get("ItemRef") or {}).get("value") or "")
+            for l in (lines or [])
+        } - {""})
+        if item_ids:
+            # One batch query rather than a GET per line — this is the failure
+            # path, but it can be hit repeatedly while someone retries.
+            in_list = ", ".join("'" + quickbooks.escape_query_value(i) + "'" for i in item_ids)
+            rows = await quickbooks.query(
+                conn, db, f"SELECT Id, Name, Active FROM Item WHERE Id IN ({in_list})",
+                client_id=client_id, client_secret=client_secret,
+            )
+            by_id = {str(r.get("Id")): r for r in (rows or [])}
+            for item_id in item_ids:
+                row = by_id.get(item_id)
+                if row is None:
+                    # A query filters inactive rows out by default, so "missing
+                    # from the result" means deleted OR deactivated. Both are
+                    # unusable on a new transaction, which is all that matters.
+                    problems.append(f"the QuickBooks item for line id {item_id} is inactive or deleted")
+                elif row.get("Active") is False:
+                    problems.append(f"the QuickBooks item \u201c{row.get('Name') or item_id}\u201d is inactive")
+    except Exception as e:                      # noqa: BLE001 - diagnostics only
+        print(f"[LTP] qbo: could not identify the unusable reference ({e})", flush=True)
+        return ""
+    return "; ".join(problems)
+
+
 async def find_or_create_customer(conn, db, party, kind, *, client_id, client_secret) -> str:
     """Resolve `party` (Company or Contact row) to a QB Customer id, caching it
     on the row. When the customer already exists, keep its billing address +
@@ -265,21 +320,61 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
     display_name, fields = _customer_fields(party, kind)
 
     if party.qb_customer_id:
+        # A DEACTIVATED customer is still readable by id — QuickBooks only
+        # refuses it when a transaction references it, and then says "Object Not
+        # Found ... has been made inactive", naming nothing. So the old check
+        # ("did the GET come back with an Id?") passed, the sync error was
+        # swallowed as best-effort, the stale id was returned anyway, and every
+        # later send failed with that message forever, with no way out from the
+        # app. Deleted ITEMS were already revived this way further down
+        # (_repoint_item_income_account); customers never were.
+        current = None
         try:
             current = await quickbooks.get_customer(
                 conn, db, party.qb_customer_id, client_id=client_id, client_secret=client_secret
             )
-            if current.get("Id"):
-                update = dict(fields)
-                update["Id"] = str(current["Id"])
-                update["SyncToken"] = str(current.get("SyncToken", "0"))
-                update["sparse"] = True
+        except QboApiError as e:
+            # The id names nothing in this QB company at all (deleted outright,
+            # or carried over from another realm — ids are reused across
+            # companies). Drop the cache and re-resolve by name below rather
+            # than posting a reference we already know is bad.
+            print(f"[LTP] qbo: cached customer {party.qb_customer_id} unreadable "
+                  f"({e.safe_message}) — re-resolving by name", flush=True)
+            current = None
+
+        if current and current.get("Id"):
+            inactive = current.get("Active") is False
+            update = dict(fields)
+            update["Id"] = str(current["Id"])
+            update["SyncToken"] = str(current.get("SyncToken", "0"))
+            update["sparse"] = True
+            if inactive:
+                # Revive it as part of the sync we are already doing. Recreating
+                # under the same DisplayName is not an option: QB enforces name
+                # uniqueness across active AND inactive customers, so a create
+                # would fault 6240 and a by-name query would not see the
+                # inactive row — the account would be unreachable either way.
+                update["Active"] = True
+            try:
                 await quickbooks.update_customer(
                     conn, db, update, client_id=client_id, client_secret=client_secret
                 )
-        except QboApiError as e:
-            print(f"[LTP] qbo: customer sync skipped for {party.qb_customer_id} ({e.safe_message})", flush=True)
-        return party.qb_customer_id
+            except QboApiError as e:
+                if inactive:
+                    # Staying quiet here is what produced the unexplainable
+                    # failure: the estimate/invoice that follows is certain to be
+                    # rejected, so say which customer and why while we still know.
+                    raise InvoiceNotSyncable(
+                        f"the QuickBooks customer \"{display_name}\" is inactive and could not be "
+                        f"reactivated ({e.safe_message}). Make it active again in QuickBooks "
+                        f"(Sales \u2192 Customers \u2192 filter by Inactive), then try again."
+                    ) from e
+                # An ordinary sync hiccup on an ACTIVE customer is still
+                # best-effort — the reference itself is fine.
+                print(f"[LTP] qbo: customer sync skipped for {party.qb_customer_id} ({e.safe_message})", flush=True)
+            return party.qb_customer_id
+
+        party.qb_customer_id = None
 
     # No cached id — match an existing customer by DisplayName, else create.
     payload = dict(fields)
@@ -1174,9 +1269,24 @@ async def get_quote_estimate_tax(db, quote, user=None, *, client_id=None, client
     # each time anyway). Only CustomerRef + Line are needed for QB to compute tax.
     payload = {"CustomerRef": {"value": str(customer_id)}, "Line": lines}
 
-    resp = await quickbooks.create_estimate(
-        conn, db, payload, client_id=client_id, client_secret=client_secret
-    )
+    try:
+        resp = await quickbooks.create_estimate(
+            conn, db, payload, client_id=client_id, client_secret=client_secret
+        )
+    except QboApiError as e:
+        # 610 is Intuit's "Object Not Found", which is what a reference to a
+        # deactivated customer or item comes back as. The fault names no id, so
+        # turn it into something a person can act on before giving up.
+        if e.fault_code == "610" or "not found" in (e.safe_message or "").lower():
+            detail = await _name_unusable_refs(
+                conn, db, customer_id, lines, client_id=client_id, client_secret=client_secret
+            )
+            if detail:
+                raise InvoiceNotSyncable(
+                    f"QuickBooks rejected the tax calculation because {detail}. "
+                    f"Make it active again in QuickBooks and try again."
+                ) from e
+        raise
     est = resp.get("Estimate") or {}
     estimate_id = est.get("Id")
     sync_token = est.get("SyncToken")
