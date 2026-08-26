@@ -559,7 +559,14 @@
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
           h(window.LTPSelect, { label: "Default Payment Terms", value: String(draft.defaultPaymentTerms || 30), onChange: function(v) { set("defaultPaymentTerms", Number(v)); },
             options: [{ value: "0", label: "Due on Receipt" }, { value: "15", label: "Net 15" }, { value: "20", label: "Net 20" }, { value: "30", label: "Net 30" }, { value: "45", label: "Net 45" }, { value: "60", label: "Net 60" }] }),
-          h(window.LTPInput, { label: "Quote Validity (days)", value: draft.defaultQuoteValidity || "", onChange: function(v) { set("defaultQuoteValidity", Number(v) || 30); }, type: "number" })
+          // A FALLBACK now, not the rule: each quote carries its own expiry date
+          // (set in the quote builder, stamped on send), and this is only what
+          // a quote without one resolves to. Said out loud so nobody expects
+          // changing it to move the deadline on quotes already sent.
+          h("div", { style: { minWidth: 0 } },
+            h(window.LTPInput, { label: "Default Quote Validity (days)", value: draft.defaultQuoteValidity || "", onChange: function(v) { set("defaultQuoteValidity", Number(v) || 30); }, type: "number" }),
+            h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
+              "Starting point for a new quote's expiration date. Each quote can override it, and sending stamps the date onto the quote \u2014 so changing this never moves a deadline a client already has."))
         ),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
           h("div", null,

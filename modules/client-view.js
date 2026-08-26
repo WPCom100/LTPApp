@@ -741,6 +741,12 @@
 
     // ── Mobile sticky action bar (pending quotes, before a choice is made) ────
     var showSticky = isMobile && isQuote && !terminal && !isPreview && respondMode === null;
+    // The day this quote's prices stop being good for. "" on a quote that never
+    // went out and carries no date of its own — there's nothing to promise yet.
+    // Shared rule with the app and the PDF (window.LTP_quoteExpiry, theme.js);
+    // the validity is passed in because this page loads without a session, so
+    // app.js never mirrored the workspace default onto window.
+    var quoteExpiry = isQuote ? window.LTP_quoteExpiry(entity, "", settings.defaultQuoteValidity) : "";
     var stickyBar = showSticky
       ? h("div", { style: { position: "fixed", left: 0, right: 0, bottom: 0, background: INSET, borderTop: "1px solid " + HAIR, zIndex: 3000 } },
           h("div", { style: { height: 4, background: GRAD_RULE } }),
@@ -801,7 +807,14 @@
           h("div", { style: { marginTop: 12 } },
             (isQuote
               ? [
-                  "This quote is valid for 30 days from the date of issue.",
+                  // Names the day whenever the quote carries one, so the client's
+                  // copy, the PDF and the producer's app all agree. The
+                  // "N days from issue" wording is the fallback for a quote sent
+                  // before per-quote expiry existed — which is what this line
+                  // used to say unconditionally, with 30 hardcoded.
+                  quoteExpiry
+                    ? "This quote is valid through " + fmtDate(quoteExpiry) + "."
+                    : "This quote is valid for " + window.LTP_QUOTE_VALIDITY_DAYS(settings.defaultQuoteValidity) + " days from the date of issue.",
                   "Prices are subject to equipment availability at time of booking.",
                   "All equipment rentals are subject to a damage waiver fee.",
                   "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",

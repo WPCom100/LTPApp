@@ -2084,35 +2084,35 @@
                   ),
 
                   // Company mode
-                  draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 } },
+                  draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start" } },
                     h(window.CompanySearchField, {
                       label: "Company *", compId: draft.companyId,
                       setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
                       companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); },
                       createKind: "company", allowEdit: true
                     }),
+                    // Same chip field as Company and Linked Projects beside it,
+                    // so the whole header reads as one control type and this
+                    // field's box starts at the same y as Company's. (Hanging
+                    // the ＋/✎ off the LABEL, as this used to, grew the label
+                    // row and pushed the field ~13px lower than its neighbour.)
+                    //
                     // Narrowed to this client's contacts, so a client with none
-                    // yet leaves the select empty \u2014 the \uff0b on the label is the
-                    // way out, and what it creates is linked to the company so
-                    // it lands in this list.
-                    // Tier 1 is this company's contacts; everyone else sits behind
-                    // an "Other contacts" click. Mirrors the quote builder.
-                    (function() {
-                      var tiers = window.LTP_HELPERS.contactPickerTiers(
+                    // yet leaves tier 1 empty — the ＋ is the way out, and what
+                    // it creates is linked to the company so it lands in this
+                    // list. Tier 2 is everyone else, behind a click. Mirrors the
+                    // quote builder.
+                    h(window.ContactSearchField, {
+                      label: "Primary Contact", contactId: draft.clientContactId,
+                      setContactId: function(id) { patchDraft({ clientContactId: id }); },
+                      contacts: contacts,
+                      tiers: window.LTP_HELPERS.contactFieldTiers(
                         selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : [],
-                        draft.clientContactId, contacts, [{ value: "", label: "(none)" }]);
-                      return h(window.LTPSearchSelect, { label: "Primary Contact",
-                        value: draft.clientContactId || "",
-                        onChange: function(v) { patchDraft({ clientContactId: v === "" ? null : Number(v) }); },
-                        searchPlaceholder: "Search contacts\u2026",
-                        options: tiers.options, moreOptions: tiers.moreOptions, moreLabel: tiers.moreLabel,
-                        labelAction: h(window.LTPEntityQuickAction, {
-                          kind: "contact", id: draft.clientContactId || null,
-                          prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
-                          onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
-                        })
-                      });
-                    })()
+                        draft.clientContactId, contacts),
+                      placeholder: "Search contacts…",
+                      createKind: "contact", allowEdit: true,
+                      createPrefill: draft.companyId ? { companyIds: [draft.companyId] } : null
+                    })
                   ),
 
                   // Contact mode
@@ -2125,7 +2125,7 @@
                     })
                   ),
 
-                  h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
+                  h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12, alignItems: "start" } },
                     // Project picker — typeahead, filtered by company. Clearing
                     // the chip is the old "(no project — use custom name)"
                     // option; a project created here inherits this invoice's
@@ -2172,7 +2172,7 @@
                   ),
                   // Invoice + Due date share one row (each in a minWidth:0 cell so
                   // the native date inputs shrink to fit instead of overflowing).
-                  h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 12, marginTop: 12 } },
+                  h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: isMobile ? 8 : 12, marginTop: 12, alignItems: "start" } },
                     // Invoice date
                     h("div", { style: { minWidth: 0 } },
                       h(window.LTPInput, { label: "Invoice Date", value: draft.invoiceDate || "", type: "date",

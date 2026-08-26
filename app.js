@@ -18,6 +18,29 @@ window.LTPApp = function() {
   var useEffect = React.useEffect;
   var route = window.LTPRouter.useRoute();
 
+  // EVERY hook runs before the first branch below, and none of them may move
+  // under one. The public-route returns used to sit ABOVE these two, which is
+  // fine on a cold load (nothing has rendered yet) and fatal on a hash change
+  // that crosses between a public route and an app one WITHOUT a reload: this
+  // component's hook count changes between renders (1 ↔ 3) and React throws
+  // "Rendered more/fewer hooks than expected", blanking the page.
+  //
+  // Both directions are reachable by hand: paste a copied share link
+  // (origin + "/#/view/quote/<token>") into the tab the app is already open in,
+  // or open a share link and then navigate into the app. Only the in-app
+  // Preview buttons escaped it, by opening a new tab. Subscribing on a public
+  // route is harmless — auth.js skips its /auth/me call there, so the event
+  // never fires.
+  //
+  // Re-render when auth.js publishes the result.
+  var pair = useState(window.LTP_AUTH_USER);
+  var authUser = pair[0], setAuthUser = pair[1];
+  useEffect(function() {
+    function onReady() { setAuthUser(window.LTP_AUTH_USER); }
+    window.addEventListener("ltp-auth-ready", onReady);
+    return function() { window.removeEventListener("ltp-auth-ready", onReady); };
+  }, []);
+
   // Public client view bypasses auth entirely. Token is the credential.
   if (route.module === "view") {
     return h(window.LTPClientView, { route: route });
@@ -28,15 +51,6 @@ window.LTPApp = function() {
   if (route.module === "crew") {
     return h(window.LTPCrewView, { route: route });
   }
-
-  // Re-render when auth.js publishes the result.
-  var pair = useState(window.LTP_AUTH_USER);
-  var authUser = pair[0], setAuthUser = pair[1];
-  useEffect(function() {
-    function onReady() { setAuthUser(window.LTP_AUTH_USER); }
-    window.addEventListener("ltp-auth-ready", onReady);
-    return function() { window.removeEventListener("ltp-auth-ready", onReady); };
-  }, []);
 
   if (authUser === undefined) {
     return h(window.LTPLoadingScreen, { label: "Loading…" });
@@ -170,6 +184,11 @@ function LTPSignedInApp(props) {
   window.LTP_SENDER_PHOTO = props.authUser.pictureUrl || "";
   window.LTP_COMPANY_NAME = settings.companyName || "LTP";
   window.LTP_DEFAULT_TERMS = settings.defaultPaymentTerms || 30;
+  // How long a quote stays good for when it has no expiry date of its own —
+  // the fallback behind window.LTP_quoteExpiry (theme.js). Mirrored here for
+  // the same reason as LTP_DEFAULT_TERMS: the PDF/client-view/quote-list
+  // readers have the quote but not the settings object.
+  window.LTP_DEFAULT_QUOTE_VALIDITY = settings.defaultQuoteValidity || 30;
   window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
   window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
   // Resolved fee quick-pick names for the Add-Item → Fees tab (edited in

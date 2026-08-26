@@ -106,9 +106,14 @@
         });
       },
       style: {
-        flexShrink: 0, width: s, height: s, borderRadius: "6px", padding: 0,
+        flexShrink: 0, width: s, height: s, borderRadius: (s <= 18 ? 4 : 6) + "px", padding: 0,
         background: "transparent", border: "1px solid " + B.border, color: B.accent,
-        fontSize: editing ? "12px" : "15px", lineHeight: 1, cursor: "pointer",
+        // Glyph and corner scale with the box, so a label-row instance sized to
+        // LTP_FIELD_LABEL_HEIGHT still reads as the same control rather than a
+        // 15px "+" crammed into a 16px square. The ratios reproduce the
+        // original 12/15px at the default size of 26.
+        fontSize: Math.max(9, Math.round(s * (editing ? 0.46 : 0.58))) + "px",
+        lineHeight: 1, cursor: "pointer",
         display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
       },
     }, editing ? "✎" : "+");

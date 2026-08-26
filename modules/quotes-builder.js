@@ -65,6 +65,9 @@
       customName: "", customStartDate: todayISO(), customEndDate: todayISO(),
       rentalStartDate: null, rentalEndDate: null,
       status: "draft", createdDate: todayISO(), sentDate: null,
+      // "" until the producer sets one or the quote is sent (which stamps the
+      // workspace default). See window.LTP_quoteExpiry in theme.js.
+      expiryDate: "",
       globalDiscount: { type: "none", value: 0 },
       sections: [{ id: genId("sec"), label: "Equipment", items: [], customDates: false, startDate: "", endDate: "" }],
       notes: window.LTP_DEFAULT_QUOTE_NOTES || "",
@@ -86,6 +89,7 @@
       customName: q.customName || "", customStartDate: q.customStartDate || "", customEndDate: q.customEndDate || "",
       rentalStartDate: q.rentalStartDate || null, rentalEndDate: q.rentalEndDate || null,
       status: q.status || "draft", createdDate: q.createdDate || todayISO(), sentDate: q.sentDate || null,
+      expiryDate: q.expiryDate || "",
       globalDiscount: Object.assign({ type: "none", value: 0 }, q.globalDiscount || {}),
       // This rebuild is a whitelist, so every section field must be named here
       // or editing the quote silently drops it — `projectId` records which job
@@ -1102,6 +1106,13 @@
       var aRange = aDates.start ? (fmt(aDates.start) + " — " + fmt(aDates.end)) : "No dates";
       changes.push({ cat: "Quote Dates", detail: bRange + " → " + aRange });
     }
+    // Worth logging on its own: moving the expiry changes what the client was
+    // promised, and on a sent quote that's a term the two sides have to agree on.
+    if ((before.expiryDate || "") !== (after.expiryDate || "")) {
+      var bExp = before.expiryDate ? fmt(before.expiryDate) : "Default validity";
+      var aExp = after.expiryDate ? fmt(after.expiryDate) : "Default validity";
+      changes.push({ cat: "Expires", detail: bExp + " → " + aExp });
+    }
 
     // Section-level changes
     var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
@@ -1661,6 +1672,15 @@
       var totals = window.LTP_QUOTE_TOTALS(draft);
       var resolve = window.LTP_resolveTemplate;
       var s = settings || {};
+      // Resolve the deadline once. On a resend `sentDate` is the ORIGINAL send,
+      // so "valid for N days from the date of issue" still counts from the issue
+      // the client has — not from today, which would silently shorten it.
+      var sendExpiryISO = window.LTP_quoteExpiry(draft, todayISO());
+      var sendValidityDays = window.LTP_QUOTE_VALIDITY_DAYS();
+      if (sendExpiryISO) {
+        var issuedOn = draft.sentDate || todayISO();
+        sendValidityDays = Math.max(0, Math.round((new Date(sendExpiryISO) - new Date(issuedOn)) / 86400000));
+      }
       var templateKey = draft.status === "draft" ? "quoteSent" : "quoteFollowUp";
       var tmpl = (s.emailTemplates || {})[templateKey] || {};
       // viewUrl and signature are intentionally LEFT as placeholders in the
@@ -1677,7 +1697,14 @@
         projectName: projName,
         clientName: clientName || "there",
         total: "$" + window.LTP_money(totals.total),
-        quoteValidity: String(s.defaultQuoteValidity || 30),
+        // {{quoteValidity}} used to read the workspace setting straight, which
+        // meant the email could promise 30 days while the quote itself carried
+        // a different expiry. Both now come off the one resolved deadline, so
+        // the email, the PDF terms and the client's view agree.
+        quoteValidity: String(sendValidityDays),
+        // The same deadline as a date, for a template that would rather name the
+        // day than count days from an issue date the client has to work out.
+        quoteExpiry: sendExpiryISO ? fmt(sendExpiryISO) : "",
       };
       setSendRecipients(initSendRecipients());
       setSendSubject(resolve(tmpl.subject || "{{refNumber}} — {{projectName}} from {{companyName}}", vars));
@@ -1770,9 +1797,19 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
+            var sentOn = isResend ? baseDraft.sentDate : today;
             var updated = Object.assign({}, baseDraft, {
               status: isResend ? baseDraft.status : "sent",
-              sentDate: isResend ? baseDraft.sentDate : today,
+              sentDate: sentOn,
+              // Freeze the shelf life at send time. Until now this was implicit
+              // — "30 days" resolved fresh out of the workspace setting every
+              // time anything rendered it — so changing that setting silently
+              // moved the deadline on quotes already in a client's inbox.
+              // Stamping the date the client was actually told keeps the two
+              // copies agreeing. A resend counts from the ORIGINAL send: it's
+              // the same offer going out again, not a new one.
+              expiryDate: baseDraft.expiryDate
+                || window.LTP_quoteExpiry(Object.assign({}, baseDraft, { sentDate: sentOn }), today),
               sendRecipients: sendRecipients,  // remember who this went to
             });
             setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
@@ -2137,6 +2174,41 @@
       ? contacts.filter(function(c) { return (selectedProject.contactIds || []).includes(c.id); })
       : (selectedCompany ? contacts.filter(function(c) { return (c.companyIds || []).includes(selectedCompany.id); }) : []);
 
+    // ── Expiration ─────────────────────────────────────────────────────────
+    // The date the quote's prices stop being good for. `draft.expiryDate` when
+    // the producer set one; otherwise the workspace default counted from the
+    // send date (today, on a draft that hasn't gone out yet) — see
+    // window.LTP_quoteExpiry in theme.js, which every other reader shares.
+    var expiryFromDate = draft.sentDate || todayISO();
+    function expiryAfter(days) {
+      var d = new Date(expiryFromDate);
+      d.setDate(d.getDate() + days);
+      return d.toISOString().substring(0, 10);
+    }
+    // The line beside the field. It has to answer two questions: what happens if
+    // you leave this empty, and — on a quote already out with the client — how
+    // much runway is actually left.
+    var expiryNote = (function() {
+      var effective = window.LTP_quoteExpiry(draft, todayISO());
+      var days = window.LTP_QUOTE_VALIDITY_DAYS();
+      if (!draft.expiryDate) {
+        return { tone: B.textMut,
+                 text: "Not set \u2014 this quote is good for the workspace default of " + days + " days, "
+                     + (draft.sentDate ? "from the day it was sent" : "counted from the day it's sent")
+                     + (effective ? " (" + fmt(effective) + " as of today)" : "") + "." };
+      }
+      if (!draft.sentDate) {
+        return { tone: B.textMut, text: "The client's copy will say this quote is good through " + fmt(draft.expiryDate) + "." };
+      }
+      var today = todayISO();
+      if (draft.expiryDate < today) {
+        return { tone: B.danger, text: "Expired " + fmt(draft.expiryDate) + ". Push the date out to put this quote back in play." };
+      }
+      var left = Math.round((new Date(draft.expiryDate) - new Date(today)) / 86400000);
+      return { tone: left <= 7 ? B.warn : B.textMut,
+               text: "Good through " + fmt(draft.expiryDate) + " \u2014 " + (left === 0 ? "expires today" : left + (left === 1 ? " day" : " days") + " left") + "." };
+    })();
+
     // Quote-level dates (project dates or custom dates) — used as default for all sections
     var quoteDates = selectedProject
       ? { start: selectedProject.startDate, end: selectedProject.endDate }
@@ -2367,36 +2439,36 @@
               ),
 
               // Company mode
-              draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 } },
+              draft.clientType === "company" && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, alignItems: "start" } },
                 h(window.CompanySearchField, {
                   label: "Company *", compId: draft.companyId,
                   setCompId: function(id) { patchDraft({ companyId: id, clientContactId: null }); },
                   companies: companies, onClear: function() { patchDraft({ companyId: null, clientContactId: null }); },
                   createKind: "company", allowEdit: true
                 }),
-                // The contact list is narrowed to this client, so when the
-                // client has no contacts yet the select is empty and there's
-                // nothing to pick \u2014 the \uff0b on the label is the way out. A
-                // contact added here is linked to the company so it lands in
-                // this very list.
+                // Same chip field as Company and Linked Projects beside it — one
+                // look for "pick a record" across the whole header, and the
+                // ✎/＋ lives inside the box rather than on the label, where it
+                // used to stretch the label row and push this field ~13px below
+                // the Company field next to it.
+                //
+                // The list is narrowed to this client, so when the client has no
+                // contacts yet tier 1 is empty and there's nothing to pick — the
+                // ＋ is the way out, and a contact added here is linked to the
+                // company so it lands in this very list.
+                //
                 // Tier 1 is this client's / project's contacts; everyone else is
                 // behind an "Other contacts" click, so a client whose contact was
                 // never linked is still reachable instead of unpickable.
-                (function() {
-                  var tiers = window.LTP_HELPERS.contactPickerTiers(
-                    projectContacts, draft.clientContactId, contacts, [{ value: "", label: "(none)" }]);
-                  return h(window.LTPSearchSelect, { label: "Primary Contact",
-                    value: draft.clientContactId || "",
-                    onChange: function(v) { patchDraft({ clientContactId: v === "" ? null : Number(v) }); },
-                    searchPlaceholder: "Search contacts\u2026",
-                    options: tiers.options, moreOptions: tiers.moreOptions, moreLabel: tiers.moreLabel,
-                    labelAction: h(window.LTPEntityQuickAction, {
-                      kind: "contact", id: draft.clientContactId || null,
-                      prefill: draft.companyId ? { companyIds: [draft.companyId] } : null,
-                      onSaved: function(rec) { if (rec && rec.id != null) patchDraft({ clientContactId: rec.id }); }
-                    })
-                  });
-                })()
+                h(window.ContactSearchField, {
+                  label: "Primary Contact", contactId: draft.clientContactId,
+                  setContactId: function(id) { patchDraft({ clientContactId: id }); },
+                  contacts: contacts,
+                  tiers: window.LTP_HELPERS.contactFieldTiers(projectContacts, draft.clientContactId, contacts),
+                  placeholder: "Search contacts…",
+                  createKind: "contact", allowEdit: true,
+                  createPrefill: draft.companyId ? { companyIds: [draft.companyId] } : null
+                })
               ),
 
               // Contact mode
@@ -2409,7 +2481,7 @@
                 })
               ),
 
-              h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
+              h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12, alignItems: "start" } },
                 // Typeahead rather than a native <select>: the old dropdown grew
                 // unusable as projects piled up and had nowhere to put a create
                 // affordance. Clearing the chip is the old "(no project \u2014 use
@@ -2460,10 +2532,41 @@
                   placeholder: "e.g. Fall Gala Equipment Package"
                 })
               ),
-              !draft.projectId && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12 } },
+              !draft.projectId && h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12, alignItems: "start" } },
                 h(window.LTPInput, { label: "Start Date", value: draft.customStartDate, onChange: function(v) { patchDraft({ customStartDate: v }); }, type: "date" }),
                 h(window.LTPInput, { label: "End Date",   value: draft.customEndDate,   onChange: function(v) { patchDraft({ customEndDate: v   }); }, type: "date" })
               ),
+              // ── Expires ──────────────────────────────────────────────────
+              // Before this field a quote's shelf life was one workspace-wide
+              // number of days (Settings → Quote Validity) that only ever showed
+              // up as prose in the email and the terms block. Nothing recorded
+              // what a given quote had promised, and a client who needed longer
+              // couldn't be given it. Leaving the field empty keeps exactly that
+              // old behaviour — the fallback below spells out what it resolves to
+              // — and sending stamps a concrete date so the client's copy stops
+              // moving if the workspace default is later changed.
+              h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginTop: 12, alignItems: "start" } },
+                h("div", { style: { minWidth: 0 } },
+                  h(window.LTPInput, { label: "Quote Expires", value: draft.expiryDate || "", type: "date",
+                    onChange: function(v) { patchDraft({ expiryDate: v }); } }),
+                  h("div", { style: { display: "flex", gap: 4, marginTop: 4, flexWrap: "wrap", alignItems: "center" } },
+                    // Counted from the send date, or from today on a quote that
+                    // hasn't gone out — the same clock the fallback uses, so
+                    // "30 days" means the same thing whether you set it or not.
+                    [7, 14, 30, 60].map(function(n) {
+                      return h("button", { key: n, onClick: function() { patchDraft({ expiryDate: expiryAfter(n) }); },
+                        style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 6px", color: B.accent, fontSize: "9px", fontWeight: 600, cursor: "pointer" } },
+                        n + " days");
+                    }).concat([
+                      draft.expiryDate ? h("button", { key: "_clear", onClick: function() { patchDraft({ expiryDate: "" }); },
+                        style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 6px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } },
+                        "Clear") : null
+                    ])
+                  )
+                ),
+                h("div", { style: { fontSize: "10px", color: expiryNote.tone, lineHeight: 1.5, paddingTop: isMobile ? 0 : 22 } }, expiryNote.text)
+              ),
+
               draft.projectId && selectedProject && h("div", { style: { marginTop: 10, padding: "8px 12px", background: B.raised, borderRadius: "6px", fontSize: "11px", color: B.textMut } },
                 "Project dates: " + fmt(selectedProject.startDate) + " \u2192 " + fmt(selectedProject.endDate) + " \u00b7 rental pricing will use this period.",
                 // A second job usually runs on its own dates. Rental lines price

@@ -2090,6 +2090,51 @@ window.LTP_INVOICE_TOTALS = function(inv) {
            preTax: afterDiscount, total: total, paid: paid, balance: Math.max(0, total - paid) };
 };
 
+// ── Quote expiration ────────────────────────────────────────────────────────
+// A quote's prices are only good for so long. The date that happens on is
+// `quote.expiryDate`, set in the builder; when it's empty every reader falls
+// back to the workspace default (Settings → Quote Validity, mirrored onto
+// LTP_DEFAULT_QUOTE_VALIDITY) counted from the day the quote went out — which
+// is the only rule that existed before the field did, so an old quote still
+// reads exactly as it always has.
+//
+// Counting from `sentDate` and not from today matters: an unsent draft has no
+// clock running on it yet, so it has no expiry to show. Once it's sent the
+// builder stamps a concrete date, and the client's copy stops moving even if
+// the workspace default is later changed.
+
+// The workspace fallback, in days. `override` lets a surface that has the
+// settings blob but not the app globals pass the value in — the public client
+// view loads without a session, so app.js never ran to mirror it onto window.
+window.LTP_QUOTE_VALIDITY_DAYS = function(override) {
+  var n = Number(override != null && override !== "" ? override : window.LTP_DEFAULT_QUOTE_VALIDITY);
+  return (isFinite(n) && n > 0) ? Math.floor(n) : 30;
+};
+
+// The ISO date this quote expires, or "" when there's nothing to count from.
+// `asOf` (ISO) stands in for the sent date on a quote that hasn't gone out —
+// the builder passes today so the field can preview what sending would stamp.
+window.LTP_quoteExpiry = function(quote, asOf, validityDays) {
+  if (!quote) return "";
+  if (quote.expiryDate) return quote.expiryDate;
+  var from = quote.sentDate || asOf || "";
+  if (!from) return "";
+  var d = new Date(from);
+  if (isNaN(d.getTime())) return "";
+  d.setDate(d.getDate() + window.LTP_QUOTE_VALIDITY_DAYS(validityDays));
+  return d.toISOString().substring(0, 10);
+};
+
+// True once a quote the client could still act on has gone stale. Only "sent"
+// qualifies: a draft was never promised to anyone, and accepted / declined /
+// converted are all settled — an accepted quote doesn't un-accept itself
+// because a date passed.
+window.LTP_isQuoteExpired = function(quote) {
+  if (!quote || quote.status !== "sent") return false;
+  var exp = window.LTP_quoteExpiry(quote);
+  return !!exp && exp < window.LTP_todayISO();
+};
+
 window.LTP_isOverdue = function(inv) {
   if (!inv || !inv.dueDate || inv.status === "draft" || inv.status === "paid") return false;
   return inv.dueDate < window.LTP_todayISO();
