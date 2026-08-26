@@ -68,6 +68,19 @@ window.LTP_DATA_SETTINGS = {
   defaultQuoteNotes: "This quote is valid for 30 days from the date of issue.",
   defaultInvoiceNotes: "Payment is due upon receipt unless otherwise noted.",
 
+  // House terms & conditions — the bullet block printed at the foot of every
+  // quote / invoice, one line per bullet. A document that has not had its terms
+  // edited falls back to these; a workspace that has not set these falls back to
+  // window.LTP_BUILTIN_TERMS (theme.js), which is what the old hardcoded arrays
+  // said. Lines may carry {{token}} placeholders resolved at render time —
+  // {{expiryDate}} / {{validityDays}} on a quote, {{dueDate}} / {{paymentTerms}}
+  // on an invoice, {{companyName}} on either — so a date named in the text
+  // tracks the document instead of freezing when the terms were written.
+  // Empty here on purpose: shipping a copy of the built-ins would fork them, and
+  // an admin who never opens Settings would silently stop tracking changes.
+  defaultQuoteTerms: "",
+  defaultInvoiceTerms: "",
+
   // Pay periods (crew payroll cycle) — drives the Payouts tab's pay-period
   // presets and the QuickBooks vendor-bill dates. `payPeriodAnchor` is the
   // start date of any known cycle; periods tile the calendar from there in

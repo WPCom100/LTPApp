@@ -154,6 +154,7 @@ def _build_rules():
             "venue":     _str_max(255),
         },
         models.Quote: {
+            "terms":           _str_max(4000),
             "clientType":      _enum("client_type"),
             "status":          _enum("quote_status"),
             "sentDate":        _iso_date,
@@ -163,6 +164,7 @@ def _build_rules():
             "customName":      _str_max(255),
         },
         models.Invoice: {
+            "terms":           _str_max(4000),
             "clientType":  _enum("client_type"),
             "status":      _enum("invoice_status"),
             "invoiceDate": _iso_date,

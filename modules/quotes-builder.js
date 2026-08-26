@@ -79,6 +79,9 @@
       globalDiscount: { type: "none", value: 0 },
       sections: [{ id: genId("sec"), label: "Equipment", items: [], customDates: false, startDate: "", endDate: "" }],
       notes: window.LTP_DEFAULT_QUOTE_NOTES || "",
+      // "" = follow the workspace / built-in terms. Only set once a producer
+      // edits this document's own wording. See window.LTP_docTerms in theme.js.
+      terms: "",
       activity: [{ id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "created", message: "Quote created", user: (window.LTP_CURRENT_USER || "User") }],
     };
   }
@@ -112,6 +115,7 @@
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
       }),
       notes: q.notes || "",
+      terms: q.terms || "",
       // Server-managed, read-only: the QuickBooks-computed sales tax and the
       // signature that says which version of the quote it was computed for.
       // This whitelist predates quote tax and never gained them, so the builder
@@ -1101,6 +1105,14 @@
     // Notes
     if ((before.notes || "") !== (after.notes || "")) {
       changes.push({ cat: "Notes", detail: "Updated" });
+    }
+    // Terms are CLIENT-facing, unlike notes, so the log says which way it moved
+    // rather than just "updated" — reverting to the default is a real decision.
+    if ((before.terms || "") !== (after.terms || "")) {
+      changes.push({ cat: "Terms", detail:
+        !(after.terms || "").trim() ? "Reset to the default terms"
+        : !(before.terms || "").trim() ? "Customized for this quote"
+        : "Edited" });
     }
 
     // Project / dates — compare effective dates (project dates when linked, custom when not)
@@ -2588,7 +2600,13 @@
 
       // Totals
       h(TotalsPanel, { draft: draft, isLocked: draft.status === "accepted" || draft.status === "converted", onDiscountChange: function(gd) { patchDraft({ globalDiscount: gd }); },
-        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax })
+        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax }),
+
+      // Terms & Conditions — collapsed, directly under the totals, because that
+      // is where they print on the document itself.
+      h(window.LTPDocTerms, { kind: "quote", entity: draft, settings: settings,
+        isLocked: draft.status === "accepted" || draft.status === "converted",
+        onChange: function(text) { patchDraft({ terms: text }); } })
 
       ), // end main scrollable content
 

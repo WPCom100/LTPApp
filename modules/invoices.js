@@ -650,6 +650,9 @@
         globalDiscount: { type: "none", value: 0 },
         sections: [{ id: genId("sec"), label: "Items", customDates: false, startDate: "", endDate: "", items: [] }],
         notes: window.LTP_DEFAULT_INVOICE_NOTES || "",
+        // "" = follow the workspace / built-in terms. Only set once a producer
+        // edits this document's own wording. See window.LTP_docTerms in theme.js.
+        terms: "",
         payments: [],
         activity: [{ id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "created", message: "Invoice created", user: (window.LTP_CURRENT_USER || "User") }],
       };
@@ -689,6 +692,10 @@
                    items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
         }),
         notes: inv.notes || "",
+        // Carried by the spread above too; normalized here so a null from an
+        // older row reads as "follow the default" rather than reaching the
+        // editor as null.
+        terms: inv.terms || "",
         payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
         activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
       });
@@ -1672,6 +1679,15 @@
         changes.push({ cat: "Discount", detail: gdBLabel + " \u2192 " + gdALabel });
       }
       if (before.notes !== after.notes) changes.push({ cat: "Notes", detail: "Updated" });
+      // Terms are CLIENT-facing, unlike notes, so the log says which way it
+      // moved rather than just "updated" — reverting to the default is a real
+      // decision, not a typo fix.
+      if ((before.terms || "") !== (after.terms || "")) {
+        changes.push({ cat: "Terms", detail:
+          !(after.terms || "").trim() ? "Reset to the default terms"
+          : !(before.terms || "").trim() ? "Customized for this invoice"
+          : "Edited" });
+      }
       // Section/item level
       var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
       (after.sections || []).forEach(function(aSec) {
@@ -2285,7 +2301,14 @@
               h("span", null, "Paid"), h("span", null, fmtT(t.paid))),
             t.balance > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: "12px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } },
               h("span", null, "Balance Due"), h("span", null, fmtT(t.balance)))
-          )
+          ),
+
+          // Terms & Conditions — collapsed, directly under the totals, because
+          // that is where they print on the document itself. Locked once the
+          // invoice leaves draft: the client already has this copy.
+          h(window.LTPDocTerms, { kind: "invoice", entity: draft, settings: settings,
+            isLocked: !isDraft,
+            onChange: function(text) { patchDraft({ terms: text }); } })
         ),
 
         // Side panel
