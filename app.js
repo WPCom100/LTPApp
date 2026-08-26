@@ -62,6 +62,42 @@ window.LTPApp = function() {
 };
 
 
+// ── Sidebar footer ──────────────────────────────────────────────────────────
+// Shows which SHELL this device is actually running — the CACHE_VERSION of the
+// controlling service worker, published by components/register-sw.js.
+//
+// It used to read a hardcoded "v1.0" that had never once been iterated while
+// the shell went past v50, so it answered nothing. The real question it should
+// answer is "did my fix reach this phone?", which is asked after every deploy
+// and was unanswerable without devtools the last time a version bump was
+// missed.
+//
+// The worker replies over a MessagePort some time after this renders, so the
+// version arrives by event rather than being readable at mount. When there is
+// no controlling worker at all (a browser without service workers, a dev server
+// over plain http, the very first load before the worker claims the page) the
+// suffix is simply omitted — better to show nothing than a number we made up.
+function LTPShellFooter({ name }) {
+  var h = React.createElement;
+  var B = window.LTP_THEME;
+  var pair = React.useState(window.LTP_SHELL_VERSION);
+  var version = pair[0], setVersion = pair[1];
+  React.useEffect(function() {
+    function onVersion() { setVersion(window.LTP_SHELL_VERSION); }
+    window.addEventListener("ltp-shell-version", onVersion);
+    onVersion();   // it may have landed between render and effect
+    return function() { window.removeEventListener("ltp-shell-version", onVersion); };
+  }, []);
+  // "ltp-shell-v55" → "v55": the cache name is an implementation detail, the
+  // number is the part a person can read back to you.
+  var shown = version ? String(version).replace(/^ltp-shell-/, "") : "";
+  return h("div", {
+    title: version || undefined,
+    style: { padding: "12px 16px", borderTop: "1px solid " + B.border, fontSize: "9px", color: B.textMut },
+  }, name + (shown ? " " + shown : ""));
+}
+
+
 // ── Sign-in screen for unauthenticated users ────────────────────────────────
 // Masthead lockup on its orange rule — the same hero treatment as the
 // customer-facing crew/client pages, with the LTP-chip fallback if the
@@ -547,7 +583,7 @@ function LTPSignedInApp(props) {
           return rows;
         })
       ),
-      sidebarOpen && h("div", { style: { padding: "12px 16px", borderTop: "1px solid " + B.border, fontSize: "9px", color: B.textMut } }, (settings.companyShort || "LTP") + " Business Suite v1.0")
+      sidebarOpen && h(LTPShellFooter, { name: (settings.companyShort || "LTP") + " Business Suite" })
     ),
     h("div", { style: { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" } },
       // Topbar — hidden when in quote builder (builder has its own sticky header)

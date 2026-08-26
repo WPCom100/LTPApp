@@ -58,7 +58,12 @@
 // shell for one more launch and no worker installs, meaning no refresh banner
 // either. The rule is the header above, not "did index.html change": any
 // precached or runtime-cached file moving needs this string to move.
-var CACHE_VERSION = 'ltp-shell-v55';
+// v56: this worker answers GET_VERSION, and the sidebar footer shows the answer
+// instead of a hardcoded "v1.0" that had never been iterated. app.js and
+// components/register-sw.js changed with it. Remembering the bump is no longer
+// on the author: tests/check_shell_version.py fails the PR when a file the
+// browser caches moves and this string doesn't — it is what flagged this one.
+var CACHE_VERSION = 'ltp-shell-v56';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -136,10 +141,26 @@ self.addEventListener('activate', function(event) {
   );
 });
 
-// Let the page trigger activation of a waiting worker (the "tap to refresh").
 self.addEventListener('message', function(event) {
-  if (event.data && event.data.type === 'SKIP_WAITING') {
+  if (!event.data) return;
+
+  // Let the page trigger activation of a waiting worker (the "tap to refresh").
+  if (event.data.type === 'SKIP_WAITING') {
     self.skipWaiting();
+    return;
+  }
+
+  // Which shell this device is actually running. The app footer shows it so
+  // "did my fix ship to this phone?" is answerable without devtools — the
+  // question that follows every deploy, and the one that went unanswered when
+  // a change shipped without a version bump.
+  //
+  // Answered on the asker's MessagePort rather than broadcast to all clients:
+  // the page wants the version of the worker CONTROLLING it, and a newly
+  // installed worker sitting in `waiting` must not answer for the active one.
+  if (event.data.type === 'GET_VERSION') {
+    var port = event.ports && event.ports[0];
+    if (port) port.postMessage({ type: 'VERSION', version: CACHE_VERSION });
   }
 });
 
