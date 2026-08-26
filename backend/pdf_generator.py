@@ -187,6 +187,96 @@ def _quote_expiry(entity, settings):
     return d.strftime("%Y-%m-%d")
 
 
+# ── Terms & conditions ──────────────────────────────────────────────────────
+# Python twin of window.LTP_docTerms in theme.js. The rule lives in both
+# languages because the app, this PDF and the client's browser all print the
+# same block, and a client comparing their emailed PDF to the link in it must
+# not find two different sets of terms. tests/test_doc_terms.py pins the two
+# implementations to the same table.
+_BUILTIN_TERMS = {
+    "quote": "\n".join([
+        "This quote is valid through {{expiryDate}}.",
+        "Prices are subject to equipment availability at time of booking.",
+        "All equipment rentals are subject to a damage waiver fee.",
+        "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",
+        "Cancellation within 72 hours of event may incur a 25% restocking fee.",
+    ]),
+    "invoice": "\n".join([
+        "Payment is due within {{paymentTerms}} days of the invoice date unless otherwise specified.",
+        "Late payments are subject to a 1.5% monthly finance charge.",
+        "Please include the invoice reference number with your payment.",
+    ]),
+}
+
+_TOKEN_RE = re.compile(r"\{\{(\w+)\}\}")
+
+
+def _payment_terms_days(settings):
+    """Workspace net terms, falling back to the 30 the line used to hardcode."""
+    try:
+        n = int(float((settings or {}).get("defaultPaymentTerms") or 0))
+    except (TypeError, ValueError):
+        return 30
+    return n if n > 0 else 30
+
+
+def doc_terms_text(entity, kind, settings):
+    """The document's terms source text: its own, else the workspace default for
+    the kind, else the built-in."""
+    kind = "invoice" if kind == "invoice" else "quote"
+    own = ((entity or {}).get("terms") or "").strip()
+    if own:
+        return own
+    key = "defaultInvoiceTerms" if kind == "invoice" else "defaultQuoteTerms"
+    from_settings = ((settings or {}).get(key) or "").strip()
+    if from_settings:
+        return from_settings
+    return _BUILTIN_TERMS[kind]
+
+
+def _terms_vars(entity, kind, settings):
+    entity, settings = entity or {}, settings or {}
+    if kind == "invoice":
+        due = (entity.get("dueDate") or "").strip()
+        return {
+            "dueDate": _fmt_date(due) if due else "",
+            "paymentTerms": str(_payment_terms_days(settings)),
+            "companyName": settings.get("companyName") or "",
+        }
+    expiry = _quote_expiry(entity, settings)
+    return {
+        "expiryDate": _fmt_date(expiry) if expiry else "",
+        "validityDays": str(_quote_validity_days(settings)),
+        "companyName": settings.get("companyName") or "",
+    }
+
+
+def doc_terms(entity, kind, settings):
+    """The resolved bullet lines to print. One line per bullet, blanks dropped.
+
+    A line naming a value the document doesn't have is dropped whole rather than
+    printed with a hole in it ("This quote is valid through ."). Checked BEFORE
+    substitution — afterwards an empty token is indistinguishable from prose,
+    because the rest of the sentence still reads fine. An UNKNOWN token is left
+    literal instead, so a typo is visible rather than silently eating its line.
+    """
+    kind = "invoice" if kind == "invoice" else "quote"
+    variables = _terms_vars(entity, kind, settings)
+    out = []
+    for raw in doc_terms_text(entity, kind, settings).split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        keys = _TOKEN_RE.findall(line)
+        if any(k in variables and not str(variables[k]).strip() for k in keys):
+            continue
+        out.append(_TOKEN_RE.sub(
+            lambda m: str(variables[m.group(1)]) if m.group(1) in variables else m.group(0),
+            line,
+        ))
+    return out
+
+
 def _doc_ref(kind, entity):
     """Quote → 'Q-YYYY-NNN'. Invoice → 'INV-YYYY-NNN'. Year comes from the
     creation date when available, otherwise the current year."""
@@ -814,29 +904,11 @@ class _DocPDF:
         c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
         self.y -= 22
 
-        if self.kind == "invoice":
-            lines = [
-                "Payment is due within 30 days of the invoice date unless otherwise specified.",
-                "Late payments are subject to a 1.5% monthly finance charge.",
-                "Please include the invoice reference number with your payment.",
-            ]
-        else:
-            # Names the actual day whenever the quote has one to name — the
-            # builder stamps a date on send, so a client reading this PDF and a
-            # producer reading the quote see the same deadline. The "N days from
-            # issue" wording is the fallback for a quote with no expiry stamped
-            # (every quote sent before the field existed), which is exactly what
-            # this line used to say unconditionally — with 30 hardcoded, ignoring
-            # even the workspace setting.
-            expiry = _quote_expiry(self.entity, self.settings)
-            lines = [
-                f"This quote is valid through {_fmt_date(expiry)}." if expiry
-                else f"This quote is valid for {_quote_validity_days(self.settings)} days from the date of issue.",
-                "Prices are subject to equipment availability at time of booking.",
-                "All equipment rentals are subject to a damage waiver fee.",
-                "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",
-                "Cancellation within 72 hours of event may incur a 25% restocking fee.",
-            ]
+        # Whatever this document actually says — edited per document in the
+        # builder, else the workspace default, else the built-in list these two
+        # branches used to hardcode. Dates inside the text resolve here rather
+        # than being frozen when it was written.
+        lines = doc_terms(self.entity, self.kind, self.settings)
         c.setFont("Roboto-Light", 9)
         c.setFillColor(MUTED)
         for line in lines:

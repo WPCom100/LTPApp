@@ -112,6 +112,9 @@ def quote_dict(q: models.Quote) -> dict:
         "globalDiscount": q.global_discount or {},
         "sections": q.sections or [],
         "notes": q.notes,
+        # Client-facing bullets for the terms block. "" = never edited here,
+        # so readers fall back to the workspace default (doc_terms).
+        "terms": q.terms or "",
         "activity": q.activity or [],
         "shareToken": q.share_token,
         # QuickBooks-computed sales tax (read-only), from the temporary-estimate
@@ -148,6 +151,9 @@ def invoice_dict(inv: models.Invoice) -> dict:
         "globalDiscount": inv.global_discount or {},
         "sections": inv.sections or [],
         "notes": inv.notes,
+        # Client-facing bullets for the terms block. "" = never edited here,
+        # so readers fall back to the workspace default (doc_terms).
+        "terms": inv.terms or "",
         "payments": inv.payments or [],
         "activity": inv.activity or [],
         "shareToken": inv.share_token,
@@ -320,5 +326,9 @@ def public_settings(settings: dict) -> dict:
             # and the email), and the view needs it to name the same day the PDF
             # does — window.LTP_quoteExpiry takes it as an override, since the
             # public view has no session for app.js to mirror globals from.
-            "defaultQuoteValidity"]
+            "defaultQuoteValidity",
+            # The workspace terms a document falls back to when it carries none
+            # of its own. Client-facing by definition — they are printed on the
+            # very page this blob feeds.
+            "defaultQuoteTerms", "defaultInvoiceTerms"]
     return {k: settings.get(k, "") for k in keys}

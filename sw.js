@@ -63,7 +63,10 @@
 // components/register-sw.js changed with it. Remembering the bump is no longer
 // on the author: tests/check_shell_version.py fails the PR when a file the
 // browser caches moves and this string doesn't — it is what flagged this one.
-var CACHE_VERSION = 'ltp-shell-v56';
+// v57: editable terms & conditions on quotes and invoices. index.html gained a
+// script tag (components/doc-terms.js), so the precached shell must be refetched;
+// the component itself is picked up by the runtime /components/ rule below.
+var CACHE_VERSION = 'ltp-shell-v57';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

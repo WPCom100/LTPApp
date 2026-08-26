@@ -2135,6 +2135,113 @@ window.LTP_isQuoteExpired = function(quote) {
   return !!exp && exp < window.LTP_todayISO();
 };
 
+// ── Terms & conditions ──────────────────────────────────────────────────────
+// The bullet list printed at the foot of a quote or invoice. It used to be a
+// hardcoded array in TWO places (backend/pdf_generator.py and the client view),
+// so the business could not change its own terms without a code change, and the
+// two copies could drift about what a client had been told.
+//
+// Resolution order, first non-empty wins:
+//   1. the document's own `terms`  — edited in the builder, per document
+//   2. the workspace default       — Settings → Business Defaults, per kind
+//   3. the built-in below          — what the hardcoded arrays used to say
+//
+// One line per bullet. Blank lines are dropped, so a trailing newline or a
+// spacer line in the textarea doesn't print an empty bullet.
+//
+// PLACEHOLDERS
+//   Lines may use the same {{token}} syntax as the email templates, because a
+//   term usually needs to name a date the document already knows — and freezing
+//   that date into the text is how the printed terms come to contradict the
+//   document they're printed on. Supported:
+//
+//     {{expiryDate}}    quote — the day the pricing stops being good for
+//     {{validityDays}}  quote — that same window, in days
+//     {{dueDate}}       invoice — the day payment is due
+//     {{paymentTerms}}  invoice — the workspace net-terms number
+//     {{companyName}}   either
+//
+//   A line naming a value the document does NOT have is dropped rather than
+//   printed with a hole in it: an unsent quote carrying no expiry has no
+//   deadline to promise, and "This quote is valid through ." is worse than
+//   saying nothing. An UNKNOWN token is left literal instead — a typo should be
+//   visible, not silently swallow the line it sits in.
+//
+// NB: window.LTP_DEFAULT_TERMS is something else entirely (the net payment-terms
+// NUMBER, set in app.js) — hence the name here.
+window.LTP_BUILTIN_TERMS = {
+  quote: [
+    "This quote is valid through {{expiryDate}}.",
+    "Prices are subject to equipment availability at time of booking.",
+    "All equipment rentals are subject to a damage waiver fee.",
+    "Payment terms: 50% deposit upon acceptance, balance due prior to load-in.",
+    "Cancellation within 72 hours of event may incur a 25% restocking fee.",
+  ].join("\n"),
+  invoice: [
+    "Payment is due within {{paymentTerms}} days of the invoice date unless otherwise specified.",
+    "Late payments are subject to a 1.5% monthly finance charge.",
+    "Please include the invoice reference number with your payment.",
+  ].join("\n"),
+};
+
+// The terms TEXT this document should start from — its own, else the workspace
+// default, else the built-in. The builders use it to seed the editor and to
+// power "Reset to default".
+//
+// `settings` is passed explicitly rather than read off a global because the
+// public client view loads without a session, so app.js never ran there.
+window.LTP_docTermsText = function(entity, kind, settings) {
+  var k = kind === "invoice" ? "invoice" : "quote";
+  var own = entity && entity.terms;
+  if (own && String(own).trim()) return String(own);
+  var key = k === "invoice" ? "defaultInvoiceTerms" : "defaultQuoteTerms";
+  var fromSettings = (settings || {})[key];
+  if (fromSettings && String(fromSettings).trim()) return String(fromSettings);
+  return window.LTP_BUILTIN_TERMS[k];
+};
+
+// The {{token}} values available to a document's terms, by kind.
+function _termsVars(entity, kind, settings) {
+  var e = entity || {}, s = settings || {};
+  if (kind === "invoice") {
+    return {
+      dueDate: e.dueDate ? window.LTP_formatDate(e.dueDate) : "",
+      paymentTerms: String(s.defaultPaymentTerms || 30),
+      companyName: s.companyName || "",
+    };
+  }
+  var expiry = window.LTP_quoteExpiry(e, "", s.defaultQuoteValidity);
+  return {
+    expiryDate: expiry ? window.LTP_formatDate(expiry) : "",
+    validityDays: String(window.LTP_QUOTE_VALIDITY_DAYS(s.defaultQuoteValidity)),
+    companyName: s.companyName || "",
+  };
+}
+
+// The resolved bullet lines to PRINT. Every surface that renders terms — the
+// builder's preview, the client view, and (via its Python twin in
+// backend/pdf_generator.py) the PDF — goes through here, so all three say the
+// same thing to the same client.
+window.LTP_docTerms = function(entity, kind, settings) {
+  var k = kind === "invoice" ? "invoice" : "quote";
+  var vars = _termsVars(entity, k, settings);
+  return String(window.LTP_docTermsText(entity, k, settings))
+    .split("\n")
+    .map(function(line) { return line.trim(); })
+    .filter(function(line) { return line.length > 0; })
+    // Checked BEFORE substitution — after it, an empty token is indistinguishable
+    // from prose, because the rest of the sentence still reads fine.
+    .filter(function(line) {
+      var hasEmpty = false;
+      line.replace(/\{\{(\w+)\}\}/g, function(match, key) {
+        if (Object.prototype.hasOwnProperty.call(vars, key) && !String(vars[key]).trim()) hasEmpty = true;
+        return match;
+      });
+      return !hasEmpty;
+    })
+    .map(function(line) { return window.LTP_resolveTemplate(line, vars); });
+};
+
 window.LTP_isOverdue = function(inv) {
   if (!inv || !inv.dueDate || inv.status === "draft" || inv.status === "paid") return false;
   return inv.dueDate < window.LTP_todayISO();
