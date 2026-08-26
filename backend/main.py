@@ -393,26 +393,61 @@ if _IS_HTTPS:
     )
 
 
+# ── Resources an EMAIL CLIENT has to be able to render ───────────────────────
+# cross-origin-resource-policy: same-origin (above) tells every browser to
+# refuse our resources to any other origin. That is right for the app and wrong
+# for the two images we deliberately embed in outbound mail: the masthead at the
+# top of every quote/invoice/receipt, and the sender's signature avatar. Outlook,
+# Gmail and friends render those from THEIR origin, so the browser blocked them
+# — net::ERR_BLOCKED_BY_RESPONSE.NotSameOrigin — and every client saw a
+# broken-image box where the logo should be.
+#
+# These paths carry `cross-origin` instead. That is what the value is FOR:
+# public brand images and fonts with nothing to leak. Everything else — the API,
+# the app shell, PDFs, share links — keeps same-origin.
+#
+# /api/users/photo/ is the app-cached sender avatar (backend/routes/api.py). It
+# is reached by an opaque per-user token and exists precisely to be embedded in
+# mail, which is the same bargain as the static assets.
+_EMBEDDABLE_PREFIXES = ("/assets/", "/favicon.ico", "/api/users/photo/")
+_CORP_HEADER = b"cross-origin-resource-policy"
+_CORP_CROSS_ORIGIN = b"cross-origin"
+
+
+def _is_embeddable(path: str) -> bool:
+    return path.startswith(_EMBEDDABLE_PREFIXES)
+
+
 class SecurityHeadersMiddleware:
     """Pure ASGI middleware that appends standard security headers to every
     HTTP response (except the 101 WebSocket upgrade and lifespan messages).
     Inserting via raw ASGI rather than Starlette's BaseHTTPMiddleware avoids
-    re-buffering the response body."""
+    re-buffering the response body.
+
+    The one per-path variation is Cross-Origin-Resource-Policy — see
+    _EMBEDDABLE_PREFIXES above."""
 
     def __init__(self, app, headers):
         self.app = app
         self.headers = list(headers)
+        # Precomputed so the hot path doesn't rebuild the list per request.
+        self.embeddable_headers = [
+            (n, _CORP_CROSS_ORIGIN if n == _CORP_HEADER else v) for (n, v) in self.headers
+        ]
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
+
+        headers = (self.embeddable_headers if _is_embeddable(scope.get("path") or "")
+                   else self.headers)
 
         async def add_headers(msg):
             if msg["type"] == "http.response.start":
                 # Avoid duplicates: if any of our headers are already set
                 # (rare — e.g. a route hand-set CSP), respect the route's.
                 existing = {name for (name, _) in msg.get("headers", [])}
-                injected = [(n, v) for (n, v) in self.headers if n not in existing]
+                injected = [(n, v) for (n, v) in headers if n not in existing]
                 msg = {
                     **msg,
                     "headers": list(msg.get("headers", [])) + injected,
