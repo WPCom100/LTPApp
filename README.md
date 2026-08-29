@@ -636,7 +636,6 @@ Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`
 
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
-- `POST /api/sync` — Bulk import from localStorage
 
 QuickBooks Online (admin-only except `status`):
 - `GET /api/qbo/status` — connection status (booleans + masked realm; any signed-in user)
@@ -647,25 +646,22 @@ QuickBooks Online (admin-only except `status`):
 
 ## Migrating Data from localStorage
 
-Open the browser console on your current app and run:
+Done, and the endpoint is gone. `POST /api/sync` was a one-shot importer that
+seeded the server from a browser's localStorage; it wiped all twelve entity
+tables and re-inserted whatever the request body held.
 
-```javascript
-fetch('/api/sync', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    companies: JSON.parse(localStorage.getItem('ltp_companies') || '[]'),
-    contacts: JSON.parse(localStorage.getItem('ltp_contacts') || '[]'),
-    projects: JSON.parse(localStorage.getItem('ltp_projects') || '[]'),
-    quotes: JSON.parse(localStorage.getItem('ltp_quotes') || '[]'),
-    invoices: JSON.parse(localStorage.getItem('ltp_invoices') || '[]'),
-    equipment: JSON.parse(localStorage.getItem('ltp_equipment') || '[]'),
-    products: JSON.parse(localStorage.getItem('ltp_products') || '[]'),
-    services: JSON.parse(localStorage.getItem('ltp_services') || '[]'),
-    settings: JSON.parse(localStorage.getItem('ltp_settings') || '{}'),
-  })
-}).then(r => r.json()).then(console.log);
-```
+It was removed once the migration was complete, because leaving it in place
+meant a live wipe-everything endpoint with no caller. Following the snippet
+that used to live here would not have re-imported anything today — the app has
+been pure API-backed with no localStorage since (see the header comment in
+`components/data-state.js`), so the body would have been empty objects and the
+call would simply have emptied the database. It also cascade-deleted
+`client_rates` without restoring them, since that entity was never in its
+model map.
+
+If a bulk import is ever needed again, recover the handler from git history
+(`git log -S bulk_sync -- backend/routes/api.py`) rather than rewriting it, and
+gate it behind an env flag that is unset in production.
 
 ## Project Structure
 
@@ -679,7 +675,7 @@ ltp-app/
 │   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
 │   ├── pdf_generator.py   # Quote/invoice PDF rendering
 │   └── routes/
-│       ├── api.py         # REST API routes + /sync
+│       ├── api.py         # REST API routes
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete
 ├── components/            # Frontend: shared React components
 │   └── client-rates.js    # Per-client rate editor + the CLIENT RATE chip

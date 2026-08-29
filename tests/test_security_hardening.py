@@ -90,7 +90,6 @@ from backend.rate_limit import _match_rule
     ("/api/view/sometoken/pdf", "/api/view"),
     ("/pdf/sometoken", "/pdf"),
     ("/api/email/send", "/api/email/send"),
-    ("/api/sync", "/api/sync"),
 ])
 def test_rate_limited_routes_match(path, expected_key):
     rule = _match_rule(path)
@@ -470,3 +469,106 @@ def test_a_new_internal_column_does_not_leak_by_default():
     from backend.routes._shared import public_entity
     out = public_entity({"id": 1, "status": "sent", "someNewInternalColumn": "secret"})
     assert out == {"id": 1, "status": "sent"}
+
+
+# ── Operational fail-safes + retirement of POST /api/sync ──────────────────
+
+def test_env_int_rejects_garbage_and_out_of_range():
+    """A bare int() on an env var raises at IMPORT time, which crash-loops the
+    container before the app object exists — no traceback route, no health
+    surface, just restarts. backend/rate_limit.py did that with
+    LTP_TRUST_PROXY_HOPS; env_int is what main.py already used instead."""
+    import os as _os
+    from backend.env import env_int
+
+    key = "LTP_TEST_ENV_INT_PROBE"
+    try:
+        _os.environ[key] = "2h"          # the typo that used to be fatal
+        assert env_int(key, 7) == 7
+        _os.environ[key] = ""
+        assert env_int(key, 7) == 7
+        _os.environ[key] = "12"
+        assert env_int(key, 7) == 12
+        # A poller interval of 0 parses fine and turns the loop into a hot spin
+        # on the single event loop this app runs on.
+        _os.environ[key] = "0"
+        assert env_int(key, 3600, minimum=60) == 3600
+        assert env_int(key, 7) == 0      # no floor asked for, no floor applied
+        _os.environ.pop(key)
+        assert env_int(key, 7) == 7
+    finally:
+        _os.environ.pop(key, None)
+
+
+def test_trust_proxy_hops_is_parsed_defensively():
+    """The specific import-time crash this replaced.
+
+    Asserted at the source rather than by reloading the module: rate_limit is
+    imported at app construction and backend/main.py binds RateLimitMiddleware
+    from it, so importlib.reload() swaps the module out from under a live app
+    and resets the shared _RateLimitState mid-suite. Not worth that risk to
+    re-prove what test_env_int_rejects_garbage_and_out_of_range already covers.
+    """
+    import inspect
+    from backend import rate_limit as _rl
+
+    src = inspect.getsource(_rl)
+    assert 'env_int("LTP_TRUST_PROXY_HOPS"' in src, "must parse defensively"
+    assert 'int(os.environ.get("LTP_TRUST_PROXY_HOPS"' not in src, \
+        "a bare int() here raises at import and crash-loops the container"
+    assert _rl._TRUST_PROXY_HOPS >= 0
+
+
+def test_production_is_detected_from_the_same_signals_main_uses():
+    import os as _os
+    from backend.env import looks_like_production
+
+    keys = ("LTP_FORCE_HTTPS", "LTP_OAUTH_REDIRECT_URI")
+    prev = {k: _os.environ.get(k) for k in keys}
+    try:
+        for k in keys:
+            _os.environ.pop(k, None)
+        assert looks_like_production() is False
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
+        assert looks_like_production() is False
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "https://app.example.com/auth/callback"
+        assert looks_like_production() is True
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
+        _os.environ["LTP_FORCE_HTTPS"] = "1"
+        assert looks_like_production() is True
+    finally:
+        for k, v in prev.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+
+def test_webpush_sends_carry_a_timeout():
+    """pywebpush defaults to timeout=None — block forever. The endpoint URL is
+    client-supplied (routes/push.py takes it as a bare str) and _deliver runs
+    inside the caller's transaction, so a dead host held a worker thread AND a
+    DB session open."""
+    import inspect
+    from backend import webpush as _wp
+
+    src = inspect.getsource(_wp._send_one)
+    assert "timeout=" in src, "pywebpush call must pass an explicit timeout"
+    assert isinstance(_wp._PUSH_TIMEOUT_SECONDS, (int, float))
+    assert 0 < _wp._PUSH_TIMEOUT_SECONDS <= 60
+
+
+def test_bulk_sync_endpoint_is_gone():
+    """POST /api/sync wiped twelve entity tables from a request body and had no
+    caller: the localStorage migration it existed for was finished, the app has
+    been pure API-backed since, and it cascade-deleted client_rates without
+    restoring them (that entity was never in its model map). Retired rather
+    than left as a live wipe-everything endpoint."""
+    from backend.routes import api as _api
+    from backend.rate_limit import _match_rule
+
+    assert not hasattr(_api, "bulk_sync")
+    routes = [getattr(r, "path", "") for r in _api.router.routes]
+    assert "/sync" not in routes and "/api/sync" not in routes, routes
+    # Its rate-limit rule went with it; the path is now simply unmatched.
+    assert _match_rule("/api/sync") is None

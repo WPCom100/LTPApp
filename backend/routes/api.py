@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.orm import undefer
 from backend.database import get_db
 from backend import crew_integrity, models
@@ -627,61 +627,3 @@ async def get_user_photo(photo_token: str, db: AsyncSession = Depends(get_db)):
         # changes the URL — safe to cache the bytes hard.
         headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
-
-
-# ── Bulk sync (one-shot localStorage → server migration) ─────────────────
-
-@router.post("/sync", dependencies=[Depends(require_admin)])
-async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
-    """Wipe + repopulate all entities from a full localStorage dump.
-    Used once per client to seed the server from their browser state.
-    Admin-only because it's destructive."""
-    model_map = {
-        "companies":   models.Company,
-        "contacts":    models.Contact,
-        "projects":    models.Project,
-        "quotes":      models.Quote,
-        "invoices":    models.Invoice,
-        "equipment":   models.Equipment,
-        "products":    models.Product,
-        "services":    models.Service,
-        "fees":        models.Fee,
-        "allocations": models.Allocation,
-        "containers":  models.Container,
-        "kits":        models.Kit,
-    }
-    counts = {}
-    for key, model_cls in model_map.items():
-        items = payload.get(key)
-        if items is None:
-            continue
-        await db.execute(delete(model_cls))
-        for item in items:
-            # Run the same field validation as the per-entity create path so a
-            # bulk import can't seed forged enum/date/length values
-            # (SECURITY_REVIEW.md H5). Activity attribution is intentionally NOT
-            # re-stamped here — this is a one-time migration of the admin's own
-            # data and rewriting every historical actor to the importer would
-            # lose the original attribution.
-            validate(model_cls, item)
-            mapped = _dict_to_row(item, model_cls)
-            row = model_cls(**mapped)
-            # share_token is server-authoritative (stripped by _dict_to_row).
-            # Mint one for token-bearing rows so the NOT NULL invariant holds; a
-            # full re-import regenerates share links, which is acceptable for
-            # this one-time wipe-and-reseed migration. SECURITY_REVIEW.md H3.
-            if hasattr(row, "share_token") and not getattr(row, "share_token"):
-                row.share_token = secrets.token_urlsafe(32)
-            db.add(row)
-        counts[key] = len(items)
-
-    if "settings" in payload:
-        result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
-        row = result.scalar_one_or_none()
-        if not row:
-            db.add(models.Settings(id=1, data=payload["settings"]))
-        else:
-            row.data = payload["settings"]
-        counts["settings"] = 1
-
-    return {"synced": counts}

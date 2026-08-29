@@ -32,6 +32,9 @@ _SUBJ = "LTP_VAPID_SUBJECT"
 _MAX_PAYLOAD_BYTES = 3800
 # Ask the push service to hold an undelivered message for a day, then drop it.
 _TTL_SECONDS = 60 * 60 * 24
+# Wall-clock cap on a single push. Best-effort delivery: better to drop one
+# notification than to pin a thread and a DB session on a dead endpoint.
+_PUSH_TIMEOUT_SECONDS = 10
 
 
 def public_key() -> str:
@@ -60,6 +63,14 @@ def _send_one(sub_info: dict, payload: str) -> None:
         vapid_private_key=os.environ[_PRIV].strip(),
         vapid_claims={"sub": os.environ[_SUBJ].strip()},
         ttl=_TTL_SECONDS,
+        # pywebpush defaults to timeout=None, i.e. block forever. The endpoint
+        # URL comes from the browser's push service and is stored per
+        # subscription (routes/push.py accepts it as a bare string), so an
+        # unresponsive or hostile host would hang this worker thread AND hold
+        # the caller's DB session open for the whole time — _deliver runs
+        # inside the request/poller transaction and sends to each subscription
+        # in sequence.
+        timeout=_PUSH_TIMEOUT_SECONDS,
     )
 
 

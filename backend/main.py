@@ -23,21 +23,7 @@ from backend.routes.push import push_router
 from backend.routes.scan import scan_router
 from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
-
-
-def _env_int(name: str, default: int) -> int:
-    """Read an integer env var, falling back to `default` (with a warning) on a
-    missing/blank/non-numeric value. A bare int(os.environ[...]) at import time
-    turns a typo like `2h` into a ValueError that crash-loops the container on
-    every boot — before the app object even exists — so parse defensively."""
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return int(raw.strip())
-    except ValueError:
-        print(f"[LTP] config: {name}={raw!r} is not an integer; using default {default}", flush=True)
-        return default
+from backend.env import env_flag, env_int
 
 
 # ── Session sweeper ────────────────────────────────────────────────────────
@@ -45,7 +31,7 @@ def _env_int(name: str, default: int) -> int:
 # the table grows unbounded. This background task wakes hourly, deletes any
 # row past expires_at, and logs the count if non-zero. Hourly is plenty for
 # any realistic scale; tune via LTP_SESSION_SWEEP_INTERVAL_SECONDS.
-SESSION_SWEEP_INTERVAL = _env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600)
+SESSION_SWEEP_INTERVAL = env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600, minimum=60)
 
 
 async def _sweep_expired_sessions_once() -> int:
@@ -88,7 +74,7 @@ async def _session_sweeper_loop():
 # Sender = the admin who connected QuickBooks; if their Gmail is unavailable the
 # receipt is cached and retried next cycle. See backend/qbo_receipts.py. Tune
 # the cadence via LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS (default 2 hours).
-QBO_RECEIPT_POLL_INTERVAL = _env_int("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", 2 * 3600)
+QBO_RECEIPT_POLL_INTERVAL = env_int("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", 2 * 3600, minimum=60)
 
 
 async def _qbo_receipt_poll_loop():
@@ -119,7 +105,7 @@ async def _qbo_receipt_poll_loop():
 # paid, a bill's days are protected from re-pricing and it stops being polled.
 # See backend/qbo_bill_poll.py. Cadence: LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS
 # (default 2 hours).
-QBO_PAYOUT_POLL_INTERVAL = _env_int("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", 2 * 3600)
+QBO_PAYOUT_POLL_INTERVAL = env_int("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", 2 * 3600, minimum=60)
 
 # Start the payout poller slightly after the receipt poller so their (per-cycle)
 # token-refresh windows don't align — the refresh itself is serialized + race-safe
@@ -196,7 +182,7 @@ app = FastAPI(title="LTP Business Suite", version="2.0.0", lifespan=lifespan)
 # 10 MB is intentionally generous for the app's data model (quotes/invoices
 # with hundreds of line items, settings with embedded logos). Tune via
 # LTP_MAX_PAYLOAD_BYTES env var if needed; we log the value at startup.
-MAX_PAYLOAD_BYTES = _env_int("LTP_MAX_PAYLOAD_BYTES", 10 * 1024 * 1024)
+MAX_PAYLOAD_BYTES = env_int("LTP_MAX_PAYLOAD_BYTES", 10 * 1024 * 1024, minimum=1024)
 
 
 class PayloadSizeLimitMiddleware:
@@ -298,7 +284,7 @@ class PayloadSizeLimitMiddleware:
 # explicit LTP_FORCE_HTTPS switch (set this in production), OR an https://
 # redirect URI. Per-request transport (X-Forwarded-Proto) is additionally
 # honored for the app-session cookie in routes/auth.py.
-_FORCE_HTTPS = os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on")
+_FORCE_HTTPS = env_flag("LTP_FORCE_HTTPS")
 _IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
 # img-src: tightened from a bare `https:` wildcard (an easy XSS data-exfil
 # channel — encode stolen data into an image URL to an attacker host) to a host
@@ -702,6 +688,34 @@ def _dev_icon_path(icon_name: str):
     except ValueError:
         return None
     return cand if os.path.isfile(cand) else None
+
+
+# ── Health check ─────────────────────────────────────────────────────────────
+# Deliberately dependency-free: no database, no session, no external call. It
+# answers one question — "did this process finish booting and is it serving?" —
+# which is exactly the question that had no answer before.
+#
+# init_db() runs Alembic inside the lifespan, BEFORE the app starts serving, so
+# a failed or hung migration means this endpoint never responds at all. That is
+# the signal: with railway.json's healthcheckPath pointed here, the platform
+# fails the deploy and keeps the previous container serving, instead of
+# retiring a working one for a crash-looping replacement (restartPolicyMaxRetries
+# is 10) with nothing in the UI to say why.
+#
+# It deliberately does NOT probe the database. A health check that fails on a
+# transient DB blip would have the platform restart a process that is fine and
+# would recover on its own — turning a brief outage into a longer one. Liveness
+# here, not readiness.
+#
+# Registered before the catch-all below, or the SPA fallback would swallow it
+# and return index.html with a 200 — which would "pass" the health check for
+# entirely the wrong reason.
+@app.get("/healthz")
+async def healthz():
+    return JSONResponse(
+        {"status": "ok", "app": app.title, "version": app.version},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── PWA endpoints ────────────────────────────────────────────────────────────
