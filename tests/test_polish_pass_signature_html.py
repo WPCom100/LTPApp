@@ -385,11 +385,18 @@ def test_quotes_builder_uses_helpers():
     instead of the prior split-pane + LTP_renderPreviewBody. The editor
     calls LTP_bodyToEditableHtml internally."""
     print("test_quotes_builder_uses_helpers")
-    path = os.path.join(_root, "modules", "quotes-builder.js")
-    with open(path, encoding="utf-8") as f:
+    # The editor now sits inside the shared components/doc-email-pane.js that
+    # all three send modals render, so follow the chain: builder -> pane ->
+    # EmailBodyEditor. Grepping only the builder would pass if the pane stopped
+    # rendering the editor.
+    with open(os.path.join(_root, "modules", "quotes-builder.js"), encoding="utf-8") as f:
         src = f.read()
-    _check("Send modal renders EmailBodyEditor (replaces split-pane preview)",
-           "window.EmailBodyEditor" in src)
+    with open(os.path.join(_root, "components", "doc-email-pane.js"), encoding="utf-8") as f:
+        pane = f.read()
+    _check("Send modal renders the shared email pane",
+           "window.LTPEmailComposePane" in src)
+    _check("the shared pane renders EmailBodyEditor (replaces split-pane preview)",
+           "window.EmailBodyEditor" in pane)
 
 
 def test_invoices_uses_helpers():
@@ -397,9 +404,14 @@ def test_invoices_uses_helpers():
     path = os.path.join(_root, "modules", "invoices.js")
     with open(path, encoding="utf-8") as f:
         src = f.read()
-    _check("Send + Receipt modals render EmailBodyEditor",
-           src.count("window.EmailBodyEditor") >= 2,
-           f"got {src.count('window.EmailBodyEditor')} EmailBodyEditor refs")
+    # Both invoice send paths (send and receipt) render the shared pane; the
+    # pane is what holds the editor.
+    with open(os.path.join(_root, "components", "doc-email-pane.js"), encoding="utf-8") as f:
+        pane = f.read()
+    _check("Send + Receipt modals both render the shared email pane",
+           src.count("window.LTPEmailComposePane") >= 2,
+           f"got {src.count('window.LTPEmailComposePane')} pane refs")
+    _check("the shared pane renders EmailBodyEditor", "window.EmailBodyEditor" in pane)
     _check("Both send paths paragraph-wrap THEN inject the header (not the reverse)",
            src.count("LTP_renderHeader") >= 2
            and src.count("LTP_injectBlock(window.LTP_textToHtml(String(sendMessage))") >= 2

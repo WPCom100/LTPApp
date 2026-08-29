@@ -3637,7 +3637,7 @@
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
-  -- slot 13 opens an overlay (78 lines) --
+  -- slot 13 opens an overlay (79 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
@@ -3677,38 +3677,39 @@
                   Total
                 <span style=1props>
                   $1,710.00
-          <div style=7props>
-            <div style=3props>
-              <div style=6props>
-                Email Preview
-              <div style=4props>
-                <span style=3props>
-                  From:
-                <span style=2props>
-                  Sender <s@example.com>
-              <div style=1props>
-                <anon>
-                  <div>
-                    <div style=4props>
-                      <span style=8props>
-                        To
-                      <div style=5props>
-                        <span style=4props>
-                          no primary recipient
-                    <div style=4props>
-                      <span style=8props>
-                        Cc
-                      <div style=5props>
-                        <span style=4props>
-                          none
-                    <div style=2props>
-                      <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+          <LTPEmailComposePane>
+            <div style=7props>
               <div style=3props>
-                <span style=3props>
-                  Subj:
-                <input onChange=fn style=10props value="">
-            <anon>
-              <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
         <div style=6props>
           <anon>
             <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
@@ -3865,7 +3866,7 @@
             <anon>
               <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                 Record Payment
-  -- slot 11 opens an overlay (87 lines) --
+  -- slot 11 opens an overlay (88 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort27" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
@@ -3910,38 +3911,39 @@
                   Total
                 <span style=1props>
                   $1,710.00
-          <div style=7props>
-            <div style=3props>
-              <div style=6props>
-                Email Preview
-              <div style=4props>
-                <span style=3props>
-                  From:
-                <span style=2props>
-                  Sender <s@example.com>
-              <div style=1props>
-                <anon>
-                  <div>
-                    <div style=4props>
-                      <span style=8props>
-                        To
-                      <div style=5props>
-                        <span style=4props>
-                          no primary recipient
-                    <div style=4props>
-                      <span style=8props>
-                        Cc
-                      <div style=5props>
-                        <span style=4props>
-                          none
-                    <div style=2props>
-                      <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+          <LTPEmailComposePane>
+            <div style=7props>
               <div style=3props>
-                <span style=3props>
-                  Subj:
-                <input onChange=fn style=10props value="">
-            <anon>
-              <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
         <div style=7props>
           <label style=7props>
             <input checked=true onChange=fn style=2props type="checkbox">
@@ -3965,7 +3967,7 @@
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec2" style=3props>
-  -- slot 15 opens an overlay (73 lines) --
+  -- slot 15 opens an overlay (74 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
@@ -4000,38 +4002,39 @@
                   Paid in Full
                 <span style=1props>
                   $0.00
-          <div style=7props>
-            <div style=3props>
-              <div style=6props>
-                Email Preview
-              <div style=4props>
-                <span style=3props>
-                  From:
-                <span style=2props>
-                  Sender <s@example.com>
-              <div style=1props>
-                <anon>
-                  <div>
-                    <div style=4props>
-                      <span style=8props>
-                        To
-                      <div style=5props>
-                        <span style=4props>
-                          no primary recipient
-                    <div style=4props>
-                      <span style=8props>
-                        Cc
-                      <div style=5props>
-                        <span style=4props>
-                          none
-                    <div style=2props>
-                      <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+          <LTPEmailComposePane>
+            <div style=7props>
               <div style=3props>
-                <span style=3props>
-                  Subj:
-                <input onChange=fn style=10props value="">
-            <anon>
-              <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
         <div style=6props>
           <anon>
             <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>

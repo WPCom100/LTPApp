@@ -2384,35 +2384,13 @@
             )
           ),
           // Right: Email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.text } },
-                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { marginBottom: 8 } },
-                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // WYSIWYG body editor (see modules/quotes-builder.js for the
-            // matching block + rationale). sendMessage state still keeps
-            // placeholders intact; EmailBodyEditor renders the signature
-            // as a non-editable block locally and reverses the
-            // substitution on every input.
-            h(window.EmailBodyEditor, {
-              value: sendMessage,
-              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerKind: "invoice",
-              headerVars: sendHeaderVars,
-              onChange: setSendMessage,
-              minHeight: 240,
-            })
-          )
+          // Shared with the other send modals — components/doc-email-pane.js.
+          h(window.LTPEmailComposePane, {
+            recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
+            subject: sendSubject, onSubjectChange: setSendSubject,
+            body: sendMessage, onBodyChange: setSendMessage,
+            headerKind: "invoice", headerVars: sendHeaderVars, settings: settings,
+          })
         ),
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           // Attach the invoice PDF (default on). Invoice + reminder sends only;
@@ -2453,35 +2431,13 @@
             )
           ),
           // Right: Email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.text } },
-                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { marginBottom: 8 } },
-                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // WYSIWYG body editor (see modules/quotes-builder.js for the
-            // matching block + rationale). sendMessage state still keeps
-            // placeholders intact; EmailBodyEditor renders the signature
-            // as a non-editable block locally and reverses the
-            // substitution on every input.
-            h(window.EmailBodyEditor, {
-              value: sendMessage,
-              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerKind: "receipt",
-              headerVars: sendHeaderVars,
-              onChange: setSendMessage,
-              minHeight: 240,
-            })
-          )
+          // Shared with the other send modals — components/doc-email-pane.js.
+          h(window.LTPEmailComposePane, {
+            recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
+            subject: sendSubject, onSubjectChange: setSendSubject,
+            body: sendMessage, onBodyChange: setSendMessage,
+            headerKind: "receipt", headerVars: sendHeaderVars, settings: settings,
+          })
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowReceiptModal(false); } }, "Skip"),
