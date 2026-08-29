@@ -118,6 +118,53 @@ eq("A19 mealFix overnight no residual meal penalty", night.mealPenaltyHours, 0);
 eq("A20 mealFix overnight matches the daytime twin (paid)", night.paidHours, noon.paidHours);
 eq("A20 mealFix overnight matches the daytime twin (rate)", night.rate, noon.rate);
 
+// ── A21-A23. Engine and meal-break generator must partition a day alike ──────
+// LTP_mealFixBreaks tested its gap against the LAST pushed piece's end while
+// LTP_calcLaborDay tracks a running max. A short block nested inside a longer
+// one therefore split the span in the generator but not in the engine: the
+// generator saw two sub-5h spans, emitted nothing, and the engine still charged
+// meal penalty. The producer clicks "fix meal breaks" and nothing happens.
+const fixApply = (blocks) => {
+  const shifts = blocks.map((b, i) => ({ id: "s" + i, time: b[0], endTime: b[1], breaks: [], positionId: "p1" }));
+  const add = FIX(shifts);
+  // calcLaborDay pools every block's breaks across the merged span, so hanging
+  // the generated breaks off the first item is equivalent to placing them.
+  const items = blocks.map((b, i) => sh(b[0], b[1], i === 0 ? add.map((a) => nb(a.startTime, a.endTime, a.type)) : []));
+  return { add: add, r: D(R, items) };
+};
+
+// The nested-block case: 08:00-13:00 with 09:00-10:00 inside it, then
+// 12:00-16:00 overlapping the tail. The engine sees one 08:00-16:00 span (8h).
+const nested = [["08:00", "13:00"], ["09:00", "10:00"], ["12:00", "16:00"]];
+r = D(R, nested.map((b) => sh(b[0], b[1])));
+eq("A21 engine merges nested blocks into one 8h span", r.paidHours, 8);
+eq("A21 engine charges 3h meal penalty on it", r.mealPenaltyHours, 3);
+let fx = fixApply(nested);
+ok("A21 generator emits a break for that span", fx.add.length > 0, "emitted " + fx.add.length);
+eq("A21 penalty is neutralised after the fix", fx.r.mealPenaltyHours, 0);
+eq("A21 paid 7 (8h worked - 1h unpaid break)", fx.r.paidHours, 7);
+eq("A21 unpaid break 1", fx.r.unpaidBreakHours, 1);
+
+// A plain gap must still split — the fix must not merge across real gaps.
+r = D(R, [sh("08:00", "12:00"), sh("15:00", "19:00")]);
+eq("A22 real gap still splits (4h + 4h)", r.paidHours, 8);
+eq("A22 no penalty across a gap", r.mealPenaltyHours, 0);
+
+// The generator's contract, stated directly: whatever it emits must leave the
+// engine with zero meal penalty. Spot-checked across shapes that exercise
+// single, contiguous, nested and overnight days.
+[
+  [["09:00", "20:00"]],
+  [["09:00", "14:00"], ["14:00", "19:00"]],
+  [["08:00", "18:00"], ["09:00", "10:00"], ["17:00", "21:00"]],
+  [["18:00", "06:00"]],
+  [["22:00", "04:00"], ["23:00", "23:30"]],
+].forEach(function(blocks, i) {
+  const out = fixApply(blocks);
+  eq("A23." + (i + 1) + " mealFix leaves zero penalty (" + blocks.map((b) => b[0] + "-" + b[1]).join(" + ") + ")",
+     out.r.mealPenaltyHours, 0);
+});
+
 // ── B. Per-person units: LTP_calcDayLabor ────────────────────────────────────
 let d;
 d = day([{ time: "09:00", endTime: "14:00", breaks: [], positions: [P(1)] }]);

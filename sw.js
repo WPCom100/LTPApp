@@ -66,13 +66,17 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
-// v58: overnight-shift labor pricing fix in theme.js — breaks taken after
-// midnight are now lifted into their span's frame, so an 18:00-02:00 call with
-// a 00:30 break no longer prices as 25 paid hours. index.html is untouched, but
-// theme.js is precached (SAME_ORIGIN_PRECACHE below), so without a new string
-// every installed device keeps serving the old pricing engine for one more
-// launch — and no worker installs, so there is no refresh banner either. This
-// is money math: a stale shell here bills a client the wrong amount.
+// v58: labor-engine correctness in theme.js. (a) Breaks taken after midnight
+// are lifted into their span's frame, so an 18:00-02:00 call with a 00:30 break
+// no longer prices as 25 paid hours. (b) LTP_mealFixBreaks now partitions a day
+// into spans the same way LTP_calcLaborDay does, so "fix meal breaks" can no
+// longer no-op on a day with a nested block and leave the penalty standing.
+// index.html is untouched, but theme.js is precached (SAME_ORIGIN_PRECACHE
+// below), so without a new string every installed device keeps serving the old
+// pricing engine for one more launch — and no worker installs, so there is no
+// refresh banner either. This is money math: a stale shell bills the wrong
+// amount. Both changes ship under the one string because v58 has never been
+// released — nothing out there is holding a v58 shell to invalidate.
 var CACHE_VERSION = 'ltp-shell-v58';
 
 var SAME_ORIGIN_PRECACHE = [

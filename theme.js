@@ -1316,11 +1316,28 @@ window.LTP_mealFixBreaks = function(shifts) {
   if (!S.length) return [];
 
   // Contiguous shifts → one span (a real gap splits spans, matching the engine).
+  //
+  // The gap test compares against the RUNNING MAX end, not the last pushed
+  // piece's end. With a short block nested inside a longer one — 08:00-13:00,
+  // 09:00-10:00, 12:00-16:00 — the last piece ends at 10:00, so 12:00 read as a
+  // gap and the span split, while LTP_calcLaborDay (which tracks a running max)
+  // kept one 08:00-16:00 span. The generator then saw two sub-5h spans, emitted
+  // no breaks at all, and the engine still charged 3h of meal penalty: the
+  // producer clicks "fix meal breaks", nothing happens, and the day stays
+  // mispriced. Both functions must partition a day identically or the fix can
+  // never converge.
   var spans = [];
   var cur = [S[0]];
+  var curEnd = S[0].end;
   for (var i = 1; i < S.length; i++) {
-    if (S[i].start <= cur[cur.length - 1].end) cur.push(S[i]);
-    else { spans.push(cur); cur = [S[i]]; }
+    if (S[i].start <= curEnd) {
+      cur.push(S[i]);
+      if (S[i].end > curEnd) curEnd = S[i].end;
+    } else {
+      spans.push(cur);
+      cur = [S[i]];
+      curEnd = S[i].end;
+    }
   }
   spans.push(cur);
 
