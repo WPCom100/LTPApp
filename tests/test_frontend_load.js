@@ -81,14 +81,34 @@ if (loaded) {
   const added = [...live].filter((k) => !declared.has(k));
   ok("no export appears on window that no domain file declares", added.length === 0,
      added.join(", "));
-  // 102 came out of the theme.js split. Everything since is logic lifted OUT
-  // of the quote/invoice builder closures so it could be tested:
-  // LTP_sectionTotals, LTP_applySortMove, LTP_quoteChanges, LTP_invoiceChanges
-  // and LTP_SECTIONS. Bumping this number is expected when that continues; the
-  // assertion above already names anything that appears without being declared.
-  ok("the domain layer publishes the expected 107 exports", live.size === 107,
-     "got " + live.size + "; if you added one deliberately, bump this number. "
-     + "declared=" + declared.size + " live=" + live.size);
+  // A bare count was a tripwire that fired on every legitimate addition and
+  // said only "got 107". What actually needs guarding is REMOVAL: the `added`
+  // check above catches an export appearing undeclared, but nothing catches one
+  // quietly disappearing — which in this codebase is a call-time ReferenceError
+  // on whichever screen uses it. So pin the load-bearing exports by name.
+  //
+  // This list is not every export. It is the ones whose loss would be a money
+  // or data bug rather than a cosmetic one: the pricing engine, the document
+  // totals and references, the payout path, and the transforms lifted out of
+  // the builders.
+  [
+    "LTP_THEME", "LTP_MODULES", "LTP_STATUS_COLORS",
+    "LTP_calcLaborDay", "LTP_mealFixBreaks", "LTP_calcDayLabor", "LTP_calcLaborRate",
+    "LTP_servicesForClient", "LTP_applyClientRate", "LTP_clientRateMap",
+    "LTP_payoutRows", "LTP_crewDayPay", "LTP_signOffDay", "LTP_stampPay",
+    "LTP_QUOTE_TOTALS", "LTP_INVOICE_TOTALS", "LTP_QUOTE_REF", "LTP_INVOICE_REF",
+    "LTP_docTerms", "LTP_quoteExpiry", "LTP_displayStatus", "LTP_money",
+    "LTP_sectionTotals", "LTP_applySortMove", "LTP_SECTIONS",
+    "LTP_quoteChanges", "LTP_invoiceChanges",
+    "LTP_renderHeader", "LTP_renderSignature", "LTP_textToHtml",
+    "LTP_genId", "LTP_genShareToken", "LTP_formatDate", "LTP_safeUrl",
+  ].forEach(function (k) {
+    ok("load-bearing export " + k + " is still published", live.has(k),
+       "it was removed or renamed — every caller now fails at call time");
+  });
+  // A floor, not an equality: additions are routine, wholesale loss is not.
+  ok("the domain layer still publishes a full complement of exports",
+     live.size >= 100, "got " + live.size + " (declared " + declared.size + ")");
 
   // No export may be published by two files: the later <script> would silently
   // win, and which one that is depends on index.html's ordering.

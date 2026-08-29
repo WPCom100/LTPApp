@@ -382,7 +382,7 @@ def test_quotes_builder_send_paragraph_wraps_then_injects_header():
 
 def test_quotes_builder_uses_helpers():
     """Preview pane is the EmailBodyEditor (single WYSIWYG component)
-    instead of the prior split-pane + LTP_renderPreviewBody. The editor
+    instead of the prior split-pane preview helper (since removed). The editor
     calls LTP_bodyToEditableHtml internally."""
     print("test_quotes_builder_uses_helpers")
     # The editor now sits inside the shared components/doc-email-pane.js that
@@ -430,8 +430,6 @@ def test_theme_js_exposes_helpers():
            "window.LTP_textToHtml" in src)
     _check("window.LTP_renderSignature exposed",
            "window.LTP_renderSignature" in src)
-    _check("window.LTP_renderPreviewBody exposed",
-           "window.LTP_renderPreviewBody" in src)
     _check("window.LTP_injectBlock exposed (block-level token injector)",
            "window.LTP_injectBlock" in src)
 

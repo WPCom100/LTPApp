@@ -15,6 +15,7 @@ Covered:
     container, no divergence between crew and customer email).
 """
 import os
+import re
 import sys
 
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -121,8 +122,14 @@ def test_all_email_content_is_fluid_for_small_screens():
     settings = _read("data", "settings.js")
     theme = domain_source()
     # The customer {{header}} action box is generated per type by
-    # theme.js::LTP_renderHeader (no longer a stored settings template).
-    header_js = theme.split("LTP_renderHeader = function")[1].split("LTP_renderPreviewBody")[0]
+    # components/domain-email.js::LTP_renderHeader (no longer a stored settings
+    # template). Slice to the NEXT top-level export rather than naming the one
+    # that happens to follow — that coupling broke when the neighbouring dead
+    # LTP_renderPreviewBody was removed.
+    _seg = theme.split("LTP_renderHeader = function", 1)[1]
+    _next = re.search(r"\nwindow\.LTP_\w+\s*=", _seg)
+    assert _next, "could not find the export following LTP_renderHeader"
+    header_js = _seg[: _next.start()]
     sig_js = settings.split("emailSignatureTemplate:")[1].split("',")[0]
     # customer header wraps (no nowrap) and stacks via inline-block on narrow screens
     assert "white-space:nowrap" not in header_js

@@ -136,23 +136,6 @@ window.LTP_renderHeader = function(kind, vars) {
     + '</td></tr></tbody></table></div>';
 };
 
-// Build a Send-modal preview body: substitute the placeholders the
-// backend would normally fill in at send time, so the preview pane
-// shows the SAME shape the recipient gets. Real send still leaves
-// these placeholders intact for backend resolution.
-//
-// `viewUrl` should be the entity's share-link URL with no `?r=` (or a
-// sample one); `signatureTemplate` should be the workspace signature
-// template string (frontend reads settings.emailSignatureTemplate with
-// the data/settings.js default).
-window.LTP_renderPreviewBody = function(body, viewUrl, signatureTemplate) {
-  if (!body) return "";
-  var sig = window.LTP_renderSignature(signatureTemplate || "");
-  return String(body)
-    .replace(/\{\{viewUrl\}\}/g, viewUrl || "")
-    .replace(/\{\{signature\}\}/g, sig);
-};
-
 // ── EmailBodyEditor bidirectional conversion ─────────────────────────────
 // The Send modal uses a WYSIWYG contentEditable rather than a textarea —
 // the user shouldn't have to look at raw HTML to tweak an email. The
