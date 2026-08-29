@@ -369,3 +369,104 @@ def test_derived_rules_do_not_clobber_hand_written_ones():
     # `name`/`status` are hand-written; they must still be the real validators.
     assert _check_field(models.Project, "status", "not-a-status") is not None
     assert _check_field(models.Project, "status", "upcoming") is None
+
+
+# ── M1 (completion): the public payload is an ALLOW-list ───────────────────
+# The original M1 pass left three hand-maintained pop() lists behind. Between
+# them they named "internalNotes" and "internal_notes" — neither of which
+# quote_dict/invoice_dict ever produce. The real column is `notes`, annotated in
+# models.py as "internal free-form text; never rendered client-side", so it was
+# never stripped and shipped to every share-link holder. qbTaxSignature and the
+# per-line-item `notes`/`taxable` leaked the same way. Both scrubs are now
+# allow-lists (_shared._PUBLIC_ENTITY_KEYS / _PUBLIC_ITEM_KEYS) so a newly added
+# column is absent from the public payload until someone deliberately adds it.
+
+from datetime import datetime as _dt
+
+from backend import models as _m
+
+
+def _quote_with_internals():
+    q = _m.Quote(
+        id=7, client_type="company", company_id=3, client_contact_id=9,
+        project_id=11, project_ids=[11, 12], status="sent",
+        sent_date="2026-07-01", expiry_date="2026-08-01",
+        custom_start_date="", custom_end_date="", custom_name="Gala",
+        global_discount={}, terms="", activity=[],
+        notes="INTERNAL: margin is thin, do not discount",
+        share_token="SECRET-TOKEN-abc123",
+        qb_tax_total=12.5, qb_tax_signature="internal-fingerprint-xyz",
+        sections=[{"id": "s1", "label": "Audio", "projectId": 11, "items": [
+            {"id": "i1", "type": "service", "name": "A1 Engineer", "qty": 2,
+             "unitPrice": 1000, "adjustedPrice": None,
+             "cost": 600, "deliveredQty": 2, "invoicedQty": 0,
+             "notes": "INTERNAL: he owes us a favour", "taxable": True,
+             "rateType": "day", "serviceId": 42, "productVariantId": "v9"},
+            {"id": "n1", "type": "note", "text": "Load-in via the west dock.", "name": ""},
+        ]}],
+    )
+    q.created_at = _dt(2026, 7, 1)
+    return q
+
+
+def _payload():
+    return _sanitized_payload(
+        "quote", _quote_with_internals(), {}, {}, {},
+        {"companyName": "LTP", "defaultPaymentTerms": 45}, ["Gala"],
+    )
+
+
+def test_document_notes_never_reach_the_public_payload():
+    """The leak M1 was written to close. `notes` is the actual column name; the
+    old strip list named internalNotes/internal_notes, which never existed."""
+    entity = _payload()["entity"]
+    assert "notes" not in entity
+    assert "INTERNAL: margin is thin" not in repr(_payload())
+
+
+def test_qb_tax_signature_is_internal():
+    assert "qbTaxSignature" not in _payload()["entity"]
+
+
+def test_line_items_are_allow_listed_not_drop_listed():
+    item = _payload()["entity"]["sections"][0]["items"][0]
+    assert set(item) <= {"id", "type", "name", "text", "qty", "unitPrice",
+                         "adjustedPrice", "rentalLabel"}
+    for internal in ("cost", "deliveredQty", "invoicedQty", "notes", "taxable",
+                     "rateType", "serviceId", "productVariantId"):
+        assert internal not in item, f"line item leaked {internal}"
+
+
+def test_note_line_text_survives_the_scrub():
+    """modules/client-view.js renders a note row as `n.text || n.name`. An
+    allow-list that forgot `text` would silently blank every note on the
+    customer-facing page — the exact risk of this conversion."""
+    note = _payload()["entity"]["sections"][0]["items"][1]
+    assert note["text"] == "Load-in via the west dock."
+
+
+def test_everything_the_client_view_reads_still_arrives():
+    """Guards the other direction: over-tightening breaks the customer page."""
+    entity = _payload()["entity"]
+    for needed in ("id", "status", "sections", "globalDiscount", "qbTaxTotal",
+                   "customName", "customStartDate", "customEndDate",
+                   "sentDate", "createdDate", "activity", "terms",
+                   "projectNames"):
+        assert needed in entity, f"public view lost {needed}"
+    # doc_ref is computed from the scrubbed dict — it needs id + a date.
+    assert _payload()["ref"] == "Q-2026-007"
+
+
+def test_default_payment_terms_reaches_the_share_link():
+    """theme.js::LTP_docTerms resolves {{paymentTerms}} as
+    `String(s.defaultPaymentTerms || 30)`, so omitting this made the share link
+    say Net 30 while the PDF printed the real number."""
+    assert _payload()["settings"]["defaultPaymentTerms"] == 45
+
+
+def test_a_new_internal_column_does_not_leak_by_default():
+    """The structural point of the allow-list: an unrecognised key is dropped
+    rather than shipped."""
+    from backend.routes._shared import public_entity
+    out = public_entity({"id": 1, "status": "sent", "someNewInternalColumn": "secret"})
+    assert out == {"id": 1, "status": "sent"}
