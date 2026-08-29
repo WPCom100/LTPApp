@@ -48,6 +48,7 @@ def _check(label, ok, detail=""):
     suffix = f"  ({detail})" if detail else ""
     print(f"  [{status}] {label}{suffix}")
     _results.append((label, ok))
+    assert ok, f"{label} {detail}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -349,6 +350,44 @@ def test_frontend_sanitizer_allowlist_pinned():
 # ── Total formatting ──────────────────────────────────────────────────────
 
 
+def _fn_body(src, fn_name):
+    """Return the source text of `function <fn_name>(...) { ... }`, or None.
+
+    Brace-matched from the opening `{`, skipping braces inside string and
+    template literals and line comments so a `"}"` in a message can't close
+    the body early. Good enough for these hand-written modules; it is only
+    used to scope a search, never to execute anything.
+    """
+    m = re.search(r"function\s+" + re.escape(fn_name) + r"\s*\([^)]*\)\s*{", src)
+    if not m:
+        return None
+    i = m.end() - 1
+    depth = 0
+    quote = None
+    while i < len(src):
+        c = src[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "\"'`":
+            quote = c
+        elif c == "/" and src[i + 1:i + 2] == "/":
+            nl = src.find("\n", i)
+            i = len(src) if nl == -1 else nl
+            continue
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.end() - 1:i + 1]
+        i += 1
+    return None
+
+
 def test_total_renders_with_cents_in_all_three_modals():
     """{{total}} must always render with two decimal places (e.g.
     $197.00, $0.00). Three call sites: quotes-builder.js openQuoteSendModal,
@@ -356,21 +395,46 @@ def test_total_renders_with_cents_in_all_three_modals():
     print("test_total_renders_with_cents_in_all_three_modals")
     qb = _read("modules", "quotes-builder.js")
     inv = _read("modules", "invoices.js")
-    qb_matches = qb.count('minimumFractionDigits: 2')
-    inv_matches = inv.count('minimumFractionDigits: 2')
-    _check("quotes-builder uses minimumFractionDigits: 2",
-           qb_matches >= 1, f"got {qb_matches} matches")
-    _check("invoices uses minimumFractionDigits: 2 in BOTH send + receipt",
-           inv_matches >= 2, f"got {inv_matches} matches")
-    email_total_blocks = re.findall(
-        r'total:\s*"\$"\s*\+\s*Math\.round\(\w+\.total\)\.toLocaleString\(([^)]*)\)',
-        qb + inv,
-    )
-    cents_blocks = [a for a in email_total_blocks if "minimumFractionDigits" in a]
-    _check("every email-substitution `total:` uses minimumFractionDigits",
-           len(cents_blocks) == len(email_total_blocks),
-           f"found {len(email_total_blocks)} total: lines, "
-           f"{len(cents_blocks)} have cents config")
+    theme = _read("theme.js")
+
+    # This used to count occurrences of the literal `minimumFractionDigits: 2`
+    # in each module. That proxy broke when the modals were refactored onto the
+    # shared window.LTP_money helper: the literal moved into theme.js, the
+    # invoices count dropped to 1, and the regex below stopped matching
+    # anything at all (so it passed vacuously on an empty set). The behaviour
+    # was correct the whole time — only the proxy was wrong. Assert the actual
+    # invariant instead: every currency-valued `total:` substitution routes
+    # through LTP_money, and LTP_money pins two decimals.
+    _TOTAL_SUB = r'total:\s*"\$"\s*\+\s*([^,\n}]+)'
+    # Anchor to the three named modal openers rather than to file-wide counts.
+    # A per-file floor stayed green when the specific documented site was
+    # removed but an unrelated one remained; scoping to the function body is
+    # what the docstring actually means.
+    for module, src, fn_name in (
+        ("quotes-builder.js", qb, "openQuoteSendModal"),
+        ("invoices.js", inv, "openSendModal"),
+        ("invoices.js", inv, "openReceiptModal"),
+    ):
+        body = _fn_body(src, fn_name)
+        _check(f"{module}::{fn_name} found", body is not None)
+        if body is None:
+            continue
+        subs = re.findall(_TOTAL_SUB, body)
+        _check(f"{module}::{fn_name} substitutes `total:`",
+               len(subs) >= 1, f"found {len(subs)}")
+        non_money = [t.strip() for t in subs if "window.LTP_money(" not in t]
+        _check(f"{module}::{fn_name} routes `total:` through LTP_money",
+               not non_money, f"bypassing LTP_money: {non_money}")
+
+    money_fn = re.search(
+        r"window\.LTP_money\s*=\s*function[^}]+}", theme, re.S)
+    _check("theme.js defines window.LTP_money", money_fn is not None)
+    if money_fn:
+        body = money_fn.group(0)
+        _check("LTP_money pins minimumFractionDigits: 2",
+               "minimumFractionDigits: 2" in body)
+        _check("LTP_money pins maximumFractionDigits: 2",
+               "maximumFractionDigits: 2" in body)
 
 
 def test_per_template_variable_lists():

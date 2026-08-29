@@ -60,6 +60,7 @@ def _check(name, cond, detail=""):
     else:
         _failures.append(name + (f"  [{detail}]" if detail else ""))
         print(f"  FAIL {name}" + (f"  [{detail}]" if detail else ""))
+    assert cond, f"{name} {detail}"
 
 
 def _sections(unit_price=1000, qty=10, adjusted=None):
