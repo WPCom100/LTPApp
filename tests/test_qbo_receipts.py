@@ -620,3 +620,72 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ── One bad invoice must not poison the sender for the rest of the cycle ────
+# `sender` was loaded ONCE before the per-invoice loop and never refreshed,
+# unlike `conn` and `invoice` which are both re-loaded each iteration with
+# comments explaining that a per-invoice rollback expires every ORM object in
+# the session. After the first rollback the sender was expired, so the next
+# invoice's _process_invoice raised MissingGreenlet on the first attribute read
+# and the generic handler swallowed it as "failed (continuing)". Candidates are
+# ordered by id, so ONE invoice deleted in QuickBooks — which 404s every cycle,
+# forever — silently stopped receipts for every higher-id invoice.
+
+async def _add_second_invoice():
+    async with async_session() as db:
+        inv = models.Invoice(
+            client_type="contact", client_contact_id=None, company_id=None,
+            status="sent", invoice_date="2026-06-02", due_date="2026-07-02",
+            sections=[{"id": "s2", "label": "Services",
+                       "items": [{"id": "i2", "type": "service", "name": "Lighting",
+                                  "qty": 1, "unitPrice": 500.0}]}],
+            payments=[], activity=[], share_token="share-" + os.urandom(8).hex(),
+            qb_invoice_id="QB-99", qb_sync_token="1", qb_sync_status="synced",
+        )
+        db.add(inv)
+        await db.flush()
+        # Reuse the seeded client so the receipt has somewhere to go.
+        from sqlalchemy import select as _sel
+        ct = (await db.execute(_sel(models.Contact))).scalars().first()
+        inv.client_contact_id = ct.id
+        await db.commit()
+        return inv.id
+
+
+async def test_one_object_level_failure_does_not_stop_later_receipts():
+    print("test_one_object_level_failure_does_not_stop_later_receipts")
+    await _reset_schema()
+    first_id = await _seed(sender_has_gmail=True)
+    second_id = await _add_second_invoice()
+    _check("second invoice sorts after the first", second_id > first_id)
+
+    sent_to = []
+
+    async def _fake_send(**kwargs):
+        sent_to.append(kwargs.get("subject") or "")
+        return {"id": "gmail-msg"}
+
+    async def _fake_get_invoice(*a, **kw):
+        # The FIRST invoice was deleted in QuickBooks: a 404 object-level fault,
+        # which the loop handles by rolling back and continuing. The second is
+        # fine and fully paid, so it must still receive its receipt.
+        qb_id = None
+        for v in list(a) + list(kw.values()):
+            if isinstance(v, str) and v.startswith("QB-"):
+                qb_id = v
+        if qb_id == "QB-42":
+            raise quickbooks.QboApiError(404, "Object Not Found")
+        return {"Id": "QB-99", "SyncToken": "2", "Balance": 0, "TotalAmt": 500.0}
+
+    quickbooks.get_invoice = AsyncMock(side_effect=_fake_get_invoice)
+    gmail.send = AsyncMock(side_effect=_fake_send)
+
+    summary = await qr.run_receipt_poll()
+
+    _check("the deleted invoice was skipped, not fatal",
+           summary.get("skippedInvoices", 0) == 1, str(summary))
+    _check("the healthy invoice still sent its receipt",
+           summary.get("sent", 0) == 1, str(summary))
+    _check("gmail.send was actually reached for the second invoice",
+           len(sent_to) == 1, str(sent_to))

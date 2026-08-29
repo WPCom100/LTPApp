@@ -1234,7 +1234,16 @@
 
     function recallToDraft() {
       if (isDraft) return;
-      var hasPayments = (draft.payments || []).length > 0;
+      // Check the PERSISTED row as well as the draft. This guard exists to stop
+      // a recall from writing a payment-free record over one that has payments,
+      // and consulting only the in-memory draft made it trust the very state
+      // that could be wrong: a Discard against a stale baseline produced a
+      // payment-free draft, the guard passed, and onConfirm below wrote it
+      // through. The autoSavePayment fix removes that path, but a guard
+      // protecting money should not depend on another function staying correct.
+      var persisted = (invoices || []).find(function(i) { return i.id === draft.id; });
+      var hasPayments = (draft.payments || []).length > 0
+        || ((persisted && persisted.payments) || []).length > 0;
       if (hasPayments) {
         showAlert("Cannot Recall", "This invoice has recorded payments. Remove all payments before recalling to draft.");
         return;
@@ -1740,6 +1749,18 @@
           if (cur.id == null) return prev;
           return prev.map(function(inv) { return inv.id === cur.id ? Object.assign({}, cur) : inv; });
         });
+        // Advance the discard baseline too. Every other commit path pairs
+        // setDraftRaw/setIsDirty(false) with this (see :792, :1155, :1262,
+        // :1298, :1842, :1850); this one did not, so cleanRef kept the
+        // PRE-payment snapshot for as long as the editor stayed open.
+        // Discard is gated on isDirty alone — no !isLocked, unlike Save — so
+        // dirtying any un-gated field (Notes) on a locked invoice and hitting
+        // Discard reset the draft to that stale snapshot and the payment
+        // vanished from the editor. It was still in the persisted row, so the
+        // next path that wrote the draft over it (recallToDraft below) made
+        // the loss permanent. This is the state that WAS persisted, so it is
+        // the correct baseline.
+        cleanRef.current = cur;
         setIsDirty(false);
         return cur;
       });

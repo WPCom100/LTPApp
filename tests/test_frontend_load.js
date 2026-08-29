@@ -51,6 +51,47 @@ if (loaded) {
   });
 }
 
+// ── Invoice payment durability (source-level) ─────────────────────────────
+// There is no React harness here, so these assert the invariant at the source.
+// Recording a payment auto-saves it to the invoices list but the editor kept a
+// PRE-payment discard baseline, because autoSavePayment was the one commit path
+// that did not advance cleanRef. Discard is gated on isDirty alone — no
+// !isLocked, unlike Save — so dirtying any un-gated field on a locked invoice
+// and hitting Discard reset the draft to that stale snapshot and the payment
+// disappeared from the editor. recallToDraft then wrote the payment-free draft
+// over the persisted row, past a guard written to prevent exactly that.
+const invSrc = fs.readFileSync(path.join(root, "modules", "invoices.js"), "utf8");
+
+function fnBody(src, name) {
+  const m = new RegExp("function\\s+" + name + "\\s*\\([^)]*\\)\\s*\\{").exec(src);
+  if (!m) return null;
+  let i = m.index + m[0].length - 1, depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") { depth--; if (depth === 0) return src.slice(m.index, i + 1); }
+  }
+  return null;
+}
+
+const autoSave = fnBody(invSrc, "autoSavePayment");
+ok("invoices.js defines autoSavePayment", autoSave !== null);
+if (autoSave) {
+  ok("autoSavePayment advances the discard baseline (cleanRef.current)",
+     /cleanRef\.current\s*=/.test(autoSave),
+     "a payment auto-save must re-baseline or Discard reverts it away");
+  ok("autoSavePayment still clears the dirty flag", /setIsDirty\(false\)/.test(autoSave));
+}
+
+const recall = fnBody(invSrc, "recallToDraft");
+ok("invoices.js defines recallToDraft", recall !== null);
+if (recall) {
+  ok("recallToDraft checks the persisted row, not just the draft",
+     /invoices\s*\|\|\s*\[\]/.test(recall) && /persisted/.test(recall),
+     "a money guard must not trust the in-memory draft alone");
+  ok("recallToDraft still blocks when payments exist",
+     /Cannot Recall/.test(recall));
+}
+
 console.log("frontend load/syntax suite — PASS: " + pass + "   FAIL: " + fail + "   (" + files.length + " files syntax-checked)");
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " checks passed.");

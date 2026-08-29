@@ -75,6 +75,8 @@
 // duplicated as an individual one cannot bill time nobody worked, and a break
 // overhanging the shift end cannot either. (d) Times parse strictly: a
 // malformed value bills nothing instead of inventing an 18-hour day.
+// (e) modules/invoices.js: recording a payment now re-baselines the editor's
+// discard snapshot, so Discard can no longer revert a saved payment back out.
 // index.html is untouched, but theme.js is precached (SAME_ORIGIN_PRECACHE
 // below), so without a new string every installed device keeps serving the old
 // pricing engine for one more launch — and no worker installs, so there is no
