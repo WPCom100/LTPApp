@@ -1184,14 +1184,59 @@ hardest surface in the app to test. ~84 lines saved against a real chance of bre
 worse trade than it looks. The recommendation stands as: do these only alongside the builder decomposition
 below, not as standalone extractions.
 
-**Still open from this batch:** the two builders are still 1,672 and 2,008 lines. Splitting *them* — not the
-duplication between them — is the change that would make their internals testable, and it is a larger piece of
-work than this batch scoped.
+**The builders — done as a follow-on pass** (`e4d1f97` … `0c387c2`). QuotesBuilder 1,670 → **1,542**;
+InvoiceBuilder 1,998 → **1,740**. The line reduction is the least interesting part: what moved out is the logic
+that decides what gets **billed**, and none of it could be tested before.
 
-**Found while doing this batch, not fixed:** `LTP_renderPreviewBody` has zero consumers anywhere. Its only
-references are two Python tests asserting its name appears in the source, and
-`tests/test_polish_pass_signature_html.py:385` records that the editor it served was replaced. Belongs to the
-dead-code pass, not here.
+A render-tree snapshot landed **first**, as the net (`e4d1f97`): both builders rendered across 14 data scenarios
+plus an overlay sweep that flips each boolean state slot to open every modal — 4,052 lines of serialized tree,
+diffed against a committed golden. Every step below was then proven inert against it, one step at a time, with
+the golden regenerated with the step *reverted* whenever the harness itself changed, so a change was never
+measured together with the tooling that measures it.
+
+Lifted into `components/domain-docs.js`, each with its own tests:
+
+| moved | lines | why it matters |
+|---|---|---|
+| `LTP_quoteChanges` / `LTP_invoiceChanges` | 269 | what a user is *told* before committing an edit to a sent document |
+| `LTP_quoteToInvoiceDraft` | 69 | the done → billed hand-off: delivered-minus-invoiced at 5dp, `linkedQty`/`sourceQuoteId`, discount conversion |
+| `LTP_SECTIONS` (7 transforms) | 116 | the section/line-item array surgery, shared by both builders |
+| `LTP_eligibleInvoiceTargets` | 20 | which client's bill a job's lines may join |
+| `LTP_applyPayment` | 10 | paid vs partial, `>=` not `==`, and drafts never go partial |
+| `emptyInvoice` / `cloneInvoice` | 62 | file scope, matching the quote module |
+
+Extracted as components: `doc-payment-form.js` (owns its own form state) and `doc-email-pane.js` — the email
+half of all three send modals, which was the same block three times differing in **one** value (`headerKind`).
+
+**Corrections to this batch's own premises, again worth recording:**
+- The "lexically private helper" hazard reported for the theme.js split was **false**, and the same reasoning
+  would have misdirected this pass. Verified in Chromium: separate `<script>` tags share one global scope.
+- The `sortMove` guard asymmetry between the builders is **not** a missing guard. `components/sortable.js:389`
+  gates the keyboard path on `enabled` too, so quotes' lack of an inner `isDraft` check is safe.
+- Four separate times, a mutation that *looked* like a coverage gap was really a bad probe: two patterns that
+  appear twice in `domain-docs.js` (so a replace-first mutated the wrong function), a swap-vs-splice that is
+  behaviour-identical for a single step, and two fixtures where one guard hid behind another. Each was chased
+  down rather than written off; two were real holes and were closed.
+
+**Deliberately not done, and why:**
+- The `generatePdf` and Gmail-send clusters (~84 lines) stay. Each needs 6-7 closure values threaded out, wraps
+  an async fetch, and drives the iOS-standalone `window.open` + blob-download workaround — the hardest surface
+  in the app to verify.
+- The activity-detail popups in the two builders look duplicated but render differently (time shown, column
+  width, empty state). Merging them is a product decision, not a refactor.
+- The QuickBooks cluster in InvoiceBuilder (~150 lines) is the largest remaining block. It is coherent and
+  self-contained enough to lift, but every path in it talks to an external system, and the render snapshot
+  cannot see any of it.
+
+**Honest limits of the net:** anything gated on `isDirty` is dark in a static render (that flag only flips on a
+user edit — forcing `isLocked = false` does *not* move the snapshot), `useEffect` is a no-op, and handlers
+serialize as `fn`, so the snapshot cannot tell one inline closure from another. That last one is why
+single-sourcing the duplicated reopen-from-declined mutation shipped with a *source-level* guard instead: no
+inline `onClick` in either render tree may call a state setter.
+
+**Found while doing this batch, since fixed** (`ef5bb45`): `LTP_renderPreviewBody` had zero consumers anywhere
+and is gone — along with a dead `setProjects` prop threaded through three files to a builder that never
+referenced it (`ad57d48`).
 
 ---
 
