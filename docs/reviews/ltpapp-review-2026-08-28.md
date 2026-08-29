@@ -103,6 +103,17 @@ to keep the document navigable; every one still carries its `file:line`.
 > *Adversarial verify:* CONFIRMED
 
 ```
+[Medium] `USE_PROFILES` silently replaces both sanitizer allowlists with DOMPurify's built-in HTML profile
+  File: components/sanitize.js:36,102 (pre-fix line numbers)
+  What: Both CONFIG and EMAIL_CONFIG pass `USE_PROFILES: { html: true }` alongside their own ALLOWED_TAGS/ALLOWED_ATTR. DOMPurify does not intersect these — a set profile REPLACES both arrays with the profile's, so the declared lists never take effect. Measured in Chromium against the pinned build: the narrow config declares 13 tags and comments "NO attributes are allowed — class/id/style/etc. all stripped", while actually permitting 85 tags and 14 attributes, including <form>/<input>/<button>/<textarea>/<select> and style=/href=/src=/id=/class=. EMAIL_CONFIG is wrong in both directions: the profile has no `target`, so the Send-modal preview strips target="_blank" that backend/sanitize.py keeps, and it adds bgcolor=/id= that the backend rejects.
+  Why it matters: LTP_SANITIZE.html is the ONLY allowlist on the CRM-note path — backend/sanitize.py's email_html covers templates, signatures and crew mail (routes/api.py:433, routes/crew.py:384,537, qbo_receipts.py:216), not note bodies, which are stored raw and scrubbed only at render (modules/crm-notes.js:78,104,168; modules/crm-projects.js:146,167). Exposure is bounded rather than critical: handlers and <script> are stripped whatever the profile says, the CSP's `form-action 'self' …` blocks the injected form's POST, and `img-src` blocks an external tracking pixel — including inside the note print window, which I verified inherits the opener's CSP rather than escaping it. What remains is enough for in-app phishing: a `position:fixed` <div> covering the page plus an <a href> to anywhere, plantable by any member-role user into a note an admin later opens. The second-order cost is larger than the first: the file's comments assert a posture the code does not hold, so every reader downstream reasons from a false premise.
+  Fix sketch: Drop USE_PROFILES from both configs. Widen the narrow list to the tags a real paste carries (strong/em/span, h1/h2/h4, a) rather than the 13 as literally written — those were reachable for as long as the profile was set, so stored notes contain them and strict enforcement would silently flatten existing content. Allow href only, with an ALLOWED_URI_REGEXP matching backend/sanitize.py's ALLOWED_PROTOCOLS. Add a test that reads the real config objects (shim DOMPurify with a recorder) rather than the source text, and cross-check the email lists against backend/sanitize.py set-for-set.
+  Confidence: High
+```
+> *Found during Batch 6, not in the original pass* — surfaced by differential-testing DOMPurify versions rather than by reading the file, which is why the review missed it: the configs read correctly and only misbehave at runtime.  
+> *Verified by execution:* effective-vs-declared allowlists measured in Chromium; CSP inheritance in the print popup confirmed against a live server.
+
+```
 [Medium] Pay-snapshot guard protects the amount but not who/when it is paid
   File: backend/crew_integrity.py:292-343
   What: enforce_pay_snapshot restores/strips only `work` and `adj`, keyed by position id (stored map built at :314-322, applied at :327-342). It does not pin the position's `crewId`, its `status`, or the shift `date` the position lives on, and it does not detect a position id appearing more than once in the incoming schedule. Callers: backend/routes/api.py:322 (non-admin PUT /api/projects/{id}) and :259 (create).
@@ -1044,7 +1055,7 @@ Batches are ordered so nothing depends on an un-done prior step. Effort is S (<�
 L (>2 days). **Batch 0 is not optional if you intend to act on any of the rest** — right now CI cannot tell you
 whether a change broke the money paths.
 
-### Batch 0 — Restore test signal — Effort S · Blast radius: CI only
+### Batch 0 — Restore test signal — Effort S · Blast radius: CI only  ·  **DONE** (`d76d56c`)
 Add `assert cond, f"{label} {detail}"` as the last line of `_check` in the 14 affected modules. Six sibling
 modules already do exactly this (`tests/test_activity_preservation.py:70`), so the pattern is in-repo. Then run
 the suite and triage what falls out. Do `test_quickbooks_sync.py`, `test_qbo_receipts.py`,
@@ -1052,7 +1063,7 @@ the suite and triage what falls out. Do `test_quickbooks_sync.py`, `test_qbo_rec
 covers every money path in one change.
 > Expect real failures. That is the point. Budget time to triage them, not just to make them green.
 
-### Batch 1 — The overnight money bug — Effort S · Blast radius: labor pricing + crew payouts
+### Batch 1 — The overnight money bug — Effort S · Blast radius: labor pricing + crew payouts  ·  **DONE** (`0977bc9`, `e90072d`, `303f36b`, `8f7d99f`)
 Two changes in one commit, because fixing either alone leaves the other producing bad numbers:
 - `theme.js:296-316` — normalize breaks into the **span's** frame, not their own.
 - `theme.js:1313-1318` — stop `LTP_mealFixBreaks` emitting midnight-wrapped times via `_decimalToTime`'s
@@ -1063,7 +1074,7 @@ today covers overnight only *without* breaks.
 > `backend/payouts.py` will keep re-deriving that frozen value into QuickBooks vendor bills. Fixing the function
 > does not repair existing records. Query for signed-off days whose shift crosses midnight and carries a break.
 
-### Batch 2 — Public-surface leaks — Effort S · Blast radius: public share view only
+### Batch 2 — Public-surface leaks — Effort S · Blast radius: public share view only  ·  **DONE** (`5f16ecf`)
 - `backend/routes/view.py:143-144` — the strip list names the wrong keys; the column is `notes`.
 - `backend/routes/_shared.py:242,260` — convert `_PUBLIC_ITEM_DROP_KEYS` from a drop-list to an allow-list, and
   do the same for the remaining drop-list passes. This is the unfinished half of prior finding M1, and a
@@ -1072,14 +1083,14 @@ today covers overnight only *without* breaks.
   the share link shows Net 30 while the PDF prints the real terms.
 All three are single-function changes to serialization with no schema impact.
 
-### Batch 3 — Data-loss bugs — Effort M · Blast radius: invoice editor, receipt delivery
+### Batch 3 — Data-loss bugs — Effort M · Blast radius: invoice editor, receipt delivery  ·  **DONE** (`d8fe2c1`)
 - `modules/invoices.js:1737-1746` — advance `cleanRef.current` in `autoSavePayment`. Also close the
   Recall-to-Draft path (`:1237-1240`), which reads the stale draft and so passes a guard designed to stop it.
 - `backend/qbo_receipts.py:512-516` — reload `sender` inside the loop the way `conn` already is. Without this
   one bad invoice permanently stops all receipts, visible only as a log line.
 - `backend/gmail.py:200-212` — the rotated refresh token is flushed but not committed; a later rollback loses it.
 
-### Batch 4 — Operational fail-safes — Effort S · Blast radius: startup only
+### Batch 4 — Operational fail-safes — Effort S · Blast radius: startup only  ·  **DONE** (`6aa0d17`)
 - `backend/database.py:26-38` — refuse to boot on a missing `DATABASE_URL` when not obviously local dev,
   instead of silently using container-local SQLite.
 - `backend/rate_limit.py:142` — bare `int()` at import time crash-loops the container on a typo. `main.py:28-38`
@@ -1089,22 +1100,36 @@ All three are single-function changes to serialization with no schema impact.
 - Add a health endpoint and `healthcheckPath` — there is none, and a failed boot migration currently produces
   ten silent restarts with zero availability.
 
-### Batch 5 — Retire `/api/sync` — Effort S · Blast radius: potentially total, which is the point
+### Batch 5 — Retire `/api/sync` — Effort S · Blast radius: potentially total, which is the point  ·  **DONE** (`6aa0d17`)
 `backend/routes/api.py:634-680`. Its one-shot localStorage migration purpose is served and no frontend code
 calls it. It wipes 12 tables, cascade-deletes `client_rates` without repopulating them (`client-rates` is
 absent from `model_map`), and orphans `crew_requests`/`payout_bills`. Delete it, or gate it behind an env flag
 that is unset in production.
 
-### Batch 6 — Dependency pins — Effort S · Blast radius: full redeploy, needs a smoke test
-- Add `httpx` to `requirements.txt`. Four backend modules import it directly; it is only present transitively
-  via `fastapi[standard]` (`backend/gmail.py:46`, `quickbooks.py:39`, `routes/auth.py:21`, `routes/scan.py:31`).
-- Move Starlette past CVE-2026-48710 — constrained by FastAPI's own upper bound, so this is a FastAPI bump.
-  Not urgent: I verified the app does not use the vulnerable pattern.
-- DOMPurify 3.2.7 → 3.3.2+ when convenient. Not exploitable in this app today.
+### Batch 6 — Dependency pins — Effort S · Blast radius: full redeploy, needs a smoke test  ·  **DONE** (`4208e74`, `f790fe7`, `874700d`)
+- `httpx==0.28.1` declared. Four backend modules import it directly while it arrived only via
+  `fastapi[standard]` (`backend/gmail.py:46`, `quickbooks.py:39`, `routes/auth.py:21`, `routes/scan.py:31`).
+  Already the latest version, so this is a declaration, not a bump.
+- `starlette` declared too — **the original pass missed this one**. `backend/main.py:9` imports
+  `SessionMiddleware` directly, so starlette's version is a first-class concern here, not an implementation
+  detail of the FastAPI pin. Found by the new `tests/test_dependency_pins.py` guard, not by reading.
+- FastAPI `0.115.12 → 0.136.3`, Starlette `0.46.2 → 1.0.1` (CVE-2026-48710). 0.136.3 is the first FastAPI
+  release with a bare `starlette>=0.46.0`; everything through 0.135 keeps an upper bound. The bump is **two
+  packages, not four** — pydantic, uvicorn and sqlalchemy all hold at their existing pins under the resolver
+  (an unconstrained `pip install fastapi==0.136.3` moves them; installing `requirements.txt` does not).
+  Verified: 608 pytest unchanged, and a real uvicorn boot passes 15/15 checks identically to the old pins with
+  zero deprecation lines in either log.
+- DOMPurify `3.2.7 → 3.4.14`. Differential-tested in Chromium across 108 sanitize calls per version using the
+  app's real configs: exactly one behavioural difference, the `<noscript>` mXSS vector, where the new version
+  is stricter. New SRI hash verified by serving the exact CDN bytes to a browser — the pinned hash accepts the
+  real build and rejects a one-byte-modified copy.
+- **Fell out of this batch:** the `USE_PROFILES` finding above. Bumping DOMPurify meant differential-testing
+  the sanitizer, which is what exposed it.
 > Every one of these needs a `CACHE_VERSION` bump if it touches a cached file, or every device serves a stale
-> shell for one more launch.
+> shell for one more launch. `index.html` and `components/sanitize.js` both folded into the already-unreleased
+> `ltp-shell-v58`.
 
-### Batch 7 — Structural refactors — Effort L · Blast radius: load-bearing
+### Batch 7 — Structural refactors — Effort L · Blast radius: load-bearing  ·  **NOT STARTED**
 Do not start these until Batch 0 has given you working tests.
 - Split `theme.js` along its own commented section boundaries into `components/domain-*.js`. The target
   directory is already in the static allowlist and already runtime-cached, so no backend change is needed.
