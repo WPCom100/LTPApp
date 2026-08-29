@@ -273,3 +273,99 @@ def test_email_html_adds_noopener_to_target_blank():
 def test_email_html_leaves_non_blank_anchor_alone():
     out = email_html('<a href="https://x.com">x</a>')
     assert "rel=" not in out
+
+
+# ── JSON container-shape validation ────────────────────────────────────────
+# Every JSON column in models.py is declared `default=list` or `default=dict`
+# and every reader assumes that shape, but nothing enforced it. `PUT
+# /api/projects/{id}` with `{"schedule": true}` returned 200 and stored the
+# bool, after which backend/payouts.py::derive_payout_drafts raised
+# `TypeError: 'bool' object is not iterable` for EVERY project — one member's
+# write took the payouts page down for the whole workspace until the row was
+# repaired by hand. backend/validators.py now derives a container-type rule per
+# JSON column from the column's own declared default.
+
+def _rules():
+    from backend import validators
+    return validators._build_rules()
+
+
+def _check_field(model_cls, field, value):
+    """Run just this field's validator. Returns None on pass, the reason on
+    failure — mirrors what validate() converts into a 400."""
+    from backend import validators
+    rule = _rules()[model_cls][field]
+    try:
+        rule(value)
+        return None
+    except ValueError as e:
+        return str(e)
+
+
+def test_json_shape_rules_are_derived_for_every_container_column():
+    """Derived from the models, so a new JSON column is covered automatically
+    and this can never drift the way a hand-maintained list would."""
+    from sqlalchemy import JSON
+    from backend import models, validators
+    rules = _rules()
+    missing = []
+    for model_cls in rules:
+        for col in model_cls.__table__.columns:
+            if not isinstance(col.type, JSON):
+                continue
+            d = col.default
+            if d is None or not getattr(d, "is_callable", False):
+                continue
+            if not isinstance(d.arg(None), (list, dict)):
+                continue
+            if col.name not in rules[model_cls]:
+                missing.append(f"{model_cls.__name__}.{col.name}")
+    assert not missing, f"JSON columns with no shape rule: {missing}"
+
+
+def test_list_column_rejects_every_non_list_scalar():
+    from backend import models
+    for bad in ("hello", 42, True, 3.5, {"a": 1}):
+        reason = _check_field(models.Project, "schedule", bad)
+        assert reason is not None, f"schedule accepted {bad!r}"
+        assert "must be a JSON list" in reason
+
+
+def test_dict_column_rejects_a_list():
+    from backend import models
+    assert _check_field(models.Project, "budget", []) is not None
+    assert _check_field(models.Project, "budget", {"lighting": 1}) is None
+
+
+def test_container_columns_accept_their_declared_shape_and_null():
+    from backend import models
+    assert _check_field(models.Project, "schedule", []) is None
+    assert _check_field(models.Project, "schedule", [{"date": "2026-07-10"}]) is None
+    # null clears the field to the column default — must stay allowed
+    assert _check_field(models.Project, "schedule", None) is None
+    assert _check_field(models.Project, "budget", None) is None
+
+
+def test_shape_check_does_not_reach_into_nested_contents():
+    """Deliberately shallow: the readers guard per-element (payouts.py skips a
+    non-dict entry), so tightening further would risk rejecting legacy rows."""
+    from backend import models
+    junk = [{"date": "x", "time": 123, "positions": "nope"}, "not-a-dict", None]
+    assert _check_field(models.Project, "schedule", junk) is None
+
+
+def test_snake_case_spelling_is_also_covered():
+    """_dict_to_row accepts camelCase and snake_case alike, so registering only
+    one spelling would leave the other as a bypass."""
+    from backend import models
+    rules = _rules()[models.Project]
+    assert "contactIds" in rules and "contact_ids" in rules
+    assert _check_field(models.Project, "contact_ids", "nope") is not None
+    assert _check_field(models.Project, "contactIds", "nope") is not None
+
+
+def test_derived_rules_do_not_clobber_hand_written_ones():
+    from backend import models
+    # `name`/`status` are hand-written; they must still be the real validators.
+    assert _check_field(models.Project, "status", "not-a-status") is not None
+    assert _check_field(models.Project, "status", "upcoming") is None
