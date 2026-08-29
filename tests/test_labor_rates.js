@@ -59,6 +59,65 @@ r = D(0, [sh("09:00", "14:00")]);                       eq("A10 zero rate", r.ra
 r = D(R, []);                                           eq("A11 empty items rate 0", r.rate, 0);
 r = D(R, [sh("", "")]);                                 eq("A12 blank times rate 0", r.rate, 0);
 
+// ── A13-A20. Overnight breaks ────────────────────────────────────────────────
+// A9 covers an overnight shift with NO breaks, which is why the frame bug hid
+// here for so long. Blocks are normalized into a >24h frame (18:00-02:00 is
+// 18..26) but breaks parse back as wall-clock 0..24, so a break taken after
+// midnight landed at 00:30 -> 0.5 — apparently before the shift began. That
+// rewound the segment cursor and emitted one giant segment: this exact case
+// returned 25 paid hours, 20h of meal penalty and $3500 on a $1000 day rate.
+const nb = (a, b, t) => ({ startTime: a, endTime: b, type: t || "unpaid" });
+
+// The headline case. 8h shift, 0.5h unpaid break -> 7.5h paid. The 6.5h
+// unbroken stretch before the break legitimately earns 1.5h of meal penalty.
+r = D(R, [sh("18:00", "02:00", [nb("00:30", "01:00")])]);
+eq("A13 post-midnight break paid 7.5", r.paidHours, 7.5); eq("A13 unpaid break 0.5", r.unpaidBreakHours, 0.5);
+eq("A13 meal 1.5 (6.5h stretch)", r.mealPenaltyHours, 1.5); near("A13 rate 1225", r.rate, 1225);
+ok("A13 paid+break never exceeds the 8h shift", r.paidHours + r.unpaidBreakHours <= 8 + 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// A break that straddles midnight (the one case the old self-normalization
+// did handle) must keep working.
+r = D(R, [sh("18:00", "02:00", [nb("23:30", "00:30")])]);
+eq("A14 straddling break paid 7", r.paidHours, 7); eq("A14 unpaid break 1", r.unpaidBreakHours, 1);
+eq("A14 meal 0.5 (5.5h stretch)", r.mealPenaltyHours, 0.5); near("A14 rate 1075", r.rate, 1075);
+
+// Ordering: breaks were sorted on the RAW parse, so 01:00 (1) sorted ahead of
+// 21:00 (21) and the cursor ran backwards even before the frame fix.
+r = D(R, [sh("18:00", "04:00", [nb("21:00", "21:30"), nb("01:00", "01:30")])]);
+eq("A15 two breaks across midnight paid 9", r.paidHours, 9); eq("A15 unpaid break 1", r.unpaidBreakHours, 1);
+eq("A15 no meal (3/3.5/2.5h segments)", r.mealPenaltyHours, 0); near("A15 rate 1000", r.rate, 1000);
+
+// Control: same overnight shift, break BEFORE midnight — was always correct
+// and must not move.
+r = D(R, [sh("18:00", "02:00", [nb("21:00", "21:30")])]);
+eq("A16 pre-midnight break paid 7.5", r.paidHours, 7.5); eq("A16 no meal", r.mealPenaltyHours, 0);
+near("A16 rate 1000", r.rate, 1000);
+
+// A paid break after midnight keeps the crew on the clock for the whole shift.
+r = D(R, [sh("18:00", "02:00", [nb("00:30", "01:00", "paid")])]);
+eq("A17 paid post-midnight break paid 8", r.paidHours, 8); eq("A17 counted as paid break", r.paidBreakHours, 0.5);
+eq("A17 unpaid break 0", r.unpaidBreakHours, 0);
+
+// A break outside the span is bad data. It used to be spliced in anyway and
+// billed 15 hours against a 8h day; it is now ignored.
+r = D(R, [sh("09:00", "17:00", [nb("21:00", "21:30")])]);
+eq("A18 out-of-span break ignored, paid 8", r.paidHours, 8); eq("A18 no phantom break", r.unpaidBreakHours, 0);
+near("A18 rate 950 (same as no break)", r.rate, 950);
+
+// The auto meal-break generator writes wall-clock times, so its own output has
+// to survive the round trip. An overnight 12h call must price identically to
+// the equivalent daytime 12h call — it returned $2950 vs $1000 before.
+const fixRound = (start, end) => {
+  const add = FIX([{ id: "s", time: start, endTime: end, breaks: [], positionId: "p1" }]);
+  return D(R, [sh(start, end, add.map((a) => nb(a.startTime, a.endTime, a.type)))]);
+};
+const night = fixRound("18:00", "06:00"), noon = fixRound("08:00", "20:00");
+eq("A19 mealFix overnight 12h -> 10h paid", night.paidHours, 10);
+eq("A19 mealFix overnight no residual meal penalty", night.mealPenaltyHours, 0);
+eq("A20 mealFix overnight matches the daytime twin (paid)", night.paidHours, noon.paidHours);
+eq("A20 mealFix overnight matches the daytime twin (rate)", night.rate, noon.rate);
+
 // ── B. Per-person units: LTP_calcDayLabor ────────────────────────────────────
 let d;
 d = day([{ time: "09:00", endTime: "14:00", breaks: [], positions: [P(1)] }]);

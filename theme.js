@@ -240,6 +240,33 @@ function _decimalToTime(d) {
   return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
+// Lift a break's wall-clock "HH:MM" pair into the decimal frame of the SPAN
+// that contains it. Returns { start, end }, or null when the break falls
+// outside the span entirely.
+//
+// Work blocks are normalized into a >24h frame for overnight work: an
+// 18:00–02:00 shift becomes 18..26. Breaks, though, are stored as wall-clock
+// strings and parse back into 0..24 — so a break taken after midnight lands at
+// 00:30 -> 0.5 while its own span runs 18..26, i.e. apparently BEFORE the shift
+// started. Normalizing a break only against itself (`if (be <= bs) be += 24`)
+// catches a break that straddles midnight but not one wholly past it, which
+// rewound the segment cursor and emitted one enormous paid segment: an
+// 18:00–02:00 call with a 00:30–01:00 break returned 25 paid hours and 20 hours
+// of meal penalty instead of 7.5 and 0. Both callers below share this so the
+// engine and the auto meal-break generator can never disagree about which day
+// a break belongs to.
+function _breakInSpan(brk, spanStart, spanEnd) {
+  var bs = _timeToDecimal(brk.startTime);
+  var be = _timeToDecimal(brk.endTime);
+  if (be <= bs) be += 24;                       // the break straddles midnight
+  if (bs < spanStart) { bs += 24; be += 24; }   // ...or sits wholly after it
+  // A break that starts at or after the span ends belongs to some other span
+  // (or is bad data). Dropping it is what keeps the lift above from turning a
+  // nonsense break into a giant segment the way the un-lifted value used to.
+  if (bs >= spanEnd) return null;
+  return { start: bs, end: be };
+}
+
 // Full day labor rate across one or more schedule items for a single rate.
 //
 // This is the canonical engine. A "day" is a set of work blocks (schedule
@@ -293,12 +320,19 @@ window.LTP_calcLaborDay = function(dayRate, items) {
   var paidBreakHours = 0;
 
   spans.forEach(function(span) {
-    var sortedBreaks = span.breaks.slice().sort(function(a, b) { return _timeToDecimal(a.startTime) - _timeToDecimal(b.startTime); });
+    // Normalize into the span's frame FIRST, then sort. Sorting on the raw
+    // parse put a 00:30 break (0.5) ahead of a 21:00 one (21) on an overnight
+    // span, so even the ordering was wrong before the cursor ever ran.
+    var sortedBreaks = [];
+    span.breaks.forEach(function(brk) {
+      var nb = _breakInSpan(brk, span.start, span.end);
+      if (nb) { nb.type = brk.type; sortedBreaks.push(nb); }
+    });
+    sortedBreaks.sort(function(a, b) { return a.start - b.start; });
     var cursor = span.start;
     sortedBreaks.forEach(function(brk) {
-      var bs = _timeToDecimal(brk.startTime);
-      var be = _timeToDecimal(brk.endTime);
-      if (be <= bs) be += 24;
+      var bs = brk.start;
+      var be = brk.end;
       if (bs > cursor) {
         segments.push({ start: cursor, end: bs, hours: Math.round((bs - cursor) * 100) / 100 });
       }
@@ -308,7 +342,10 @@ window.LTP_calcLaborDay = function(dayRate, items) {
       } else {
         unpaidBreakHours += brkHours;
       }
-      cursor = be;
+      // Never let the cursor move backwards: two overlapping breaks would
+      // otherwise rewind it and inflate the trailing segment — the same
+      // failure mode the frame fix above closes. Matches LTP_mealFixBreaks.
+      cursor = Math.max(cursor, be);
     });
     if (cursor < span.end) {
       segments.push({ start: cursor, end: span.end, hours: Math.round((span.end - cursor) * 100) / 100 });
@@ -1297,9 +1334,13 @@ window.LTP_mealFixBreaks = function(shifts) {
     var spanStart = pieces[0].start;
     var spanEnd = pieces.reduce(function(m, p) { return Math.max(m, p.end); }, pieces[0].end);
     var brks = [];
+    // Same span-frame normalization the engine uses — without it a pre-existing
+    // post-midnight break was placed before the span start here too, so the
+    // generator measured the wrong work segments and inserted meal breaks that
+    // the engine then priced as a 20-hour penalty.
     pieces.forEach(function(p) { (p.breaks || []).forEach(function(b) {
-      var bs = _timeToDecimal(b.startTime), be = _timeToDecimal(b.endTime); if (be <= bs) be += 24;
-      brks.push({ start: bs, end: be });
+      var nb = _breakInSpan(b, spanStart, spanEnd);
+      if (nb) brks.push(nb);
     }); });
     var guard = 0;
     while (guard++ < 24) {
