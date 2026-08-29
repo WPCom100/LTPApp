@@ -2272,15 +2272,10 @@
       }),
 
       // Activity detail popup
-      viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },
-        h("div", { style: { marginBottom: 10, fontSize: "11px", color: B.textMut } }, (viewActivity.user || "") + " \u00b7 " + fmt(viewActivity.date || "")),
-        h("div", { style: { display: "flex", flexDirection: "column" } },
-          (viewActivity.changes || []).map(function(ch, i) {
-            return h("div", { key: i, style: { display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { width: 120, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.accent } }, ch.cat),
-              h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec } }, ch.detail));
-          }))
-      ),
+      // Shared with the sibling builder — components/doc-activity-detail.js.
+      viewActivity && h(window.LTPActivityDetail, {
+        entry: viewActivity, onClose: function() { setViewActivity(null); },
+      }),
 
       // Confirm dialog
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),

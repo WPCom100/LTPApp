@@ -2456,20 +2456,10 @@
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Activity detail popup
-      viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },
-        h("div", { style: { marginBottom: 10, fontSize: "11px", color: B.textMut } },
-          (viewActivity.user || "") + " \u00b7 " + (viewActivity.date ? window.LTP_formatDate(viewActivity.date) : "") + (viewActivity.time ? " " + window.LTP_formatTime(viewActivity.time) : "")
-        ),
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 0 } },
-          (viewActivity.changes || []).map(function(ch, i) {
-            return h("div", { key: i, style: { display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { width: 140, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.accent } }, ch.cat),
-              h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec } }, ch.detail)
-            );
-          })
-        ),
-        (viewActivity.changes || []).length === 0 && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: 16, textAlign: "center" } }, "No detailed changes recorded.")
-      ),
+      // Shared with the sibling builder — components/doc-activity-detail.js.
+      viewActivity && h(window.LTPActivityDetail, {
+        entry: viewActivity, onClose: function() { setViewActivity(null); },
+      }),
 
       // Invoice target picker
       invPickerData && h(window.LTPModal, { title: "Send to Invoice", onClose: function() { setInvPickerData(null); } },
