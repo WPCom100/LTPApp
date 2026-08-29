@@ -323,6 +323,292 @@ window.LTP_applySortMove = function(sections, m) {
   return copy;
 };
 
+// ── Save-confirmation change summaries ─────────────────────────────────────
+// What changed between the last saved document and the working draft, as a
+// list of {cat, detail} rows the save dialog renders.
+//
+// Both lived inside their module: quotes at file scope, invoices buried inside
+// the 1,998-line InvoiceBuilder closure. Neither could be tested — file scope
+// inside an IIFE is readable, not reachable. Each had exactly ONE free
+// identifier (`fmt`, an alias for window.LTP_formatDate), so both moved here
+// verbatim with that inlined and nothing else changed.
+//
+// They are deliberately NOT merged. A quote's summary tracks expiry, client
+// rates and section dates; an invoice's tracks due date, payments and the
+// QuickBooks link. The overlap is the entity header, and folding two different
+// documents' change vocabularies into one function with a `kind` flag would
+// cost more than the ~30 lines it saves.
+window.LTP_quoteChanges = function(before, after, projects, companies) {
+  if (!before || !after) return null;
+  var changes = [];
+  projects = projects || [];
+  companies = companies || [];
+
+  // Helper: resolve effective dates for a quote snapshot
+  function effectiveDates(q) {
+    if (q.projectId) {
+      var p = projects.find(function(pr) { return pr.id === q.projectId; });
+      return p ? { start: p.startDate, end: p.endDate } : { start: "", end: "" };
+    }
+    return { start: q.customStartDate || "", end: q.customEndDate || "" };
+  }
+
+  // Totals
+  var tBefore = window.LTP_QUOTE_TOTALS(before);
+  var tAfter  = window.LTP_QUOTE_TOTALS(after);
+  if (Math.round(tBefore.total * 100) !== Math.round(tAfter.total * 100)) {
+    changes.push({ cat: "Quote Total", detail: "$" + window.LTP_money(tBefore.total) + " → $" + window.LTP_money(tAfter.total) });
+  }
+
+  // Status
+  if (before.status !== after.status) {
+    changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
+  }
+
+  // Client type
+  if (before.clientType !== after.clientType) {
+    changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
+  }
+
+  // Company
+  if (before.companyId !== after.companyId) {
+    var cB = window.LTP_diffEntityName(companies, before.companyId);
+    var cA = window.LTP_diffEntityName(companies, after.companyId);
+    changes.push({ cat: "Company", detail: cB + " \u2192 " + cA });
+  }
+
+  // Custom name
+  if (before.customName !== after.customName) {
+    changes.push({ cat: "Quote Name", detail: (before.customName || "None") + " \u2192 " + (after.customName || "None") });
+  }
+
+  // Global discount
+  var gdB = before.globalDiscount || {}, gdA = after.globalDiscount || {};
+  if (gdB.type !== gdA.type || gdB.value !== gdA.value) {
+    var gdBLabel = gdB.type === "none" || !gdB.type ? "None" : gdB.type === "percent" ? gdB.value + "%" : gdB.type === "target" ? "Target $" + gdB.value : "$" + gdB.value;
+    var gdALabel = gdA.type === "none" || !gdA.type ? "None" : gdA.type === "percent" ? gdA.value + "%" : gdA.type === "target" ? "Target $" + gdA.value : "$" + gdA.value;
+    changes.push({ cat: "Global Discount", detail: gdBLabel + " \u2192 " + gdALabel });
+  }
+
+  // Notes
+  if ((before.notes || "") !== (after.notes || "")) {
+    changes.push({ cat: "Notes", detail: "Updated" });
+  }
+  // Terms are CLIENT-facing, unlike notes, so the log says which way it moved
+  // rather than just "updated" — reverting to the default is a real decision.
+  if ((before.terms || "") !== (after.terms || "")) {
+    changes.push({ cat: "Terms", detail:
+      !(after.terms || "").trim() ? "Reset to the default terms"
+      : !(before.terms || "").trim() ? "Customized for this quote"
+      : "Edited" });
+  }
+
+  // Project / dates — compare effective dates (project dates when linked, custom when not)
+  if (before.projectId !== after.projectId) {
+    var bProj = before.projectId ? projects.find(function(p) { return p.id === before.projectId; }) : null;
+    var aProj = after.projectId ? projects.find(function(p) { return p.id === after.projectId; }) : null;
+    var bName = bProj ? bProj.name : (before.projectId ? "Project #" + before.projectId : "No project");
+    var aName = aProj ? aProj.name : (after.projectId ? "Project #" + after.projectId : "Custom dates");
+    changes.push({ cat: "Project", detail: bName + " → " + aName });
+  }
+  var bDates = effectiveDates(before);
+  var aDates = effectiveDates(after);
+  if (bDates.start !== aDates.start || bDates.end !== aDates.end) {
+    var bRange = bDates.start ? (window.LTP_formatDate(bDates.start) + " — " + window.LTP_formatDate(bDates.end)) : "No dates";
+    var aRange = aDates.start ? (window.LTP_formatDate(aDates.start) + " — " + window.LTP_formatDate(aDates.end)) : "No dates";
+    changes.push({ cat: "Quote Dates", detail: bRange + " → " + aRange });
+  }
+  // Worth logging on its own: moving the expiry changes what the client was
+  // promised, and on a sent quote that's a term the two sides have to agree on.
+  if ((before.expiryDate || "") !== (after.expiryDate || "")) {
+    var bExp = before.expiryDate ? window.LTP_formatDate(before.expiryDate) : "Default validity";
+    var aExp = after.expiryDate ? window.LTP_formatDate(after.expiryDate) : "Default validity";
+    changes.push({ cat: "Expires", detail: bExp + " → " + aExp });
+  }
+
+  // Section-level changes
+  var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
+  var aSecMap = {}; (after.sections || []).forEach(function(s) { aSecMap[s.id] = s; });
+
+  // Added sections
+  (after.sections || []).forEach(function(s) {
+    if (!bSecMap[s.id]) changes.push({ cat: "Section Added", detail: "\"" + s.label + "\"" });
+  });
+  // Removed sections
+  (before.sections || []).forEach(function(s) {
+    if (!aSecMap[s.id]) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" });
+  });
+
+  // Per-section diffs
+  (after.sections || []).forEach(function(aSec) {
+    var bSec = bSecMap[aSec.id];
+    if (!bSec) return;
+
+    // Label change
+    if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" → \"" + aSec.label + "\"" });
+
+    // Custom dates change
+    if (bSec.customDates !== aSec.customDates || bSec.startDate !== aSec.startDate || bSec.endDate !== aSec.endDate) {
+      if (aSec.customDates) {
+        var secRange = aSec.startDate && aSec.endDate ? window.LTP_formatDate(aSec.startDate) + " \u2192 " + window.LTP_formatDate(aSec.endDate) : "Not set";
+        var prevRange = bSec.customDates && bSec.startDate && bSec.endDate ? window.LTP_formatDate(bSec.startDate) + " \u2192 " + window.LTP_formatDate(bSec.endDate) : "Quote dates";
+        changes.push({ cat: aSec.label + " Rental Period", detail: prevRange + " \u2192 " + secRange });
+      } else if (bSec.customDates) {
+        changes.push({ cat: aSec.label + " Rental Period", detail: "Reset to quote dates" });
+      }
+    }
+
+    // Section subtotal
+    var stB = 0, stA = 0;
+    (bSec.items || []).forEach(function(i) { if (i.type !== "note") stB += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
+    (aSec.items || []).forEach(function(i) { if (i.type !== "note") stA += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
+    if (Math.round(stB * 100) !== Math.round(stA * 100)) {
+      changes.push({ cat: aSec.label + " Subtotal", detail: "$" + window.LTP_money(stB) + " → $" + window.LTP_money(stA) });
+    }
+
+    // Item-level diffs
+    var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
+    var aItemMap = {}; (aSec.items || []).forEach(function(i) { aItemMap[i.id] = i; });
+
+    (aSec.items || []).forEach(function(i) {
+      // Notes are editable in place, so an edited note has to show up here —
+      // otherwise a changed note reads as a silent edit on a sent quote.
+      if (i.type === "note") {
+        if (!bItemMap[i.id]) {
+          changes.push({ cat: aSec.label + " — Note Added", detail: window.LTP_noteSummary(i.text) });
+        } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
+          changes.push({ cat: aSec.label + " — Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " → " + window.LTP_noteSummary(i.text) });
+        }
+        return;
+      }
+      if (!bItemMap[i.id]) {
+        changes.push({ cat: aSec.label + " — Item Added", detail: i.name + " (×" + i.qty + ")" });
+      } else if (bItemMap[i.id]) {
+        var bi = bItemMap[i.id];
+        // Pricing-variant switch → one explicit from → to entry carrying both
+        // labels AND both prices. Without this, only the plain Price entry
+        // fired — and it prints the NEW name on both sides, so what the line
+        // changed FROM was invisible. The Price entry is suppressed for a
+        // variant switch since this entry already carries the prices.
+        var variantChanged = i.type === "product" &&
+          ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
+        if (variantChanged) {
+          changes.push({ cat: aSec.label + " — Variant", detail: bi.name + " ($" + bi.unitPrice + ") → " + i.name + " ($" + i.unitPrice + ")" });
+        }
+        if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " — Qty", detail: i.name + ": " + bi.qty + " → " + i.qty });
+        if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
+        if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
+          var adjB = bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)";
+          var adjA = i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)";
+          changes.push({ cat: aSec.label + " — Adj. Price", detail: i.name + ": " + adjB + " \u2192 " + adjA });
+        }
+        var dB = Number(bi.deliveredQty) || 0, dA = Number(i.deliveredQty) || 0;
+        if (dB !== dA) changes.push({ cat: aSec.label + " — Delivered", detail: i.name + ": " + dB + " \u2192 " + dA + " of " + (i.qty || 0) });
+        var iB = Number(bi.invoicedQty) || 0, iA = Number(i.invoicedQty) || 0;
+        if (iB !== iA) changes.push({ cat: aSec.label + " — Invoiced", detail: i.name + ": " + iB + " \u2192 " + iA + " of " + (i.qty || 0) });
+      }
+    });
+    (bSec.items || []).forEach(function(i) {
+      if (aItemMap[i.id]) return;
+      if (i.type === "note") {
+        changes.push({ cat: aSec.label + " — Note Removed", detail: window.LTP_noteSummary(i.text) });
+      } else {
+        changes.push({ cat: aSec.label + " — Item Removed", detail: i.name });
+      }
+    });
+  });
+
+  return changes.length > 0 ? changes : null;
+};
+
+window.LTP_invoiceChanges = function(before, after, projects, companies) {
+  if (!before || !after) return null;
+  var changes = [];
+  var tB = window.LTP_INVOICE_TOTALS(before), tA = window.LTP_INVOICE_TOTALS(after);
+  if (Math.round(tB.total * 100) !== Math.round(tA.total * 100)) changes.push({ cat: "Invoice Total", detail: "$" + window.LTP_money(tB.total) + " \u2192 $" + window.LTP_money(tA.total) });
+  if (before.status !== after.status) changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
+  if (before.dueDate !== after.dueDate) {
+    var dbf = before.dueDate ? window.LTP_formatDate(before.dueDate) : "Not set";
+    var daf = after.dueDate ? window.LTP_formatDate(after.dueDate) : "Not set";
+    changes.push({ cat: "Due Date", detail: dbf + " \u2192 " + daf });
+  }
+  if (before.invoiceDate !== after.invoiceDate) {
+    var ibf = before.invoiceDate ? window.LTP_formatDate(before.invoiceDate) : "Not set";
+    var iaf = after.invoiceDate ? window.LTP_formatDate(after.invoiceDate) : "Not set";
+    changes.push({ cat: "Invoice Date", detail: ibf + " \u2192 " + iaf });
+  }
+  if (before.companyId !== after.companyId) {
+    var cBefore = window.LTP_diffEntityName(companies, before.companyId);
+    var cAfter = window.LTP_diffEntityName(companies, after.companyId);
+    changes.push({ cat: "Company", detail: cBefore + " \u2192 " + cAfter });
+  }
+  if (before.projectId !== after.projectId) {
+    var pBefore = window.LTP_diffEntityName(projects, before.projectId);
+    var pAfter = window.LTP_diffEntityName(projects, after.projectId);
+    changes.push({ cat: "Project", detail: pBefore + " \u2192 " + pAfter });
+  }
+  if (before.clientType !== after.clientType) changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
+  var gdB = before.globalDiscount || {}, gdA = after.globalDiscount || {};
+  if (gdB.type !== gdA.type || gdB.value !== gdA.value) {
+    var gdBLabel = gdB.type === "none" ? "None" : gdB.type === "percent" ? gdB.value + "%" : gdB.type === "target" ? "Target $" + gdB.value : "$" + gdB.value;
+    var gdALabel = gdA.type === "none" ? "None" : gdA.type === "percent" ? gdA.value + "%" : gdA.type === "target" ? "Target $" + gdA.value : "$" + gdA.value;
+    changes.push({ cat: "Discount", detail: gdBLabel + " \u2192 " + gdALabel });
+  }
+  if (before.notes !== after.notes) changes.push({ cat: "Notes", detail: "Updated" });
+  // Terms are CLIENT-facing, unlike notes, so the log says which way it
+  // moved rather than just "updated" — reverting to the default is a real
+  // decision, not a typo fix.
+  if ((before.terms || "") !== (after.terms || "")) {
+    changes.push({ cat: "Terms", detail:
+      !(after.terms || "").trim() ? "Reset to the default terms"
+      : !(before.terms || "").trim() ? "Customized for this invoice"
+      : "Edited" });
+  }
+  // Section/item level
+  var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
+  (after.sections || []).forEach(function(aSec) {
+    if (!bSecMap[aSec.id]) { changes.push({ cat: "Section Added", detail: "\"" + aSec.label + "\"" }); return; }
+    var bSec = bSecMap[aSec.id];
+    if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" \u2192 \"" + aSec.label + "\"" });
+    var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
+    (aSec.items || []).forEach(function(i) {
+      // Notes are editable in place, so an edited note has to show up here \u2014
+      // otherwise a changed note reads as a silent edit on a sent invoice.
+      if (i.type === "note") {
+        if (!bItemMap[i.id]) {
+          changes.push({ cat: aSec.label + " \u2014 Note Added", detail: window.LTP_noteSummary(i.text) });
+        } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
+          changes.push({ cat: aSec.label + " \u2014 Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " \u2192 " + window.LTP_noteSummary(i.text) });
+        }
+        return;
+      }
+      if (!bItemMap[i.id]) { changes.push({ cat: aSec.label + " \u2014 Added", detail: i.name + " \u00d7" + i.qty }); return; }
+      var bi = bItemMap[i.id];
+      // Pricing-variant switch \u2192 explicit from \u2192 to entry with both labels
+      // and prices; the plain Price entry (new name on both sides) hid what
+      // the line changed FROM, so it's suppressed for variant switches.
+      var variantChanged = i.type === "product" &&
+        ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
+      if (variantChanged) {
+        changes.push({ cat: aSec.label + " \u2014 Variant", detail: bi.name + " ($" + bi.unitPrice + ") \u2192 " + i.name + " ($" + i.unitPrice + ")" });
+      }
+      if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " \u2014 Qty", detail: i.name + ": " + bi.qty + " \u2192 " + i.qty });
+      if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " \u2014 Price", detail: i.name + ": $" + bi.unitPrice + " \u2192 $" + i.unitPrice });
+      if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
+        changes.push({ cat: aSec.label + " \u2014 Adj.", detail: i.name + ": " + (bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)") + " \u2192 " + (i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)") });
+      }
+    });
+    (bSec.items || []).forEach(function(i) {
+      if ((aSec.items || []).find(function(ai) { return ai.id === i.id; })) return;
+      changes.push(i.type === "note"
+        ? { cat: aSec.label + " \u2014 Note Removed", detail: window.LTP_noteSummary(i.text) }
+        : { cat: aSec.label + " \u2014 Removed", detail: i.name });
+    });
+  });
+  (before.sections || []).forEach(function(s) { if (!(after.sections || []).find(function(as) { return as.id === s.id; })) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" }); });
+  return changes.length > 0 ? changes : null;
+};
+
 window.LTP_sectionTotals = function(sec) {
   var subtotal = 0, cost = 0;
   ((sec && sec.items) || []).forEach(function(it) {

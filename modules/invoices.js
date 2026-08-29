@@ -1620,93 +1620,6 @@
     var sectionTotals = window.LTP_sectionTotals;
 
     // Actions
-    function computeInvChanges(before, after) {
-      if (!before || !after) return null;
-      var changes = [];
-      var tB = window.LTP_INVOICE_TOTALS(before), tA = window.LTP_INVOICE_TOTALS(after);
-      if (Math.round(tB.total * 100) !== Math.round(tA.total * 100)) changes.push({ cat: "Invoice Total", detail: "$" + window.LTP_money(tB.total) + " \u2192 $" + window.LTP_money(tA.total) });
-      if (before.status !== after.status) changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
-      if (before.dueDate !== after.dueDate) {
-        var dbf = before.dueDate ? fmt(before.dueDate) : "Not set";
-        var daf = after.dueDate ? fmt(after.dueDate) : "Not set";
-        changes.push({ cat: "Due Date", detail: dbf + " \u2192 " + daf });
-      }
-      if (before.invoiceDate !== after.invoiceDate) {
-        var ibf = before.invoiceDate ? fmt(before.invoiceDate) : "Not set";
-        var iaf = after.invoiceDate ? fmt(after.invoiceDate) : "Not set";
-        changes.push({ cat: "Invoice Date", detail: ibf + " \u2192 " + iaf });
-      }
-      if (before.companyId !== after.companyId) {
-        var cBefore = window.LTP_diffEntityName(companies, before.companyId);
-        var cAfter = window.LTP_diffEntityName(companies, after.companyId);
-        changes.push({ cat: "Company", detail: cBefore + " \u2192 " + cAfter });
-      }
-      if (before.projectId !== after.projectId) {
-        var pBefore = window.LTP_diffEntityName(projects, before.projectId);
-        var pAfter = window.LTP_diffEntityName(projects, after.projectId);
-        changes.push({ cat: "Project", detail: pBefore + " \u2192 " + pAfter });
-      }
-      if (before.clientType !== after.clientType) changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
-      var gdB = before.globalDiscount || {}, gdA = after.globalDiscount || {};
-      if (gdB.type !== gdA.type || gdB.value !== gdA.value) {
-        var gdBLabel = gdB.type === "none" ? "None" : gdB.type === "percent" ? gdB.value + "%" : gdB.type === "target" ? "Target $" + gdB.value : "$" + gdB.value;
-        var gdALabel = gdA.type === "none" ? "None" : gdA.type === "percent" ? gdA.value + "%" : gdA.type === "target" ? "Target $" + gdA.value : "$" + gdA.value;
-        changes.push({ cat: "Discount", detail: gdBLabel + " \u2192 " + gdALabel });
-      }
-      if (before.notes !== after.notes) changes.push({ cat: "Notes", detail: "Updated" });
-      // Terms are CLIENT-facing, unlike notes, so the log says which way it
-      // moved rather than just "updated" — reverting to the default is a real
-      // decision, not a typo fix.
-      if ((before.terms || "") !== (after.terms || "")) {
-        changes.push({ cat: "Terms", detail:
-          !(after.terms || "").trim() ? "Reset to the default terms"
-          : !(before.terms || "").trim() ? "Customized for this invoice"
-          : "Edited" });
-      }
-      // Section/item level
-      var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
-      (after.sections || []).forEach(function(aSec) {
-        if (!bSecMap[aSec.id]) { changes.push({ cat: "Section Added", detail: "\"" + aSec.label + "\"" }); return; }
-        var bSec = bSecMap[aSec.id];
-        if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" \u2192 \"" + aSec.label + "\"" });
-        var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
-        (aSec.items || []).forEach(function(i) {
-          // Notes are editable in place, so an edited note has to show up here \u2014
-          // otherwise a changed note reads as a silent edit on a sent invoice.
-          if (i.type === "note") {
-            if (!bItemMap[i.id]) {
-              changes.push({ cat: aSec.label + " \u2014 Note Added", detail: window.LTP_noteSummary(i.text) });
-            } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
-              changes.push({ cat: aSec.label + " \u2014 Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " \u2192 " + window.LTP_noteSummary(i.text) });
-            }
-            return;
-          }
-          if (!bItemMap[i.id]) { changes.push({ cat: aSec.label + " \u2014 Added", detail: i.name + " \u00d7" + i.qty }); return; }
-          var bi = bItemMap[i.id];
-          // Pricing-variant switch \u2192 explicit from \u2192 to entry with both labels
-          // and prices; the plain Price entry (new name on both sides) hid what
-          // the line changed FROM, so it's suppressed for variant switches.
-          var variantChanged = i.type === "product" &&
-            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
-          if (variantChanged) {
-            changes.push({ cat: aSec.label + " \u2014 Variant", detail: bi.name + " ($" + bi.unitPrice + ") \u2192 " + i.name + " ($" + i.unitPrice + ")" });
-          }
-          if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " \u2014 Qty", detail: i.name + ": " + bi.qty + " \u2192 " + i.qty });
-          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " \u2014 Price", detail: i.name + ": $" + bi.unitPrice + " \u2192 $" + i.unitPrice });
-          if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
-            changes.push({ cat: aSec.label + " \u2014 Adj.", detail: i.name + ": " + (bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)") + " \u2192 " + (i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)") });
-          }
-        });
-        (bSec.items || []).forEach(function(i) {
-          if ((aSec.items || []).find(function(ai) { return ai.id === i.id; })) return;
-          changes.push(i.type === "note"
-            ? { cat: aSec.label + " \u2014 Note Removed", detail: window.LTP_noteSummary(i.text) }
-            : { cat: aSec.label + " \u2014 Removed", detail: i.name });
-        });
-      });
-      (before.sections || []).forEach(function(s) { if (!(after.sections || []).find(function(as) { return as.id === s.id; })) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" }); });
-      return changes.length > 0 ? changes : null;
-    }
 
     // Auto-save after payment recording — bypasses lock since payments are operational, not edits
     function autoSavePayment() {
@@ -1738,7 +1651,7 @@
         showAlert("Invalid Dates", "Due date (" + fmt(draft.dueDate) + ") is before the invoice date (" + fmt(draft.invoiceDate) + "). Please fix before saving.");
         return;
       }
-      var changes = computeInvChanges(cleanRef.current, draft);
+      var changes = window.LTP_invoiceChanges(cleanRef.current, draft, projects, companies);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Invoice saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };

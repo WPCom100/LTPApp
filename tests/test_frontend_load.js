@@ -81,9 +81,10 @@ if (loaded) {
   const added = [...live].filter((k) => !declared.has(k));
   ok("no export appears on window that no domain file declares", added.length === 0,
      added.join(", "));
-  // 102 came out of the split; +2 for LTP_sectionTotals and LTP_applySortMove,
-  // extracted from the duplicated quote/invoice builders.
-  ok("the domain layer publishes the expected 104 exports", live.size === 104,
+  // 102 came out of the split; +2 for LTP_sectionTotals and LTP_applySortMove
+  // and +2 for LTP_quoteChanges and LTP_invoiceChanges, all lifted out of the
+  // quote/invoice builder closures so they could finally be tested.
+  ok("the domain layer publishes the expected 106 exports", live.size === 106,
      "got " + live.size + "; if you added one deliberately, bump this number. "
      + "declared=" + declared.size + " live=" + live.size);
 

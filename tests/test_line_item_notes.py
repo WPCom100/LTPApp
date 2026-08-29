@@ -260,11 +260,19 @@ def test_client_view_note_row_preserves_whitespace():
 def test_note_edits_reach_the_change_log():
     """Notes are editable now, so an edited note must appear in the revision
     log — otherwise it reads as a silent change on a sent document."""
-    for mod in ("quotes-builder.js", "invoices.js"):
-        src = _read("modules", mod)
-        assert "Note Edited" in src, mod
-        assert "Note Added" in src, mod
-        assert "Note Removed" in src, mod
+    # The change-log categories used to live in each module's own
+    # computeChanges/computeInvChanges. Both moved verbatim into
+    # components/domain-docs.js (window.LTP_quoteChanges / LTP_invoiceChanges)
+    # so they could be unit-tested, so assert on the domain layer — and assert
+    # on BOTH functions, since each document type builds its own list.
+    src = domain_source()
+    for cat in ("Note Edited", "Note Added", "Note Removed"):
+        assert cat in src, cat
+    q = src[src.index("window.LTP_quoteChanges"):src.index("window.LTP_invoiceChanges")]
+    i = src[src.index("window.LTP_invoiceChanges"):]
+    for cat in ("Note Edited", "Note Added", "Note Removed"):
+        assert cat in q, f"quote change log is missing {cat!r}"
+        assert cat in i, f"invoice change log is missing {cat!r}"
 
 
 if __name__ == "__main__":
