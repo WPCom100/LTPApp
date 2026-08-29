@@ -1146,64 +1146,19 @@
     // sees the new "PDF generated" entry without a full refetch.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
-      // iOS standalone blocks programmatic downloads and post-fetch window.open;
-      // open a blank tab synchronously (in the click gesture) on mobile and
-      // redirect it to the PDF once ready. Desktop keeps the direct download.
-      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
-      fetch("/api/quotes/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
-        .then(function(r) {
-          if (!r.ok) {
-            return r.text().then(function(body) {
-              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(resp) {
-          if (pdfWin) {
-            pdfWin.location = resp.downloadUrl;
-          } else {
-            // Trigger download. <a download> on a same-origin URL just works.
-            var a = document.createElement("a");
-            a.href = resp.downloadUrl;
-            a.download = resp.filename || ("Q-" + draft.id + ".pdf");
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          }
-          // Mirror the server's activity entry into local state so the
-          // activity feed updates immediately. The server is the source of
-          // truth; this is just an optimistic display so the user sees the
-          // entry before the next save sync.
-          var actEntry = {
-            id: "pdf-" + Date.now(),
-            date: todayISO(),
-            time: new Date().toTimeString().substring(0, 5),
-            type: "pdf_generated",
-            user: (window.LTP_CURRENT_USER || "User"),
-            userId: window.LTP_CURRENT_USER_ID || null,
-            message: "PDF generated",
-            pdfToken: resp.token,
-            pdfFilename: resp.filename,
-          };
+      // The fetch, the iOS tab workaround, the download trigger and the error
+      // reporting are shared with the invoice builder — components/doc-pdf.js.
+      // Only what to do with the resulting activity entry is ours.
+      window.LTP_generateDocPdf({ kind: "quote", id: draft.id, isMobile: isMobile })
+        .then(function(actEntry) {
           var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
           setDraftRaw(updated);
           cleanRef.current = updated;
-          // Also update the quotes list state so the activity persists if
-          // the user navigates away and back.
+          // Also update the list state so the activity survives navigating away.
           setQuotes(function(prev) { return prev.map(function(q) { return q.id === draft.id ? updated : q; }); });
         })
         .catch(function(err) {
-          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
-          // The fetch wrapper in data-state.js handles 401 by redirecting;
-          // here we just surface via the existing toast system.
-          if (window.LTP_API_ERRORS) {
-            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST quotes/" + draft.id + "/pdf", error: String(err) });
-          }
-          try {
-            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
-          } catch (e) {}
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });

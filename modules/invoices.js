@@ -755,62 +755,20 @@
     var [attachPdf, setAttachPdf] = useState(true);
     var [generatingPdf, setGeneratingPdf] = useState(false);
 
-    // POST /api/invoices/{id}/pdf → trigger download + mirror activity entry.
-    // Same pattern as quotes-builder.js. See that file's generatePdf for
-    // detailed comments on the flow.
+    // POST /api/invoices/{id}/pdf → download + mirror the activity entry.
+    // The fetch, the iOS tab workaround, the download trigger and the error
+    // reporting are shared with the quote builder — components/doc-pdf.js.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
-      // iOS standalone blocks BOTH programmatic downloads and window.open()
-      // called after an async fetch (outside the click gesture). So on mobile
-      // open a blank tab synchronously now (inside the gesture) and redirect it
-      // to the PDF once ready — it opens in the iOS PDF viewer. Desktop keeps
-      // the direct download.
-      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
-      fetch("/api/invoices/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
-        .then(function(r) {
-          if (!r.ok) {
-            return r.text().then(function(body) {
-              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(resp) {
-          if (pdfWin) {
-            pdfWin.location = resp.downloadUrl;
-          } else {
-            var a = document.createElement("a");
-            a.href = resp.downloadUrl;
-            a.download = resp.filename || ("INV-" + draft.id + ".pdf");
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          }
-          var actEntry = {
-            id: "pdf-" + Date.now(),
-            date: todayISO(),
-            time: new Date().toTimeString().substring(0, 5),
-            type: "pdf_generated",
-            user: (window.LTP_CURRENT_USER || "User"),
-            userId: window.LTP_CURRENT_USER_ID || null,
-            message: "PDF generated",
-            pdfToken: resp.token,
-            pdfFilename: resp.filename,
-          };
+      window.LTP_generateDocPdf({ kind: "invoice", id: draft.id, isMobile: isMobile })
+        .then(function(actEntry) {
           var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
           setDraftRaw(updated);
           cleanRef.current = updated;
           setInvoices(function(prev) { return prev.map(function(inv) { return inv.id === draft.id ? updated : inv; }); });
         })
         .catch(function(err) {
-          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
-          if (window.LTP_API_ERRORS) {
-            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST invoices/" + draft.id + "/pdf", error: String(err) });
-          }
-          try {
-            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
-          } catch (e) {}
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });
