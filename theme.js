@@ -2,6 +2,23 @@
 // customer-facing surfaces (modules/client-view.js, modules/crew-view.js,
 // backend/email_compose.py), with the masthead orange as the single accent.
 //
+// ── LOOKING FOR A BUSINESS FUNCTION? IT MOVED. ──────────────────────────────
+// This file used to be 2,739 lines, 96% of which was not theme. Every
+// window.LTP_* function that is not a colour now lives in components/domain-*.js,
+// loaded immediately after this file in index.html's theme slot:
+//
+//   domain-util.js     dates, times, ids, share tokens, urls, addresses, notes
+//   domain-labor.js    the labor pricing engine (calcLaborDay, mealFixBreaks)
+//   domain-rates.js    per-client service rates, product variants
+//   domain-crew.js     schedule shaping, sign-off, crew notifications
+//   domain-payouts.js  payout rows and pay-period arithmetic
+//   domain-email.js    signature, header and body rendering (incl. PARA_STYLE)
+//   domain-docs.js     quote/invoice totals, refs, terms, expiry, doc-projects
+//
+// Comments elsewhere in the repo — including several in backend/ — still say
+// "mirrors theme.js::LTP_X". Read those as "mirrors the domain layer"; the
+// table above says which file.
+//
 // NOTE: accent/success/warn/danger/info (and text*) MUST stay 6-digit hexes —
 // several call sites build translucent fills by appending alpha ("18"/"44").
 window.LTP_THEME = {

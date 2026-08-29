@@ -35,7 +35,7 @@
 //      Enter. defaultParagraphSeparator picks <p> in Chrome/Firefox;
 //      Safari ignores it and uses <div>. We no longer care which: the
 //      `.ltp-email-editor` CSS (index.html) gives <p> AND <div> the same
-//      paragraph spacing in this live preview, and theme.js's PARA_STYLE
+//      paragraph spacing in this live preview, and domain-email.js's PARA_STYLE
 //      (via LTP_textToHtml) stamps the SAME inline margin onto the body at
 //      send time — so the editor, both <p>/<div>, and the recipient's mail
 //      all line up. Keep the CSS value and PARA_STYLE in sync.

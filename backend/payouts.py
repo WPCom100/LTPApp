@@ -3,7 +3,7 @@
 This module is the SERVER's authoritative view of "what we owe each crew member"
 for a date range. It deliberately does NOT re-run the labor rate engine — the
 payable figure for a signed-off day is a FROZEN snapshot the frontend stamped at
-sign-off time (theme.js::LTP_signOffDay writes the same ``work.pay`` object onto
+sign-off time (components/domain-crew.js::LTP_signOffDay writes the same ``work.pay`` object onto
 every confirmed position of a (crew, date), and LTP_setPayAdjustments writes the
 same ``adj`` list). So we re-read those snapshots straight out of the opaque
 ``Project.schedule`` JSON and rebuild the payout, guaranteeing the QuickBooks
@@ -14,11 +14,11 @@ Two responsibilities:
 
   1. Pay periods — fixed-length (default 14-day) windows tiling the calendar from
      a configured anchor date. Pure whole-day arithmetic (no wall-clock/DST term),
-     mirroring theme.js::LTP_payPeriod* EXACTLY. tests/fixtures/payout_periods.json
+     mirroring components/domain-payouts.js::LTP_payPeriod* EXACTLY. tests/fixtures/payout_periods.json
      locks the JS and Python implementations together.
 
   2. derive_payout_drafts — the snapshot re-derivation, mirroring
-     theme.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
+     components/domain-payouts.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
      two-step js_round2 rounding, per-unit expense-account grouping).
 
 Money is float dollars rounded to the cent, matching the rest of the app.
@@ -42,7 +42,7 @@ def js_round2(x):
 # ── Pay periods (bi-weekly payroll cycles) ──────────────────────────────────
 
 def _parse_iso(iso):
-    """Strict YYYY-MM-DD -> date, or None (mirrors theme.js::_ppEpochDays, which
+    """Strict YYYY-MM-DD -> date, or None (mirrors components/domain-payouts.js::_ppEpochDays, which
     rejects malformed and overflow-normalized dates like '2026-02-31')."""
     if not isinstance(iso, str) or len(iso) != 10 or iso[4] != "-" or iso[7] != "-":
         return None
@@ -59,7 +59,7 @@ def _parse_iso(iso):
 
 
 def _pp_len(length_days):
-    """Guard/default the period length to bi-weekly (matches theme.js::_ppLen)."""
+    """Guard/default the period length to bi-weekly (matches components/domain-payouts.js::_ppLen)."""
     try:
         n = int(length_days)
     except (TypeError, ValueError):
@@ -116,7 +116,7 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July",
 
 
 def _ordinal_date(iso):
-    """'2026-07-06' -> 'July 6th, 2026' (mirrors theme.js::LTP_formatDate)."""
+    """'2026-07-06' -> 'July 6th, 2026' (mirrors components/domain-util.js::LTP_formatDate)."""
     d = _parse_iso(iso)
     if d is None:
         return iso or ""
@@ -144,7 +144,7 @@ def pay_period_number_in_year(anchor_iso, length_days, index):
     label. `number` is the 1-based ordinal of this period within its START date's
     calendar year (period #1 = the first period that STARTS that year; resets each
     January; ~26/yr). Drives the QuickBooks bill number PAY-{year2}-{number}, e.g.
-    PAY-26-14. Mirrors theme.js::LTP_payPeriodNumberInYear."""
+    PAY-26-14. Mirrors components/domain-payouts.js::LTP_payPeriodNumberInYear."""
     pp = pay_period_for_index(anchor_iso, length_days, index)
     if pp is None:
         return None
@@ -162,7 +162,7 @@ def pay_period_number_in_year(anchor_iso, length_days, index):
 
 # ── Payout re-derivation from frozen schedule snapshots ─────────────────────
 #
-# Mirrors theme.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each
+# Mirrors components/domain-payouts.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each
 # (crew, date, project) the sign-off invariant guarantees one representative
 # work.pay and one adj list across the group, so we take the FIRST match — never
 # sum per position. Two-step js_round2 rounding matches the frontend to the cent.

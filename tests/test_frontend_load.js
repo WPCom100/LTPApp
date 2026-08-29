@@ -74,7 +74,16 @@ if (loaded) {
   const live = new Set(Object.keys(window).filter((k) => k.startsWith("LTP_")));
   const missing = [...declared].filter((k) => !live.has(k));
   ok("every declared LTP_ export reaches window", missing.length === 0, missing.join(", "));
-  ok("the domain layer still publishes 102 exports", live.size === 102, "got " + live.size);
+  // A bare count is a tripwire: "got 103" does not say WHICH export appeared,
+  // and a legitimate addition should be a one-line edit with an obvious reason.
+  // So name the expected set and diff against it — a failure prints exactly
+  // what was added or lost.
+  const added = [...live].filter((k) => !declared.has(k));
+  ok("no export appears on window that no domain file declares", added.length === 0,
+     added.join(", "));
+  ok("the domain layer publishes the expected 102 exports", live.size === 102,
+     "got " + live.size + "; if you added one deliberately, bump this number. "
+     + "declared=" + declared.size + " live=" + live.size);
 
   // No export may be published by two files: the later <script> would silently
   // win, and which one that is depends on index.html's ordering.
