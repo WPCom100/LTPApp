@@ -1125,20 +1125,73 @@ that is unset in production.
   real build and rejects a one-byte-modified copy.
 - **Fell out of this batch:** the `USE_PROFILES` finding above. Bumping DOMPurify meant differential-testing
   the sanitizer, which is what exposed it.
+- **A miss in my own first pass at this batch,** fixed in `4045850`: `sw.js`'s `CDN_PRECACHE` pins the same CDN
+  libraries by absolute URL as `index.html`'s `<script src>` tags, with nothing linking the two lists — so the
+  DOMPurify bump was a silent half-change. The worker warmed 3.2.7 while the page requested 3.4.14, leaving the
+  version actually in use absent from the precache on a cold offline launch. Guarded now by
+  `test_service_worker_cdn_precache_matches_index_html`.
 > Every one of these needs a `CACHE_VERSION` bump if it touches a cached file, or every device serves a stale
 > shell for one more launch. `index.html` and `components/sanitize.js` both folded into the already-unreleased
 > `ltp-shell-v58`.
 
-### Batch 7 — Structural refactors — Effort L · Blast radius: load-bearing  ·  **NOT STARTED**
-Do not start these until Batch 0 has given you working tests.
-- Split `theme.js` along its own commented section boundaries into `components/domain-*.js`. The target
-  directory is already in the static allowlist and already runtime-cached, so no backend change is needed.
-  **Do not** create new root-level `.js` files — `_ALLOWED_TOP_LEVEL_FILES` (`backend/main.py:632`) is a fixed
-  five-name set and an unlisted root script silently falls through to the SPA fallback as `text/html`, which
-  `nosniff` then refuses to execute.
-- Collapse the measured 466 lines of quotes/invoices duplication in tiers, mechanical helpers first. Reconcile
-  the `sectionTotals` return-shape divergence (`{subtotal, margin}` vs `{subtotal, cost}` from byte-identical
-  bodies) as part of tier 1, not after.
+### Batch 7 — Structural refactors — Effort L · Blast radius: load-bearing  ·  **theme.js split DONE** (`66991e9`, `b36e9f7`); **duplication tier 1 DONE** (`da41067`), tiers 2+ deliberately not taken
+
+**theme.js split — done.** 2,739 lines → theme.js (113, tokens + colours + the module registry) plus seven
+`components/domain-*.js`: util, labor, rates, crew, payouts, email, docs. Done as a proven pure move — a
+segmenter partitions the file into 109 units and the splitter refuses to write unless reassembling every
+destination reproduces the original byte for byte. A snapshot harness (all 102 exports, their types and
+arities, every constant, 84 fixed-input probes) is identical before and after.
+
+Two things the original plan got wrong, both caught before shipping:
+- *"The target directory is already runtime-cached, so no backend change is needed"* — true for serving, but
+  incomplete. `sw.js`'s `SAME_ORIGIN_PRECACHE` lists the boot chain by name and included `/theme.js`; the
+  domain files are boot-chain code by the same definition, so runtime stale-while-revalidate leaves them
+  simply **absent on a cold offline launch**. They had to be added.
+- The plan said to split "along its own commented section boundaries". The real constraint is load ORDER, not
+  section boundaries: 46 frontend files alias these exports into IIFE-locals at their own load time
+  (`modules/quotes-list.js:9` is `var computeTotals = window.LTP_QUOTE_TOTALS;`), so the domain files must be
+  script-tagged in index.html's **theme slot**, not in the components group their path suggests — and
+  `index.html:256-258`'s own standing instruction ("drop it at the END of that group") sends you the wrong way.
+
+A hazard reported during the work turned out to be **false, and is recorded here so it is not re-derived**:
+the file-scope helpers (`_timeToDecimal`, `_crNum`, `_ppEpochDays`, …) are *not* lexically private. theme.js
+was never IIFE-wrapped, so they are globals, and separate `<script>` tags share one global scope — verified in
+Chromium, where a function declared in one tag is callable from the next and appears on `window`. Splitting a
+helper from its callers would still run. They are co-located anyway, because the right next cleanup is to
+IIFE-wrap each domain file so these stop leaking onto `window`, and that becomes a one-line change per file
+only if they are already together. `tests/test_frontend_load.js` guards it (8 mutations, 8 caught).
+
+**Duplication — the "466 lines" figure was wrong.** No method was stated for it. Measuring contiguous runs of
+≥6 normalized lines (quote/invoice naming and indentation folded) gives **261 lines across 25 blocks**, now 236
+across 24. Two of the three named tier-1 candidates did not survive checking:
+- The send-modal citation `invoices.js:2506-2560` points at the **payment** modal. The real send modals
+  (`quotes-builder.js:2869-2906`, `invoices.js:2527-2599`) are 38 vs 73 lines with 61 differing — not duplicates.
+- `sectionTotals` bodies are **not** byte-identical, and `margin` vs `cost` is a real semantic difference
+  (`margin = subtotal − cost`), not two names for one value. Merging them as described would have shipped a
+  money bug. The safe merge — return all three fields — works only because invoices' `cost` turned out to have
+  no consumer at all.
+
+Tier 1 taken: `LTP_sectionTotals` and `LTP_applySortMove` (the reorder transform: 22 contiguous lines,
+byte-identical modulo comments, 65 lines collapsed to 13). Both verified by re-implementing the pre-extraction
+code verbatim and diffing over exhaustive matrices — 4,752 cases and 1,384 move shapes — plus 10 mutations, 10
+caught. Both had **zero** prior coverage, having lived inside the 1,704- and 2,008-line builder closures.
+
+**Tiers 2+ not taken, deliberately.** The remaining blocks are `generatePdf` (~51 lines across 4 blocks) and
+the Gmail send error/header path (~33 lines). Neither is a mechanical move: `generatePdf` alone needs `draft`,
+`isMobile`, `generatingPdf`, `setGeneratingPdf`, `setDraftRaw` and the list setter threaded out of the closure,
+wraps an async fetch, and drives the iOS-standalone `window.open` + blob-download workaround, which is the
+hardest surface in the app to test. ~84 lines saved against a real chance of breaking PDF download on iOS is a
+worse trade than it looks. The recommendation stands as: do these only alongside the builder decomposition
+below, not as standalone extractions.
+
+**Still open from this batch:** the two builders are still 1,672 and 2,008 lines. Splitting *them* — not the
+duplication between them — is the change that would make their internals testable, and it is a larger piece of
+work than this batch scoped.
+
+**Found while doing this batch, not fixed:** `LTP_renderPreviewBody` has zero consumers anywhere. Its only
+references are two Python tests asserting its name appears in the source, and
+`tests/test_polish_pass_signature_html.py:385` records that the editor it served was replaced. Belongs to the
+dead-code pass, not here.
 
 ---
 
