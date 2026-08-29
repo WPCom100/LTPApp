@@ -21,6 +21,7 @@ Runs both as pytest and as a plain script:
     python tests/test_gmail_token_rotation.py
 """
 import asyncio
+import contextlib
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -44,9 +45,34 @@ from backend import crypto, database, gmail, models  # noqa: E402
 _DB_PATH = os.path.join(_here, "scratch_gmail_rotation_test.db")
 engine = create_async_engine("sqlite+aiosqlite:///" + _DB_PATH)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
-# refresh_if_needed opens its OWN session for the rotated-token write, resolved
-# from backend.database at call time — point that at this file's engine.
-database.async_session = async_session
+
+
+@contextlib.contextmanager
+def _rotation_write_target():
+    """Point backend.database.async_session at this file's private engine.
+
+    refresh_if_needed opens its OWN session for the rotated-token write
+    (backend/gmail.py:240 resolves the factory from backend.database at call
+    time), so exercising that write means repointing the module attribute.
+
+    Scoped to a single test, NOT applied at module level: under pytest every
+    test module is imported into one process at collection time, so a
+    module-level assignment repoints the whole app's session factory —
+    backend.database.get_db() resolves the same global — for every other module
+    in the run. That damage is invisible on a warm checkout (this file's scratch
+    DB already carries a schema from an earlier run, so the misdirected writes
+    land somewhere valid) and fatal on a cold one, which is what CI always has:
+    the file is created empty on first connect and 75 tests die with
+    "no such table: users". tests/conftest.py::pytest_collection_finish now
+    fails the run if any module repoints it at import time.
+    """
+    prev = database.async_session
+    database.async_session = async_session
+    try:
+        yield
+    finally:
+        database.async_session = prev
+
 
 _results: list[tuple[str, bool]] = []
 
@@ -104,15 +130,16 @@ async def test_rotated_refresh_token_survives_a_caller_rollback():
     await _reset_schema()
     uid = await _seed_user()
 
-    async with async_session() as db:
-        user = await db.get(models.User, uid)
-        access = await gmail.refresh_if_needed(
-            user, db, client_id="cid", client_secret="csec",
-            httpx_client=_FakeHttpx(),
-        )
-        _check("refresh returned the new access token", access == "ya29.brand-new-access")
-        # Exactly what the receipt poller does when a send fails.
-        await db.rollback()
+    with _rotation_write_target():
+        async with async_session() as db:
+            user = await db.get(models.User, uid)
+            access = await gmail.refresh_if_needed(
+                user, db, client_id="cid", client_secret="csec",
+                httpx_client=_FakeHttpx(),
+            )
+            _check("refresh returned the new access token", access == "ya29.brand-new-access")
+            # Exactly what the receipt poller does when a send fails.
+            await db.rollback()
 
     async with async_session() as db:
         user = await db.get(models.User, uid)
@@ -138,11 +165,12 @@ async def test_refresh_without_rotation_leaves_the_stored_token_alone():
         async def post(self, *a, **kw):
             return _NoRotation()
 
-    async with async_session() as db:
-        user = await db.get(models.User, uid)
-        await gmail.refresh_if_needed(user, db, client_id="cid", client_secret="csec",
-                                      httpx_client=_Client())
-        await db.commit()
+    with _rotation_write_target():
+        async with async_session() as db:
+            user = await db.get(models.User, uid)
+            await gmail.refresh_if_needed(user, db, client_id="cid", client_secret="csec",
+                                          httpx_client=_Client())
+            await db.commit()
 
     async with async_session() as db:
         user = await db.get(models.User, uid)
