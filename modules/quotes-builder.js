@@ -1697,6 +1697,19 @@
       setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
     }
 
+    // Reopen a declined quote. Written inline TWICE in the render tree — once
+    // in the mobile header, once in the desktop one — which is how a state
+    // mutation drifts: fix one copy and the other keeps the old behaviour. It
+    // belongs here with the other status transitions.
+    function reopenQuote() {
+      var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+        type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"),
+        changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
+      var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
+      setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+      setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+    }
+
     function declineQuote() {
       setDlg({ title: "Decline Quote", message: "Mark this quote as declined? You can reopen it later if needed.", variant: "danger", confirmLabel: "Mark Declined",
         onConfirm: function() {
@@ -2013,12 +2026,7 @@
             isDirty && h(window.Btn, { small: true, onClick: save }, "Save"),
             draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 14px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Send"),
             draft.status === "sent" && h("button", { onClick: acceptQuote, style: { background: B.info, border: "none", borderRadius: "6px", padding: "8px 12px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "\u2713 Accept"),
-            draft.status === "declined" && h("button", { onClick: function() {
-                var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5), type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"), changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
-                var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
-                setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
-                setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-              }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
+            draft.status === "declined" && h("button", { onClick: reopenQuote, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
             hasUninvoiced && h("button", { onClick: sendToInvoice, style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "8px 12px", whiteSpace: "nowrap" } }, "\u2192 Invoice"),
             h(window.LTPOverflowMenu, { align: "left", items: [
               draft.id != null && { label: generatingPdf ? "Generating\u2026" : "Generate PDF", onClick: generatePdf, disabled: generatingPdf },
@@ -2069,14 +2077,7 @@
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: openQuoteSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           // Declined: Reopen
-          draft.status === "declined" && h("button", { onClick: function() {
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"),
-              changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
-            var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
-            setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
-            setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-          }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Reopen as Draft"),
+          draft.status === "declined" && h("button", { onClick: reopenQuote, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Reopen as Draft"),
           // Converted: badge
           draft.status === "converted" && h("div", { style: { fontSize: "10px", color: B.success, padding: "4px 10px", border: "1px solid " + B.success, borderRadius: "6px", fontWeight: 600 } }, "CONVERTED"),
           // Mark All Delivered — only when accepted and items are undelivered

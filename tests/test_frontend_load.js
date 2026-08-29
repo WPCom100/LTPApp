@@ -178,6 +178,39 @@ if (loaded) {
   });
 }
 
+// ── No state mutation inside a render tree's inline handlers ──────────────
+// The quote builder had the "reopen a declined quote" mutation written inline
+// TWICE — once in the mobile header, once in the desktop one — with the same
+// six lines of activity-stamping and three setters in each. That is how a state
+// mutation drifts: someone fixes one copy and the other quietly keeps the old
+// behaviour. It is also invisible to the render snapshot, which serializes
+// every handler as `fn` and so cannot tell one inline closure from another.
+//
+// Both are now calls to a named reopenQuote(). This guards the invariant rather
+// than that one instance: no `onClick: function(){...}` inside either builder's
+// render return may call a state setter. Named handlers defined above the
+// return are the point — they can be read, reused, and eventually tested.
+(function () {
+  const SETTER = /\bset(Quotes|Invoices|DraftRaw|Draft|Projects|Contacts|Companies)\s*\(/;
+  ["modules/quotes-builder.js", "modules/invoices.js"].forEach(function (rel) {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    const at = src.indexOf("\n    return h(");
+    ok(rel + ": found the render return", at !== -1);
+    if (at === -1) return;
+    const body = src.slice(at);
+    const offenders = [];
+    const re = /onClick: function\(\)\s*\{/g;
+    let m;
+    while ((m = re.exec(body)) !== null) {
+      if (SETTER.test(body.slice(m.index, m.index + 500))) {
+        offenders.push(rel + ":" + (src.slice(0, at).split("\n").length + body.slice(0, m.index).split("\n").length - 1));
+      }
+    }
+    ok(rel + ": no inline render handler mutates state", offenders.length === 0,
+       offenders.join(", ") + " — lift it to a named function above the return");
+  });
+})();
+
 // ── Invoice payment durability (source-level) ─────────────────────────────
 // There is no React harness here, so these assert the invariant at the source.
 // Recording a payment auto-saves it to the invoices list but the editor kept a
