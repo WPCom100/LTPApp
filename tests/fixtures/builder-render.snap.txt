@@ -20,6 +20,7 @@
         Send Quote
       <anon>
         <<Btn> onClick=fn small=true variant="danger">
+          Delete
   <div style=7props>
     <div style=6props>
       <div style=3props>
@@ -481,6 +482,7 @@
         Resend
       <anon>
         <<Btn> onClick=fn small=true variant="danger">
+          Delete
   <div style=7props>
     <div style=6props>
       <div style=3props>
@@ -772,6 +774,7 @@
           Send Invoice
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -1160,6 +1163,7 @@
           Resend
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -1340,6 +1344,7 @@
       <input onChange=fn placeholder="Search invoices…" style=10props type="text" value="">
       <anon>
         <<Btn> onClick=fn small=true>
+          + New Invoice
     <div style=4props>
       <anon>
         <<StatCard> accent="#5FD08A" label="Paid" value="$0.00">
@@ -1350,6 +1355,18 @@
     <div style=6props>
       <anon>
         <<LTPScrollStrip> desktopStyle={"display":"flex","gap":6,"flexWrap":"wrap"} isMobile=false mobileStyle={"display":"flex","gap":8,"overflowX":"auto","flexWrap":"nowrap","WebkitOverflowScrolling":"touch","scrollbarWidth":"none","paddingBottom":4} wrapStyle={"flex":1,"minWidth":0}>
+          <button className="ltp-tap" key="all" onClick=fn style=12props>
+            all
+          <button className="ltp-tap" key="draft" onClick=fn style=12props>
+            draft
+          <button className="ltp-tap" key="sent" onClick=fn style=12props>
+            sent
+          <button className="ltp-tap" key="partial" onClick=fn style=12props>
+            partial
+          <button className="ltp-tap" key="paid" onClick=fn style=12props>
+            paid
+          <button className="ltp-tap" key="overdue" onClick=fn style=12props>
+            overdue
       <button className="ltp-tap" onClick=fn style=11props>
         Hide Paid
     <div style=2props>
@@ -1362,6 +1379,24 @@
           Ref #
     <anon>
       <<LTPList>>
+        <anon>
+          <<LTPRow> key=7 onClick=fn style=4props>
+            <div style=2props>
+              <div style=3props>
+                INV-2026-007
+              <div style=4props>
+                Spring Shoot
+              <div style=3props>
+                Acme Co
+              <div style=3props>
+                Due: September 4th, 2026
+            <div style=4props>
+              <div style=1props>
+                <div style=3props>
+                  $1,710.00
+              <div style=2props>
+                <anon>
+                  <<Badge> status="draft">
 
 == InvoiceBuilder (paid) ==
 <InvoiceBuilder>
@@ -1392,6 +1427,7 @@
           Resend
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -1602,6 +1638,7 @@
           Resend
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -1824,6 +1861,7 @@
           OVERDUE
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -2022,6 +2060,7 @@
           Resend
         <anon>
           <<Btn> onClick=fn small=true variant="danger">
+            Delete
     <div style=7props>
       <div style=6props>
         <div style=3props>
@@ -2232,6 +2271,7 @@
         ✓ Mark All Delivered
       <anon>
         <<Btn> onClick=fn small=true variant="danger">
+          Delete
   <div style=7props>
     <div style=6props>
       <div style=3props>
@@ -2472,6 +2512,7 @@
         Resend
       <anon>
         <<Btn> onClick=fn small=true variant="danger">
+          Delete
   <div style=7props>
     <div style=6props>
       <div style=3props>
@@ -2762,6 +2803,7 @@
         Reopen as Draft
       <anon>
         <<Btn> onClick=fn small=true variant="danger">
+          Delete
   <div style=7props>
     <div style=6props>
       <div style=3props>
@@ -3029,3 +3071,251 @@
         <div style=5props>
           <div style=5props>
             No activity yet.
+
+== QuotesBuilder overlays ==
+  -- slot 2 opens an overlay (9 lines) --
+        <<Btn> onClick=fn small=true variant="ghost">
+          Discard
+        <<Btn> onClick=fn small=true>
+          Save Changes
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort15" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort15"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort15" style=4props>
+  -- slot 8 opens an overlay (7 lines) --
+      <div style=8props>
+        ✓ Saved
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort16" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort16"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort16" style=4props>
+  -- slot 9 opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort17"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
+  -- slot 12 opens an overlay (40 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort18"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
+  <anon>
+    <<LTPModal> onClose=fn title="Send Quote" wide=true>
+            Quote Preview
+            Q-2026-001
+            Acme Co
+            <div key="sec1" style=4props>
+              <span style=1props>
+                Audio (2)
+              <span style=1props>
+                $1,900.00
+            <div key="sec2" style=4props>
+              <span style=1props>
+                Grip (0)
+              <span style=1props>
+                $0.00
+              <span style=1props>
+                Total
+              <span style=1props>
+                $1,710.00
+        <div style=7props>
+              Email Preview
+                From:
+                Sender <s@example.com>
+                <<RecipientEditor> contacts=[{"id":"ct1","name":"Dana Reyes","email":"dana@acme.test","companyIds":["co1"]},{"id":"c9","name":"Crew Person","isCrew":true}] onChange=fn value={"to":[],"cc":[]}>
+                Subj:
+              <input onChange=fn style=10props value="">
+          <anon>
+            <<EmailBodyEditor> headerKind="quote" headerVars=null minHeight=240 onChange=fn signatureTemplate=undefined value="">
+      <div style=6props>
+        <anon>
+          <<Btn> onClick=fn variant="ghost">
+            Cancel
+        <anon>
+          <<Btn> disabled=false onClick=fn>
+            Send Quote
+  -- slot 17 opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort19"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
+  -- slot 18 opens an overlay (7 lines) --
+      <button disabled=true onClick=fn style=12props>
+        Generating…
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
+                  <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort20"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
+
+== InvoiceBuilder overlays ==
+  -- slot 2 opens an overlay (9 lines) --
+        <<Btn> onClick=fn small=true variant="ghost">
+          Discard
+        <<Btn> onClick=fn small=true>
+          Save Changes
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort22" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort22"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort22" key="sec2" style=3props>
+  -- slot 6 opens an overlay (6 lines) --
+        ✓ Saved
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort23" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort23"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort23" key="sec2" style=3props>
+  -- slot 9 opens an overlay (30 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort24" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort24"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort24" key="sec2" style=3props>
+  <anon>
+    <<LTPModal> onClose=fn title="Record Payment">
+        <div style=7props>
+              Invoice Total
+              $1,710.00
+              Already Paid
+              $0.00
+              Balance Due
+              $1,710.00
+        <anon>
+          <<LTPInput> label="Payment Date" onChange=fn type="date" value="2026-08-29">
+        <anon>
+          <<LTPInput> label="Amount *" onChange=fn placeholder="0.00" type="number" value="">
+        <anon>
+          <<LTPSelect> label="Payment Method" onChange=fn options=[{"value":"check","label":"Check"},{"value":"ach","label":"ACH / Bank Transfer"},{"value":"credit_card","label":"Credit Card"},{"value":"cash","label":"Cash"},{"value":"wire","label":"Wire Transfer"},{"value":"other","label":"Other"}] value="check">
+        <anon>
+          <<LTPInput> label="Reference / Check #" onChange=fn placeholder="e.g. CHK-4412" value="">
+        <anon>
+          <<LTPInput> label="Notes (optional)" onChange=fn placeholder="Payment notes…" value="">
+        <anon>
+          <<Btn> onClick=fn variant="ghost">
+            Cancel
+        <anon>
+          <<Btn> onClick=fn>
+            Record Payment
+  -- slot 10 opens an overlay (53 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort25" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort25"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort25" key="sec2" style=3props>
+  <anon>
+    <<LTPModal> onClose=fn title="Send Invoice" wide=true>
+          <div style=6props>
+            Invoice Preview
+            INV-2026-007
+            Acme Co
+            <div style=4props>
+              <span style=1props>
+                Invoice Date
+              <span style=1props>
+                August 5th, 2026
+            <div style=4props>
+              <span style=1props>
+                Due Date
+              <span style=1props>
+                September 4th, 2026
+            <div style=4props>
+              <span style=1props>
+                Line Items
+              <span style=1props>
+                2
+              <span style=1props>
+                Total
+              <span style=1props>
+                $1,710.00
+        <div style=7props>
+            <div style=6props>
+              Email Preview
+            <div style=4props>
+              <span style=3props>
+                From:
+              <span style=2props>
+                Sender <s@example.com>
+                <<RecipientEditor> contacts=[{"id":"ct1","name":"Dana Reyes","email":"dana@acme.test","companyIds":["co1"]},{"id":"c9","name":"Crew Person","isCrew":true}] onChange=fn value={"to":[],"cc":[]}>
+              <span style=3props>
+                Subj:
+              <input onChange=fn style=10props value="">
+          <anon>
+            <<EmailBodyEditor> headerKind="invoice" headerVars=null minHeight=240 onChange=fn signatureTemplate=undefined value="">
+        <label style=7props>
+          <input checked=true onChange=fn style=2props type="checkbox">
+          Attach invoice PDF
+          <anon>
+            <<Btn> onClick=fn variant="ghost">
+              Cancel
+          <anon>
+            <<Btn> disabled=false onClick=fn>
+              Send Invoice
+  -- slot 12 opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort26" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort26"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort26" key="sec2" style=3props>
+  -- slot 13 opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort27" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort27"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort27" key="sec2" style=3props>
+  -- slot 14 opens an overlay (42 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort28" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort28" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort28" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort28"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort28" key="sec2" style=3props>
+  <anon>
+    <<LTPModal> onClose=fn title="Send Payment Receipt" wide=true>
+          <div style=6props>
+            Receipt Preview
+            INV-2026-007
+            <div style=4props>
+              <span style=1props>
+                Invoice Total
+              <span style=1props>
+                $1,710.00
+            <div style=4props>
+              Payments
+              <span style=1props>
+                Paid in Full
+              <span style=1props>
+                $0.00
+        <div style=7props>
+            <div style=6props>
+              Email Preview
+            <div style=4props>
+              <span style=3props>
+                From:
+              <span style=2props>
+                Sender <s@example.com>
+                <<RecipientEditor> contacts=[{"id":"ct1","name":"Dana Reyes","email":"dana@acme.test","companyIds":["co1"]},{"id":"c9","name":"Crew Person","isCrew":true}] onChange=fn value={"to":[],"cc":[]}>
+              <span style=3props>
+                Subj:
+              <input onChange=fn style=10props value="">
+          <anon>
+            <<EmailBodyEditor> headerKind="receipt" headerVars=null minHeight=240 onChange=fn signatureTemplate=undefined value="">
+      <div style=6props>
+        <anon>
+          <<Btn> onClick=fn variant="ghost">
+            Skip
+        <anon>
+          <<Btn> disabled=false onClick=fn>
+            Send Receipt
+  -- slot 21 opens an overlay (7 lines) --
+      <button disabled=true onClick=fn style=12props>
+        Generating…
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+              <<LTPNoteLineRow> containerProps={"data-ltp-sort":"item","data-ltp-id":"i3","data-ltp-zone":"sec1","data-ltp-sort-inst":"sort29"} editable=true handle={"$$":true,"type":"button","props":{"type":"button","className":"ltp-drag-handle","title":"Drag to reorder (or focus and press ↑ / ↓)","aria-label":"Reorder line item","style":{"fontSize":"12px","flexShrink":0}},"children":["☰"]} onDelete=fn onSave=fn text="Handle with care">
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec2" style=3props>

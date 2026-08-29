@@ -638,73 +638,81 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE BUILDER
   // ═══════════════════════════════════════════════════════════════════════════
+  // A blank invoice, and a deep copy of an existing one for editing.
+  //
+  // At file scope so they can be read without scrolling through the builder,
+  // matching modules/quotes-builder.js, where the equivalent emptyDraft and
+  // cloneDraft have always lived outside the component. These reference no
+  // props at all — only the file-scope net30/genId/todayISO helpers — so they
+  // were inside InvoiceBuilder purely because that is where they were written.
+  function emptyInvoice() {
+    var today = todayISO();
+    return {
+      id: null, quoteId: null,
+      // projectId is the PRIMARY project; projectIds is every project this
+      // invoice bills work for (see window.LTP_docProjectIds in theme.js).
+      clientType: "company", companyId: null, clientContactId: null, projectId: null, projectIds: [],
+      customName: "", status: "draft",
+      invoiceDate: today, createdDate: today, sentDate: null, dueDate: net30(today), paidDate: null,
+      globalDiscount: { type: "none", value: 0 },
+      sections: [{ id: genId("sec"), label: "Items", customDates: false, startDate: "", endDate: "", items: [] }],
+      notes: window.LTP_DEFAULT_INVOICE_NOTES || "",
+      // "" = follow the workspace / built-in terms. Only set once a producer
+      // edits this document's own wording. See window.LTP_docTerms in theme.js.
+      terms: "",
+      payments: [],
+      activity: [{ id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "created", message: "Invoice created", user: (window.LTP_CURRENT_USER || "User") }],
+    };
+  }
+
+  function cloneInvoice(inv) {
+    // Spread the source FIRST so server-managed fields we don't normalize
+    // explicitly survive into the draft — notably the QuickBooks link
+    // (qbInvoiceId, qbSyncToken, qbSyncStatus, qbSyncedAt, qbTaxTotal,
+    // qbTotalAmt, qbLastError). Without this, re-opening an invoice (e.g.
+    // after editing its customer) dropped the qb link from the draft and the
+    // UI reverted to "Send to QuickBooks" even though the server still had
+    // it. The explicit keys below override/normalize and deep-clone the
+    // nested arrays so edits never mutate the shared list objects.
+    return Object.assign({}, inv, {
+      id: inv.id, quoteId: inv.quoteId || null,
+      shareToken: inv.shareToken || null,
+      clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
+      projectId: inv.projectId,
+      // Normalized (not passed through raw) so a legacy row without the field
+      // still round-trips a correct list instead of saving back an empty one
+      // and dropping its "Includes" attribution.
+      projectIds: window.LTP_docProjectIds(inv),
+      customName: inv.customName || "",
+      status: inv.status || "draft",
+      invoiceDate: inv.invoiceDate || inv.createdDate || todayISO(),
+      createdDate: inv.createdDate || todayISO(), sentDate: inv.sentDate || null,
+      dueDate: inv.dueDate || "", paidDate: inv.paidDate || null,
+      globalDiscount: Object.assign({ type: "none", value: 0 }, inv.globalDiscount || {}),
+      // A whitelist rebuild, so every section field must be named here or
+      // editing the invoice silently drops it — `projectId` records which job
+      // an appended section came from. (Items are spread, so sourceQuoteId /
+      // linkedQty survive automatically.)
+      sections: (inv.sections || []).map(function(s) {
+        return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+                 projectId: s.projectId != null ? s.projectId : null,
+                 items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
+      }),
+      notes: inv.notes || "",
+      // Carried by the spread above too; normalized here so a null from an
+      // older row reads as "follow the default" rather than reaching the
+      // editor as null.
+      terms: inv.terms || "",
+      payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
+      activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
+    });
+  }
+
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
                             companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
                             equipment, products, services, clientRates, fees, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
-    function emptyInvoice() {
-      var today = todayISO();
-      return {
-        id: null, quoteId: null,
-        // projectId is the PRIMARY project; projectIds is every project this
-        // invoice bills work for (see window.LTP_docProjectIds in theme.js).
-        clientType: "company", companyId: null, clientContactId: null, projectId: null, projectIds: [],
-        customName: "", status: "draft",
-        invoiceDate: today, createdDate: today, sentDate: null, dueDate: net30(today), paidDate: null,
-        globalDiscount: { type: "none", value: 0 },
-        sections: [{ id: genId("sec"), label: "Items", customDates: false, startDate: "", endDate: "", items: [] }],
-        notes: window.LTP_DEFAULT_INVOICE_NOTES || "",
-        // "" = follow the workspace / built-in terms. Only set once a producer
-        // edits this document's own wording. See window.LTP_docTerms in theme.js.
-        terms: "",
-        payments: [],
-        activity: [{ id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "created", message: "Invoice created", user: (window.LTP_CURRENT_USER || "User") }],
-      };
-    }
-
-    function cloneInvoice(inv) {
-      // Spread the source FIRST so server-managed fields we don't normalize
-      // explicitly survive into the draft — notably the QuickBooks link
-      // (qbInvoiceId, qbSyncToken, qbSyncStatus, qbSyncedAt, qbTaxTotal,
-      // qbTotalAmt, qbLastError). Without this, re-opening an invoice (e.g.
-      // after editing its customer) dropped the qb link from the draft and the
-      // UI reverted to "Send to QuickBooks" even though the server still had
-      // it. The explicit keys below override/normalize and deep-clone the
-      // nested arrays so edits never mutate the shared list objects.
-      return Object.assign({}, inv, {
-        id: inv.id, quoteId: inv.quoteId || null,
-        shareToken: inv.shareToken || null,
-        clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
-        projectId: inv.projectId,
-        // Normalized (not passed through raw) so a legacy row without the field
-        // still round-trips a correct list instead of saving back an empty one
-        // and dropping its "Includes" attribution.
-        projectIds: window.LTP_docProjectIds(inv),
-        customName: inv.customName || "",
-        status: inv.status || "draft",
-        invoiceDate: inv.invoiceDate || inv.createdDate || todayISO(),
-        createdDate: inv.createdDate || todayISO(), sentDate: inv.sentDate || null,
-        dueDate: inv.dueDate || "", paidDate: inv.paidDate || null,
-        globalDiscount: Object.assign({ type: "none", value: 0 }, inv.globalDiscount || {}),
-        // A whitelist rebuild, so every section field must be named here or
-        // editing the invoice silently drops it — `projectId` records which job
-        // an appended section came from. (Items are spread, so sourceQuoteId /
-        // linkedQty survive automatically.)
-        sections: (inv.sections || []).map(function(s) {
-          return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
-                   projectId: s.projectId != null ? s.projectId : null,
-                   items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
-        }),
-        notes: inv.notes || "",
-        // Carried by the spread above too; normalized here so a null from an
-        // older row reads as "follow the default" rather than reaching the
-        // editor as null.
-        terms: inv.terms || "",
-        payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
-        activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
-      });
-    }
 
     var initial = useMemo(function() {
       if (isNew) return emptyInvoice();

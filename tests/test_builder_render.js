@@ -110,7 +110,14 @@ for (const rel of REAL_COMPONENTS) {
 // Each UI component becomes a marker element, so the tree still records WHERE
 // it appears and WHAT props it is handed — which is the part a refactor can
 // break — without needing the component's own internals.
-function stub(name) { return function (props) { return { $$: true, type: "<" + name + ">", props: props || {}, children: [] }; }; }
+function stub(name) {
+  return function (props) {
+    const p = props || {};
+    const kids = p.children == null ? [] : (Array.isArray(p.children) ? p.children : [p.children]);
+    const rest = {}; Object.keys(p).forEach(function (k) { if (k !== "children") rest[k] = p[k]; });
+    return { $$: true, type: "<" + name + ">", props: rest, children: kids };
+  };
+}
 [
   "Badge", "Btn", "ClientRateChip", "CompanySearchField", "ContactSearchField", "EmailBodyEditor",
   "LTPConfirmDialog", "LTPDocTerms", "LTPInput", "LTPList", "LTPModal", "LTPMoveArrows",
@@ -192,6 +199,53 @@ function render(Component, props, label) {
   return label + "\n" + serialize(tree, 0);
 }
 
+// Render a builder once with every FALSE boolean useState slot flipped true, one
+// at a time. Almost all of this app's overlays are gated on exactly such a flag
+// (showSendModal, showPaymentForm, showReceiptModal, ...), and a static render
+// leaves every one of them closed — so without this, the modals are invisible to
+// the snapshot and could be refactored with nothing to catch a mistake.
+//
+// Slots are addressed by INDEX, not by name, because the shim cannot see the
+// variable names. That is fine for a golden-file guard: the index is stable for
+// a given component, and if a refactor changes the hook order the snapshot moves
+// and a human looks — which is exactly the signal wanted. Only slots that
+// actually change the tree are reported, so the output does not grow a line for
+// every unrelated boolean.
+function renderWithOverlays(Component, props, label) {
+  const probe = mkCtx(function () {});
+  CTX = probe; probe.idx = 0;
+  let base;
+  try { base = serialize(Component(props), 0); }
+  catch (e) { CTX = null; return label + " THREW: " + e.message; }
+  CTX = null;
+
+  const boolSlots = Object.keys(probe.hooks)
+    .filter((k) => probe.hooks[k] && probe.hooks[k].v === false);
+
+  const out = [];
+  boolSlots.forEach(function (slot) {
+    const ctx = mkCtx(function () {});
+    CTX = ctx; ctx.idx = 0;
+    // Pre-seed: useState returns the seeded value for this slot on first call.
+    const seeded = {};
+    seeded[slot] = { v: true };
+    ctx.hooks = seeded;
+    let tree;
+    try { tree = Component(props); }
+    catch (e) { CTX = null; out.push("  slot " + slot + " -> THREW: " + e.message); return; }
+    CTX = null;
+    const rendered = serialize(tree, 0);
+    if (rendered === base) return;                  // this flag renders nothing
+    // Report only what the flag ADDED, so the diff stays readable.
+    const baseLines = new Set(base.split("\n"));
+    const added = rendered.split("\n").filter((l) => !baseLines.has(l));
+    if (!added.length) return;
+    out.push("  -- slot " + slot + " opens an overlay (" + added.length + " lines) --");
+    out.push(added.join("\n"));
+  });
+  return label + "\n" + (out.length ? out.join("\n") : "  (no boolean slot opens an overlay)");
+}
+
 function serialize(node, depth) {
   const pad = "  ".repeat(Math.min(depth, 40));
   if (node == null || node === false || node === true) return "";
@@ -209,7 +263,11 @@ function serialize(node, depth) {
     const saved = CTX;
     CTX = mkCtx(function () {});
     let sub;
-    try { sub = node.type(node.props || {}); }
+    // Children must be handed to the component, or a stubbed wrapper like
+    // LTPModal renders as an empty shell and everything inside the modal —
+    // which is the whole point of the overlay scenarios — is invisible.
+    try { sub = node.type(Object.assign({}, node.props || {},
+      (node.children && node.children.length) ? { children: node.children } : {})); }
     catch (e) { CTX = saved; return pad + "<" + name + " RENDER-THREW=" + e.constructor.name + ":" + JSON.stringify(e.message) + ">"; }
     CTX = saved;
     const inner = serialize(sub, depth + 1);
@@ -297,6 +355,30 @@ const DECLINED = Object.assign({}, QUOTE, { status: "declined", sentDate: "2026-
   }, COMMON), "\n== QuotesBuilder (" + pair[0] + ") =="));
 });
 
+// ── Overlay scenarios ──────────────────────────────────────────────────────
+// Every modal in both builders, opened by flipping its gating flag. This is
+// what makes the send / payment / receipt / picker overlays refactorable with
+// a net under them.
+out.push(renderWithOverlays(window.QuotesBuilder, Object.assign({
+  quoteId: 1, isNew: false, quotes: [QUOTE], setQuotes: function () {},
+  getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+  getNextInvoiceId: function () { return 1; },
+}, COMMON), "\n== QuotesBuilder overlays =="));
+
+// InvoicesView owns no state — it just routes — so probing it finds no flags.
+// Reach through to the InvoiceBuilder element it returns and probe that.
+(function () {
+  const ctx = mkCtx(function () {});
+  CTX = ctx; ctx.idx = 0;
+  const el = window.InvoicesView(Object.assign({ route: { id: 7, action: null } }, INV_PROPS));
+  CTX = null;
+  if (el && typeof el.type === "function") {
+    out.push(renderWithOverlays(el.type, el.props, "\n== InvoiceBuilder overlays =="));
+  } else {
+    out.push("\n== InvoiceBuilder overlays ==\n  COULD NOT REACH the builder through InvoicesView");
+  }
+})();
+
 // Three clock reads reach the tree and differ between two runs of the SAME
 // code, so they are normalized rather than compared: an id minted from
 // Date.now() inside a nested module, the "HH:MM" stamped onto activity
@@ -327,7 +409,13 @@ function ok(n, c, d) { if (c) pass++; else { fail++; fails.push(n + (d ? "  [" +
 
 ok("every scenario rendered without throwing", threw === 0,
    (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
-ok("all " + out.length + " scenarios produced output", out.length === 14, "got " + out.length);
+// 14 data scenarios + 2 overlay sweeps (one per builder).
+ok("all " + out.length + " scenarios produced output", out.length === 16, "got " + out.length);
+ok("the overlay sweeps actually opened modals",
+   (text.match(/opens an overlay/g) || []).length >= 10,
+   "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "
+   + "if a modal's gating flag stopped being a plain useState boolean, this sweep "
+   + "silently stops covering it");
 
 if (!fs.existsSync(GOLDEN)) {
   ok("golden snapshot exists", false, "run with --update to create it");
