@@ -1184,8 +1184,8 @@ hardest surface in the app to test. ~84 lines saved against a real chance of bre
 worse trade than it looks. The recommendation stands as: do these only alongside the builder decomposition
 below, not as standalone extractions.
 
-**The builders — done as a follow-on pass** (`e4d1f97` … `0c387c2`). QuotesBuilder 1,670 → **1,542**;
-InvoiceBuilder 1,998 → **1,740**. The line reduction is the least interesting part: what moved out is the logic
+**The builders — done as a follow-on pass** (`e4d1f97` … `3939079`). QuotesBuilder 1,670 → **1,478**;
+InvoiceBuilder 1,998 → **1,677**. The line reduction is the least interesting part: what moved out is the logic
 that decides what gets **billed**, and none of it could be tested before.
 
 A render-tree snapshot landed **first**, as the net (`e4d1f97`): both builders rendered across 14 data scenarios
@@ -1218,15 +1218,37 @@ half of all three send modals, which was the same block three times differing in
   behaviour-identical for a single step, and two fixtures where one guard hid behind another. Each was chased
   down rather than written off; two were real holes and were closed.
 
-**Deliberately not done, and why:**
-- The `generatePdf` and Gmail-send clusters (~84 lines) stay. Each needs 6-7 closure values threaded out, wraps
-  an async fetch, and drives the iOS-standalone `window.open` + blob-download workaround — the hardest surface
-  in the app to verify.
-- The activity-detail popups in the two builders look duplicated but render differently (time shown, column
-  width, empty state). Merging them is a product decision, not a refactor.
-- The QuickBooks cluster in InvoiceBuilder (~150 lines) is the largest remaining block. It is coherent and
-  self-contained enough to lift, but every path in it talks to an external system, and the render snapshot
-  cannot see any of it.
+**The three items first deferred — since finished** (`d729fa2` … `3939079`). Each was deferred for a stated
+reason; two of those reasons turned out to be wrong on inspection, which is recorded here rather than quietly
+dropped.
+
+- **PDF generation.** I said it needed 6-7 closure values threaded out and wrapped the iOS `window.open`
+  workaround. True — and irrelevant, because the two copies were *functionally identical*: after normalising
+  the document naming, the only difference between 64 lines and 57 was a loop variable named `q` in one and
+  `inv` in the other. Now `components/doc-pdf.js`, with 36 assertions (12/12 mutations caught) covering the
+  thing that actually mattered: the blank tab must be opened BEFORE the fetch, or the button silently does
+  nothing on a phone.
+- **The Gmail send path.** Here the deferral held: the two flows genuinely differ (32 of ~64 lines), because
+  the invoice one attaches a PDF, pushes to QuickBooks and unwinds that push on failure. They stay separate.
+  What *was* shared is deciding what to tell the user — a four-level property walk to spot the "your Google
+  token lost the gmail.send scope" case, which fails silently into a useless `Send failed (HTTP 409)`. Now
+  `LTP_sendFailure`, 19 assertions, each level of the walk pinned separately.
+- **The QuickBooks cluster.** "Every path talks to an external system" is true of the *orchestration*, which
+  stayed; it is not true of the decisions, which are now `components/domain-qbo.js`: may this push happen, what
+  does the response mean, what does it write back. That last one is why it was worth doing — dropping
+  `qbSyncToken` means the next push creates a SECOND QuickBooks invoice instead of updating the first. 47
+  assertions, 13/13 mutations caught.
+- **The activity-detail popups.** I called this a product decision. It was one *copy that fell behind*: the
+  invoice version never rendered the entry's time (though invoices stamp one on every activity type) and
+  showed an empty modal body for an entry with no change list. Unified on the quote version with your approval,
+  so the invoice side gains both.
+
+**And the gap that last item exposed, which was the more valuable find.** The overlay sweep opened modals by
+flipping *boolean* state slots — but four overlays (`dlg`, `pickerForSection`, `invPickerData`, `viewActivity`)
+are gated on an object-or-null slot, so they were shut in all 16 scenarios and never in the golden at all.
+That is precisely how the two popups drifted for so long with nothing noticing. The sweep now seeds null slots
+too: overlays covered went 14 → 27. It immediately reached `AddItemPicker` for the first time, which failed on
+a `LTP_RENTALS` stub the harness had left empty; it now loads the real `modules/rentals-utils.js`.
 
 **Honest limits of the net:** anything gated on `isDirty` is dark in a static render (that flag only flips on a
 user edit — forcing `isLocked = false` does *not* move the snapshot), `useEffect` is a no-op, and handlers
