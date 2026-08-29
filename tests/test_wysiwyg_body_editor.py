@@ -31,6 +31,9 @@ _root = os.path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 
 _results: list[tuple[str, bool]] = []
 
@@ -440,9 +443,10 @@ def test_body_to_editable_and_back_roundtrip():
 
 def test_theme_js_exposes_helpers():
     print("test_theme_js_exposes_helpers")
-    path = os.path.join(_root, "theme.js")
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
+    # theme.js was split into components/domain-*.js; these helpers now live in
+    # domain-email.js. Read the whole layer so the assertion survives the next
+    # move too — the file list comes from index.html.
+    src = domain_source()
     _check("LTP_bodyToEditableHtml exposed",
            "window.LTP_bodyToEditableHtml" in src)
     _check("LTP_editableHtmlToBody exposed",

@@ -20,6 +20,9 @@ import sys
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 
 def _read(*parts):
     with open(os.path.join(_root, *parts), encoding="utf-8") as f:
@@ -116,7 +119,7 @@ def test_all_email_content_is_fluid_for_small_screens():
     email = _read("backend", "routes", "email.py")
     compose = _read("backend", "email_compose.py")
     settings = _read("data", "settings.js")
-    theme = _read("theme.js")
+    theme = domain_source()
     # The customer {{header}} action box is generated per type by
     # theme.js::LTP_renderHeader (no longer a stored settings template).
     header_js = theme.split("LTP_renderHeader = function")[1].split("LTP_renderPreviewBody")[0]

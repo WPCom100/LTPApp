@@ -32,6 +32,9 @@ import sys
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 from backend.pdf_generator import (  # noqa: E402
     _DocPDF, _register_fonts, _wrap_plain, generate_pdf,
 )
@@ -224,7 +227,7 @@ def test_notes_still_carry_no_money():
 # this change fixed — so a regression should fail here loudly.
 
 def test_theme_exports_the_note_helpers():
-    src = _read("theme.js")
+    src = domain_source()
     for pin in ("window.LTP_noteText", "window.LTP_noteHasText",
                 "window.LTP_noteSummary", "window.LTP_NOTE_TEXT_STYLE"):
         assert pin in src, f"theme.js missing {pin}"

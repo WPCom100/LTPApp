@@ -26,6 +26,9 @@ _root = os.path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 _db_path = os.path.join(_root, "_test_polish.db")
 if os.path.exists(_db_path):
     os.remove(_db_path)
@@ -245,9 +248,9 @@ def test_data_settings_email_templates_wrap_viewurl_in_anchor():
     settings_path = os.path.join(_root, "data", "settings.js")
     with open(settings_path, encoding="utf-8") as f:
         src = f.read()
-    theme_path = os.path.join(_root, "theme.js")
-    with open(theme_path, encoding="utf-8") as f:
-        theme = f.read()
+    # theme.js was split into components/domain-*.js; read the whole layer
+    # (file list from index.html) so this survives the next move too.
+    theme = domain_source()
     # The header generator wraps {{viewUrl}} in an anchor.
     _check("LTP_renderHeader wraps {{viewUrl}} in an <a>",
            'href="{{viewUrl}}"' in theme)
@@ -407,9 +410,10 @@ def test_invoices_uses_helpers():
 
 def test_theme_js_exposes_helpers():
     print("test_theme_js_exposes_helpers")
-    path = os.path.join(_root, "theme.js")
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
+    # theme.js was split into components/domain-*.js; these four now live in
+    # domain-email.js. Read the whole layer (file list from index.html) so the
+    # assertion survives the next move too.
+    src = domain_source()
     _check("window.LTP_textToHtml exposed",
            "window.LTP_textToHtml" in src)
     _check("window.LTP_renderSignature exposed",

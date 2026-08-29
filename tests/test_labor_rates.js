@@ -15,11 +15,9 @@ const fs = require("fs");
 const path = require("path");
 
 // Load theme.js in a browser-less shim.
-global.window = {};
-let _seq = 0;
-window.LTP_genId = (p) => (p || "x") + "-" + (++_seq);
-const themePath = path.join(__dirname, "..", "theme.js");
-(0, eval)(fs.readFileSync(themePath, "utf8"));
+// theme.js is now theme.js + components/domain-*.js; the loader reads the
+// order straight out of index.html so it cannot drift from production.
+require("./_load_domain.js").loadDomain();
 
 const D = window.LTP_calcLaborDay;      // (dayRate, items) -> single rate calc
 const DAY = window.LTP_calcDayLabor;    // (items, services) -> per-person units

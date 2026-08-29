@@ -185,9 +185,11 @@ _CASES = [
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_js_twin_matches_python():
+    # theme.js is now theme.js + components/domain-*.js (LTP_docTerms lives in
+    # domain-docs.js). The file list is read from index.html by
+    # tests/_load_domain.js, so this cannot drift from what the browser loads.
     script = (
-        "global.window={};"
-        "eval(require('fs').readFileSync('theme.js','utf8'));"
+        "require('./tests/_load_domain.js').loadDomain();"
         "const cases=JSON.parse(process.argv[1]);"
         "const settings=JSON.parse(process.argv[2]);"
         "console.log(JSON.stringify(cases.map(c=>window.LTP_docTerms(c[0],c[1],settings))));"

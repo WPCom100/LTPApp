@@ -95,6 +95,16 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/viewport-height.js',
   '/router.js',
   '/theme.js',
+  // The domain layer split out of theme.js. Precached for the same reason
+  // theme.js is: it is boot-chain code, and a cold offline launch that has to
+  // fetch it has already failed. index.html loads these in the theme slot.
+  '/components/domain-util.js',
+  '/components/domain-labor.js',
+  '/components/domain-rates.js',
+  '/components/domain-crew.js',
+  '/components/domain-payouts.js',
+  '/components/domain-email.js',
+  '/components/domain-docs.js',
   '/app.js',
   '/mount.js',
   // Icons referenced by the manifest / head.

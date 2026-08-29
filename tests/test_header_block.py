@@ -40,6 +40,9 @@ import sys
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 _results = []
 
 
@@ -215,7 +218,7 @@ def test_render_header_per_type_cta():
     """LTP_renderHeader builds the box with the right CTA per kind, and
     theme.js declares those labels in LTP_HEADER_CTA."""
     print("test_render_header_per_type_cta")
-    theme = _read("theme.js")
+    theme = domain_source()
     _check("theme.js declares LTP_HEADER_CTA", "LTP_HEADER_CTA" in theme)
     for kind, label in _CTA.items():
         _check(f"theme.js carries the {kind} CTA label", label in theme)
@@ -291,7 +294,7 @@ def test_invoice_header_due_date_and_larger_fonts():
            "font-size:14px;color:#8a949e" in no_due and "font-size:17px" in no_due)
     _check("invoice w/o due date omits the due-date line", ">Due " not in no_due)
     # Source-level: the variant is gated to kind === "invoice" in theme.js.
-    theme = _read("theme.js")
+    theme = domain_source()
     _check('theme.js gates the invoice variant on kind === "invoice"',
            'kind === "invoice"' in theme)
     _check("theme.js renders a 'Due ' line for invoices", ">Due " in theme)
@@ -395,7 +398,7 @@ def test_total_renders_with_cents_in_all_three_modals():
     print("test_total_renders_with_cents_in_all_three_modals")
     qb = _read("modules", "quotes-builder.js")
     inv = _read("modules", "invoices.js")
-    theme = _read("theme.js")
+    theme = domain_source()
 
     # This used to count occurrences of the literal `minimumFractionDigits: 2`
     # in each module. That proxy broke when the modals were refactored onto the
@@ -564,7 +567,7 @@ def test_text_to_html_block_detect_re_includes_section():
     include <section> so a body that already has the WYSIWYG-rendered
     section block passes through unchanged instead of being paragraph-wrapped."""
     print("test_text_to_html_block_detect_re_includes_section")
-    src = _read("theme.js")
+    src = domain_source()
     m = re.search(r'BLOCK_DETECT_RE\s*=\s*(.{,200})', src)
     _check("BLOCK_DETECT_RE found in theme.js", m is not None)
     if m:
