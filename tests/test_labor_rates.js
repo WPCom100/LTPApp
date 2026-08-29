@@ -165,6 +165,78 @@ eq("A22 no penalty across a gap", r.mealPenaltyHours, 0);
      out.r.mealPenaltyHours, 0);
 });
 
+// ── A24-A26. Overlapping and overhanging breaks ──────────────────────────────
+// LTP_calcDayLabor hands each person the crew-wide breaks CONCATENATED with
+// their own, so two breaks covering the same window is a normal shape, not bad
+// data. Each break used to contribute its FULL length: unpaid overlap inflated
+// the reported break total, and PAID overlap fed regularHours and billed time
+// nobody worked. A 4.5h day with one paid break duplicated reported 5.5 paid
+// hours and crossed the 5h tier boundary — a half day billed as a full one.
+r = D(R, [sh("09:00", "13:30", [nb("10:00", "11:00", "paid"), nb("10:00", "11:00", "paid")])]);
+eq("A24 duplicate paid break does not invent hours", r.paidHours, 4.5);
+eq("A24 paid break counted once", r.paidBreakHours, 1);
+near("A24 still a half day", r.rate, 500);
+eq("A24 tier unchanged", r.tier, "Half day (4.5h)");
+
+// Partial overlap: 17:00-17:45 and 17:30-18:45 cover 17:00-18:45 = 1.75h.
+r = D(R, [sh("16:00", "19:45", [nb("17:00", "17:45"), nb("17:30", "18:45")])]);
+eq("A25 overlapping unpaid breaks count their union", r.unpaidBreakHours, 1.75);
+eq("A25 paid hours unaffected", r.paidHours, 2);
+ok("A25 paid+break reconciles with the 3.75h shift",
+   Math.abs(r.paidHours + r.unpaidBreakHours - 3.75) < 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// A break running past the end of the shift only counts the part inside it.
+r = D(R, [sh("02:00", "03:30", [nb("03:00", "04:00")])]);
+eq("A26 break overhanging the shift end is clipped", r.unpaidBreakHours, 0.5);
+ok("A26 paid+break reconciles with the 1.5h shift",
+   Math.abs(r.paidHours + r.unpaidBreakHours - 1.5) < 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// ── A27. Malformed input must not invent money ───────────────────────────────
+// project.schedule is a free-form JSON column and backend/validators.py checks
+// only top-level fields, so these values can arrive from an API write, not just
+// the time picker. The old parser was parseInt-based: "12" produced a zero-hour
+// day that still billed a half-day rate, and "-1:00" turned a 17:00 finish into
+// an 18-hour day at $2450.
+[
+  ["no colon", "12", "17:00"],
+  ["non-numeric", "abc", "def"],
+  ["hour out of range", "25:00", "26:00"],
+  ["minute out of range", "09:90", "17:00"],
+  ["negative hour", "-1:00", "17:00"],
+  ["24:30 is not a time", "09:00", "24:30"],
+].forEach(function(c) {
+  const bad = D(R, [sh(c[1], c[2])]);
+  eq("A27 " + c[0] + " bills nothing", bad.rate, 0);
+  eq("A27 " + c[0] + " has no paid hours", bad.paidHours, 0);
+});
+
+// A malformed or null BREAK is dropped; the surrounding valid shift still bills.
+[
+  ["null entry", null],
+  ["null times", { startTime: null, endTime: "13:00", type: "unpaid" }],
+  ["unparseable", { startTime: "12", endTime: "13:00", type: "unpaid" }],
+].forEach(function(c) {
+  let out;
+  ok("A27 break " + c[0] + " does not throw", (function() {
+    try { out = D(R, [sh("09:00", "17:00", [c[1]])]); return true; } catch (e) { return false; }
+  })());
+  if (out) {
+    eq("A27 break " + c[0] + " ignored, shift still 8h", out.paidHours, 8);
+    eq("A27 break " + c[0] + " contributes no break time", out.unpaidBreakHours, 0);
+  }
+});
+
+// "24:00" is a real end-of-day value the schedule uses (A5/A7/B4 depend on it);
+// the strict parser must keep accepting it while rejecting "24:30".
+r = D(R, [sh("18:00", "24:00")]);
+eq("A27 18:00-24:00 is a valid 6h block", r.paidHours, 6);
+
+// mealFixBreaks must not generate against unparseable shifts either.
+eq("A27 mealFix emits nothing for a malformed shift",
+   FIX([{ id: "x", time: "-1:00", endTime: "17:00", breaks: [], positionId: "p1" }]).length, 0);
+
 // ── B. Per-person units: LTP_calcDayLabor ────────────────────────────────────
 let d;
 d = day([{ time: "09:00", endTime: "14:00", breaks: [], positions: [P(1)] }]);

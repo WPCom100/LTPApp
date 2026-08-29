@@ -71,6 +71,10 @@
 // no longer prices as 25 paid hours. (b) LTP_mealFixBreaks now partitions a day
 // into spans the same way LTP_calcLaborDay does, so "fix meal breaks" can no
 // longer no-op on a day with a nested block and leave the penalty standing.
+// (c) Breaks are clipped to the cursor and the span end, so a crew-wide break
+// duplicated as an individual one cannot bill time nobody worked, and a break
+// overhanging the shift end cannot either. (d) Times parse strictly: a
+// malformed value bills nothing instead of inventing an 18-hour day.
 // index.html is untouched, but theme.js is precached (SAME_ORIGIN_PRECACHE
 // below), so without a new string every installed device keeps serving the old
 // pricing engine for one more launch — and no worker installs, so there is no

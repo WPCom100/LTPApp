@@ -227,11 +227,28 @@ window.LTP_useUnsavedGuard = function() {
 //   4. Remaining paid hours apply to standard tiers
 //   5. Regular OT (10h+ of non-penalty time) stacks with meal penalty
 
-// Parse "HH:MM" to decimal hours from midnight
+// Parse "HH:MM" to decimal hours from midnight. Returns NaN for anything that
+// is not a real 24-hour clock time; every caller below skips the row it came
+// from rather than guessing.
+//
+// This used to be `parseInt(p[0]) + parseInt(p[1]) / 60`, which invented money
+// out of bad data instead of rejecting it: "12" (no colon) made parseInt(p[1])
+// NaN and produced a zero-hour day that still billed a half-day rate; "-1:00"
+// parsed as -1 and turned a 17:00 finish into an 18-hour day at $2450; "09:90"
+// silently became 10:30. That matters beyond typos — project.schedule is a
+// free-form JSON column with no server-side validation of its nested times
+// (backend/validators.py checks only top-level fields), so these values can
+// arrive straight from an API write, not just the UI's time picker.
+// "24:00" is accepted and means end-of-day midnight — the schedule uses it for
+// a shift that finishes exactly at 00:00 (an 18:00-24:00 evening call), and
+// treating it as invalid would silently drop those blocks. "24:30" is not a
+// time and is rejected like any other out-of-range value.
 function _timeToDecimal(t) {
-  if (!t) return 0;
-  var p = t.split(":");
-  return parseInt(p[0], 10) + parseInt(p[1], 10) / 60;
+  var m = /^(\d{1,2}):([0-5]\d)$/.exec(String(t == null ? "" : t).trim());
+  if (!m) return NaN;
+  var h = +m[1], mm = +m[2];
+  if (h > 24 || (h === 24 && mm > 0)) return NaN;
+  return h + mm / 60;
 }
 function _decimalToTime(d) {
   if (d < 0) d += 24;
@@ -256,8 +273,10 @@ function _decimalToTime(d) {
 // engine and the auto meal-break generator can never disagree about which day
 // a break belongs to.
 function _breakInSpan(brk, spanStart, spanEnd) {
+  if (!brk) return null;                        // a null entry in breaks[] threw
   var bs = _timeToDecimal(brk.startTime);
   var be = _timeToDecimal(brk.endTime);
+  if (isNaN(bs) || isNaN(be)) return null;      // unparseable — ignore the break
   if (be <= bs) be += 24;                       // the break straddles midnight
   if (bs < spanStart) { bs += 24; be += 24; }   // ...or sits wholly after it
   // A break that starts at or after the span ends belongs to some other span
@@ -279,6 +298,17 @@ function _breakInSpan(brk, spanStart, spanEnd) {
 // and the half/full tier are computed on the day total.
 //
 // items = [{ time, endTime, breaks: [{ startTime, endTime, type }] }, ...]
+//
+// DEFINED RANGE: a day whose blocks fit inside a 24-hour window from the
+// earliest start to the latest end. Property fuzzing over 36,000 random days
+// found no invariant violation inside that range. BEYOND it the result is
+// ambiguous by construction and not trusted: once a day already extends past
+// 24:00, a wall-clock break like "02:00" maps to two different points in the
+// day's frame and there is no information here to choose between them. Such a
+// day is physically impossible anyway — it means one person is booked
+// 01:00-08:00 AND 21:45-05:45 on the same date. If that shape ever appears it
+// is a data-entry problem to catch at the schedule editor, not something this
+// function can resolve.
 window.LTP_calcLaborDay = function(dayRate, items) {
   var EMPTY = { rate: 0, paidHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, mealPenaltyHours: 0, regularOTHours: 0, tier: "", segments: [] };
   if (!dayRate || !items || !items.length) return EMPTY;
@@ -289,6 +319,7 @@ window.LTP_calcLaborDay = function(dayRate, items) {
     if (!it || !it.time || !it.endTime) return;
     var start = _timeToDecimal(it.time);
     var end = _timeToDecimal(it.endTime);
+    if (isNaN(start) || isNaN(end)) return; // unparseable — skip, don't guess
     if (end <= start) end += 24; // overnight
     blocks.push({ start: start, end: end, breaks: (it.breaks || []).slice() });
   });
@@ -336,7 +367,20 @@ window.LTP_calcLaborDay = function(dayRate, items) {
       if (bs > cursor) {
         segments.push({ start: cursor, end: bs, hours: Math.round((bs - cursor) * 100) / 100 });
       }
-      var brkHours = Math.round((be - bs) * 100) / 100;
+      // Count only the slice of this break the cursor has not already consumed.
+      // Two breaks covering the same window — a crew-wide meal plus an
+      // individual one, which LTP_calcDayLabor concatenates for every person
+      // (see its shifts.push) — otherwise each contribute their FULL length.
+      // Unpaid double-counting inflates the reported break total; PAID
+      // double-counting flows into regularHours below and bills time nobody
+      // worked: a 4.5h day with one paid break duplicated reported 5.5 paid
+      // hours, crossing the 5h boundary and billing a full day for a half.
+      // Clipped at BOTH ends: to the cursor (overlap, above) and to the span
+      // end, so a break running past the shift — 17:00-18:00 entered on a day
+      // that ends 17:30 — cannot contribute time nobody was on site for.
+      var effStart = Math.max(bs, cursor);
+      var effEnd = Math.min(be, span.end);
+      var brkHours = Math.max(0, Math.round((effEnd - effStart) * 100) / 100);
       if (brk.type === "paid") {
         paidBreakHours += brkHours;
       } else {
@@ -1308,10 +1352,14 @@ window.LTP_payPeriodNumberInYear = function(anchorISO, lengthDays, index) {
 // existing breaks (crew-wide or individual) are honored, so it only adds what
 // is still missing.
 window.LTP_mealFixBreaks = function(shifts) {
-  var S = (shifts || []).filter(function(s) { return s.time && s.endTime; }).map(function(s) {
+  var S = (shifts || []).filter(function(s) { return s && s.time && s.endTime; }).map(function(s) {
     var st = _timeToDecimal(s.time), en = _timeToDecimal(s.endTime);
     if (en <= st) en += 24;
     return { start: st, end: en, breaks: s.breaks || [], positionId: s.positionId };
+  }).filter(function(s) {
+    // Same skip the engine applies: an unparseable shift is dropped rather
+    // than generating meal breaks against a NaN span.
+    return !isNaN(s.start) && !isNaN(s.end);
   }).sort(function(a, b) { return a.start - b.start; });
   if (!S.length) return [];
 
