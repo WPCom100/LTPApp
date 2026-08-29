@@ -275,6 +275,36 @@ window.LTP_displayStatus = function(inv) {
 // Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
 // LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
 // subtotal is the sum of its lines at the effective price, full stop.
+// Turn a failed /api/email/send response into what to tell the user.
+//
+// Both builders had this twice over: a four-level property walk to spot the
+// "your Google token lost the gmail.send scope" case, then a cascade to pull a
+// message out of whatever shape `detail` came back as. Getting the walk wrong
+// does not throw — it just falls through to "Send failed (HTTP 409)", which
+// tells a user nothing about the one thing they can actually fix.
+//
+// Pure: it decides WHAT to say. The callers decide what else to do about it,
+// which is where they genuinely differ — the invoice builder has a QuickBooks
+// push to unwind first.
+window.LTP_sendFailure = function(resp) {
+  var detail = resp && resp.body && resp.body.detail;
+  if (resp && resp.status === 409 && detail && detail.reason === "reconnect") {
+    return {
+      needsReconnect: true,
+      title: "Reconnect Google",
+      message: "Your Google connection no longer has Gmail send permission. "
+             + "Sign out and back in to reconnect.",
+    };
+  }
+  var message = "Send failed (HTTP " + (resp ? resp.status : "?") + ").";
+  if (detail) {
+    if (typeof detail === "string") message = detail;
+    else if (detail.error) message = detail.error;
+    else if (detail.reason) message = detail.reason;
+  }
+  return { needsReconnect: false, title: "Send Failed", message: message };
+};
+
 // Fold a new payment into an invoice and decide what its status becomes.
 //
 // Small, but it is the rule that says when an invoice is PAID rather than

@@ -1123,21 +1123,13 @@
           // /api/email/send validates before sending and rolls its recipient
           // rows back on both Gmail failure paths (backend/routes/email.py).
           // That makes it safe to undo the QuickBooks invoice this send created.
-          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            unwindQboPush(baseDraft, unwindableQbId, function(tail) {
-              showAlert("Reconnect Google",
-                "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect." + tail);
-            });
-            return;
-          }
-          var msg = "Send failed (HTTP " + resp.status + ").";
-          if (resp.body && resp.body.detail) {
-            var d = resp.body.detail;
-            if (typeof d === "string") msg = d;
-            else if (d.error) msg = d.error;
-            else if (d.reason) msg = d.reason;
-          }
-          unwindQboPush(baseDraft, unwindableQbId, function(tail) { showAlert("Send Failed", msg + tail); });
+          // Deciding WHAT to say is shared — components/domain-docs.js. Both
+          // branches unwound the QuickBooks push identically, so there is one
+          // path here now rather than two.
+          var failure = window.LTP_sendFailure(resp);
+          unwindQboPush(baseDraft, unwindableQbId, function(tail) {
+            showAlert(failure.title, failure.message + tail);
+          });
         })
         .catch(function(e) {
           setSending(false);

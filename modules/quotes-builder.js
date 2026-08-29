@@ -1571,18 +1571,9 @@
             window.LTP_toast(isResend ? "Quote Resent" : "Quote Sent", { message: "Quote " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
           }
-          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
-            return;
-          }
-          var msg = "Send failed (HTTP " + resp.status + ").";
-          if (resp.body && resp.body.detail) {
-            var d = resp.body.detail;
-            if (typeof d === "string") msg = d;
-            else if (d.error) msg = d.error;
-            else if (d.reason) msg = d.reason;
-          }
-          showAlert("Send Failed", msg);
+          // Deciding WHAT to say is shared — components/domain-docs.js.
+          var failure = window.LTP_sendFailure(resp);
+          showAlert(failure.title, failure.message);
         })
         .catch(function(e) {
           setSending(false);

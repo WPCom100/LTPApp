@@ -200,6 +200,56 @@ ok("B17 the caller's payments array is not mutated", (function () {
 eq("B18 the new payment is appended last",
    PAY([p(10)], p(20), 100, "sent").payments.map((x) => x.amount), [10, 20]);
 
+// ── window.LTP_sendFailure ─────────────────────────────────────────────────
+// What to tell a user when /api/email/send fails. The reconnect case is the
+// only failure they can actually DO something about, and spotting it is a
+// four-level property walk that fails silently into a useless "HTTP 409".
+const SF = window.LTP_sendFailure;
+ok("C0 LTP_sendFailure is exported", typeof SF === "function");
+
+const reconnect = { status: 409, body: { detail: { reason: "reconnect" } } };
+eq("C1 the reconnect case is recognised", SF(reconnect).needsReconnect, true);
+eq("C2 ...and titled so the user knows what to do", SF(reconnect).title, "Reconnect Google");
+ok("C3 ...and says how to fix it", /[Ss]ign out/.test(SF(reconnect).message), SF(reconnect).message);
+
+// Each level of the walk matters: get any one wrong and the user is told
+// nothing actionable. These pin all four.
+eq("C4 a 409 with no body is not a reconnect",
+   SF({ status: 409 }).needsReconnect, false);
+eq("C5 a 409 with no detail is not a reconnect",
+   SF({ status: 409, body: {} }).needsReconnect, false);
+eq("C6 a 409 with a different reason is not a reconnect",
+   SF({ status: 409, body: { detail: { reason: "quota" } } }).needsReconnect, false);
+eq("C7 the reconnect reason on a NON-409 is not a reconnect",
+   SF({ status: 500, body: { detail: { reason: "reconnect" } } }).needsReconnect, false);
+
+// Message extraction: `detail` comes back in three shapes from FastAPI.
+eq("C8 a string detail is used verbatim",
+   SF({ status: 400, body: { detail: "No recipients" } }).message, "No recipients");
+eq("C9 detail.error is preferred next",
+   SF({ status: 400, body: { detail: { error: "Bad address" } } }).message, "Bad address");
+eq("C10 detail.reason is the last resort",
+   SF({ status: 400, body: { detail: { reason: "quota" } } }).message, "quota");
+eq("C11 error wins over reason when both are present",
+   SF({ status: 400, body: { detail: { error: "E", reason: "R" } } }).message, "E");
+ok("C12 with no detail at all, the status is still surfaced",
+   /400/.test(SF({ status: 400 }).message), SF({ status: 400 }).message);
+eq("C13 a non-reconnect failure is titled generically",
+   SF({ status: 500, body: {} }).title, "Send Failed");
+
+// Defensive: this runs inside a .then, and a malformed response must not throw
+// on top of the failure it is trying to report.
+ok("C14 a null response does not throw",
+   (function () { try { return typeof SF(null).message === "string"; } catch (e) { return "threw: " + e.message; } })() === true);
+ok("C15 an undefined response does not throw",
+   (function () { try { return typeof SF(undefined).message === "string"; } catch (e) { return "threw: " + e.message; } })() === true);
+eq("C16 a null body is safe", SF({ status: 502, body: null }).title, "Send Failed");
+eq("C17 a null detail is safe", SF({ status: 502, body: { detail: null } }).title, "Send Failed");
+ok("C18 every result has both a title and a message",
+   [null, { status: 409 }, reconnect, { status: 500, body: { detail: "x" } }]
+     .every((r) => { const f = SF(r); return typeof f.title === "string" && f.title
+                                        && typeof f.message === "string" && f.message; }));
+
 console.log("quote-to-invoice suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
