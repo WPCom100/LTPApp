@@ -14,7 +14,7 @@
   var B = window.LTP_THEME;
   var nav = window.LTPRouter.navigate;
 
-  window.QuotesView = function({ companies, contacts, projects, setProjects, route,
+  window.QuotesView = function({ companies, contacts, projects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
                                   fees, setFees, clientRates, setClientRates,
                                   equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, setSettings, isAdmin, qbo }) {
@@ -75,7 +75,7 @@
         allocations: allocations,
         companies:  companies,
         contacts:   contacts,
-        projects:   projects,   setProjects: setProjects,
+        projects:   projects,
         invoices:   invoices,   setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
         settings:   settings,

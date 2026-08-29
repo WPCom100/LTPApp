@@ -275,6 +275,97 @@ window.LTP_displayStatus = function(inv) {
 // Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
 // LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
 // subtotal is the sum of its lines at the effective price, full stop.
+// Turn a quote's delivered-but-uninvoiced lines into invoice sections.
+//
+// 69 lines of billing math that lived inside the quote builder's closure with
+// exactly one side effect at the end, so none of it could be tested. It decides
+// what actually gets billed:
+//
+//   * how much of each line is still owed — delivered minus already-invoiced,
+//     rounded to 5dp because with decimal quantities a bare subtraction carries
+//     float noise (5.1 - 2.2 = 2.8999999999) that would otherwise reach the
+//     invoice line, its display, and the QuickBooks Qty. 5dp matches
+//     QuickBooks' quantity precision.
+//   * how the new invoice line is linked back to the quote — sourceItemId,
+//     sourceQuoteId and linkedQty, which is what modules/invoices.js keys every
+//     invoicedQty rollback on.
+//   * how a quote's discount converts. An invoice carries a percentage, so an
+//     "amount" or "target" discount is converted to the equivalent percentage
+//     of the quote's adjusted total, and the conversion is recorded in
+//     discountNote so nobody has to reverse-engineer the number later.
+//
+// Returns null when nothing is billable. `genId` is injected rather than read
+// from window so tests can be deterministic — same convention as
+// LTP_appendDocSections.
+window.LTP_quoteToInvoiceDraft = function(quote, genId) {
+
+  // Collect delivered-but-uninvoiced items
+  var invSections = [];
+  var updatedQuoteSections = quote.sections.map(function(sec) {
+    var invItems = [];
+    var updatedItems = sec.items.map(function(it) {
+      if (it.type === "note") return it;
+      var d = Number(it.deliveredQty) || 0;
+      var inv = Number(it.invoicedQty) || 0;
+      // Round the subtraction to 5 dp: with decimal quantities allowed, a
+      // bare d − inv can carry float noise (e.g. 5.1 − 2.2 = 2.8999999999),
+      // which would otherwise flow onto the invoice line, its display, and
+      // the QuickBooks Qty. 5 dp matches QuickBooks' quantity precision.
+      var toInvoice = Math.round((d - inv) * 1e5) / 1e5;
+      if (toInvoice <= 0) return it;
+      // linkedQty caps how much of this invoice line counts against the
+      // source quote's invoicedQty. Starts equal to qty; only ever shrinks
+      // (when invoice qty is reduced below it). Extra qty added directly
+      // on the invoice sits above linkedQty and is treated as a direct
+      // bill, NOT additional draw against the quote.
+      //
+      // sourceQuoteId names WHICH quote the line draws against. An invoice
+      // can now gather lines from several of a client's quotes (the target
+      // picker below offers any of their draft invoices, not just ones on
+      // this project), so the invoice's own `quoteId` is no longer a safe
+      // stand-in — modules/invoices.js keys every invoicedQty rollback on
+      // this field, falling back to `quoteId` only for legacy lines.
+      invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0,
+                                            sourceItemId: it.id, sourceQuoteId: quote.id, linkedQty: toInvoice }));
+      return Object.assign({}, it, { invoicedQty: d });
+    });
+    if (invItems.length > 0) {
+      // projectId rides along so a section's job attribution survives the
+      // quote → invoice hop; without it a multi-project quote's sections
+      // would arrive on the invoice with no idea which job they billed.
+      invSections.push({ id: genId("sec"), label: sec.label, projectId: sec.projectId != null ? sec.projectId : null,
+                         customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems });
+    }
+    return Object.assign({}, sec, { items: updatedItems });
+  });
+
+  if (invSections.length === 0) return null;
+
+  // Convert discount
+  var quoteGd = quote.globalDiscount || { type: "none", value: 0 };
+  var invoiceDiscount = { type: "none", value: 0 };
+  var discountNote = "";
+  if (quoteGd.type === "percent") {
+    invoiceDiscount = { type: "percent", value: quoteGd.value };
+  } else if (quoteGd.type === "amount" || quoteGd.type === "target") {
+    var quoteTotals = window.LTP_QUOTE_TOTALS(quote);
+    var adjustedTotal = quoteTotals.adjusted;
+    if (adjustedTotal > 0) {
+      var effectiveAmount = quoteGd.type === "amount" ? quoteGd.value : (adjustedTotal - quoteGd.value);
+      var pct = Math.round((effectiveAmount / adjustedTotal) * 10000) / 100;
+      if (pct > 0) {
+        invoiceDiscount = { type: "percent", value: pct };
+        discountNote = quoteGd.type === "amount"
+          ? "Discount converted: $" + quoteGd.value + " amount \u2192 " + pct + "%"
+          : "Discount converted: $" + quoteGd.value + " target \u2192 " + pct + "%";
+      }
+    }
+  }
+
+  // Show the invoice target picker
+  return { invSections: invSections, updatedQuoteSections: updatedQuoteSections, invoiceDiscount: invoiceDiscount, discountNote: discountNote };
+};
+
 // Which existing invoices a quote's items may be added to.
 //
 // This rule lived inside an IIFE in the middle of the quote builder's render
