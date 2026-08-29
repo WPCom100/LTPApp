@@ -150,6 +150,56 @@ eq("A35 a missing globalDiscount is treated as none",
 r = run(quote(billable, { globalDiscount: { type: "amount", value: 33 } }));
 eq("A36 the converted percentage is rounded to 2dp", r.invoiceDiscount.value, 6.6);
 
+// ── window.LTP_applyPayment ────────────────────────────────────────────────
+// When does an invoice become PAID rather than PARTIAL. Lived inside the
+// invoice builder's addPayment, tangled with an activity entry, a patchDraft,
+// two setTimeouts and a modal.
+const PAY = window.LTP_applyPayment;
+ok("B0 LTP_applyPayment is exported", typeof PAY === "function");
+const p = (amount) => ({ id: "p" + amount, amount: amount });
+
+eq("B1 a payment covering the total marks it paid",
+   PAY([], p(100), 100, "sent").status, "paid");
+eq("B2 ...and reports fullyPaid", PAY([], p(100), 100, "sent").fullyPaid, true);
+eq("B3 a part payment on a sent invoice marks it partial",
+   PAY([], p(40), 100, "sent").status, "partial");
+eq("B4 a second part payment that completes it marks it paid",
+   PAY([p(40)], p(60), 100, "partial").status, "paid");
+eq("B5 the running total accumulates prior payments",
+   PAY([p(40)], p(35), 100, "partial").paidTotal, 75);
+
+// >= not ==: an overpayment must still close the invoice, or a client who
+// rounds up leaves it stuck open forever.
+eq("B6 an overpayment still marks it paid", PAY([], p(150), 100, "sent").status, "paid");
+eq("B7 an overpayment reports fullyPaid", PAY([], p(150), 100, "sent").fullyPaid, true);
+eq("B8 a cent short is NOT paid", PAY([], p(99.99), 100, "sent").status, "partial");
+
+// A draft has not been sent, so a payment against it is data entry rather than
+// a part-payment of a live bill. Promoting it would put a draft into the
+// sent-invoice reporting.
+eq("B9 a draft never becomes partial", PAY([], p(40), 100, "draft").status, "draft");
+eq("B10 ...but a draft paid in full still becomes paid",
+   PAY([], p(100), 100, "draft").status, "paid");
+
+// Degenerate and defensive cases the builder can reach.
+eq("B11 a zero payment on a sent invoice leaves the status alone",
+   PAY([], p(0), 100, "sent").status, "sent");
+eq("B12 a zero-total invoice is paid by any payment",
+   PAY([], p(0), 0, "sent").status, "paid");
+eq("B13 non-numeric amounts count as zero",
+   PAY([], { amount: "abc" }, 100, "sent").paidTotal, 0);
+eq("B14 numeric strings are counted", PAY([], { amount: "60" }, 100, "sent").paidTotal, 60);
+eq("B15 a null payments list is treated as empty", PAY(null, p(10), 100, "sent").paidTotal, 10);
+eq("B16 a missing invoice total is treated as zero (paid)",
+   PAY([], p(10), undefined, "sent").status, "paid");
+ok("B17 the caller's payments array is not mutated", (function () {
+  const list = [p(10)];
+  PAY(list, p(20), 100, "sent");
+  return list.length === 1;
+})());
+eq("B18 the new payment is appended last",
+   PAY([p(10)], p(20), 100, "sent").payments.map((x) => x.amount), [10, 20]);
+
 console.log("quote-to-invoice suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

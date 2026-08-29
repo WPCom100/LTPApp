@@ -275,6 +275,30 @@ window.LTP_displayStatus = function(inv) {
 // Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
 // LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
 // subtotal is the sum of its lines at the effective price, full stop.
+// Fold a new payment into an invoice and decide what its status becomes.
+//
+// Small, but it is the rule that says when an invoice is PAID rather than
+// PARTIAL, and it lived inside the invoice builder's addPayment tangled up with
+// an activity entry, a patchDraft, two setTimeouts and a modal. Only the
+// arithmetic moved.
+//
+// Two details that are easy to get wrong and are pinned by tests:
+//   * "paid" is >= the total, not ==. Overpayment (a client rounding up, or a
+//     duplicate) still closes the invoice rather than leaving it stuck open.
+//   * a DRAFT invoice never becomes "partial". A draft has not been sent, so a
+//     payment against it is data entry, not a part-payment of a live bill;
+//     promoting it would put a draft into the sent-invoice reporting.
+window.LTP_applyPayment = function(payments, payment, invoiceTotal, currentStatus) {
+  var list = (payments || []).concat([payment]);
+  var paid = list.reduce(function(sum, p) { return sum + (Number(p.amount) || 0); }, 0);
+  var total = Number(invoiceTotal) || 0;
+  var fullyPaid = paid >= total;
+  var status = currentStatus;
+  if (fullyPaid) status = "paid";
+  else if (paid > 0 && currentStatus !== "draft") status = "partial";
+  return { payments: list, paidTotal: paid, status: status, fullyPaid: fullyPaid };
+};
+
 // Turn a quote's delivered-but-uninvoiced lines into invoice sections.
 //
 // 69 lines of billing math that lived inside the quote builder's closure with

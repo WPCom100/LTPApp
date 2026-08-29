@@ -836,13 +836,13 @@
     // ── Payment helpers ──────────────────────────────────────────────────────
     function addPayment(payment) {
       var newPayment = Object.assign({ id: genId("pay") }, payment);
-      var updatedPayments = (draft.payments || []).concat([newPayment]);
-      var newTotal = updatedPayments.reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
+      // The paid/partial rule lives in components/domain-docs.js so it can be
+      // tested; everything below is this builder's orchestration around it.
+      var applied = window.LTP_applyPayment(draft.payments, newPayment, t.total, draft.status);
+      var updatedPayments = applied.payments;
+      var newTotal = applied.paidTotal;
       var invoiceTotal = t.total;
-      // Auto-update status
-      var newStatus = draft.status;
-      if (newTotal >= invoiceTotal) { newStatus = "paid"; }
-      else if (newTotal > 0 && draft.status !== "draft") { newStatus = "partial"; }
+      var newStatus = applied.status;
       var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
         type: "paid", user: (window.LTP_CURRENT_USER || "User"), message: "Payment recorded: $" + window.LTP_money(payment.amount) + (newTotal >= invoiceTotal ? " \u2014 Paid in full" : ""),
 
