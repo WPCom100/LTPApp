@@ -753,8 +753,6 @@
     // Attach the invoice PDF to invoice + reminder emails. Default ON; the
     // user can uncheck per-send in the modal. Backend generates the PDF fresh.
     var [attachPdf, setAttachPdf] = useState(true);
-    var [payDate, setPayDate] = useState(todayISO());
-    var [payAmount, setPayAmount] = useState("");
     var [generatingPdf, setGeneratingPdf] = useState(false);
 
     // POST /api/invoices/{id}/pdf → trigger download + mirror activity entry.
@@ -833,18 +831,7 @@
         window.location.href = "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(url);
       }
     }
-    var [payMethod, setPayMethod] = useState("check");
-    var [payRef, setPayRef] = useState("");
-    var [payNotes, setPayNotes] = useState("");
 
-    function openPaymentForm() {
-      setPayDate(todayISO());
-      setPayAmount(String(Math.round((t.balance > 0 ? t.balance : 0) * 100) / 100));
-      setPayMethod("check");
-      setPayRef("");
-      setPayNotes("");
-      setShowPaymentForm(true);
-    }
 
     // ── Payment helpers ──────────────────────────────────────────────────────
     function addPayment(payment) {
@@ -2252,7 +2239,7 @@
           !isDraft && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "Payments"),
-              h("button", { onClick: function() { showPaymentForm ? setShowPaymentForm(false) : openPaymentForm(); },
+              h("button", { onClick: function() { setShowPaymentForm(!showPaymentForm); },
                 style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
                 showPaymentForm ? "Cancel" : "+ Record Payment")),
             // Payment list
@@ -2357,40 +2344,14 @@
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Record Payment modal
-      showPaymentForm && h(window.LTPModal, { title: "Record Payment", onClose: function() { setShowPaymentForm(false); } },
-        h("div", { style: { marginBottom: 12 } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: B.raised, borderRadius: "6px", border: "1px solid " + B.border } },
-            h("div", null,
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Invoice Total"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))),
-            h("div", { style: { textAlign: "center" } },
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Already Paid"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.paid > 0 ? B.success : B.textMut } }, "$" + window.LTP_money(t.paid))),
-            h("div", { style: { textAlign: "right" } },
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Balance Due"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } }, "$" + window.LTP_money(t.balance))))
-        ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-          h(window.LTPInput, { label: "Payment Date", value: payDate, onChange: setPayDate, type: "date" }),
-          h(window.LTPInput, { label: "Amount *", value: payAmount, onChange: setPayAmount, type: "number", placeholder: "0.00" })),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
-          h(window.LTPSelect, { label: "Payment Method", value: payMethod, onChange: setPayMethod,
-            options: [{ value: "check", label: "Check" }, { value: "ach", label: "ACH / Bank Transfer" }, { value: "credit_card", label: "Credit Card" }, { value: "cash", label: "Cash" }, { value: "wire", label: "Wire Transfer" }, { value: "other", label: "Other" }] }),
-          h(window.LTPInput, { label: "Reference / Check #", value: payRef, onChange: setPayRef, placeholder: "e.g. CHK-4412" })),
-        h("div", { style: { marginTop: 12 } },
-          h(window.LTPInput, { label: "Notes (optional)", value: payNotes, onChange: setPayNotes, placeholder: "Payment notes\u2026" })),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setShowPaymentForm(false); } }, "Cancel"),
-          h(window.Btn, { onClick: function() {
-            var amt = Number(payAmount);
-            if (!payAmount || amt <= 0) { showAlert("Invalid Amount", "Enter a valid payment amount."); return; }
-            if (!payDate) { showAlert("Missing Date", "Enter a payment date."); return; }
-            if (amt > t.balance && t.balance > 0) {
-              if (!window.confirm("This payment ($" + window.LTP_money(amt) + ") exceeds the balance due ($" + window.LTP_money(t.balance) + "). Record anyway?")) return;
-            }
-            addPayment({ date: payDate, amount: amt, method: payMethod, reference: payRef, notes: payNotes });
-          } }, "Record Payment"))
-      ),
+      // Record Payment — components/doc-payment-form.js. It owns the form's
+      // own state; what happens to a valid payment stays here in addPayment.
+      showPaymentForm && h(window.LTPPaymentForm, {
+        totals: t,
+        onSubmit: function(payment) { addPayment(payment); },
+        onClose: function() { setShowPaymentForm(false); },
+        onAlert: showAlert,
+      }),
 
       // Send Invoice modal
       showSendModal && h(window.LTPModal, { title: isDraft ? "Send Invoice" : "Resend Invoice", onClose: function() { setShowSendModal(false); }, wide: true },

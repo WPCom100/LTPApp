@@ -98,12 +98,19 @@ Object.assign(global.window, {
 const { domainScripts } = require(path.join(ROOT, "tests", "_load_domain.js"));
 for (const rel of domainScripts()) (0, eval)(fs.readFileSync(path.join(ROOT, rel), "utf8"));
 
-const REAL_COMPONENTS = [
-  "components/helpers.js", "components/status-enums.js", "components/sortable.js",
-];
-for (const rel of REAL_COMPONENTS) {
-  const p = path.join(ROOT, rel);
-  if (fs.existsSync(p)) { try { (0, eval)(fs.readFileSync(p, "utf8")); } catch (e) { /* optional */ } }
+// Load every components/*.js index.html lists, in its order, best-effort. Ones
+// that need a real DOM simply throw and fall through to a stub below — but
+// anything that CAN run is exercised for real, so a sub-component lifted out of
+// a builder is covered by this snapshot the moment its <script> tag is added,
+// with no edit here.
+const indexHtml = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+const COMPONENT_SRCS = [...indexHtml.matchAll(/<script\s+src="(components\/[^"]+)"/g)].map((m) => m[1]);
+const loadedComponents = [];
+for (const rel of COMPONENT_SRCS) {
+  const abs = path.join(ROOT, rel);
+  if (!fs.existsSync(abs)) continue;
+  try { (0, eval)(fs.readFileSync(abs, "utf8")); loadedComponents.push(rel); }
+  catch (e) { /* needs a real DOM; the stubs below cover it */ }
 }
 
 // ── Stubs for everything a real DOM would provide ──────────────────────────
@@ -236,9 +243,19 @@ function renderWithOverlays(Component, props, label) {
     CTX = null;
     const rendered = serialize(tree, 0);
     if (rendered === base) return;                  // this flag renders nothing
-    // Report only what the flag ADDED, so the diff stays readable.
-    const baseLines = new Set(base.split("\n"));
-    const added = rendered.split("\n").filter((l) => !baseLines.has(l));
+    // Report only what the flag ADDED, so the golden stays readable — but
+    // count occurrences rather than using a Set. A Set silently swallows an
+    // added line that happens to be textually identical to one already in the
+    // base tree (`<div style=4props>` and friends are everywhere), which made
+    // a refactor look like it had DELETED content when it had not. Counting
+    // reports exactly the lines whose multiplicity went up, in order.
+    const baseCount = Object.create(null);
+    base.split("\n").forEach(function (l) { baseCount[l] = (baseCount[l] || 0) + 1; });
+    const seen = Object.create(null);
+    const added = rendered.split("\n").filter(function (l) {
+      seen[l] = (seen[l] || 0) + 1;
+      return seen[l] > (baseCount[l] || 0);
+    });
     if (!added.length) return;
     out.push("  -- slot " + slot + " opens an overlay (" + added.length + " lines) --");
     out.push(added.join("\n"));
@@ -407,6 +424,11 @@ if (process.argv.includes("--update")) {
 let pass = 0, fail = 0; const fails = [];
 function ok(n, c, d) { if (c) pass++; else { fail++; fails.push(n + (d ? "  [" + d + "]" : "")); } }
 
+ok("real components loaded from index.html", loadedComponents.length >= 5,
+   "loaded " + loadedComponents.length + " of " + COMPONENT_SRCS.length + ": " + loadedComponents.join(", "));
+ok("the payment form is one of them (it is exercised by the overlay sweep)",
+   loadedComponents.indexOf("components/doc-payment-form.js") !== -1,
+   loadedComponents.join(", "));
 ok("every scenario rendered without throwing", threw === 0,
    (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
 // 14 data scenarios + 2 overlay sweeps (one per builder).
