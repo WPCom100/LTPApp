@@ -2592,20 +2592,9 @@
           "Add these items to one of this client\u2019s draft invoices \u2014 they arrive as new sections, leaving what\u2019s already there untouched \u2014 or create a new invoice."),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
           (function() {
-            // Every DRAFT invoice for this client, whichever project it started
-            // on \u2014 the project restriction that used to be here is what stopped
-            // one invoice from covering several jobs. Draft-only is not a
-            // preference: invoices lock as soon as they're sent
-            // (modules/invoices.js), so a sent invoice can't take new lines.
-            // Contact-billed and company-billed invoices never mix, since the
-            // billing party has to match for the totals to mean anything.
-            var clientInvDrafts = (invoices || []).filter(function(inv) {
-              if (!inv || inv.status !== "draft") return false;
-              if ((inv.clientType || "company") !== (draft.clientType || "company")) return false;
-              return (draft.clientType === "contact")
-                ? (inv.clientContactId != null && inv.clientContactId === draft.clientContactId)
-                : (inv.companyId != null && inv.companyId === draft.companyId);
-            }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
+            // The eligibility rule (draft-only, same billing party, any
+            // project) lives in components/domain-docs.js so it can be tested.
+            var clientInvDrafts = window.LTP_eligibleInvoiceTargets(invoices, draft);
             return clientInvDrafts.length > 0
               ? clientInvDrafts.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);

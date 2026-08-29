@@ -284,6 +284,87 @@ eq("E34 a section with no items array does not throw",
 eq("E35 patchItem on a section with no items array does not throw",
    S.patchItem([{ id: "A" }], "A", "x", { qty: 1 }).length, 1);
 
+// ── window.LTP_eligibleInvoiceTargets ──────────────────────────────────────
+// Which existing invoices a quote's items may be added to. This decides whose
+// bill a job's lines land on, and it lived inside an IIFE in the middle of the
+// quote builder's render tree where nothing could reach it.
+const ELIG = window.LTP_eligibleInvoiceTargets;
+ok("F0 LTP_eligibleInvoiceTargets is exported", typeof ELIG === "function");
+
+const COMPANY_QUOTE = { clientType: "company", companyId: "co1", clientContactId: null };
+const CONTACT_QUOTE = { clientType: "contact", companyId: null, clientContactId: "ct1" };
+function inv(over) {
+  return Object.assign({ id: 1, status: "draft", clientType: "company",
+                         companyId: "co1", clientContactId: null }, over || {});
+}
+const ids = (list) => list.map((x) => x.id);
+
+// Draft-only. An invoice locks the moment it is sent, so a sent one cannot
+// take new lines — offering it would produce an edit the builder then refuses.
+["sent", "paid", "overdue", "partial", "void"].forEach(function (st) {
+  eq("F1 a " + st + " invoice is never a target",
+     ids(ELIG([inv({ id: 9, status: st })], COMPANY_QUOTE)), []);
+});
+eq("F2 a draft invoice for the same company IS a target",
+   ids(ELIG([inv({ id: 9 })], COMPANY_QUOTE)), [9]);
+
+// Billing party must match — this is the assertion that stops a job's lines
+// landing on another client's bill.
+eq("F3 a different company is not a target",
+   ids(ELIG([inv({ id: 9, companyId: "co2" })], COMPANY_QUOTE)), []);
+eq("F4 a contact-billed invoice is not a target for a company-billed quote",
+   ids(ELIG([inv({ id: 9, clientType: "contact", clientContactId: "ct1", companyId: null })], COMPANY_QUOTE)), []);
+eq("F5 a company-billed invoice is not a target for a contact-billed quote",
+   ids(ELIG([inv({ id: 9 })], CONTACT_QUOTE)), []);
+eq("F6 a contact-billed invoice for the same contact IS a target",
+   ids(ELIG([inv({ id: 9, clientType: "contact", clientContactId: "ct1", companyId: null })], CONTACT_QUOTE)), [9]);
+eq("F7 a different contact is not a target",
+   ids(ELIG([inv({ id: 9, clientType: "contact", clientContactId: "ct2", companyId: null })], CONTACT_QUOTE)), []);
+
+// An invoice that carries BOTH ids — which happens when one is switched from
+// company- to contact-billing and the old field is left behind — is the case
+// that actually proves clientType is checked. With both ids populated, the id
+// comparison alone would match; only the type check excludes it. (Verified by
+// mutation: deleting the clientType check passes every test above but fails
+// these two.)
+const BOTH = { id: 9, status: "draft", companyId: "co1", clientContactId: "ct1" };
+eq("F7b a contact-billed invoice carrying a matching companyId is still not a company target",
+   ids(ELIG([Object.assign({}, BOTH, { clientType: "contact" })], COMPANY_QUOTE)), []);
+eq("F7c a company-billed invoice carrying a matching contactId is still not a contact target",
+   ids(ELIG([Object.assign({}, BOTH, { clientType: "company" })], CONTACT_QUOTE)), []);
+
+// A null id must never match a null id — otherwise every unassigned invoice
+// becomes a target for every unassigned quote.
+eq("F8 a null companyId does not match a null companyId",
+   ids(ELIG([inv({ id: 9, companyId: null })], { clientType: "company", companyId: null })), []);
+eq("F9 a null contactId does not match a null contactId",
+   ids(ELIG([inv({ id: 9, clientType: "contact", clientContactId: null, companyId: null })],
+            { clientType: "contact", clientContactId: null })), []);
+
+// The project is deliberately NOT a condition: an invoice that started on
+// another job is a legitimate target, which is what lets one invoice cover
+// several jobs.
+eq("F10 an invoice from a different project is still a target",
+   ids(ELIG([inv({ id: 9, projectId: "pr-other" })], Object.assign({ projectId: "pr1" }, COMPANY_QUOTE))), [9]);
+
+// Missing clientType defaults to company on both sides.
+eq("F11 a missing clientType defaults to company",
+   ids(ELIG([{ id: 9, status: "draft", companyId: "co1" }], { companyId: "co1" })), [9]);
+
+// Newest first — the invoice someone is most likely still working on.
+eq("F12 targets come back newest first",
+   ids(ELIG([inv({ id: 3 }), inv({ id: 11 }), inv({ id: 7 })], COMPANY_QUOTE)), [11, 7, 3]);
+
+// Purity + defensiveness: the builder calls this during render.
+const src = [inv({ id: 3 }), inv({ id: 11 })];
+const before = JSON.stringify(src);
+ELIG(src, COMPANY_QUOTE);
+ok("F13 does not mutate or reorder the input array", JSON.stringify(src) === before);
+eq("F14 null invoices is safe", ids(ELIG(null, COMPANY_QUOTE)), []);
+eq("F15 null quote is safe", ids(ELIG([inv({ id: 9 })], null)), []);
+eq("F16 a null entry in the list is skipped",
+   ids(ELIG([null, inv({ id: 9 })], COMPANY_QUOTE)), [9]);
+
 console.log("doc-sections suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

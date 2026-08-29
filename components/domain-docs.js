@@ -275,6 +275,38 @@ window.LTP_displayStatus = function(inv) {
 // Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
 // LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
 // subtotal is the sum of its lines at the effective price, full stop.
+// Which existing invoices a quote's items may be added to.
+//
+// This rule lived inside an IIFE in the middle of the quote builder's render
+// tree, where it could not be tested — and it is the rule that stops a job's
+// lines landing on the wrong client's bill. Three conditions, each load-bearing:
+//
+//   draft only        invoices lock the moment they are sent
+//                     (modules/invoices.js gates every edit on isDraft), so a
+//                     sent invoice cannot take new lines.
+//   same clientType   contact-billed and company-billed invoices never mix;
+//                     the billing party has to match or the totals are
+//                     meaningless.
+//   same client id    compared on clientContactId or companyId to match.
+//
+// Note what is deliberately NOT a condition: the project. An invoice that
+// started on another job is a legitimate target — the project restriction that
+// used to be here is exactly what stopped one invoice covering several jobs.
+//
+// Newest first, so the invoice someone is most likely to still be working on
+// is at the top.
+window.LTP_eligibleInvoiceTargets = function(invoices, quote) {
+  var q = quote || {};
+  var qType = q.clientType || "company";
+  return (invoices || []).filter(function(inv) {
+    if (!inv || inv.status !== "draft") return false;
+    if ((inv.clientType || "company") !== qType) return false;
+    return qType === "contact"
+      ? (inv.clientContactId != null && inv.clientContactId === q.clientContactId)
+      : (inv.companyId != null && inv.companyId === q.companyId);
+  }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
+};
+
 // ── Section / line-item transforms ─────────────────────────────────────────
 // The pure half of the quote and invoice builders' draft mutators. Each takes
 // a sections array and returns a NEW one, or the SAME reference when nothing
