@@ -3597,7 +3597,7 @@
             No activity yet.
 
 == QuotesBuilder overlays ==
-  -- slot 0 opens an overlay (13 lines) --
+  -- slot 0 (flag) opens an overlay (13 lines) --
       <button onClick=fn style=10props>
         Send
         <div ref={"current":null} style=2props>
@@ -3611,7 +3611,7 @@
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort15" style=4props>
-  -- slot 3 opens an overlay (11 lines) --
+  -- slot 3 (flag) opens an overlay (11 lines) --
         <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
           Discard
       <anon>
@@ -3623,7 +3623,7 @@
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort16" style=4props>
       <anon>
-  -- slot 9 opens an overlay (7 lines) --
+  -- slot 9 (flag) opens an overlay (7 lines) --
       <div style=8props>
         ✓ Saved
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
@@ -3631,13 +3631,13 @@
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
-  -- slot 10 opens an overlay (5 lines) --
+  -- slot 10 (flag) opens an overlay (5 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
-  -- slot 13 opens an overlay (79 lines) --
+  -- slot 13 (flag) opens an overlay (79 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
@@ -3717,13 +3717,13 @@
           <anon>
             <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
               Send Quote
-  -- slot 18 opens an overlay (5 lines) --
+  -- slot 18 (flag) opens an overlay (5 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
-  -- slot 19 opens an overlay (7 lines) --
+  -- slot 19 (flag) opens an overlay (7 lines) --
       <button disabled=true onClick=fn style=12props>
         Generating…
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort21" style=4props>
@@ -3731,9 +3731,139 @@
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort21" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort21" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort21" style=4props>
+  -- slot 7 (object) opens an overlay (51 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort22" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort22" style=4props>
+  <AddItemPicker>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Add to ""
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            <button key="equipment" onClick=fn style=8props>
+              Equipment
+            <button key="product" onClick=fn style=8props>
+              Products
+            <button key="service" onClick=fn style=8props>
+              Services
+            <button key="fee" onClick=fn style=8props>
+              Fees
+            <button key="note" onClick=fn style=8props>
+              Note
+          <div>
+            <div style=4props>
+              <input onChange=fn placeholder="Search equipment…" style=9props type="text" value="">
+              <span style=3props>
+                3-Day Rate
+            <div style=5props>
+              <div key="e1" onMouseOut=fn onMouseOver=fn style=7props>
+                <div style=2props>
+                  <div style=6props>
+                    Speaker
+                  <div style=2props>
+                    undefined
+                <div style=2props>
+                  <div style=3props>
+                    0 / 0 avail
+                <div style=3props>
+                  <button onClick=fn style=13props>
+                    −
+                  <input min=1 onChange=fn onClick=fn style=10props type="number" value=1>
+                  <button onClick=fn style=13props>
+                    +
+                <div style=2props>
+                  <div style=3props>
+                    $0
+                <button onClick=fn style=9props>
+                  Add
+  -- slot 8 (object) opens an overlay (23 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort23" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort23" style=4props>
+  <anon>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            Seed
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=undefined style=10props>
+                OK
+  -- slot 11 (object) opens an overlay (19 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort24" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort24" style=4props>
+  <LTPActivityDetail>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=3props>
+             · 
+          <div style=3props>
+          <div style=5props>
+            No detailed changes recorded.
+  -- slot 12 (object) opens an overlay (21 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort25" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort25" style=4props>
+  <anon>
+    <div className="ltp-modal-backdrop" onClick=fn style=7props>
+      <div className="ltp-modal-panel" onClick=fn style=11props>
+        <div style=4props>
+          <h3 style=5props>
+            Send to Invoice
+          <button onClick=fn style=5props>
+            ✕
+        <p style=3props>
+          Add these items to one of this client’s draft invoices — they arrive as new sections, leaving what’s already there untouched — or create a new invoice.
+        <div style=6props>
+          <div key="_empty" style=4props>
+            No draft invoices for this client yet.
+        <anon>
+          <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+            + Create New Invoice
+  -- slot 17 (object) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort26" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort26" style=4props>
+  -- slot 23 (object) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort27" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort27" style=4props>
 
 == InvoiceBuilder overlays ==
-  -- slot 0 opens an overlay (23 lines) --
+  -- slot 0 (flag) opens an overlay (23 lines) --
       <button onClick=fn style=10props>
         Send
         <div ref={"current":null} style=2props>
@@ -3742,47 +3872,47 @@
           <anon>
             <span style=10props>
               draft
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort23" key="sec1" style=3props>
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec1" style=3props>
           <anon>
               <button aria-label="Move section up" className="ltp-tap" disabled=true onClick=fn style=12props>
                 ▲
               <button aria-label="Move section down" className="ltp-tap" disabled=false onClick=fn style=12props>
                 ▼
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort23" key="sec2" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec2" style=3props>
           <anon>
               <button aria-label="Move section up" className="ltp-tap" disabled=false onClick=fn style=12props>
                 ▲
               <button aria-label="Move section down" className="ltp-tap" disabled=true onClick=fn style=12props>
                 ▼
-  -- slot 3 opens an overlay (11 lines) --
+  -- slot 3 (flag) opens an overlay (11 lines) --
         <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
           Discard
       <anon>
         <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
           Save Changes
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort24" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort24" key="sec2" style=3props>
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec2" style=3props>
       <anon>
-  -- slot 7 opens an overlay (7 lines) --
+  -- slot 7 (flag) opens an overlay (7 lines) --
         ✓ Saved
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort25" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort25" key="sec2" style=3props>
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec2" style=3props>
       <div style=7props>
-  -- slot 10 opens an overlay (88 lines) --
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort26" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort26" key="sec2" style=3props>
+  -- slot 10 (flag) opens an overlay (88 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort32" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort32" key="sec2" style=3props>
   <LTPPaymentForm>
     <anon>
       <div className="ltp-modal-backdrop" onClick=fn style=7props>
@@ -3866,12 +3996,12 @@
             <anon>
               <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                 Record Payment
-  -- slot 11 opens an overlay (88 lines) --
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort27" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort27" key="sec2" style=3props>
+  -- slot 11 (flag) opens an overlay (88 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort33" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort33" key="sec2" style=3props>
   <anon>
     <div className="ltp-modal-backdrop" onClick=fn style=7props>
       <div className="ltp-modal-panel" onClick=fn style=11props>
@@ -3955,24 +4085,24 @@
             <anon>
               <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                 Send Invoice
-  -- slot 13 opens an overlay (5 lines) --
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort28" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort28" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort28" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort28" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort28" key="sec2" style=3props>
-  -- slot 14 opens an overlay (5 lines) --
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec2" style=3props>
-  -- slot 15 opens an overlay (74 lines) --
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec2" style=3props>
+  -- slot 13 (flag) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec2" style=3props>
+  -- slot 14 (flag) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec2" style=3props>
+  -- slot 15 (flag) opens an overlay (74 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec2" style=3props>
   <anon>
     <div className="ltp-modal-backdrop" onClick=fn style=7props>
       <div className="ltp-modal-panel" onClick=fn style=11props>
@@ -4042,11 +4172,107 @@
           <anon>
             <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
               Send Receipt
-  -- slot 20 opens an overlay (7 lines) --
+  -- slot 20 (flag) opens an overlay (7 lines) --
       <button disabled=true onClick=fn style=12props>
         Generating…
-      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec1" style=3props>
-            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
-            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
-              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
-      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec2" style=3props>
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort37" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort37" key="sec2" style=3props>
+  -- slot 6 (object) opens an overlay (23 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort38" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort38" key="sec2" style=3props>
+  <anon>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            Seed
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=undefined style=10props>
+                OK
+  -- slot 8 (object) opens an overlay (39 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort39" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort39" key="sec2" style=3props>
+  <InvAddItemPicker>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Add Item
+            <button onClick=fn style=5props>
+              ✕
+          <anon>
+            <div style=2props>
+              <div className="ltp-tabs-strip" ref={"current":null} style=7props>
+                <button className="ltp-tap" key="equipment" onClick=fn style=14props>
+                  Equipment
+                <button className="ltp-tap" key="product" onClick=fn style=14props>
+                  Products
+                <button className="ltp-tap" key="service" onClick=fn style=14props>
+                  Services
+                <button className="ltp-tap" key="fee" onClick=fn style=14props>
+                  Fees
+                <button className="ltp-tap" key="note" onClick=fn style=14props>
+                  Note
+              <anon>
+          <div>
+            <input onChange=fn placeholder="Search equipment…" style=10props type="text" value="">
+            <div style=5props>
+              <div key="e1" onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+                <div style=1props>
+                  <div style=3props>
+                    Speaker
+                  <div style=2props>
+                    
+                <div style=3props>
+                  $0
+  -- slot 9 (object) opens an overlay (19 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort40" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort40" key="sec2" style=3props>
+  <LTPActivityDetail>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=3props>
+             · 
+          <div style=3props>
+          <div style=5props>
+            No detailed changes recorded.
+  -- slot 18 (object) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec2" style=3props>
+  -- slot 25 (object) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort42" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort42" key="sec2" style=3props>

@@ -150,7 +150,17 @@ window.LTP_DATA_SETTINGS = window.LTP_DATA_SETTINGS || {};
 window.LTP_DEFAULT_TERMS = window.LTP_DEFAULT_TERMS || "";
 window.LTP_DEFAULT_QUOTE_NOTES = ""; window.LTP_DEFAULT_INVOICE_NOTES = "";
 window.LTP_API_ERRORS = [];
+// The real rentals helpers, so the equipment picker (reached only now that the
+// sweep seeds object-gated slots) renders against real availability maths
+// rather than a stub that happens to satisfy it.
+if (fs.existsSync(path.join(ROOT, "modules", "rentals-utils.js"))) {
+  try { (0, eval)(fs.readFileSync(path.join(ROOT, "modules", "rentals-utils.js"), "utf8")); }
+  catch (e) { /* falls back to the stub below */ }
+}
 window.LTP_RENTALS = window.LTP_RENTALS || {};
+["eqQty", "allocatedQty"].forEach(function (k) {
+  if (typeof window.LTP_RENTALS[k] !== "function") window.LTP_RENTALS[k] = function () { return 0; };
+});
 
 // ── Deterministic ids (BEFORE the modules load) ──────────────────────────────────────────────────────
 let _n = 0;
@@ -226,20 +236,46 @@ function renderWithOverlays(Component, props, label) {
   catch (e) { CTX = null; return label + " THREW: " + e.message; }
   CTX = null;
 
+  // Two kinds of gate. `showSendModal`-style flags are booleans; but several
+  // overlays are gated on an OBJECT-or-null slot instead (dlg, pickerForSection,
+  // invPickerData, viewActivity), and flipping only booleans left every one of
+  // those shut in all 16 scenarios — which is how the two revision-log popups
+  // drifted apart with nothing noticing. Null slots are therefore also probed,
+  // seeded with a permissive object. Ones needing a specific shape throw and are
+  // skipped rather than recorded, so this reaches what it can and no more; the
+  // rest have their own suites.
   const boolSlots = Object.keys(probe.hooks)
-    .filter((k) => probe.hooks[k] && probe.hooks[k].v === false);
+    .filter((k) => probe.hooks[k] && probe.hooks[k].v === false)
+    .map((k) => ({ slot: k, value: true, kind: "flag" }));
+  const OBJ_SEED = { id: "seed", title: "Seed", label: "Seed", message: "Seed",
+                     variant: "danger", confirmLabel: "OK", sections: [], items: [],
+                     changes: [], invSections: [], updatedQuoteSections: [],
+                     invoiceDiscount: { type: "none", value: 0 }, discountNote: "" };
+  const objSlots = Object.keys(probe.hooks)
+    .filter((k) => probe.hooks[k] && probe.hooks[k].v === null)
+    .map((k) => ({ slot: k, value: OBJ_SEED, kind: "object" }));
+  const slots = boolSlots.concat(objSlots);
 
   const out = [];
-  boolSlots.forEach(function (slot) {
+  slots.forEach(function (spec) {
+    const slot = spec.slot;
     const ctx = mkCtx(function () {});
     CTX = ctx; ctx.idx = 0;
     // Pre-seed: useState returns the seeded value for this slot on first call.
     const seeded = {};
-    seeded[slot] = { v: true };
+    seeded[slot] = { v: spec.value };
     ctx.hooks = seeded;
     let tree;
     try { tree = Component(props); }
-    catch (e) { CTX = null; out.push("  slot " + slot + " -> THREW: " + e.message); return; }
+    catch (e) {
+      CTX = null;
+      // An object-gated overlay that needs a shape the generic seed does not
+      // satisfy is skipped, not reported — recording a throw would make the
+      // golden churn on unrelated edits and says nothing useful.
+      if (spec.kind === "object") return;
+      out.push("  slot " + slot + " -> THREW: " + e.message);
+      return;
+    }
     CTX = null;
     const rendered = serialize(tree, 0);
     if (rendered === base) return;                  // this flag renders nothing
@@ -257,7 +293,8 @@ function renderWithOverlays(Component, props, label) {
       return seen[l] > (baseCount[l] || 0);
     });
     if (!added.length) return;
-    out.push("  -- slot " + slot + " opens an overlay (" + added.length + " lines) --");
+    out.push("  -- slot " + slot + " (" + spec.kind + ") opens an overlay ("
+      + added.length + " lines) --");
     out.push(added.join("\n"));
   });
   return label + "\n" + (out.length ? out.join("\n") : "  (no boolean slot opens an overlay)");
@@ -434,10 +471,15 @@ ok("every scenario rendered without throwing", threw === 0,
 // 14 data scenarios + 2 overlay sweeps (one per builder).
 ok("all " + out.length + " scenarios produced output", out.length === 16, "got " + out.length);
 ok("the overlay sweeps actually opened modals",
-   (text.match(/opens an overlay/g) || []).length >= 10,
+   (text.match(/opens an overlay/g) || []).length >= 24,
    "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "
-   + "if a modal's gating flag stopped being a plain useState boolean, this sweep "
-   + "silently stops covering it");
+   + "if a modal's gating slot stopped being a useState boolean-or-null, this "
+   + "sweep silently stops covering it");
+ok("object-gated overlays are covered too",
+   (text.match(/\(object\) opens an overlay/g) || []).length >= 6,
+   "only " + (text.match(/\(object\) opens an overlay/g) || []).length
+   + " — the confirm dialog, the item pickers and the invoice-target picker are "
+   + "gated on an object-or-null slot, not a boolean");
 
 if (!fs.existsSync(GOLDEN)) {
   ok("golden snapshot exists", false, "run with --update to create it");
