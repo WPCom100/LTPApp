@@ -1234,10 +1234,9 @@
     // render (hoisted var) and holds the value as of the click.
     var qbSig = "";
     function sendToQuickBooks() {
-      if (draft.id == null) { window.LTP_toast("Save first", { message: "Save the invoice before sending it to QuickBooks.", variant: "warn" }); return; }
-      if (!draft.sentDate && !draft.qbInvoiceId) { window.LTP_toast("Send the invoice first", { message: "Invoices export to QuickBooks once they've been sent.", variant: "warn" }); return; }
-      if (!isAdmin) { window.LTP_toast("Admin only", { message: "Only an admin can push invoices to QuickBooks.", variant: "warn" }); return; }
-      if (!qbo || !qbo.connected) { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings before pushing invoices.", variant: "warn" }); return; }
+      // Whether a push is allowed is decided in components/domain-qbo.js.
+      var blocked = window.LTP_qboPushBlocker(draft, isAdmin, qbo);
+      if (blocked) { window.LTP_toast(blocked.title, { message: blocked.message, variant: blocked.variant }); return; }
       setQboSyncing(true);
       fetch("/api/qbo/invoices/" + draft.id + "/push", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
@@ -1246,25 +1245,14 @@
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
         .then(function(resp) {
           setQboSyncing(false);
-          if (resp.status === 200) {
-            var b = resp.body || {};
-            var updated = Object.assign({}, draft, {
-              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
-              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
-              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : qbSig
-            });
+          // What the response means, and what to say about it — domain-qbo.js.
+          var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (outcome.ok) {
+            var updated = window.LTP_applyQboPush(draft, resp.body, qbSig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-            window.LTP_toast(b.action === "created" ? "Sent to QuickBooks" : "Updated in QuickBooks", {
-              message: "Invoice " + (b.action === "created" ? "created in" : "updated in") + " QuickBooks"
-                + (b.qbTaxTotal ? " — sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "."),
-              variant: "success" });
-            return;
           }
-          var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") { window.LTP_toast("Reconnect QuickBooks", { message: "The QuickBooks connection expired. An admin should reconnect it in Settings.", variant: "error" }); return; }
-          if (resp.status === 409 && d.reason === "not_connected") { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings first.", variant: "warn" }); return; }
-          window.LTP_toast("QuickBooks sync failed", { message: d.error || ("HTTP " + resp.status + "."), variant: "error" });
+          window.LTP_toast(outcome.title, { message: outcome.message, variant: outcome.variant });
         })
         .catch(function(e) { setQboSyncing(false); window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
     }
@@ -1296,36 +1284,40 @@
         })
         .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
         .then(function(resp) {
-          if (resp.status === 200) {
-            var b = resp.body || {};
-            var withQb = Object.assign({}, invoiceObj, {
-              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
-              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
-              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : sig
-            });
+          var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (outcome.ok) {
+            var withQb = window.LTP_applyQboPush(invoiceObj, resp.body, sig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
             setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
             if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;
             if (!opts.quiet) {
-              window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
-                { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
+              // This path runs as a side effect of SENDING, so it reads as an
+              // export rather than a manual sync.
+              window.LTP_toast(outcome.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
+                { variant: "success", message: (resp.body || {}).qbTaxTotal
+                    ? "Sales tax " + money2((resp.body || {}).qbTaxTotal) + " calculated by QuickBooks." : "" });
             }
-            // `action` decides whether a failed send may unwind this push: only
-            // a create is ours to delete. An update means the QB invoice existed
-            // before this send (a resend, or an earlier push) — deleting it
-            // would destroy a record the customer may already hold.
-            return { ok: true, invoice: withQb, action: b.action, qbInvoiceId: b.qbInvoiceId };
+            // outcome.action decides whether a failed send may unwind this push:
+            // only a create is ours to delete. An update means the QB invoice
+            // existed before this send (a resend, or an earlier push) — deleting
+            // it would destroy a record the customer may already hold.
+            return { ok: true, invoice: withQb, action: outcome.action, qbInvoiceId: outcome.qbInvoiceId };
           }
+          // This path's wording differs from the manual-sync button's on
+          // purpose and is kept verbatim: here the invoice DID send and only
+          // the sync failed, and `error` below is quoted back to the user
+          // inside a sentence by the caller at :1042 rather than shown as a
+          // toast, so it reads "…could not be reached: <error>".
           var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") {
+          if (outcome.reason === "reconnect") {
             if (!opts.quiet) window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" });
             return { ok: false, reason: "reconnect", error: d.error || "The QuickBooks connection expired. Reconnect it in Settings." };
           }
-          if (resp.status === 409 && d.reason === "not_connected") {
+          if (outcome.reason === "not_connected") {
             return { ok: false, reason: "not_connected", error: d.error || "QuickBooks is not connected." };
           }
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: (d.error || ("HTTP " + resp.status)) + " — open the invoice and use Update QuickBooks to retry.", variant: "error" });
-          return { ok: false, reason: d.reason || "error", error: d.error || ("HTTP " + resp.status) };
+          return { ok: false, reason: outcome.reason, error: d.error || ("HTTP " + resp.status) };
         })
         .catch(function(e) {
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" });

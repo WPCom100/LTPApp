@@ -105,6 +105,7 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/domain-payouts.js',
   '/components/domain-email.js',
   '/components/domain-docs.js',
+  '/components/domain-qbo.js',
   '/app.js',
   '/mount.js',
   // Icons referenced by the manifest / head.
