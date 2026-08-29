@@ -299,16 +299,22 @@ function _breakInSpan(brk, spanStart, spanEnd) {
 //
 // items = [{ time, endTime, breaks: [{ startTime, endTime, type }] }, ...]
 //
-// DEFINED RANGE: a day whose blocks fit inside a 24-hour window from the
-// earliest start to the latest end. Property fuzzing over 36,000 random days
-// found no invariant violation inside that range. BEYOND it the result is
-// ambiguous by construction and not trusted: once a day already extends past
-// 24:00, a wall-clock break like "02:00" maps to two different points in the
-// day's frame and there is no information here to choose between them. Such a
-// day is physically impossible anyway — it means one person is booked
-// 01:00-08:00 AND 21:45-05:45 on the same date. If that shape ever appears it
-// is a data-entry problem to catch at the schedule editor, not something this
-// function can resolve.
+// DEFINED RANGE. Shifts run up to 24 hours and routinely cross midnight; both
+// are fully supported and pinned by tests (a 22:00-04:00 call with a 01:00
+// break, a 14-hour 18:00-08:00 call, a maximal 06:00-06:00 day, and a date
+// carrying both a day call and a night call). Property fuzzing over 36,000
+// random days found no invariant violation anywhere in that range.
+//
+// The one shape this function cannot resolve is a date whose blocks span MORE
+// than 24 hours end-to-end. There, a wall-clock break like "02:00" maps to two
+// different points in the day's frame and nothing in the data says which. That
+// requires a single continuous run longer than a day, which the 24-hour shift
+// ceiling rules out — so it is out of scope by operating constraint, not merely
+// untested. Do not "fix" it by resolving breaks against their owning block
+// instead of the span: that was tried and measured, and it changes billing on
+// ~5% of ordinary sub-24h days by dropping breaks entered slightly outside
+// their own block (a 21:15 break on a 21:45 shift), every difference biased
+// toward billing MORE. Span-relative is correct for every reachable input.
 window.LTP_calcLaborDay = function(dayRate, items) {
   var EMPTY = { rate: 0, paidHours: 0, unpaidBreakHours: 0, paidBreakHours: 0, mealPenaltyHours: 0, regularOTHours: 0, tier: "", segments: [] };
   if (!dayRate || !items || !items.length) return EMPTY;

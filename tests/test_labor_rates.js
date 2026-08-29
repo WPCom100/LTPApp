@@ -233,6 +233,32 @@ ok("A26 paid+break reconciles with the 1.5h shift",
 r = D(R, [sh("18:00", "24:00")]);
 eq("A27 18:00-24:00 is a valid 6h block", r.paidHours, 6);
 
+// ── A28. The supported envelope, stated as tests ─────────────────────────────
+// Operating constraint confirmed by the owner: a shift never exceeds 24 hours
+// in total, but shifts routinely run past midnight. These pin that envelope so
+// the boundary documented on LTP_calcLaborDay is executable rather than prose.
+r = D(R, [sh("22:00", "04:00", [nb("01:00", "01:30")])]);
+eq("A28 overnight 6h call, break after midnight", r.paidHours, 5.5);
+eq("A28 no meal penalty on 3h/2.5h segments", r.mealPenaltyHours, 0);
+
+r = D(R, [sh("18:00", "08:00", [nb("00:00", "01:00")])]);
+eq("A28 14h overnight call", r.paidHours, 13);
+eq("A28 unpaid hour deducted across midnight", r.unpaidBreakHours, 1);
+
+r = D(R, [sh("06:00", "06:00")]);
+eq("A28 maximal 24h shift", r.paidHours, 24);
+
+// One date carrying a day call AND a separate night call that crosses midnight.
+r = D(R, [sh("09:00", "17:00", [nb("12:00", "12:30")]), sh("22:00", "02:00", [nb("00:00", "00:30")])]);
+eq("A28 day call + night call on one date", r.paidHours, 11);
+eq("A28 both breaks deducted", r.unpaidBreakHours, 1);
+eq("A28 gap between them resets the meal clock", r.mealPenaltyHours, 0);
+
+// Contiguous blocks running through midnight merge into one span.
+r = D(R, [sh("16:00", "22:00"), sh("22:00", "03:00", [nb("01:00", "01:30")])]);
+eq("A28 contiguous through midnight merges", r.paidHours, 10.5);
+ok("A28 merged run earns meal penalty", r.mealPenaltyHours > 0, "got " + r.mealPenaltyHours);
+
 // mealFixBreaks must not generate against unparseable shifts either.
 eq("A27 mealFix emits nothing for a malformed shift",
    FIX([{ id: "x", time: "-1:00", endTime: "17:00", breaks: [], positionId: "p1" }]).length, 0);
