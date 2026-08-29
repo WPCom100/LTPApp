@@ -195,6 +195,31 @@ def test_dompurify_is_past_the_known_advisory_range():
         "range; bump the URL and recompute the SRI hash")
 
 
+def test_service_worker_cdn_precache_matches_index_html():
+    """sw.js precaches the CDN libraries by absolute URL, and index.html loads
+    them by absolute URL, with nothing linking the two lists. A version bump to
+    one alone is silent in both directions: the worker warms a URL the page
+    never requests, and the URL the page does request never gets precached — so
+    it is simply absent on a cold offline launch. (This drifted the moment
+    DOMPurify was bumped: index.html moved to 3.4.14, sw.js kept 3.2.7.)"""
+    with open(os.path.join(_root, "sw.js"), encoding="utf-8") as fh:
+        sw = fh.read()
+    block = re.search(r"var CDN_PRECACHE = \[(.*?)\];", sw, re.S)
+    assert block, "could not find CDN_PRECACHE in sw.js"
+    precached = set(re.findall(r"'(https://[^']+)'", block.group(1)))
+    assert precached, "CDN_PRECACHE parsed as empty — the regex stopped matching"
+
+    loaded = {s["src"] for s in _cdn_scripts()}
+    assert loaded, "no CDN scripts found in index.html"
+
+    missing = loaded - precached
+    stale = precached - loaded
+    assert not missing and not stale, (
+        "sw.js CDN_PRECACHE and index.html <script src> have drifted:\n"
+        f"  loaded but not precached: {sorted(missing)}\n"
+        f"  precached but not loaded: {sorted(stale)}")
+
+
 def test_sri_hashes_are_distinct_per_script():
     """A copy-pasted tag that kept the previous file's hash fails closed in the
     browser (script blocked) — cheap to catch here instead."""

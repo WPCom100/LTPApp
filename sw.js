@@ -105,10 +105,18 @@ var SAME_ORIGIN_PRECACHE = [
 
 // Cross-origin, version-pinned libraries (CORS-enabled on cdnjs). Best-effort:
 // a CDN hiccup at install time must not fail the whole install.
+//
+// These URLs MUST match index.html's <script src> tags exactly. They are
+// version-pinned in two files with nothing linking them, so a bump to one is
+// silently a no-op in the other: the worker warms a URL the page never asks
+// for, and the URL the page DOES ask for is left to runtime cache — which
+// means it is simply missing on a cold offline launch. tests/
+// test_dependency_pins.py::test_service_worker_cdn_precache_matches_index_html
+// compares the two lists so the pair cannot drift again.
 var CDN_PRECACHE = [
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.14/purify.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/signature_pad/5.0.4/signature_pad.umd.min.js',
 ];
 
