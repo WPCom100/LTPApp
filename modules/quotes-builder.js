@@ -1502,35 +1502,9 @@
     // `m` is { kind, id, fromZone, toZone, targetId, after }; a null targetId
     // means "append to toZone" (released over a section's empty space).
     function sortMove(m) {
-      if (m.kind === "section") {
-        setDraft(function(d) {
-          var secs = d.sections.slice();
-          var from = secs.findIndex(function(s) { return s.id === m.id; });
-          if (from === -1) return d;
-          var moved = secs.splice(from, 1)[0];
-          var to = m.targetId == null ? secs.length : secs.findIndex(function(s) { return s.id === m.targetId; });
-          if (to === -1) to = secs.length;
-          else if (m.after) to += 1;
-          secs.splice(to, 0, moved);
-          return Object.assign({}, d, { sections: secs });
-        });
-        return;
-      }
       setDraft(function(d) {
-        var secs = d.sections.map(function(s) { return Object.assign({}, s, { items: s.items.slice() }); });
-        var from = secs.find(function(s) { return s.id === m.fromZone; });
-        var dest = secs.find(function(s) { return s.id === m.toZone; });
-        if (!from || !dest) return d;
-        var idx = from.items.findIndex(function(i) { return i.id === m.id; });
-        if (idx === -1) return d;
-        var moved = from.items.splice(idx, 1)[0];
-        // Look the target up AFTER the removal so the index is already correct
-        // for a same-section move.
-        var to = m.targetId == null ? dest.items.length : dest.items.findIndex(function(i) { return i.id === m.targetId; });
-        if (to === -1) to = dest.items.length;
-        else if (m.after) to += 1;
-        dest.items.splice(to, 0, moved);
-        return Object.assign({}, d, { sections: secs });
+        var secs = window.LTP_applySortMove(d.sections, m);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -2274,17 +2248,9 @@
     });
 
     // Section subtotals + margins (per-section display only)
-    function sectionTotals(sec) {
-      var sub = 0, cst = 0;
-      sec.items.forEach(function(it) {
-        if (it.type === "note") return;
-        var qty = Number(it.qty) || 0;
-        var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
-        sub += eff * qty;
-        cst += (Number(it.cost) || 0) * qty;
-      });
-      return { subtotal: sub, margin: sub - cst };
-    }
+    // Shared with modules/invoices.js — see components/domain-docs.js. Returns
+    // { subtotal, cost, margin }; this builder reads subtotal and margin.
+    var sectionTotals = window.LTP_sectionTotals;
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },

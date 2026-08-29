@@ -258,6 +258,83 @@ window.LTP_displayStatus = function(inv) {
 };
 
 // Quote helpers — moved here from quotes-list to ensure availability
+// Per-SECTION totals for the quote and invoice builders' summary panels.
+//
+// Both builders had their own copy of this loop. They were not quite twins, and
+// the difference was in the RETURN, which is the part that matters:
+//   quotes-builder.js  returned { subtotal, margin: sub - cst }
+//   invoices.js        returned { subtotal, cost }
+// so `margin` and `cost` were genuinely different numbers, not two names for
+// one value — unifying them naively would have shipped a money bug.
+//
+// Tracing the call sites settles it: quotes reads .subtotal and .margin
+// (quotes-builder.js:2586 `sectionMargin: t.margin`), invoices reads .subtotal
+// and NOTHING else — its `cost` field had no consumer at all. So returning all
+// three fields serves both callers with no behaviour change in either.
+//
+// Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
+// LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
+// subtotal is the sum of its lines at the effective price, full stop.
+// Apply one drag-reorder move to a document's sections. Pure: returns a NEW
+// sections array, or the SAME reference when the move is a no-op, so a caller
+// can skip the state update entirely.
+//
+// `m` is { kind, id, fromZone, toZone, targetId, after } from
+// components/sortable.js, applied continuously while a row is in flight (once
+// per hit-test), not once on release — that is what makes the list itself the
+// drop preview. A null targetId means "append to toZone" (released over a
+// section's empty space).
+//
+// Both builders carried this, byte-identical after comments and indentation;
+// the only real difference was that invoices guarded on isDraft and quotes did
+// not (quotes gates reordering at the sortable's `enabled:` instead, which
+// covers the keyboard path too — components/sortable.js:389). That guard stays
+// with each caller, where the policy belongs; only the transform moved here.
+// Being pure, it is finally unit-testable — the drag path had no coverage at
+// all while it lived inside two 1,700-line closures.
+window.LTP_applySortMove = function(sections, m) {
+  if (!sections || !m) return sections;
+
+  if (m.kind === "section") {
+    var secs = sections.slice();
+    var from = secs.findIndex(function(s) { return s.id === m.id; });
+    if (from === -1) return sections;
+    var moved = secs.splice(from, 1)[0];
+    var to = m.targetId == null ? secs.length : secs.findIndex(function(s) { return s.id === m.targetId; });
+    if (to === -1) to = secs.length;
+    else if (m.after) to += 1;
+    secs.splice(to, 0, moved);
+    return secs;
+  }
+
+  var copy = sections.map(function(s) { return Object.assign({}, s, { items: (s.items || []).slice() }); });
+  var src = copy.find(function(s) { return s.id === m.fromZone; });
+  var dest = copy.find(function(s) { return s.id === m.toZone; });
+  if (!src || !dest) return sections;
+  var idx = src.items.findIndex(function(i) { return i.id === m.id; });
+  if (idx === -1) return sections;
+  var item = src.items.splice(idx, 1)[0];
+  // Resolve the target AFTER the removal so the index is already correct for a
+  // same-section move.
+  var at = m.targetId == null ? dest.items.length : dest.items.findIndex(function(i) { return i.id === m.targetId; });
+  if (at === -1) at = dest.items.length;
+  else if (m.after) at += 1;
+  dest.items.splice(at, 0, item);
+  return copy;
+};
+
+window.LTP_sectionTotals = function(sec) {
+  var subtotal = 0, cost = 0;
+  ((sec && sec.items) || []).forEach(function(it) {
+    if (it.type === "note") return;
+    var qty = Number(it.qty) || 0;
+    var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
+    subtotal += eff * qty;
+    cost += (Number(it.cost) || 0) * qty;
+  });
+  return { subtotal: subtotal, cost: cost, margin: subtotal - cost };
+};
+
 window.LTP_QUOTE_TOTALS = function(q) {
   var subtotal = 0, adjusted = 0, cost = 0;
   (q.sections || []).forEach(function(sec) {

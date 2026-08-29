@@ -152,6 +152,75 @@ eq("F5 de-dupes case-insensitively, keeps first form/order", JSON.stringify(FQN(
 eq("F6 explicit empty list stays empty (no fallback)", JSON.stringify(FQN({ feeQuickNames: [] })), JSON.stringify([]));
 eq("F7 non-array falls back to default", JSON.stringify(FQN({ feeQuickNames: "Lodging" })), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT));
 
+// ── Shared section totals (was duplicated in both builders) ─────────────────
+// modules/quotes-builder.js and modules/invoices.js each carried their own
+// sectionTotals(). The loops matched, but the RETURNS did not:
+//   quotes   -> { subtotal, margin: sub - cost }
+//   invoices -> { subtotal, cost }
+// `margin` and `cost` are different numbers, so a naive merge would have been a
+// money bug. They now share window.LTP_sectionTotals, which returns all three.
+//
+// These assertions re-implement BOTH originals verbatim and diff them against
+// the shared helper over a matrix — the only way to show the merge was lossless
+// rather than merely plausible.
+const ST = window.LTP_sectionTotals;
+
+function oldQuoteSectionTotals(sec) {          // verbatim, pre-merge
+  var sub = 0, cst = 0;
+  sec.items.forEach(function(it) {
+    if (it.type === "note") return;
+    var qty = Number(it.qty) || 0;
+    var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
+    sub += eff * qty;
+    cst += (Number(it.cost) || 0) * qty;
+  });
+  return { subtotal: sub, margin: sub - cst };
+}
+function oldInvoiceSectionTotals(sec) {        // verbatim, pre-merge
+  var sub = 0, cost = 0;
+  sec.items.forEach(function(it) {
+    if (it.type === "note") return;
+    var qty = Number(it.qty) || 0;
+    var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
+    sub += eff * qty;
+    cost += (Number(it.cost) || 0) * qty;
+  });
+  return { subtotal: sub, cost: cost };
+}
+
+const QTY = [0, 1, 2, 3.5, -1, null, undefined, "2", "", "abc", NaN];
+const PRICE = [0, 100, 1234.56, -50, null, undefined, "250", "", "x"];
+const COST = [0, 60, 999.99, null, undefined, "40", "", "y"];
+const ADJ = [undefined, null, 0, 75, "80", ""];
+let cases = 0, mismatchQ = 0, mismatchI = 0, firstBad = "";
+QTY.forEach((qty) => PRICE.forEach((unitPrice) => COST.forEach((cost) => ADJ.forEach((adjustedPrice) => {
+  const item = { id: "i", type: "product", qty, unitPrice, cost };
+  if (adjustedPrice !== undefined) item.adjustedPrice = adjustedPrice;
+  const sec = { id: "s", items: [item, { id: "n", type: "note", text: "ignored" }] };
+  cases++;
+  const now = ST(sec), oq = oldQuoteSectionTotals(sec), oi = oldInvoiceSectionTotals(sec);
+  const okQ = Object.is(now.subtotal, oq.subtotal) && Object.is(now.margin, oq.margin);
+  const okI = Object.is(now.subtotal, oi.subtotal) && Object.is(now.cost, oi.cost);
+  if (!okQ) { mismatchQ++; if (!firstBad) firstBad = JSON.stringify({ item, now, oq }); }
+  if (!okI) { mismatchI++; if (!firstBad) firstBad = JSON.stringify({ item, now, oi }); }
+})))); 
+eq("ST1 matrix ran the full cross-product", cases, QTY.length * PRICE.length * COST.length * ADJ.length);
+eq("ST2 shared helper matches the old QUOTE version on every case", mismatchQ + "|" + firstBad, "0|" + (mismatchQ ? firstBad : ""));
+eq("ST3 shared helper matches the old INVOICE version on every case", mismatchI + "|" + firstBad, "0|" + (mismatchI ? firstBad : ""));
+
+// margin and cost are distinct — the assertion that stops a future "simplify"
+// from collapsing them back into one field.
+const marginCase = ST({ items: [{ type: "product", qty: 2, unitPrice: 100, cost: 30 }] });
+eq("ST4 subtotal is price x qty", marginCase.subtotal, 200);
+eq("ST5 cost is cost x qty", marginCase.cost, 60);
+eq("ST6 margin is subtotal - cost, NOT cost", marginCase.margin, 140);
+eq("ST7 margin and cost really differ", marginCase.margin === marginCase.cost, false);
+eq("ST8 adjustedPrice wins over unitPrice", ST({ items: [{ type: "product", qty: 1, unitPrice: 100, adjustedPrice: 70 }] }).subtotal, 70);
+eq("ST9 adjustedPrice of 0 is honoured, not treated as absent", ST({ items: [{ type: "product", qty: 1, unitPrice: 100, adjustedPrice: 0 }] }).subtotal, 0);
+eq("ST10 note rows never contribute", ST({ items: [{ type: "note", text: "x", qty: 9, unitPrice: 9 }] }).subtotal, 0);
+eq("ST11 missing items array is safe", ST({}).subtotal, 0);
+eq("ST12 null section is safe", ST(null).subtotal, 0);
+
 console.log("money-totals suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
