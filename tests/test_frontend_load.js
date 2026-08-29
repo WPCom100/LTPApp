@@ -81,10 +81,12 @@ if (loaded) {
   const added = [...live].filter((k) => !declared.has(k));
   ok("no export appears on window that no domain file declares", added.length === 0,
      added.join(", "));
-  // 102 came out of the split; +2 for LTP_sectionTotals and LTP_applySortMove
-  // and +2 for LTP_quoteChanges and LTP_invoiceChanges, all lifted out of the
-  // quote/invoice builder closures so they could finally be tested.
-  ok("the domain layer publishes the expected 106 exports", live.size === 106,
+  // 102 came out of the theme.js split. Everything since is logic lifted OUT
+  // of the quote/invoice builder closures so it could be tested:
+  // LTP_sectionTotals, LTP_applySortMove, LTP_quoteChanges, LTP_invoiceChanges
+  // and LTP_SECTIONS. Bumping this number is expected when that continues; the
+  // assertion above already names anything that appears without being declared.
+  ok("the domain layer publishes the expected 107 exports", live.size === 107,
      "got " + live.size + "; if you added one deliberately, bump this number. "
      + "declared=" + declared.size + " live=" + live.size);
 

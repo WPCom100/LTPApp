@@ -23,6 +23,10 @@
   var fmt = window.LTP_formatDate;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
+  // Pure section/line-item transforms, shared with modules/invoices.js.
+  // See components/domain-docs.js — the policy around each edit (who may edit,
+  // what gets confirmed, what marks the document dirty) stays here.
+  var S = window.LTP_SECTIONS;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (violet — distinct from EQ/PR/SV)
 
   // QuickBooks tax change-signature: a compact fingerprint of everything that
@@ -1247,7 +1251,7 @@
 
     function updateSection(secId, patch) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) { return s.id === secId ? Object.assign({}, s, patch) : s; }) });
+        return Object.assign({}, d, { sections: S.patchSection(d.sections, secId, patch) });
       });
     }
     function addSection() {
@@ -1265,7 +1269,7 @@
         confirmLabel: "Delete",
         onConfirm: function() {
           setDraft(function(d) {
-            return Object.assign({}, d, { sections: d.sections.filter(function(s) { return s.id !== secId; }) });
+            return Object.assign({}, d, { sections: S.removeSection(d.sections, secId) });
           });
           setDlg(null);
         },
@@ -1273,9 +1277,7 @@
     }
     function addItemToSection(secId, item) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          return s.id === secId ? Object.assign({}, s, { items: s.items.concat([item]) }) : s;
-        }) });
+        return Object.assign({}, d, { sections: S.addItem(d.sections, secId, item) });
       });
     }
     function updateItem(secId, itemId, patch) {
@@ -1283,34 +1285,19 @@
       var isOperational = Object.keys(patch).every(function(k) { return k === "deliveredQty" || k === "invoicedQty"; });
       var setter = isOperational ? setDraftSilent : setDraft;
       setter(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.map(function(i) { return i.id === itemId ? Object.assign({}, i, patch) : i; }) });
-        }) });
+        return Object.assign({}, d, { sections: S.patchItem(d.sections, secId, itemId, patch) });
       });
     }
     function deleteItem(secId, itemId) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.filter(function(i) { return i.id !== itemId; }) });
-        }) });
+        return Object.assign({}, d, { sections: S.removeItem(d.sections, secId, itemId) });
       });
     }
     // Single-step reorder within a section (dir = -1 up, +1 down). Drives the
     // mobile ▲▼ buttons and the ↑/↓ keys on a focused desktop grab handle.
     function moveItem(secId, itemId, dir) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          var items = s.items.slice();
-          var idx = items.findIndex(function(i) { return i.id === itemId; });
-          var to = idx + dir;
-          if (idx === -1 || to < 0 || to >= items.length) return s;
-          var moved = items.splice(idx, 1)[0];
-          items.splice(to, 0, moved);
-          return Object.assign({}, s, { items: items });
-        }) });
+        return Object.assign({}, d, { sections: S.nudgeItem(d.sections, secId, itemId, dir) });
       });
     }
 
@@ -1341,13 +1328,8 @@
     // focused grab handle.
     function moveSection(sectionId, dir) {
       setDraft(function(d) {
-        var secs = d.sections.slice();
-        var idx = secs.findIndex(function(s) { return s.id === sectionId; });
-        if (idx === -1) return d;
-        var target = idx + dir;
-        if (target < 0 || target >= secs.length) return d;
-        var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
-        return Object.assign({}, d, { sections: secs });
+        var secs = S.nudgeSection(d.sections, sectionId, dir);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 

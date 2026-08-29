@@ -7,6 +7,11 @@
   var useState = React.useState, useRef = React.useRef, useMemo = React.useMemo, useEffect = React.useEffect;
   var nav = window.LTPRouter.navigate;
   var fmt = window.LTP_formatDate;
+  // Pure section/line-item transforms, shared with modules/quotes-builder.js.
+  // See components/domain-docs.js — every invoice-specific rule (draft-only
+  // edits, linkedQty clamping, rollback bookkeeping, the last-section guard)
+  // stays in this file.
+  var S = window.LTP_SECTIONS;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (matches the quote builder)
@@ -1457,23 +1462,20 @@
     function updateItem(secId, itemId, patch) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.map(function(i) {
-            if (i.id !== itemId) return i;
-            var effective = Object.assign({}, patch);
-            // Clamp linkedQty when qty drops below it — qty added on top of
-            // linkedQty is "direct" and reducing back through it doesn't
-            // touch the source quote's invoicedQty. See sendToInvoice for
-            // the model.
-            if (patch.qty != null && i.sourceItemId) {
-              var newQty = Number(patch.qty) || 0;
-              var oldLinked = i.linkedQty != null ? Number(i.linkedQty) : (Number(i.qty) || 0);
-              effective.linkedQty = Math.min(newQty, oldLinked);
-            }
-            return Object.assign({}, i, effective);
-          }) });
-        })});
+        return Object.assign({}, d, { sections: S.patchItem(d.sections, secId, itemId, function(i) {
+          var effective = Object.assign({}, patch);
+          // Clamp linkedQty when qty drops below it — qty added on top of
+          // linkedQty is "direct" and reducing back through it doesn't
+          // touch the source quote's invoicedQty. See sendToInvoice for
+          // the model. Invoice-only rule, so it stays here rather than in
+          // the shared transform.
+          if (patch.qty != null && i.sourceItemId) {
+            var newQty = Number(patch.qty) || 0;
+            var oldLinked = i.linkedQty != null ? Number(i.linkedQty) : (Number(i.qty) || 0);
+            effective.linkedQty = Math.min(newQty, oldLinked);
+          }
+          return effective;
+        }) });
       });
     }
     // Which quote a converted line draws against. An invoice can gather lines
@@ -1506,19 +1508,13 @@
       });
       // Remove item from draft
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.filter(function(i) { return i.id !== itemId; }) });
-        })});
+        return Object.assign({}, d, { sections: S.removeItem(d.sections, secId, itemId) });
       });
     }
     function addItemToSection(secId, item) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.concat([item]) });
-        })});
+        return Object.assign({}, d, { sections: S.addItem(d.sections, secId, item) });
       });
     }
     function addSection() {
@@ -1530,13 +1526,13 @@
     function updateSectionLabel(secId, label) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) { return s.id === secId ? Object.assign({}, s, { label: label }) : s; }) });
+        return Object.assign({}, d, { sections: S.patchSection(d.sections, secId, { label: label }) });
       });
     }
     function deleteSection(secId) {
       if (!isDraft) return;
       if (draft.sections.length <= 1) { showAlert("Cannot Delete", "Invoice must have at least one section."); return; }
-      setDraft(function(d) { return Object.assign({}, d, { sections: d.sections.filter(function(s) { return s.id !== secId; }) }); });
+      setDraft(function(d) { return Object.assign({}, d, { sections: S.removeSection(d.sections, secId) }); });
     }
 
     // Single-step section reorder — swap a section with its neighbour. Drives
@@ -1545,13 +1541,8 @@
     function moveSection(secId, dir) {
       if (!isDraft) return;
       setDraft(function(d) {
-        var secs = d.sections.slice();
-        var idx = secs.findIndex(function(s) { return s.id === secId; });
-        if (idx === -1) return d;
-        var target = idx + dir;
-        if (target < 0 || target >= secs.length) return d;
-        var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
-        return Object.assign({}, d, { sections: secs });
+        var secs = S.nudgeSection(d.sections, secId, dir);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -1559,16 +1550,7 @@
     function moveItem(secId, itemId, dir) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          var items = s.items.slice();
-          var idx = items.findIndex(function(i) { return i.id === itemId; });
-          var to = idx + dir;
-          if (idx === -1 || to < 0 || to >= items.length) return s;
-          var moved = items.splice(idx, 1)[0];
-          items.splice(to, 0, moved);
-          return Object.assign({}, s, { items: items });
-        }) });
+        return Object.assign({}, d, { sections: S.nudgeItem(d.sections, secId, itemId, dir) });
       });
     }
 

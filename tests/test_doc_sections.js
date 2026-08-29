@@ -168,6 +168,122 @@ ok("D19 null move is safe", APPLY(original, null) === original);
 eq("D20 a section with no items array does not throw",
    APPLY([{ id: "A" }], { kind: "item", id: "x", fromZone: "A", toZone: "A" }).length, 1);
 
+// ── window.LTP_SECTIONS — the builders' pure draft transforms ──────────────
+// Six array surgeries that lived twice, once in each 1,700/1,900-line builder
+// closure, wrapped in six different sets of policy. The policy stayed in the
+// builders; only these moved, which is what makes them testable at all.
+//
+// The contract every one of them keeps: return a NEW sections array when
+// something changed, the SAME reference when nothing did, and never mutate the
+// input. The builders rely on the same-reference case in moveSection to leave
+// the draft object untouched.
+const S = window.LTP_SECTIONS;
+ok("E0 LTP_SECTIONS is exported", S && typeof S === "object");
+["patchSection", "removeSection", "addItem", "patchItem", "removeItem", "nudgeItem", "nudgeSection"]
+  .forEach(function (k) { ok("E0." + k + " exists", typeof S[k] === "function"); });
+
+function secs() {
+  return [
+    { id: "A", label: "Audio", customDates: false, items: [{ id: "a1", qty: 1 }, { id: "a2", qty: 2 }, { id: "a3", qty: 3 }] },
+    { id: "B", label: "Grip", customDates: false, items: [{ id: "b1", qty: 1 }] },
+  ];
+}
+const snapshot = JSON.stringify(secs());
+function unchangedInput(fn) {
+  const input = secs();
+  fn(input);
+  return JSON.stringify(input) === snapshot;
+}
+
+// patchSection
+eq("E1 patchSection merges into the named section",
+   S.patchSection(secs(), "A", { label: "Sound" }).map((x) => x.label), ["Sound", "Grip"]);
+eq("E2 patchSection leaves other sections alone",
+   S.patchSection(secs(), "A", { label: "Sound" })[1], secs()[1]);
+ok("E3 patchSection returns the SAME array for an unknown id",
+   S.patchSection(secs(), "zzz", { label: "x" }) !== null
+   && (function () { const i = secs(); return S.patchSection(i, "zzz", { label: "x" }) === i; })());
+ok("E4 patchSection does not mutate its input", unchangedInput((i) => S.patchSection(i, "A", { label: "X" })));
+
+// removeSection
+eq("E5 removeSection drops the named section",
+   S.removeSection(secs(), "A").map((x) => x.id), ["B"]);
+ok("E6 removeSection returns the SAME array for an unknown id",
+   (function () { const i = secs(); return S.removeSection(i, "zzz") === i; })());
+ok("E7 removeSection does not mutate its input", unchangedInput((i) => S.removeSection(i, "A")));
+
+// addItem
+eq("E8 addItem appends to the named section",
+   S.addItem(secs(), "B", { id: "b2", qty: 9 })[1].items.map((i) => i.id), ["b1", "b2"]);
+ok("E9 addItem returns the SAME array for an unknown section",
+   (function () { const i = secs(); return S.addItem(i, "zzz", { id: "x" }) === i; })());
+ok("E10 addItem does not mutate its input", unchangedInput((i) => S.addItem(i, "A", { id: "new" })));
+eq("E11 addItem into an empty section works",
+   S.addItem([{ id: "C", items: [] }], "C", { id: "c1" })[0].items.map((i) => i.id), ["c1"]);
+
+// patchItem — object form and function form
+eq("E12 patchItem merges an object patch",
+   S.patchItem(secs(), "A", "a2", { qty: 99 })[0].items[1].qty, 99);
+eq("E13 patchItem accepts a function patch and sees the existing item",
+   S.patchItem(secs(), "A", "a2", (it) => ({ qty: it.qty * 10 }))[0].items[1].qty, 20);
+ok("E14 patchItem returns the SAME array for an unknown item",
+   (function () { const i = secs(); return S.patchItem(i, "A", "zzz", { qty: 1 }) === i; })());
+ok("E15 patchItem returns the SAME array for an unknown section",
+   (function () { const i = secs(); return S.patchItem(i, "zzz", "a1", { qty: 1 }) === i; })());
+ok("E16 patchItem does not mutate its input", unchangedInput((i) => S.patchItem(i, "A", "a1", { qty: 5 })));
+eq("E17 patchItem leaves sibling items untouched",
+   S.patchItem(secs(), "A", "a2", { qty: 99 })[0].items.map((i) => i.qty), [1, 99, 3]);
+
+// removeItem
+eq("E18 removeItem drops the named item",
+   S.removeItem(secs(), "A", "a2")[0].items.map((i) => i.id), ["a1", "a3"]);
+ok("E19 removeItem returns the SAME array for an unknown item",
+   (function () { const i = secs(); return S.removeItem(i, "A", "zzz") === i; })());
+ok("E20 removeItem does not mutate its input", unchangedInput((i) => S.removeItem(i, "A", "a1")));
+
+// nudgeItem
+eq("E21 nudgeItem moves an item down", S.nudgeItem(secs(), "A", "a1", 1)[0].items.map((i) => i.id), ["a2", "a1", "a3"]);
+eq("E22 nudgeItem moves an item up", S.nudgeItem(secs(), "A", "a3", -1)[0].items.map((i) => i.id), ["a1", "a3", "a2"]);
+ok("E23 nudgeItem past the top is a no-op (SAME array)",
+   (function () { const i = secs(); return S.nudgeItem(i, "A", "a1", -1) === i; })());
+ok("E24 nudgeItem past the bottom is a no-op (SAME array)",
+   (function () { const i = secs(); return S.nudgeItem(i, "A", "a3", 1) === i; })());
+ok("E25 nudgeItem on an unknown item is a no-op",
+   (function () { const i = secs(); return S.nudgeItem(i, "A", "zzz", 1) === i; })());
+ok("E26 nudgeItem does not mutate its input", unchangedInput((i) => S.nudgeItem(i, "A", "a1", 1)));
+
+// nudgeSection — moves a section one place. Implemented as a swap with the
+// neighbour; note that for a SINGLE step a swap and a remove-then-insert are
+// indistinguishable (verified by mutation — replacing the swap with a splice
+// changes nothing), so no assertion here can or should distinguish them. They
+// would diverge only for |dir| > 1, which this function never takes.
+eq("E27 nudgeSection swaps with the next section",
+   S.nudgeSection(secs(), "A", 1).map((x) => x.id), ["B", "A"]);
+eq("E28 nudgeSection swaps with the previous section",
+   S.nudgeSection(secs(), "B", -1).map((x) => x.id), ["B", "A"]);
+ok("E29 nudgeSection past either end is a no-op (SAME array)",
+   (function () { const i = secs(); return S.nudgeSection(i, "A", -1) === i && S.nudgeSection(i, "B", 1) === i; })());
+ok("E30 nudgeSection on an unknown id is a no-op",
+   (function () { const i = secs(); return S.nudgeSection(i, "zzz", 1) === i; })());
+ok("E31 nudgeSection does not mutate its input", unchangedInput((i) => S.nudgeSection(i, "A", 1)));
+eq("E32 nudgeSection moves the middle of three down one place",
+   S.nudgeSection([{ id: "A" }, { id: "B" }, { id: "C" }], "B", 1).map((x) => x.id), ["A", "C", "B"]);
+eq("E32b nudgeSection moves the middle of three up one place",
+   S.nudgeSection([{ id: "A" }, { id: "B" }, { id: "C" }], "B", -1).map((x) => x.id), ["B", "A", "C"]);
+eq("E32c nudgeSection leaves the untouched sections in order",
+   S.nudgeSection([{ id: "A" }, { id: "B" }, { id: "C" }, { id: "D" }], "C", 1).map((x) => x.id),
+   ["A", "B", "D", "C"]);
+
+// Defensive: the builders can call these while a draft is still settling.
+["patchSection", "removeSection", "addItem", "patchItem", "removeItem", "nudgeItem", "nudgeSection"]
+  .forEach(function (k) {
+    ok("E33." + k + " tolerates null sections", S[k](null, "A", "x", 1) === null);
+  });
+eq("E34 a section with no items array does not throw",
+   S.addItem([{ id: "A" }], "A", { id: "x" })[0].items.map((i) => i.id), ["x"]);
+eq("E35 patchItem on a section with no items array does not throw",
+   S.patchItem([{ id: "A" }], "A", "x", { qty: 1 }).length, 1);
+
 console.log("doc-sections suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

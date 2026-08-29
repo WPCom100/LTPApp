@@ -275,6 +275,122 @@ window.LTP_displayStatus = function(inv) {
 // Note this is section-level and deliberately simpler than LTP_QUOTE_TOTALS /
 // LTP_INVOICE_TOTALS below: no global discount, no tax, no payments. A section
 // subtotal is the sum of its lines at the effective price, full stop.
+// ── Section / line-item transforms ─────────────────────────────────────────
+// The pure half of the quote and invoice builders' draft mutators. Each takes
+// a sections array and returns a NEW one, or the SAME reference when nothing
+// changed, so a caller can leave its draft object untouched.
+//
+// The builders' mutators were the same six transforms wrapped in six different
+// sets of policy — invoices refuse every edit unless the invoice is a draft,
+// clamp linkedQty on items that came from a quote, stash a rollback before
+// deleting one, and refuse to delete the last section; quotes ask for
+// confirmation before deleting a section and route operational edits
+// (deliveredQty / invoicedQty) through a setter that does not mark the
+// document dirty. That policy stays in each builder, where it belongs and
+// where it is legible. Only the array surgery moved here, where it can be
+// tested.
+//
+// NOTE ON no-ops: callers still invoke setDraft unconditionally and return the
+// draft unchanged when the transform returns the same reference. That is
+// deliberate — setDraft also flips the unsaved-changes flag, so skipping it
+// would quietly change when a document counts as dirty. Same contract as
+// LTP_applySortMove below.
+window.LTP_SECTIONS = {
+  // Merge `patch` into one section.
+  patchSection: function(sections, secId, patch) {
+    if (!sections) return sections;
+    var hit = false;
+    var out = sections.map(function(s) {
+      if (s.id !== secId) return s;
+      hit = true;
+      return Object.assign({}, s, patch);
+    });
+    return hit ? out : sections;
+  },
+
+  // Drop one section.
+  removeSection: function(sections, secId) {
+    if (!sections) return sections;
+    var out = sections.filter(function(s) { return s.id !== secId; });
+    return out.length === sections.length ? sections : out;
+  },
+
+  // Append one item to a section.
+  addItem: function(sections, secId, item) {
+    if (!sections) return sections;
+    var hit = false;
+    var out = sections.map(function(s) {
+      if (s.id !== secId) return s;
+      hit = true;
+      return Object.assign({}, s, { items: (s.items || []).concat([item]) });
+    });
+    return hit ? out : sections;
+  },
+
+  // Merge into one item. `patch` may be a function (existingItem) -> patch,
+  // which is how the invoice builder clamps linkedQty against the quote it
+  // came from without this module needing to know that rule exists.
+  patchItem: function(sections, secId, itemId, patch) {
+    if (!sections) return sections;
+    var hit = false;
+    var out = sections.map(function(s) {
+      if (s.id !== secId) return s;
+      return Object.assign({}, s, { items: (s.items || []).map(function(i) {
+        if (i.id !== itemId) return i;
+        hit = true;
+        return Object.assign({}, i, typeof patch === "function" ? patch(i) : patch);
+      }) });
+    });
+    return hit ? out : sections;
+  },
+
+  // Drop one item.
+  removeItem: function(sections, secId, itemId) {
+    if (!sections) return sections;
+    var hit = false;
+    var out = sections.map(function(s) {
+      if (s.id !== secId) return s;
+      var items = (s.items || []).filter(function(i) { return i.id !== itemId; });
+      if (items.length === (s.items || []).length) return s;
+      hit = true;
+      return Object.assign({}, s, { items: items });
+    });
+    return hit ? out : sections;
+  },
+
+  // Single-step reorder within a section (dir -1 up, +1 down). Drives the
+  // mobile up/down buttons and the arrow keys on a focused grab handle.
+  nudgeItem: function(sections, secId, itemId, dir) {
+    if (!sections) return sections;
+    var hit = false;
+    var out = sections.map(function(s) {
+      if (s.id !== secId) return s;
+      var items = (s.items || []).slice();
+      var idx = items.findIndex(function(i) { return i.id === itemId; });
+      var to = idx + dir;
+      if (idx === -1 || to < 0 || to >= items.length) return s;
+      var moved = items.splice(idx, 1)[0];
+      items.splice(to, 0, moved);
+      hit = true;
+      return Object.assign({}, s, { items: items });
+    });
+    return hit ? out : sections;
+  },
+
+  // Single-step reorder of a whole section. Swaps with its neighbour rather
+  // than splicing, which is what the builders did.
+  nudgeSection: function(sections, secId, dir) {
+    if (!sections) return sections;
+    var secs = sections.slice();
+    var idx = secs.findIndex(function(s) { return s.id === secId; });
+    if (idx === -1) return sections;
+    var target = idx + dir;
+    if (target < 0 || target >= secs.length) return sections;
+    var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
+    return secs;
+  },
+};
+
 // Apply one drag-reorder move to a document's sections. Pure: returns a NEW
 // sections array, or the SAME reference when the move is a no-op, so a caller
 // can skip the state update entirely.
