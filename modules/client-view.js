@@ -413,12 +413,12 @@
     var subState = useState(false); var submitting = subState[0], setSubmitting = subState[1];
     var fErrState = useState(null); var formErr = fErrState[0], setFormErr = fErrState[1];
     var mqState = useState(false); var isMobile = mqState[0], setIsMobile = mqState[1];
-    var stState = useState(false); var stale = stState[0], setStale = stState[1];
     var actionRef = useRef(null);
-    // The version of the document as it was handed to us. A client can sit on a
-    // quote for an hour while it is re-priced underneath them, and without this
-    // the first they would know is accepting terms they never read.
-    var verRef = useRef(null);
+    // A client can sit on a quote for an hour while it is re-priced underneath
+    // them, and without this the first they would know is accepting terms they
+    // never read. See LTP_useDocFreshness in components/domain-util.js.
+    var stale = window.LTP_useDocFreshness(
+      token ? "/api/view/" + token + "/version" : null, data && data._v);
 
     function _buildTrackingQs() {
       // Build a query string carrying the tracking token (if any) AND
@@ -442,71 +442,11 @@
           if (!r.ok) throw new Error("Server returned " + r.status);
           return r.json();
         })
-        .then(function(d) {
-          setData(d);
-          setLoadErr(null);
-          // Whatever we just rendered is, by definition, current.
-          verRef.current = d && d._v;
-          setStale(false);
-        })
+        .then(function(d) { setData(d); setLoadErr(null); })
         .catch(function(e) { setLoadErr(String(e.message || e)); });
     }
 
     useEffect(reload, [token]);
-
-    // ── Has this document moved since we rendered it? ────────────────────────
-    //
-    // This page has no session, so none of the app's live sync reaches it —
-    // there is nothing to hold a stream open for an anonymous reader, and it
-    // would be the wrong thing to open for one anyway. A poll of one small
-    // endpoint is enough: a client reading a quote does not need sub-second
-    // news, they need to not be looking at last week's price.
-    //
-    // Paused while the tab is hidden and checked the moment it comes back,
-    // because the case this exists for IS the tab left open in the background.
-    useEffect(function() {
-      if (!token) return undefined;
-      var POLL_MS = 60000;
-      var timer = null;
-      var cancelled = false;
-
-      function check() {
-        if (cancelled) return;
-        fetch("/api/view/" + token + "/version")
-          .then(function(r) { return r.ok ? r.json() : null; })
-          .then(function(v) {
-            if (cancelled || !v) return;
-            // The shell half: a public tab has no feed to hear a deploy on, so
-            // it raises the same event the signed-in app does and
-            // components/register-sw.js takes it from there.
-            if (v.app) {
-              try {
-                window.dispatchEvent(new CustomEvent("ltp-app-version", { detail: { version: v.app } }));
-              } catch (e) { /* CustomEvent unsupported */ }
-            }
-            // Before the first load lands there is nothing to compare against.
-            if (!verRef.current || !v.doc) return;
-            if (v.doc !== verRef.current) setStale(true);
-          })
-          .catch(function() { /* offline or a blip — the next tick retries */ });
-      }
-
-      function tick() {
-        if (!document.hidden) check();
-        timer = setTimeout(tick, POLL_MS);
-      }
-      function onVisible() { if (!document.hidden) check(); }
-
-      timer = setTimeout(tick, POLL_MS);
-      document.addEventListener("visibilitychange", onVisible);
-      window.addEventListener("focus", onVisible);
-      return function() {
-        cancelled = true;
-        if (timer) clearTimeout(timer);
-        document.removeEventListener("visibilitychange", onVisible);
-        window.removeEventListener("focus", onVisible);
-      };
-    }, [token]);
 
     // Inject the micro-interaction stylesheet once.
     useEffect(injectStyle, []);
@@ -549,6 +489,39 @@
           h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } }, "This document isn't available"),
           h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 8, lineHeight: 1.5 } }, loadErr),
           h("div", { style: { marginTop: 32, display: "flex", justifyContent: "center", opacity: 0.9 } },
+            mastheadFailed
+              ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
+              : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
+    }
+
+    // ── It changed while they were reading it ────────────────────────────────
+    //
+    // The whole page, not a strip above it. What is underneath is a price and a
+    // set of terms that are no longer the ones on offer, and leaving them on
+    // screen with a note above invites exactly the mistake this is here to stop
+    // — someone accepting figures that have been superseded. Nothing is
+    // reloaded automatically: taking the page away mid-signature would be its
+    // own kind of rude, so the refresh is theirs to press.
+    if (stale) {
+      var whatKind = data.kind === "quote" ? "quote" : "invoice";
+      return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
+        h("div", { style: { maxWidth: 460, textAlign: "center" } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE } }, "Updated"),
+          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } },
+            "This " + whatKind + " has changed"),
+          h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
+            "It was updated while this page was open, so what you were looking at is out of date. " +
+            "Refresh to see the current " + whatKind + "."),
+          h("button", {
+            type: "button",
+            onClick: reload,
+            style: {
+              marginTop: 24, minHeight: 46, padding: "0 26px",
+              background: GRAD_BTN, color: BTN_INK, border: "none", borderRadius: 10,
+              fontFamily: "inherit", fontSize: "14px", fontWeight: 800, cursor: "pointer",
+            }
+          }, "Refresh"),
+          h("div", { style: { marginTop: 36, display: "flex", justifyContent: "center", opacity: 0.9 } },
             mastheadFailed
               ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
               : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
@@ -835,27 +808,6 @@
       // Preview banner
       isPreview && h("div", { style: { background: ORANGE, color: BTN_INK, padding: "8px 20px", fontSize: "12px", fontWeight: 700, textAlign: "center", letterSpacing: "0.05em" } },
         "PREVIEW MODE — Accept and Decline are disabled. Remove ?preview=1 to use the real client view."),
-
-      // This document changed while they were reading it. Offered, not forced:
-      // reloading out from under someone half-way through signing would be its
-      // own kind of rude, and the point is only that they should not accept
-      // figures they have not seen.
-      stale && h("div", { style: {
-        background: ORANGE, color: BTN_INK, padding: "10px 20px",
-        display: "flex", alignItems: "center", justifyContent: "center",
-        gap: 14, flexWrap: "wrap", textAlign: "center",
-      } },
-        h("span", { style: { fontSize: "13px", fontWeight: 700, lineHeight: 1.4 } },
-          "This " + (kind === "quote" ? "quote" : "invoice") + " has been updated since you opened it."),
-        h("button", {
-          type: "button",
-          onClick: reload,
-          style: {
-            background: BTN_INK, color: "#FFFFFF", border: "none",
-            borderRadius: 8, padding: "0 18px", minHeight: 40,
-            fontFamily: "inherit", fontSize: "13px", fontWeight: 700, cursor: "pointer",
-          }
-        }, "Refresh")),
 
       h("div", { style: { maxWidth: 820, margin: "0 auto", padding: pad } },
         // Masthead hero + brand rule (same lockup as the crew call sheet)

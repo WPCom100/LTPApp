@@ -112,7 +112,13 @@
 // topbar so the two bottom rules meet as one line (app.js). The lockup PNG
 // joins the precache below — it is shell chrome now, on screen everywhere, and
 // runtime caching alone would show the chip fallback on a cold offline launch.
-var CACHE_VERSION = 'ltp-shell-v69';
+// v70: both public share views replace the whole page when their document
+// changes underneath the reader — a client on a re-priced quote, a crew member
+// on a retimed call — instead of leaving the superseded figures on screen under
+// a banner. modules/client-view.js and modules/crew-view.js render it,
+// components/domain-util.js polls for it (LTP_useDocFreshness). Precached, and
+// a stale shell here means a client reading a price that is no longer offered.
+var CACHE_VERSION = 'ltp-shell-v70';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
