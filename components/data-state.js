@@ -266,7 +266,7 @@
   // in-flight edit. A row changed on BOTH sides keeps the local edit here and
   // resolves on write, where If-Match turns it into a visible 409 rather than a
   // silent overwrite.
-  function mergeRemote(base, local, server) {
+  function mergeRemote(base, local, server, removedOut) {
     var baseById = indexById(base);
     var localById = indexById(local);
     var out = (server || []).slice();
@@ -277,8 +277,17 @@
       var mine = localById[id];
       var wasBase = baseById[id];
       if (wasBase !== undefined && same(wasBase, mine)) return;   // untouched locally
-      if (at[id] !== undefined) out[at[id]] = mine;                // locally edited
-      else out.push(mine);                                        // locally created
+      if (at[id] !== undefined) { out[at[id]] = mine; return; }    // locally edited
+      if (baseById[id] !== undefined) {
+        // We edited it; someone else DELETED it. Keeping our copy would not
+        // just show a stale row — the next diff would see it as new and POST it
+        // back, undoing their delete behind their back. A delete is the more
+        // destructive intent and the harder one to notice was reverted, so it
+        // wins; the caller says so rather than letting the row vanish silently.
+        if (removedOut) removedOut.push(id);
+        return;
+      }
+      out.push(mine);                                              // locally created
     });
 
     // Deleted locally but not yet synced — keep it deleted rather than letting
@@ -606,7 +615,17 @@
             }
             if (!Array.isArray(fetched.rows)) return;
             revsRef.current = Object.assign({}, revsRef.current, fetched.revs);
-            var next = mergeRemote(prevSyncedRef.current, latestValueRef.current, fetched.rows);
+            var removed = [];
+            var next = mergeRemote(prevSyncedRef.current, latestValueRef.current,
+                                   fetched.rows, removed);
+            if (removed.length && window.LTP_toast) {
+              window.LTP_toast("Deleted in another window", {
+                message: removed.length === 1
+                  ? "A record you were editing was deleted elsewhere, so your changes to it were dropped."
+                  : removed.length + " records you were editing were deleted elsewhere, so your changes to them were dropped.",
+                variant: "warn",
+              });
+            }
             // Baseline becomes what the SERVER actually holds, so the next diff
             // re-sends exactly the local edits the merge preserved — no more,
             // no less.

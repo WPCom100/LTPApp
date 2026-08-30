@@ -211,14 +211,36 @@ const M = S._mergeRemote;
   eq("M7 server ordering is preserved", M([], [], server), server);
 }
 
-eq("M8 empty everything is empty", M([], [], []), []);
-eq("M9 null inputs are tolerated", M(null, null, null), []);
+{
+  // Edited here, DELETED there. Keeping the local copy would not just show a
+  // stale row — the next diff would treat it as new and POST it back, undoing
+  // someone else's delete behind their back.
+  const base   = [{ id: 1, name: "A" }, { id: 2, name: "B" }];
+  const local  = [{ id: 1, name: "A" }, { id: 2, name: "B edited here" }];
+  const server = [{ id: 1, name: "A" }];
+  const removed = [];
+  eq("M8 a remote delete beats a local edit rather than resurrecting the row",
+     M(base, local, server, removed), [{ id: 1, name: "A" }]);
+  eq("M9 and the dropped row is reported so the user can be told", removed, ["2"]);
+}
+
+{
+  // A locally-CREATED row must still survive — it was never on the server, so
+  // its absence there is not a delete.
+  const removed = [];
+  eq("M10 a locally-created row is not mistaken for a remote delete",
+     M([], [{ id: 9, name: "New here" }], [], removed), [{ id: 9, name: "New here" }]);
+  eq("M11 and nothing is reported dropped", removed, []);
+}
+
+eq("M12 empty everything is empty", M([], [], []), []);
+eq("M13 null inputs are tolerated", M(null, null, null), []);
 
 {
   // Rows without ids (defensive — nothing in the app stores them, but a merge
   // must not crash if one appears).
   const server = [{ id: 1, name: "A" }, { name: "no id" }];
-  eq("M10 id-less server rows pass through", M([], [], server), server);
+  eq("M14 id-less server rows pass through", M([], [], server), server);
 }
 
 // ── Settings merge ──────────────────────────────────────────────────────────

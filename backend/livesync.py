@@ -163,6 +163,10 @@ _QUEUE_MAXSIZE = 8
 _subscribers: set[asyncio.Queue] = set()
 _stamps: dict[str, str] = {}
 _seq = 0
+# When a polling client last asked. Streams are visible in _subscribers; pollers
+# are not, and they need the sweep just as much — more, in fact. See
+# note_watcher().
+_last_poll = 0.0
 
 
 def _models():
@@ -248,6 +252,37 @@ async def ensure_seeded(db) -> dict:
 def current_map() -> dict:
     """The cached stamp map without touching the database."""
     return dict(_stamps)
+
+
+def note_watcher() -> None:
+    """Record that somebody is watching WITHOUT holding a stream open.
+
+    GET /api/versions answers from the cached map, and the only thing that
+    refreshes that cache for a writer which bypasses get_db (the QuickBooks
+    pollers) is the sweep. Gating the sweep on _subscribers alone therefore left
+    a hole: a window that fell back to polling — SSE blocked by a proxy, or three
+    failed connects — would poll a stamp that could never move, and never learn
+    about a QuickBooks sync for as long as it stayed on the fallback.
+
+    So pollers register here, and the sweep treats a recent poll exactly like an
+    open stream. A genuinely unused deployment still sweeps nothing, which was
+    the point of gating it at all.
+    """
+    global _last_poll
+    _last_poll = time.monotonic()
+
+
+def anyone_watching(interval: float = SWEEP_SECONDS) -> bool:
+    """Is any window listening — by stream, or by having polled recently?
+
+    The poll grace is generous relative to the client's own cadence
+    (POLL_MS is 15s in components/live-sync.js) so that a hidden tab, which
+    deliberately pauses polling, does not switch the sweep off underneath a
+    sibling window that is still open.
+    """
+    if _subscribers:
+        return True
+    return (time.monotonic() - _last_poll) < max(interval * 3.0, 90.0)
 
 
 # ── Marking writes ──────────────────────────────────────────────────────────
@@ -358,11 +393,11 @@ async def sweeper(session_factory, interval: float = SWEEP_SECONDS) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            # Nobody connected — nobody to broadcast to. Skipping keeps an idle
-            # deployment genuinely idle (this is a small internal tool; it sits
-            # unused most nights and weekends) instead of running fifteen
+            # Nobody watching — by stream OR by recent poll. Skipping keeps an
+            # idle deployment genuinely idle (this is a small internal tool; it
+            # sits unused most nights and weekends) instead of running fifteen
             # aggregates a minute against the database forever.
-            if not _subscribers:
+            if not anyone_watching(interval):
                 continue
             async with session_factory() as db:
                 await sweep_once(db)
@@ -426,6 +461,8 @@ def now_ms() -> int:
 def _reset_for_tests() -> None:
     """Drop all cached state. Test-only — production has no reason to call it."""
     global _seq
+    global _last_poll
     _stamps.clear()
     _subscribers.clear()
     _seq = 0
+    _last_poll = 0.0

@@ -598,6 +598,10 @@ async def get_versions(db: AsyncSession = Depends(get_db)):
     after would let a write that lands between the two be lost forever: the
     client would hold pre-write rows alongside the post-write stamp and never
     refetch. Fetching in the other order costs at worst one redundant refetch."""
+    # A poller is a watcher too, even though it holds no stream. Without this the
+    # safety sweep would idle out underneath it and it would never see a write
+    # that bypassed get_db — see livesync.note_watcher.
+    livesync.note_watcher()
     return {"stamps": await livesync.ensure_seeded(db), "at": livesync.now_ms()}
 
 

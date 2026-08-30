@@ -523,6 +523,56 @@ def test_the_sweep_stays_idle_when_nobody_is_connected():
     assert busy_calls > 0, "the sweep must resume once a window is connected"
 
 
+def test_a_polling_window_keeps_the_sweep_alive():
+    """A window on the /api/versions fallback holds no stream, so it is invisible
+    in _subscribers — but it needs the sweep MORE than a streaming one, not less.
+
+    /api/versions answers from the cached stamp map, and the only thing that
+    refreshes that cache for a writer which bypasses get_db (the QuickBooks
+    pollers) is the sweep. Gating the sweep on streams alone meant a window that
+    fell back to polling would poll a stamp that could never move."""
+    from backend.database import async_session
+
+    opened = {"count": 0}
+
+    def counting_factory():
+        opened["count"] += 1
+        return async_session()
+
+    async def body():
+        livesync._reset_for_tests()
+        task = asyncio.ensure_future(livesync.sweeper(counting_factory, interval=0.05))
+        await asyncio.sleep(0.3)
+        idle_calls = opened["count"]
+
+        livesync.note_watcher()            # a poller asks — no stream involved
+        assert not livesync._subscribers, "this test must not rely on a stream"
+        await asyncio.sleep(0.3)
+        polling_calls = opened["count"]
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return idle_calls, polling_calls
+
+    idle_calls, polling_calls = _run(body())
+    assert idle_calls == 0, "still idle with nobody watching at all"
+    assert polling_calls > 0, \
+        "a recent poll must keep the sweep running, or a polling window never " \
+        "sees a write that bypassed get_db"
+
+
+def test_the_versions_endpoint_registers_the_caller_as_a_watcher():
+    client, tok = _setup()
+    livesync._last_poll = 0.0
+    assert not livesync.anyone_watching(), "nothing should be watching yet"
+    _stamps(client, tok)
+    assert livesync.anyone_watching(), \
+        "GET /api/versions must count as watching — see livesync.note_watcher"
+
+
 def test_stream_cleans_up_its_subscriber_on_disconnect():
     client, tok = _setup()
     before = livesync.subscriber_count()
@@ -601,6 +651,8 @@ def main():
         test_stream_recycles_itself_with_a_goodbye_frame,
         test_stream_does_not_recycle_early,
         test_the_sweep_stays_idle_when_nobody_is_connected,
+        test_a_polling_window_keeps_the_sweep_alive,
+        test_the_versions_endpoint_registers_the_caller_as_a_watcher,
         test_stream_cleans_up_its_subscriber_on_disconnect,
         test_broadcast_reaches_every_subscriber,
         test_a_full_queue_collapses_its_backlog_instead_of_dropping_the_subscriber,
