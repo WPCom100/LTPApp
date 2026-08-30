@@ -87,7 +87,10 @@
 // LTP_DATA_LIVE mirror it reads; a dozen editors across modules/ now call it.
 // theme.js is precached, so without a bump a device keeps a theme.js with no
 // such hook while its runtime-cached modules try to call one.
-var CACHE_VERSION = 'ltp-shell-v61';
+// v62: data-state.js — mergeRemote no longer resurrects a row deleted in another
+// window. Runtime-cached, so without a bump a device keeps the version that
+// POSTs the deleted row back.
+var CACHE_VERSION = 'ltp-shell-v62';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
