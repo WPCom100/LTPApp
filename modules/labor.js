@@ -240,6 +240,12 @@
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingCrew, setEditingCrew] = useState(null);
     var [crewDlg, setCrewDlg] = useState(null);
+    // editingCrew is a COPY of the contact, taken when the editor opened. If the
+    // real row moves in another window, say so — this form cannot re-seed itself
+    // mid-edit. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("contacts", editingCrew && editingCrew.id,
+      { title: "This crew member changed elsewhere",
+        message: "Another window updated them while this form was open. Saving will replace the newer version." });
     var [customRole, setCustomRole] = useState("");
     var crew = contacts.filter(function(c) { return c.isCrew; });
     var q = search.toLowerCase();
@@ -439,6 +445,17 @@
     // untouched (its ids/crew/status survive, and so do any crew requests).
     var editing = !!editProject;
     var editShift = editing ? ((editProject.schedule && editProject.schedule[0]) || {}) : {};
+    // Watch only the fields THIS modal owns. Roles and crew on the same internal
+    // project are managed from the Assignments tab, and a crew member accepting
+    // there must not look like someone editing this form's shift out from under
+    // it. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("projects", editProject && editProject.id,
+      { title: "This shift changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." },
+      function(p) {
+        var sh = (p.schedule && p.schedule[0]) || {};
+        return [p.name, p.startDate, p.venue, sh.title, sh.date, sh.time, sh.endTime, sh.notes];
+      });
     var [title, setTitle] = useState(editing ? (editProject.name || editShift.title || "") : "");
     var [date, setDate] = useState(editing ? (editShift.date || editProject.startDate || "") : todayISO());
     var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");

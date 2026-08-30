@@ -115,6 +115,16 @@
     var [text, setText] = useState(note.text);
     var [author, setAuthor] = useState(note.author);
     var [linkedMeetingId, setLinkedMeetingId] = useState(note.linkedMeetingId || null);
+    // Notes live inside the project row, so watch just THIS note — an unrelated
+    // change elsewhere in the project is not this editor's business. `pick`
+    // returning null means the note itself was deleted in another window, which
+    // is worth saying. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("projects", en.projectId,
+      { title: "This note changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." },
+      function(p) {
+        return (p.notes || []).find(function(x) { return x.id === en.noteId; }) || null;
+      });
     var meetings = project.meetings;
 
     return h(window.LTPModal, { title: "Edit Note", onClose: function() { ctx.setEditNote(null); }, disableBackdrop: true },

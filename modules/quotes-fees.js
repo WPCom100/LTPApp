@@ -42,6 +42,13 @@
   }
 
   function FeeForm({ initial, onSave, onCancel, onDelete, settings, qbo }) {
+    // The row this form is editing can change in another window while it sits
+    // open. Field state was seeded when it opened and cannot be safely
+    // re-seeded underneath the user, so say so rather than let Save quietly
+    // overwrite the newer version. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("fees", initial && initial.id,
+      { title: "This fee changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." });
     var [name,      setName]      = useState(initial ? initial.name      : "");
     var [category,  setCategory]  = useState(initial ? (initial.category || "") : "Travel");
     var [unit,      setUnit]      = useState(initial ? (initial.unit || "flat") : "flat");

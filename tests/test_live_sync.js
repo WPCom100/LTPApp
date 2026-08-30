@@ -379,6 +379,97 @@ function scenario() {
   ok("H16 an unserializable record is survived, not thrown", !threw);
 }
 
+// ── Watching a row from a field-per-useState form (LTP_useRecordWatch) ──────
+//
+// The ~dozen modal editors seed one useState per field from a row. They cannot
+// adopt a newer version mid-edit, so they warn — and If-Match will not catch
+// them, because live sync refreshes the row's revision underneath a form that
+// is still holding values from before it.
+
+function watchScenario(collection, id, pick) {
+  const state = { toasts: [] };
+  window.LTP_toast = (title) => state.toasts.push(title);
+  const render = mountHook(() => {
+    window.LTP_useRecordWatch(collection, id, { title: "Changed elsewhere", message: "m" }, pick);
+  });
+  return { state, render };
+}
+
+{
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }, { id: 2, name: "Other" }] };
+  const { state, render } = watchScenario("companies", 1);
+  render();
+  eq("W1 finding the row is not itself a change", state.toasts, []);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme Renamed" }, { id: 2, name: "Other" }];
+  render();
+  eq("W2 a change to the watched row warns", state.toasts.length, 1);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme Renamed" }, { id: 2, name: "Other Renamed" }];
+  render();
+  eq("W3 a change to a DIFFERENT row does not", state.toasts.length, 1);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme Third Time" }, { id: 2, name: "Other Renamed" }];
+  render();
+  eq("W4 it warns once per open, not once per change", state.toasts.length, 1);
+}
+
+{
+  // Creating a new record: there is no row to watch and nothing to warn about.
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }] };
+  const { state, render } = watchScenario("companies", undefined);
+  render();
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme Renamed" }];
+  render();
+  eq("W5 a create form watches nothing", state.toasts, []);
+}
+
+{
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }] };
+  const { state, render } = watchScenario("companies", 1);
+  render();
+  window.LTP_DATA_LIVE.companies = [];              // deleted in another window
+  render();
+  eq("W6 the row being deleted elsewhere warns too", state.toasts.length, 1);
+}
+
+{
+  // A note lives inside a project row. Editing one note must not be woken by an
+  // unrelated change to the same project.
+  const pick = (p) => (p.notes || []).find((n) => n.id === "n1") || null;
+  window.LTP_DATA_LIVE = { projects: [{ id: 7, name: "Gala", notes: [{ id: "n1", text: "a" }] }] };
+  const { state, render } = watchScenario("projects", 7, pick);
+  render();
+
+  window.LTP_DATA_LIVE.projects = [{ id: 7, name: "Gala RENAMED", notes: [{ id: "n1", text: "a" }] }];
+  render();
+  eq("W7 pick ignores changes outside the watched slice", state.toasts, []);
+
+  window.LTP_DATA_LIVE.projects = [{ id: 7, name: "Gala RENAMED", notes: [{ id: "n1", text: "edited elsewhere" }] }];
+  render();
+  eq("W8 but still catches a change inside it", state.toasts.length, 1);
+}
+
+{
+  // A singleton blob (settings) has no id — the whole object is the record.
+  window.LTP_DATA_LIVE = { settings: { theme: "dark" } };
+  const { state, render } = watchScenario("settings", null);
+  render();
+  window.LTP_DATA_LIVE.settings = { theme: "light" };
+  render();
+  eq("W9 a singleton collection is watched whole", state.toasts.length, 1);
+}
+
+{
+  // A collection that has not loaded yet must not crash the form.
+  window.LTP_DATA_LIVE = {};
+  const { state, render } = watchScenario("companies", 1);
+  let threw = false;
+  try { render(); render(); } catch (e) { threw = true; }
+  ok("W10 an unloaded collection is survived", !threw);
+  eq("W11 and warns about nothing", state.toasts, []);
+}
+
 // ── The unsaved-changes guard (theme.js::LTP_useUnsavedGuard) ───────────────
 //
 // router.navigate() decides whether to prompt "You have unsaved changes" purely

@@ -290,6 +290,13 @@
   window.CRMProjectForm = function({ ctx, initial, prefill, onSave, onClose, modalZIndex }) {
     var isMobile = window.LTP_useIsMobile();
     var seed = initial || prefill || {};
+    // The row this form is editing can change in another window while it sits
+    // open. Field state was seeded when it opened and cannot be safely
+    // re-seeded underneath the user, so say so rather than let Save quietly
+    // overwrite the newer version. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("projects", initial && initial.id,
+      { title: "This project changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." });
     var seedBudget = seed.budget || {};
     var [name, setName] = useState(seed.name || "");
     var [compId, setCompId] = useState(seed.companyId == null ? null : seed.companyId);
