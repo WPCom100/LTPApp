@@ -2098,21 +2098,33 @@
     var canExport = isAdmin && qbo && qbo.connected;
 
     // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
-    function savePayAdjustments(row, list) {
+    //
+    // Called once per added or removed item rather than once per modal session:
+    // an adjustment cannot be edited after the fact — you delete it and add
+    // another — so each one is a complete decision and there is nothing a Save
+    // button could still be waiting for. `what` names the single change, both
+    // for the toast and for the project's activity log, which is a better audit
+    // trail than one "2 items, net +$40" entry per visit.
+    function savePayAdjustments(row, list, what) {
       var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+      var who = crewLabel(row.crewId) + " \u00b7 " + fmt(row.date);
+      var netLabel = (net < 0 ? "\u2212" : "+") + fmtMoney(Math.abs(net));
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
           var updated = Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
-            message: "Pay adjustments: " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " +
-              (list.length ? (list.length + " item" + (list.length > 1 ? "s" : "") + ", net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))) : "cleared"),
-            changes: [{ cat: "Pay Adjusted", detail: crewLabel(row.crewId) + " " + fmt(row.date) + " net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) }] };
+            message: "Pay adjustments: " + who + " \u2014 " + what + " \u2192 " +
+              (list.length ? (list.length + " item" + (list.length > 1 ? "s" : "") + ", net " + netLabel) : "cleared"),
+            changes: [{ cat: "Pay Adjusted", detail: who + " " + what + " (net " + netLabel + ")" }] };
           return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
         });
       });
-      window.LTP_toast("Pay adjustments saved", { message: crewLabel(row.crewId) + " · " + fmt(row.date) + (list.length ? " — net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) : " — cleared"), variant: "success" });
+      window.LTP_toast(what, {
+        message: who + (list.length ? " \u2014 net " + netLabel : " \u2014 no adjustments left"),
+        variant: "success",
+      });
     }
 
     // The person's confirmed shifts on a row's day — the entries the adjust
@@ -2392,7 +2404,7 @@
                             canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
                             canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }); }, null,
+                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
@@ -2401,29 +2413,44 @@
       // before or after sign-off (independent of the worked-hours math).
       adjPayDlg && (function() {
         var d = adjPayDlg;
-        var net = Math.round(d.list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+        // Read the list LIVE rather than from a copy taken when the modal
+        // opened. Two things fall out of that. Another window adding or
+        // removing an adjustment simply appears here — there is no local draft
+        // for it to conflict with, so nothing to warn about and nothing to
+        // reconcile. And since every add and delete below writes immediately,
+        // what is on screen is always what is stored.
+        var adjProj = projects.find(function(x) { return x.id === d.row.projectId; });
+        var list = window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
+        var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
         var pendingAmt = parseFloat(d.amount);
         var canAdd = !isNaN(pendingAmt) && pendingAmt !== 0;
+        function adjLabel(a) {
+          return (a.amount < 0 ? "\u2212" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : "");
+        }
         function addItem() {
           if (!canAdd) return;
-          setAdjPayDlg(Object.assign({}, d, { list: d.list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]), label: "", amount: "" }));
+          var item = { id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(),
+                       addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") };
+          setAdjPayDlg(Object.assign({}, d, { label: "", amount: "" }));
+          savePayAdjustments(d.row, list.concat([item]), "Added " + adjLabel(item));
         }
-        function save() {
-          var list = d.list;
-          if (canAdd) list = list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]);
-          setAdjPayDlg(null);
-          savePayAdjustments(d.row, list);
+        function removeItem(a) {
+          // By id where there is one — the list is re-derived every render, so
+          // matching on object identity would depend on which render's closure
+          // fired. Items predating ids fall back to identity.
+          var without = list.filter(function(x) { return a.id ? x.id !== a.id : x !== a; });
+          savePayAdjustments(d.row, without, "Removed " + adjLabel(a));
         }
         return h(window.LTPModal, { title: "Pay adjustments — " + crewLabel(d.row.crewId) + " · " + fmt(d.row.date), onClose: function() { setAdjPayDlg(null); } },
           h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
-            "Extras or deductions on top of the day's pay — parking, gear rental, a bonus, an advance. Use a negative amount to deduct. These are payout-only and never billed to the client."),
-          d.list.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } },
-            d.list.map(function(a, ai) {
+            "Extras or deductions on top of the day's pay — parking, gear rental, a bonus, an advance. Use a negative amount to deduct. These are payout-only and never billed to the client. Each saves as you add or remove it; to change one, remove it and add it again."),
+          list.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } },
+            list.map(function(a, ai) {
               return h("div", { key: a.id || ai, style: { display: "flex", gap: 10, alignItems: "center", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 10px" } },
                 h("span", { style: { fontSize: "12px", fontWeight: 700, color: a.amount < 0 ? B.danger : B.success, width: 80 } }, (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount))),
                 h("span", { style: { flex: 1, fontSize: "11px", color: B.text } }, a.label || "—"),
                 a.addedBy && h("span", { style: { fontSize: "9px", color: B.textMut } }, a.addedBy + (a.addedAt ? " · " + fmt(a.addedAt) : "")),
-                h("button", { onClick: function() { setAdjPayDlg(Object.assign({}, d, { list: d.list.filter(function(x, xi) { return xi !== ai; }) })); },
+                h("button", { onClick: function() { removeItem(a); }, title: "Remove this adjustment",
                   style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "13px", padding: 0, lineHeight: 1 } }, "×"));
             })),
           h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14 } },
@@ -2435,9 +2462,10 @@
           h("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" } },
             h("span", { style: { fontSize: "12px", fontWeight: 700, color: net < 0 ? B.danger : B.accent } },
               "Net: " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h(window.Btn, { variant: "ghost", onClick: function() { setAdjPayDlg(null); } }, "Cancel"),
-              h(window.Btn, { onClick: save }, "Save"))));
+            // No Save. Each "+ Add" and each "×" has already been written, so a
+            // Save button could only imply something was still pending, and a
+            // Cancel would falsely promise to undo what is already stored.
+            h(window.Btn, { onClick: function() { setAdjPayDlg(null); } }, "Done")));
       })(),
 
       // No-show confirm

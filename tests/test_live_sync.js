@@ -47,6 +47,10 @@ global.CustomEvent = function () {};
 
 (0, eval)(fs.readFileSync(path.join(root, "components", "live-sync.js"), "utf8"));
 (0, eval)(fs.readFileSync(path.join(root, "components", "data-state.js"), "utf8"));
+// Loaded for its toast policy — the pure decisions about what expires, what
+// survives a navigation, and what gets evicted first. The React component in
+// the same file is never mounted here.
+(0, eval)(fs.readFileSync(path.join(root, "components", "error-toasts.js"), "utf8"));
 
 const LIVE = window.LTP_LIVE;
 const S = window.LTP_STATE;
@@ -555,6 +559,160 @@ function watchScenario(collection, id, pick) {
   try { render(); render(); } catch (e) { threw = true; }
   ok("W10 an unloaded collection is survived", !threw);
   eq("W11 and warns about nothing", state.toasts, []);
+}
+
+// ── Attributing a change: mine, or somebody else's? ─────────────────────────
+//
+// The warning is worded "changed elsewhere", and for a while it was not true:
+// the commonest way for a watched row to change is that the person watching it
+// just saved. Both arrive at the hook identically — new object, new content —
+// so the hook asks data-state, which publishes a counter it bumps only when IT
+// installs rows from a server response.
+
+function epochScenario(collection, id) {
+  const state = { toasts: [] };
+  window.LTP_toast = (title) => state.toasts.push(title);
+  const render = mountHook(() => {
+    window.LTP_useRecordWatch(collection, id, { title: "Changed elsewhere", message: "m" });
+  });
+  return { state, render };
+}
+const setEpoch = (c, n) => { window.LTP_DATA_REMOTE_EPOCH = Object.assign(
+  {}, window.LTP_DATA_REMOTE_EPOCH, { [c]: n }); };
+
+{
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }] };
+  setEpoch("companies", 4);
+  const { state, render } = epochScenario("companies", 1);
+  render();
+
+  // The person watching saves. The row changes; the epoch does not, because no
+  // server response installed it.
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme, By Me" }];
+  render();
+  eq("E1 your own save is not 'elsewhere'", state.toasts, []);
+
+  // Now the server really does hand back different rows.
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Acme, By Them" }];
+  setEpoch("companies", 5);
+  render();
+  eq("E2 a change the state layer took from the server warns", state.toasts.length, 1);
+}
+
+{
+  // Saving re-levels the form with the stored row, so the once-per-session gate
+  // reopens: the next genuine remote change is news again.
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }] };
+  setEpoch("companies", 1);
+  const { state, render } = epochScenario("companies", 1);
+  render();
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Theirs" }];
+  setEpoch("companies", 2);
+  render();
+  eq("E3 a remote change warns", state.toasts.length, 1);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Theirs Again" }];
+  setEpoch("companies", 3);
+  render();
+  eq("E4 a second remote change does not nag", state.toasts.length, 1);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Mine" }];   // the user saves
+  render();
+  eq("E5 and saving still says nothing", state.toasts.length, 1);
+
+  window.LTP_DATA_LIVE.companies = [{ id: 1, name: "Theirs Once More" }];
+  setEpoch("companies", 4);
+  render();
+  eq("E6 but a remote change AFTER a save is news again", state.toasts.length, 2);
+}
+
+{
+  // Fail loud. An epoch that is missing — a collection the state layer does not
+  // manage, or a watch mounted before it — must warn, never go quiet.
+  window.LTP_DATA_LIVE = { widgets: [{ id: 1, name: "Acme" }] };
+  window.LTP_DATA_REMOTE_EPOCH = {};
+  const { state, render } = epochScenario("widgets", 1);
+  render();
+  window.LTP_DATA_LIVE.widgets = [{ id: 1, name: "Changed" }];
+  render();
+  eq("E7 no published epoch falls back to warning", state.toasts.length, 1);
+}
+
+{
+  // Deletion is attributed the same way: dropping the row locally (the user
+  // deleted it here) is not the same event as it vanishing from a server fetch.
+  window.LTP_DATA_LIVE = { companies: [{ id: 1, name: "Acme" }] };
+  setEpoch("companies", 9);
+  const { state, render } = epochScenario("companies", 1);
+  render();
+  window.LTP_DATA_LIVE.companies = [];
+  setEpoch("companies", 10);
+  render();
+  eq("E8 a remote deletion still warns", state.toasts.length, 1);
+}
+
+// ── Toast policy (components/error-toasts.js) ───────────────────────────────
+//
+// A timed toast is right for "Quote sent" and wrong for "this changed in
+// another window": the reader it is written for is exactly the one likely to be
+// away from the desk when it lands, and what they do on returning is press Save.
+
+const P = window.LTP_TOAST_POLICY;
+ok("T0 the toast policy is exposed", !!P);
+
+{
+  eq("T1 an ordinary toast keeps its per-variant clock", P.dismissAfter({ variant: "warn" }), 9000);
+  eq("T2 an explicit duration still wins", P.dismissAfter({ variant: "warn", duration: 1234 }), 1234);
+  eq("T3 a sticky toast has no clock at all", P.dismissAfter({ variant: "warn", sticky: true }), null);
+  eq("T4 sticky beats an explicit duration", P.dismissAfter({ variant: "warn", duration: 50, sticky: true }), null);
+}
+
+{
+  const sticky = { sticky: true, path: "projects/7101/edit" };
+  ok("T5 a sticky toast survives while you stay on its page",
+     P.survivesNavigation(sticky, "projects/7101/edit"));
+  ok("T6 and is retired when you leave it",
+     !P.survivesNavigation(sticky, "projects/7101"));
+  ok("T7 a timed toast is never touched by navigation",
+     P.survivesNavigation({ variant: "warn" }, "anywhere/else"));
+}
+
+{
+  const a = { sticky: true, variant: "warn", title: "This project changed elsewhere", message: "m" };
+  const b = { sticky: true, variant: "warn", title: "This project changed elsewhere", message: "m" };
+  const c = { sticky: true, variant: "warn", title: "This quote changed elsewhere", message: "m" };
+  ok("T8 the same sticky warning does not stack", P.isDuplicate([a], b));
+  ok("T9 a different one still gets through", !P.isDuplicate([a], c));
+  ok("T10 timed toasts are never deduplicated",
+     !P.isDuplicate([{ variant: "warn", title: "x", message: "m" }],
+                    { variant: "warn", title: "x", message: "m" }));
+}
+
+{
+  // Over the cap, the unread warning is the last thing that should go.
+  const timed = (n) => ({ id: n, variant: "info", title: "t" + n });
+  const stuck = (n) => ({ id: n, sticky: true, variant: "warn", title: "s" + n });
+  const over = [stuck(1), timed(2), timed(3), timed(4), timed(5), timed(6)];
+  const r = P.evict(over);
+  eq("T11 eviction respects the cap", r.list.length, P.MAX_VISIBLE);
+  ok("T12 and drops a timed toast, not the sticky one",
+     r.list.some((t) => t.id === 1) && r.dropped.every((t) => !t.sticky));
+
+  const allSticky = [stuck(1), stuck(2), stuck(3), stuck(4), stuck(5), stuck(6)];
+  const r2 = P.evict(allSticky);
+  eq("T13 with nothing else to drop the oldest sticky goes", r2.list.length, P.MAX_VISIBLE);
+  eq("T14 and it is the oldest", r2.dropped.map((t) => t.id), [1]);
+
+  eq("T15 under the cap nothing is evicted", P.evict([stuck(1), timed(2)]).dropped, []);
+}
+
+{
+  const hash = (h) => { window.location = Object.assign({}, window.location, { hash: h }); };
+  hash("#/projects/7101/edit");
+  eq("T16 the route path drops the leading marker", P.routePath(), "projects/7101/edit");
+  hash("#/view/quote/abc?preview=1");
+  eq("T17 and ignores the query string", P.routePath(), "view/quote/abc");
 }
 
 // ── The unsaved-changes guard (theme.js::LTP_useUnsavedGuard) ───────────────

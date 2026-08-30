@@ -67,6 +67,11 @@
   // Every sync failure pushes onto a ring buffer so the user can inspect
   // recent failures from the console (window.LTP_API_ERRORS) without
   // hunting through DevTools' Network tab.
+  //
+  // `info.sticky` marks an entry whose toast must not time out. Reserved for
+  // divergence — a write the server refused, a row another window won — as
+  // opposed to a transient failure that will simply be retried. See the sticky
+  // note in components/error-toasts.js.
   if (!window.LTP_API_ERRORS) window.LTP_API_ERRORS = [];
   function recordError(label, info) {
     var entry = Object.assign({ at: new Date().toISOString(), label: label }, info || {});
@@ -434,6 +439,7 @@
                   status: 409,
                   conflict: "changes days already paid in QuickBooks — awaiting confirmation",
                   days: err.detail.days,
+                  sticky: true,         // a refused write, not a passing failure
                 });
                 try {
                   window.dispatchEvent(new CustomEvent("ltp-paid-day-conflict", {
@@ -457,6 +463,7 @@
                   status: 409,
                   conflict: "row changed in another window — server version adopted",
                   discardedLocalEdit: item,
+                  sticky: true,         // the user's edit lost; they must see it
                 });
                 return true;   // handled, not a failure
               }
@@ -569,6 +576,20 @@
     // — doing so would drop the rows the refresh just learned about, and the
     // next diff would try to re-create or re-delete them.
     var baselineEpochRef = useRef(0);
+    // Bumped immediately before every setValue that installs rows THE SERVER
+    // sent, and published at render time beside LTP_DATA_LIVE.
+    //
+    // This is how a watching form tells "someone else changed this row" from
+    // "I just saved this row". Nothing else can: by the time the row reaches
+    // the form both look identical — new object, new content — so a form that
+    // saved and stayed mounted for even one commit warned the person who did
+    // the saving that their own write had come from another window. Being
+    // wrong here is expensive twice over: the notice is alarming, and a warning
+    // people learn to wave away stops working on the day it is right.
+    //
+    // Bump it ONLY where a setValue actually follows, so the epoch this render
+    // publishes always matches the value it publishes.
+    var remoteEpochRef = useRef(0);
 
     latestValueRef.current = value;
 
@@ -580,6 +601,10 @@
     // not a second copy of it.
     if (!window.LTP_DATA_LIVE) window.LTP_DATA_LIVE = {};
     window.LTP_DATA_LIVE[key] = value;
+    // Read by theme.js::LTP_useRemoteEdits to attribute a change: same epoch as
+    // last render means this window caused it, so it is not "elsewhere".
+    if (!window.LTP_DATA_REMOTE_EPOCH) window.LTP_DATA_REMOTE_EPOCH = {};
+    window.LTP_DATA_REMOTE_EPOCH[key] = remoteEpochRef.current;
 
     // One-shot hydration on mount.
     //
@@ -636,6 +661,7 @@
             // the flag — and the user's next edit was then swallowed as if it
             // were server adoption, silently never syncing.
             skipNextSyncRef.current = true;   // adoption isn't a user change
+            remoteEpochRef.current += 1;       // these rows came from the server
             setValue(adopted);
           }
           if (fetched) stampRef.current = stampAtHydrate;
@@ -718,6 +744,7 @@
               prevSyncedRef.current = merged;
               baselineEpochRef.current += 1;
               skipNextSyncRef.current = true;
+              remoteEpochRef.current += 1;
               setValue(merged);
               return;
             }
@@ -748,6 +775,7 @@
                   ? "A record you were editing was deleted elsewhere, so your changes to it were dropped."
                   : removed.length + " records you were editing were deleted elsewhere, so your changes to them were dropped.",
                 variant: "warn",
+                sticky: true,           // work was lost; do not let it scroll by
               });
             }
             // Baseline becomes what the SERVER actually holds, so the next diff
@@ -758,6 +786,7 @@
             if (same(next, latestValueRef.current)) return;   // nothing to re-render
             // Deliberately NOT skipping the next sync: if the merge kept a
             // local edit, it still has to reach the server.
+            remoteEpochRef.current += 1;
             setValue(next);
           } catch (e) {
             recordError("refresh " + key, { error: String(e) });
@@ -824,6 +853,7 @@
                 return (row && row.id != null && byId[row.id]) ? stripRev(byId[row.id]) : row;
               });
             }
+            remoteEpochRef.current += 1;      // the winning rows are the server's
             setValue(applied);
             if (window.LTP_toast) {
               window.LTP_toast("Changed in another window", {
@@ -831,6 +861,7 @@
                   ? "One record was updated elsewhere while you were editing it. The newer version is now shown."
                   : lostIds.length + " records were updated elsewhere while you were editing them. The newer versions are now shown.",
                 variant: "warn",
+                sticky: true,           // an edit was replaced; do not let it scroll by
               });
             }
           } else if (res.ok && baselineIsOurs) {
