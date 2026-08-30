@@ -642,7 +642,13 @@ async def get_versions(db: AsyncSession = Depends(get_db)):
     # safety sweep would idle out underneath it and it would never see a write
     # that bypassed get_db — see livesync.note_watcher.
     livesync.note_watcher()
-    return {"stamps": await livesync.ensure_seeded(db), "at": livesync.now_ms()}
+    # `app` is the shell this process serves, so a window on the polling
+    # fallback learns about a deploy on the same terms as a streaming one.
+    return {
+        "stamps": await livesync.ensure_seeded(db),
+        "at": livesync.now_ms(),
+        "app": livesync.app_version(),
+    }
 
 
 # NOT mounted on `router`: that router carries a Depends(require_session) whose

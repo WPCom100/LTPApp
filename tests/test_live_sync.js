@@ -561,6 +561,54 @@ function watchScenario(collection, id, pick) {
   eq("W11 and warns about nothing", state.toasts, []);
 }
 
+// ── Which shell the server is serving ───────────────────────────────────────
+//
+// A tab already open could not find out a deploy had happened: the browser
+// re-checks a service worker on navigation and about once a day, so the "new
+// version" banner only appeared after a reload — you had to refresh to learn
+// that you needed to refresh. The version now rides the feed the window is
+// already listening to, and is announced only when it moves.
+
+{
+  const seen = [];
+  const prevDispatch = window.dispatchEvent;
+  window.dispatchEvent = function (e) {
+    if (e && e.type === "ltp-app-version") seen.push(e.detail && e.detail.version);
+    return true;
+  };
+  global.CustomEvent = function (type, init) {
+    this.type = type; this.detail = init && init.detail;
+  };
+
+  LIVE._reset();
+  eq("V1 nothing is known before a frame arrives", LIVE.appVersion(), null);
+
+  LIVE._noteAppVersion("ltp-shell-v66");
+  eq("V2 the first report is announced", seen, ["ltp-shell-v66"]);
+  eq("V3 and remembered", LIVE.appVersion(), "ltp-shell-v66");
+
+  LIVE._noteAppVersion("ltp-shell-v66");
+  LIVE._noteAppVersion("ltp-shell-v66");
+  eq("V4 every later frame repeats it, and repeats are not announced", seen.length, 1);
+
+  LIVE._noteAppVersion("ltp-shell-v67");
+  eq("V5 a deploy is announced once", seen, ["ltp-shell-v66", "ltp-shell-v67"]);
+  eq("V6 and becomes the known version", LIVE.appVersion(), "ltp-shell-v67");
+
+  // A server that cannot read its own sw.js reports "" — no opinion. Saying
+  // nothing beats nagging about an update we cannot name.
+  LIVE._noteAppVersion("");
+  LIVE._noteAppVersion(null);
+  LIVE._noteAppVersion(undefined);
+  LIVE._noteAppVersion(42);
+  eq("V7 an absent or malformed version is ignored", seen.length, 2);
+  eq("V8 and does not erase what we knew", LIVE.appVersion(), "ltp-shell-v67");
+
+  LIVE._reset();
+  eq("V9 a reset forgets it", LIVE.appVersion(), null);
+  window.dispatchEvent = prevDispatch;
+}
+
 // ── Attributing a change: mine, or somebody else's? ─────────────────────────
 //
 // The warning is worded "changed elsewhere", and for a while it was not true:

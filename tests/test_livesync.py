@@ -16,8 +16,10 @@ as a plain script it uses its own DATABASE_URL (the setdefault below).
 """
 import asyncio
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from cryptography.fernet import Fernet
 
@@ -145,6 +147,45 @@ def test_versions_covers_every_synced_collection():
     # easy to get wrong are worth pinning explicitly.
     assert "client-rates" in stamps, "hyphenated key must match the frontend state key"
     assert "crew-requests" in stamps, "the Labor tab needs crew-requests in the feed"
+
+
+# ── Which shell the server is serving ───────────────────────────────────────
+#
+# A tab already open could not find out that a deploy happened: the browser
+# re-checks a service worker on navigation and roughly once a day, so the "new
+# version" banner only appeared after a reload. You had to refresh to learn that
+# you needed to refresh. The version now rides the feed the window is already
+# listening to.
+
+
+def test_app_version_is_the_service_workers_cache_version():
+    """The one string the client compares against what it is running."""
+    livesync._reset_for_tests()
+    sw = (Path(__file__).resolve().parent.parent / "sw.js").read_text(encoding="utf-8")
+    declared = re.search(r"""CACHE_VERSION\s*=\s*['"]([^'"]+)['"]""", sw).group(1)
+    assert livesync.app_version() == declared, \
+        "the feed must announce the shell this process actually serves"
+    assert declared.startswith("ltp-shell-v"), \
+        f"unexpected CACHE_VERSION shape {declared!r} — the client compares it verbatim"
+
+
+def test_app_version_survives_an_unreadable_sw(monkeypatch):
+    """No opinion beats a wrong one: a client told "" simply says nothing.
+
+    Nagging about an update we cannot name would be worse than staying quiet.
+    """
+    livesync._reset_for_tests()
+    monkeypatch.setattr(livesync, "_read_app_version", lambda: "")
+    assert livesync.app_version() == ""
+    livesync._reset_for_tests()
+
+
+def test_versions_reports_the_app_version():
+    client, tok = _setup()
+    r = client.get("/api/versions", cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+    assert r.json()["app"] == livesync.app_version(), \
+        "a window on the polling fallback must learn about a deploy too"
 
 
 def test_versions_is_stable_when_nothing_changes():
@@ -498,6 +539,11 @@ def test_stream_opens_with_a_snapshot_and_correct_headers():
     assert event == "sync"
     assert set(data["stamps"]) >= set(livesync.COLLECTIONS), \
         "a window connecting mid-session must get a full snapshot to reconcile against"
+    # A deploy replaces this process, so a window that reconnects after one is
+    # told the new shell by this very frame. That is the whole delivery
+    # mechanism — nothing is pushed to an already-open connection.
+    assert data["app"] == livesync.app_version(), \
+        "the opening snapshot must name the shell, or a reconnect learns nothing"
     assert data["stamps"] == _stamps(client, tok), \
         "the stream snapshot and /api/versions must agree"
 

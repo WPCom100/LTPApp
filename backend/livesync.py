@@ -77,7 +77,9 @@ Who publishes
 import asyncio
 import json
 import os
+import re
 import time
+from pathlib import Path
 
 from sqlalchemy import func, select
 
@@ -458,7 +460,7 @@ async def event_stream(initial: dict, queue=None):
     deadline = time.monotonic() + MAX_STREAM_SECONDS
     last_keepalive = time.monotonic()
     try:
-        yield _frame("sync", {"stamps": initial, "at": now_ms()})
+        yield _frame("sync", {"stamps": initial, "at": now_ms(), "app": app_version()})
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -486,7 +488,7 @@ async def event_stream(initial: dict, queue=None):
             # Collapse anything that queued up behind it — the newest map wins.
             while not q.empty():
                 payload = q.get_nowait()
-            yield _frame("sync", {"stamps": payload, "at": now_ms()})
+            yield _frame("sync", {"stamps": payload, "at": now_ms(), "app": app_version()})
     except asyncio.CancelledError:
         raise
     finally:
@@ -495,6 +497,47 @@ async def event_stream(initial: dict, queue=None):
 
 def _frame(event: str, data) -> str:
     return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+# ── Which shell this process serves ─────────────────────────────────────────
+#
+# A tab that is already open cannot find out on its own that a deploy happened.
+# The browser re-checks a service worker on navigation and roughly once a day,
+# so the "new version available" banner only appeared once you reloaded — you
+# had to refresh to learn that you needed to refresh.
+#
+# It costs one string on a feed the window is already listening to. And the
+# delivery works because a deploy REPLACES this process: SIGTERM releases the
+# open streams (see shutdown_event), every client reconnects, and the first
+# frame from the new process carries its version. So the announcement rides in
+# on the reconnect rather than needing anything pushed.
+#
+# Read once and cached: within a process the answer cannot change, because
+# changing it means deploying, and deploying means a different process.
+_APP_VERSION_RE = re.compile(r"""CACHE_VERSION\s*=\s*['"]([^'"]+)['"]""")
+_app_version: "str | None" = None
+
+
+def app_version() -> str:
+    """The service worker's CACHE_VERSION, i.e. the shell this process serves.
+
+    Empty string if sw.js cannot be read or does not declare one — the client
+    treats that as "no opinion" and carries on, rather than nagging about an
+    update it cannot describe.
+    """
+    global _app_version
+    if _app_version is None:
+        _app_version = _read_app_version()
+    return _app_version
+
+
+def _read_app_version() -> str:
+    try:
+        text = (Path(__file__).resolve().parent.parent / "sw.js").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = _APP_VERSION_RE.search(text)
+    return m.group(1) if m else ""
 
 
 def now_ms() -> int:
@@ -509,6 +552,8 @@ def _reset_for_tests() -> None:
     _subscribers.clear()
     _seq = 0
     _last_poll = None
+    global _app_version
+    _app_version = None
     # Also clear the shutdown flag: it is process-wide, so a test that exercises
     # the shutdown path would otherwise make every later stream close instantly.
     _shutdown = None
