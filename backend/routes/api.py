@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import undefer
 from backend.database import async_session, get_db
-from backend import crew_integrity, livesync, models
+from backend import crew_integrity, livesync, models, payouts
 from backend.auth_deps import load_session_user, require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
@@ -149,6 +149,21 @@ def _row_to_dict(row):
         d[_snake_to_camel(col.name)] = val
     d["_rev"] = _row_rev(d)
     return d
+
+
+def _paid_day_override(request: Request) -> bool:
+    """Did the caller explicitly confirm editing a day already paid in QuickBooks?
+
+    A header rather than a body field: the body is the row, and anything in it
+    would be persisted. Same reasoning as If-Match.
+
+    Any signed-in user may override — the Schedule Builder is member-accessible
+    and its existing warn+confirm has always been open to members, so requiring
+    admin here would silently change who can edit a schedule. The override is
+    logged server-side either way.
+    """
+    raw = (request.headers.get("x-ltp-paid-day-override") or "").strip().lower()
+    return raw in ("1", "true", "yes")
 
 
 def _require_fresh(request: Request, row, path: str, item_id) -> None:
@@ -390,6 +405,39 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        # Paid-day integrity. Runs LAST among the schedule guards, on the FINAL
+        # incoming schedule, so a change the floor/pay-snapshot guards already
+        # reverted is not reported as a conflict that no longer exists.
+        #
+        # Once a day is billed AND that bill is paid, the money is gone; editing
+        # the schedule underneath it only makes the app disagree with the
+        # accounts. The Schedule Builder warns first, but it warns from a
+        # `paidDays` map fetched when the editor opened — stale the moment a bill
+        # is paid, or a second window saves. That check is a courtesy; this is
+        # the enforcement, and it is what makes the client's staleness harmless.
+        if model_cls is models.Project and isinstance(mapped.get("schedule"), list):
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, mapped["schedule"])
+            if paid_hits:
+                if not _paid_day_override(request):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=jsonable_encoder({
+                            "code": "paid_day_conflict",
+                            "message": (
+                                f"This save changes {len(paid_hits)} day"
+                                f"{'' if len(paid_hits) == 1 else 's'} already paid in QuickBooks."
+                            ),
+                            "days": paid_hits,
+                        }),
+                    )
+                # Overridden deliberately. The client also POSTs
+                # /api/qbo/payouts/notify-edit, which stamps the bill and pushes
+                # admins — but that is best-effort and client-driven, so leave a
+                # server-side trace that cannot be skipped.
+                print(f"[LTP] payout-integrity: user id={user.id} ({user.email}) overrode "
+                      f"{len(paid_hits)} paid-day change(s) on project {item_id}: "
+                      + ", ".join(f"{h['name']}@{h['date']}" for h in paid_hits), flush=True)
+
         # Keep server-stamped history the client's snapshot doesn't know about.
         if has_activity and "activity" in mapped:
             mapped["activity"] = _merge_activity(row.activity, mapped["activity"])

@@ -77,7 +77,13 @@
 // without a bump every installed device keeps the broken guard for one more
 // launch. The three editors that consume the hook (schedule/quote/invoice) are
 // runtime-cached under /modules/ and need no precache entry.
-var CACHE_VERSION = 'ltp-shell-v59';
+// v60: the paid-day guard moved server-side. components/data-state.js can now
+// attach a one-shot override header to a write, and both editors that touch paid
+// days (modules/schedule-builder.js, modules/labor.js) prompt from the SERVER's
+// refusal when their own paid-day map is stale. All three are runtime-cached, so
+// without a bump a device keeps the old client — which would hit the new 409 with
+// no way to answer it.
+var CACHE_VERSION = 'ltp-shell-v60';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

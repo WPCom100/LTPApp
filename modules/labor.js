@@ -2002,6 +2002,22 @@
       fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
     }
+    // The admin confirmed. Record the override, arm the header the server now
+    // requires on a write that reprices a paid day (backend/routes/api.py
+    // ::_paid_day_override), then run the action. Arming BEFORE it matters:
+    // persisted state issues the PUT on a debounce and reads the header then.
+    //
+    // Armed even in the `unverified` case — we could not confirm the day is
+    // unpaid, and the server refuses either way if it turns out to be.
+    function confirmPaidEdit(g) {
+      if (!g) return;
+      if (!g.unverified) notifyPaidEdit(g.row);
+      if (window.LTP_STATE && window.LTP_STATE.armWrite) {
+        window.LTP_STATE.armWrite("projects", g.row.projectId, { "X-LTP-Paid-Day-Override": "1" });
+      }
+      g.run();
+    }
+
     function guardPaid(r, proceed) {
       // Payout pay-writes (sign-off, lock, adjust, no-show, undo) are admin-only —
       // the amount is billed verbatim to QuickBooks, and the server reverts a
@@ -2017,6 +2033,32 @@
     }
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
+
+    // The server refused a write because it reprices a paid day this tab did not
+    // know about — `dayStatus` is fetched per period, so a bill paid since then
+    // (or another window's edit) leaves it stale. Prompt from the SERVER's
+    // answer; re-running the action after confirming works because the refused
+    // write never advanced the sync baseline.
+    React.useEffect(function() {
+      function onConflict(e) {
+        var d = e && e.detail;
+        if (!d || d.collection !== "projects" || !(d.days || []).length) return;
+        var first = d.days[0];
+        setPaidGuard({
+          row: { crewId: first.contactId, projectId: d.id, date: first.date },
+          ds: { docNumber: first.docNumber, paid: true },
+          run: function() {
+            if (window.LTP_STATE && window.LTP_STATE.armWrite) {
+              window.LTP_STATE.armWrite("projects", d.id, { "X-LTP-Paid-Day-Override": "1" });
+            }
+            // Re-issue the same edit: the pending change is still in local state.
+            setProjects(function(prev) { return prev.slice(); });
+          },
+        });
+      }
+      window.addEventListener("ltp-paid-day-conflict", onConflict);
+      return function() { window.removeEventListener("ltp-paid-day-conflict", onConflict); };
+    }, []);
 
     // ── Day-of sign-off ──────────────────────────────────────────────────────
     var [adjustDlg, setAdjustDlg] = useState(null);  // { row, shifts, actuals }
@@ -2389,7 +2431,7 @@
                + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?")),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setPaidGuard(null); } }, "Cancel"),
-          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); if (!g.unverified) notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
+          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); confirmPaidEdit(g); } }, "Edit anyway"))),
 
       // Adjust-day sign-off
       adjustDlg && (function() {
