@@ -82,7 +82,14 @@
 // for mail clients, and inline beats any stylesheet selector, so the page's own
 // <style> rule never applied. Bumped so no device answers that URL from a v59
 // cache holding the broken copy.
-var CACHE_VERSION = 'ltp-shell-v60';
+// v61: the announcement page is rebuilt from the shared crew-briefing template
+// so it matches the published artifact — the branded layout with numbered steps
+// and proper list formatting, in place of the plain email-shell copy it used to
+// serve. Its sender toolbar moved into assets/crew-email/briefing.js: script-src
+// is 'self' with no 'unsafe-inline', so the inline block it used to carry was
+// refused and the buttons rendered dead. Both files are runtime-cached, so a
+// device on a v60 cache would pair the new page with no script at all.
+var CACHE_VERSION = 'ltp-shell-v61';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

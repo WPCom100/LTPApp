@@ -55,18 +55,29 @@ def test_crew_announcement_resolves():
 
 
 def test_crew_announcement_exists_on_disk():
-    """The page is committed, not just allow-listed."""
+    """The page and its toolbar script are committed, not just allow-listed."""
     assert os.path.isfile(os.path.join(_root, "assets", "crew-email", "announcement.html"))
+    assert os.path.isfile(os.path.join(_root, "assets", "crew-email", "briefing.js"))
+
+
+def test_crew_briefing_script_resolves():
+    """The toolbar script must be reachable. It is a file rather than an inline
+    block precisely because script-src is 'self' with no 'unsafe-inline'."""
+    rel = "assets/crew-email/briefing.js"
+    resolved = _resolve_static(rel)
+    assert resolved is not None, f"{rel} should be allow-listed"
+    assert resolved.replace(os.sep, "/").endswith(rel)
 
 
 def test_deny_by_default_preserved():
     """Non-frontend files at the repo root stay unreachable — the allowlist must
     not have widened beyond assets/vendor/*.{js,wasm} and
-    assets/crew-email/*.html."""
+    assets/crew-email/*.{html,js}."""
     for denied in ("requirements.txt", "backend/main.py", "alembic.ini", "pytest.ini",
                    "assets/foo.wasm", "assets/bar.js",  # .wasm/.js only under vendor/
-                   "assets/rogue.html", "index2.html",  # .html only under crew-email/
-                   "assets/crew-email/notes.txt"):      # and only .html in there
+                   "assets/rogue.html", "index2.html",   # .html only under crew-email/
+                   "assets/rogue.js",                    # .js only under vendor/ + crew-email/
+                   "assets/crew-email/notes.txt"):       # only .html/.js in there
         assert _resolve_static(denied) is None, f"{denied} must not be servable"
 
 
@@ -117,8 +128,32 @@ def test_crew_announcement_served_as_html():
         assert "text/html" in ct, f"expected text/html, got {ct!r}"
         # Distinguishing marker: the announcement's <title>, which the SPA shell
         # does not carry. A status-code-only check cannot tell these apart.
-        assert "Crew Requests" in r.text, "served the SPA fallback, not the page"
+        assert "Your New Call Sheet" in r.text, "served the SPA fallback, not the page"
         assert "LTP Business Suite" not in r.text, "this is the app shell, not the page"
+
+
+def test_crew_briefing_script_served_as_javascript():
+    """The toolbar script must come back with a JavaScript content-type. If it
+    falls through to the SPA fallback, nosniff blocks execution and the toolbar
+    renders dead — the exact failure the file (vs inline) split exists to avoid."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    with TestClient(app) as client:
+        r = client.get("/assets/crew-email/briefing.js")
+        assert r.status_code == 200, f"got {r.status_code}"
+        ct = r.headers.get("content-type", "").lower()
+        assert "javascript" in ct, f"expected a JS content-type, got {ct!r}"
+        assert not r.text.lstrip().startswith("<!DOCTYPE"), "served the SPA fallback, not the script"
+
+
+def test_crew_page_has_no_inline_script():
+    """The page must not carry an inline <script>: the CSP would refuse it and
+    the toolbar would silently do nothing. Pins the build's file split."""
+    path = os.path.join(_root, "assets", "crew-email", "announcement.html")
+    with open(path, encoding="utf-8") as fh:
+        html = fh.read()
+    assert "<script src=" in html, "page should load its script from a file"
+    assert "<script>" not in html, "inline <script> would be refused by the CSP"
 
 
 def test_csp_allows_wasm():
