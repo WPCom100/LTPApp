@@ -66,7 +66,12 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
-var CACHE_VERSION = 'ltp-shell-v57';
+// v58: crew-announcement screenshots under assets/crew-email/. No script tag and
+// no shell file moved — but /assets/ is runtime-cached, so a device holding the
+// v57 cache would serve its own (empty) view of the new tree for one more launch.
+// The images are linked from an email that renders outside the app entirely, so
+// they have to be right the first time a crew member opens it.
+var CACHE_VERSION = 'ltp-shell-v58';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
