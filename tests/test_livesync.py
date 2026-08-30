@@ -50,6 +50,7 @@ P_REV = 7402           # If-Match happy path / stale path
 P_ACCEPT = 7403        # the crew-accept stale-write reproduction
 P_DEL = 7404           # delete moves the stamp via count(*)
 CO_GZIP = 6401         # company used for the gzip payload check
+INV_REV = 6501         # invoice used for the _rev / readonly-column check
 
 _client = None
 _seeded = False
@@ -95,6 +96,8 @@ def _setup():
                             _pos("acc_p2", C_CREW, service=S_ROLE)]),
                 ]))
                 db.add(models.Project(id=P_DEL, name="Delete Me", schedule=[]))
+                db.add(models.Invoice(id=INV_REV, status="draft", notes="rev probe",
+                                      share_token="rev-probe-share-token"))
                 await db.commit()
 
         _run(seed())
@@ -386,6 +389,92 @@ def _parse_frame(text):
     return event, data
 
 
+def test_a_quickbooks_style_readonly_write_does_not_move_rev():
+    """_rev must hash only what the CLIENT can write.
+
+    Hashing the server-authoritative qb_* block meant a QuickBooks push moved the
+    row's _rev, so the user's very next save came back 409 stale_write — and the
+    client answers a 409 by adopting the server row, discarding their unsaved
+    edit. A guard should only fire on a conflict it can actually resolve."""
+    client, tok = _setup()
+    from backend.database import async_session
+    from sqlalchemy import select as _select
+
+    before = client.get(f"/api/invoices/{INV_REV}", cookies={"ltp_session": tok}).json()
+
+    async def qbo_push():
+        async with async_session() as db:
+            row = (await db.execute(
+                _select(models.Invoice).where(models.Invoice.id == INV_REV))).scalar_one()
+            row.qb_sync_status = "synced"
+            row.qb_invoice_id = "QB-123"
+            await db.commit()
+    _run(qbo_push())
+
+    after = client.get(f"/api/invoices/{INV_REV}", cookies={"ltp_session": tok}).json()
+    assert after["qbSyncStatus"] == "synced", "the push must actually have landed"
+    assert after["_rev"] == before["_rev"], \
+        "a write to columns the client cannot send must not invalidate its If-Match token"
+
+    r = client.put(f"/api/invoices/{INV_REV}", json={"id": INV_REV, "notes": "user edit"},
+                   headers={"If-Match": before["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 200, \
+        f"the user's next save must not 409 because of a QuickBooks push: {r.text[:200]}"
+
+
+def test_a_broadcast_during_the_stream_handshake_is_not_lost():
+    """The route subscribes BEFORE reading its snapshot.
+
+    event_stream is a generator — nothing in it runs until the first chunk is
+    pulled — so subscribing there left a window across the handshake in which
+    another request's broadcast reached the existing subscribers but not this
+    one, while the snapshot it had already been handed was pre-write. The sweep
+    could not repair it: _stamps had already advanced, so nothing looked changed."""
+    async def body():
+        livesync._reset_for_tests()
+        q = livesync.subscribe()                    # what the route now does first
+        initial = {"projects": "old"}               # snapshot read afterwards
+        livesync._broadcast({"projects": "new"})    # a write lands in the gap
+
+        frames = []
+        gen = livesync.event_stream(initial, q)
+        for _ in range(2):
+            frames.append(await gen.__anext__())
+        await gen.aclose()
+        return frames
+
+    frames = _run(body())
+    assert '"stamps":{"projects":"old"}' in frames[0].replace(" ", ""), \
+        f"first frame should be the snapshot, got {frames[0]!r}"
+    assert '"projects":"new"' in frames[1].replace(" ", ""), \
+        f"the broadcast from the handshake window must still be delivered, got {frames[1]!r}"
+
+
+def test_shutdown_releases_open_streams():
+    """One open tab must not hold a deploy. uvicorn's graceful drain waits for
+    in-flight responses, and a stream ends only on disconnect or its 30-minute
+    deadline — so this used to hang until Railway SIGKILLed the container, and
+    the lifespan cleanup never ran."""
+    async def body():
+        livesync._reset_for_tests()
+        q = livesync.subscribe()
+        gen = livesync.event_stream({"projects": "a"}, q)
+        first = await gen.__anext__()               # snapshot
+        livesync.begin_shutdown()
+        closing = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        try:
+            await gen.aclose()
+        except Exception:
+            pass
+        livesync._reset_for_tests()
+        return first, closing
+
+    first, closing = _run(body())
+    assert "sync" in first
+    assert "bye" in closing and "shutdown" in closing, \
+        f"a shutting-down server must end its streams, got {closing!r}"
+
+
 def test_stream_requires_a_session():
     status, _, _ = _drive_stream(cookie=None)
     assert status == 401, f"expected 401 without a session, got {status}"
@@ -523,6 +612,79 @@ def test_the_sweep_stays_idle_when_nobody_is_connected():
     assert busy_calls > 0, "the sweep must resume once a window is connected"
 
 
+def test_a_polling_window_keeps_the_sweep_alive():
+    """A window on the /api/versions fallback holds no stream, so it is invisible
+    in _subscribers — but it needs the sweep MORE than a streaming one, not less.
+
+    /api/versions answers from the cached stamp map, and the only thing that
+    refreshes that cache for a writer which bypasses get_db (the QuickBooks
+    pollers) is the sweep. Gating the sweep on streams alone meant a window that
+    fell back to polling would poll a stamp that could never move."""
+    from backend.database import async_session
+
+    opened = {"count": 0}
+
+    def counting_factory():
+        opened["count"] += 1
+        return async_session()
+
+    async def body():
+        livesync._reset_for_tests()
+        task = asyncio.ensure_future(livesync.sweeper(counting_factory, interval=0.05))
+        await asyncio.sleep(0.3)
+        idle_calls = opened["count"]
+
+        livesync.note_watcher()            # a poller asks — no stream involved
+        assert not livesync._subscribers, "this test must not rely on a stream"
+        await asyncio.sleep(0.3)
+        polling_calls = opened["count"]
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return idle_calls, polling_calls
+
+    idle_calls, polling_calls = _run(body())
+    assert idle_calls == 0, "still idle with nobody watching at all"
+    assert polling_calls > 0, \
+        "a recent poll must keep the sweep running, or a polling window never " \
+        "sees a write that bypassed get_db"
+
+
+def test_the_versions_endpoint_registers_the_caller_as_a_watcher():
+    client, tok = _setup()
+    livesync._last_poll = None
+    assert not livesync.anyone_watching(), "nothing should be watching yet"
+    _stamps(client, tok)
+    assert livesync.anyone_watching(), \
+        "GET /api/versions must count as watching — see livesync.note_watcher"
+
+
+def test_a_freshly_booted_process_is_not_watching_itself():
+    """time.monotonic()'s zero point is system boot, not the epoch.
+
+    With 0.0 as the never-polled sentinel, "monotonic() - _last_poll" on a host
+    that booted a minute ago is 60 — inside the 90s poll grace — so a process
+    with nobody connected reported a watcher and swept for the first ninety
+    seconds of its life. This is exactly how a fresh CI runner behaves, and how
+    every Railway container starts. The check must not depend on uptime at all.
+    """
+    livesync._reset_for_tests()
+    real = livesync.time.monotonic
+    try:
+        livesync.time.monotonic = lambda: 5.0          # booted five seconds ago
+        assert not livesync.anyone_watching(), \
+            "an unpolled process must be idle however recently the host booted"
+        livesync.note_watcher()
+        assert livesync.anyone_watching(), \
+            "an actual poll must still register on a freshly booted host"
+    finally:
+        livesync.time.monotonic = real
+    livesync._reset_for_tests()
+
+
 def test_stream_cleans_up_its_subscriber_on_disconnect():
     client, tok = _setup()
     before = livesync.subscriber_count()
@@ -595,12 +757,17 @@ def main():
         test_put_without_if_match_keeps_last_write_wins,
         test_an_identical_rewrite_is_not_a_conflict,
         test_stale_put_after_crew_accept_is_rejected,
+        test_a_quickbooks_style_readonly_write_does_not_move_rev,
+        test_a_broadcast_during_the_stream_handshake_is_not_lost,
+        test_shutdown_releases_open_streams,
         test_stream_requires_a_session,
         test_stream_opens_with_a_snapshot_and_correct_headers,
         test_a_write_pushes_a_frame_to_an_open_stream,
         test_stream_recycles_itself_with_a_goodbye_frame,
         test_stream_does_not_recycle_early,
         test_the_sweep_stays_idle_when_nobody_is_connected,
+        test_a_polling_window_keeps_the_sweep_alive,
+        test_the_versions_endpoint_registers_the_caller_as_a_watcher,
         test_stream_cleans_up_its_subscriber_on_disconnect,
         test_broadcast_reaches_every_subscriber,
         test_a_full_queue_collapses_its_backlog_instead_of_dropping_the_subscriber,

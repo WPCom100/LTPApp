@@ -127,7 +127,19 @@ def _row_rev(d: dict) -> str:
 
     Truncated to 16 hex chars — 64 bits, which is far past collision relevance
     for a guard whose failure mode is one skipped conflict warning."""
-    payload = json.dumps(d, sort_keys=True, separators=(",", ":"), default=str)
+    # Hash ONLY what the client can actually write. _READONLY_COLS are
+    # server-authoritative (the QuickBooks sync block, receipt state, share_token)
+    # and _dict_to_row strips them from every incoming write, so the client
+    # provably cannot be the cause of a change to them. Including them made a
+    # QuickBooks push move the row's _rev, which turned the user's very next save
+    # into a spurious 409 stale_write — and the client's handler answers a 409 by
+    # adopting the server row, so their unsaved edit was discarded, with a
+    # "Changed in another window" toast, on every single push.
+    #
+    # A guard should only fire on a conflict the guard can actually resolve.
+    hashable = {k: v for k, v in d.items()
+                if _camel_to_snake(k) not in _READONLY_COLS}
+    payload = json.dumps(hashable, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -470,12 +482,40 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         livesync.mark_dirty(db, path)
         return _row_to_dict(row)
 
-    async def remove(item_id: int, db: AsyncSession = Depends(get_db),
+    async def remove(item_id: int, request: Request,
+                     db: AsyncSession = Depends(get_db),
                      user: models.User = Depends(require_session)):
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
             return {"ok": True, "id": item_id}  # idempotent delete
+        # Paid-day guard, same as update(). Deleting a project destroys the
+        # Project.schedule JSON, which is the ONLY record the payout view
+        # re-derives a paid day from (backend/payouts.py::load_projects_and_crew)
+        # — while the QuickBooks bill and the PayoutBillLine ledger survive. That
+        # is a worse version of the divergence the guard exists to prevent, and
+        # it was reachable through the very delete wizard whose crew-release step
+        # the guard had just refused. Deleting is compared against an EMPTY
+        # schedule: every paid day on the project disappears, so every one of
+        # them is a conflict.
+        if model_cls is models.Project:
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [])
+            if paid_hits and not _paid_day_override(request):
+                raise HTTPException(
+                    status_code=409,
+                    detail=jsonable_encoder({
+                        "code": "paid_day_conflict",
+                        "message": (
+                            f"Deleting this project removes {len(paid_hits)} day"
+                            f"{'' if len(paid_hits) == 1 else 's'} already paid in QuickBooks."
+                        ),
+                        "days": paid_hits,
+                    }),
+                )
+            if paid_hits:
+                print(f"[LTP] payout-integrity: user id={user.id} ({user.email}) overrode "
+                      f"{len(paid_hits)} paid-day change(s) DELETING project {item_id}: "
+                      + ", ".join(f"{h['name']}@{h['date']}" for h in paid_hits), flush=True)
         # Auto-withdraw this project's active crew requests BEFORE the delete nulls
         # their project_id FK — otherwise they'd be orphaned with no link back to
         # trace. (Project only; a no-op for every other entity.)
@@ -598,6 +638,10 @@ async def get_versions(db: AsyncSession = Depends(get_db)):
     after would let a write that lands between the two be lost forever: the
     client would hold pre-write rows alongside the post-write stamp and never
     refetch. Fetching in the other order costs at worst one redundant refetch."""
+    # A poller is a watcher too, even though it holds no stream. Without this the
+    # safety sweep would idle out underneath it and it would never see a write
+    # that bypassed get_db — see livesync.note_watcher.
+    livesync.note_watcher()
     return {"stamps": await livesync.ensure_seeded(db), "at": livesync.now_ms()}
 
 
@@ -628,11 +672,29 @@ async def stream_changes(request: Request):
                 status_code=401, detail="Not signed in",
                 headers={"WWW-Authenticate": "Cookie"},
             )
-        initial = await livesync.ensure_seeded(db)
-        await db.commit()          # persist the throttled last_used_at touch
+        # Subscribe BEFORE reading the snapshot, and hand the queue to the
+        # generator. event_stream is an async generator: nothing inside it runs
+        # until Starlette pulls the first chunk, several awaits later. Subscribing
+        # there left a window — across this commit's round trip and the response
+        # handshake — in which another request's broadcast reached the existing
+        # subscribers but not this one, while the snapshot it had already been
+        # handed was pre-write. The sweep could not repair it either: it compares
+        # against _stamps, which that broadcast had already advanced, so nothing
+        # looked changed. The window stayed wrong until the next unrelated write.
+        #
+        # Subscribing first inverts the race: a broadcast in the gap is queued and
+        # delivered right after the snapshot. Worst case the client sees a stamp
+        # it already has, which costs nothing.
+        queue = livesync.subscribe()
+        try:
+            initial = await livesync.ensure_seeded(db)
+            await db.commit()      # persist the throttled last_used_at touch
+        except BaseException:
+            livesync.unsubscribe(queue)
+            raise
 
     return StreamingResponse(
-        livesync.event_stream(initial),
+        livesync.event_stream(initial, queue),
         media_type="text/event-stream",
         headers={
             # no-transform additionally tells intermediaries not to buffer or
@@ -861,6 +923,9 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
                 row.share_token = secrets.token_urlsafe(32)
             db.add(row)
         counts[key] = len(items)
+        # A wipe-and-reseed of a whole table is the largest change the app can
+        # make. Every open window must refetch it.
+        livesync.mark_dirty(db, key)
 
     if "settings" in payload:
         result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
@@ -870,5 +935,6 @@ async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
         else:
             row.data = payload["settings"]
         counts["settings"] = 1
+        livesync.mark_dirty(db, "settings")
 
     return {"synced": counts}

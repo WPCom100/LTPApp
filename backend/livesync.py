@@ -163,6 +163,21 @@ _QUEUE_MAXSIZE = 8
 _subscribers: set[asyncio.Queue] = set()
 _stamps: dict[str, str] = {}
 _seq = 0
+# When a polling client last asked, or None if none ever has. Streams are visible
+# in _subscribers; pollers are not, and they need the sweep just as much — more,
+# in fact. See note_watcher().
+#
+# None, not 0.0: time.monotonic()'s zero point is unspecified (system boot, on
+# Linux), so on a freshly started host "monotonic() - 0.0" is a handful of
+# seconds — inside the poll grace below, which made an idle process report a
+# watcher for the first ninety seconds of every container's life.
+_last_poll: "float | None" = None
+# Set once at shutdown. Open streams watch it and end themselves, because
+# uvicorn's graceful shutdown waits for in-flight responses to finish and an SSE
+# response finishes only on client disconnect or its own 30-minute deadline —
+# so a single open browser tab made every deploy hang until Railway SIGKILLed
+# the container, skipping the lifespan cleanup entirely.
+_shutdown: "asyncio.Event | None" = None
 
 
 def _models():
@@ -248,6 +263,56 @@ async def ensure_seeded(db) -> dict:
 def current_map() -> dict:
     """The cached stamp map without touching the database."""
     return dict(_stamps)
+
+
+def shutdown_event() -> asyncio.Event:
+    """The process-wide stop flag, created on first use (it must be bound to the
+    running loop, which does not exist at import time)."""
+    global _shutdown
+    if _shutdown is None:
+        _shutdown = asyncio.Event()
+    return _shutdown
+
+
+def begin_shutdown() -> None:
+    """Tell every open stream to end. Called from the FastAPI lifespan."""
+    try:
+        shutdown_event().set()
+    except RuntimeError:                                  # pragma: no cover
+        pass
+
+
+def note_watcher() -> None:
+    """Record that somebody is watching WITHOUT holding a stream open.
+
+    GET /api/versions answers from the cached map, and the only thing that
+    refreshes that cache for a writer which bypasses get_db (the QuickBooks
+    pollers) is the sweep. Gating the sweep on _subscribers alone therefore left
+    a hole: a window that fell back to polling — SSE blocked by a proxy, or three
+    failed connects — would poll a stamp that could never move, and never learn
+    about a QuickBooks sync for as long as it stayed on the fallback.
+
+    So pollers register here, and the sweep treats a recent poll exactly like an
+    open stream. A genuinely unused deployment still sweeps nothing, which was
+    the point of gating it at all.
+    """
+    global _last_poll
+    _last_poll = time.monotonic()
+
+
+def anyone_watching(interval: float = SWEEP_SECONDS) -> bool:
+    """Is any window listening — by stream, or by having polled recently?
+
+    The poll grace is generous relative to the client's own cadence
+    (POLL_MS is 15s in components/live-sync.js) so that a hidden tab, which
+    deliberately pauses polling, does not switch the sweep off underneath a
+    sibling window that is still open.
+    """
+    if _subscribers:
+        return True
+    if _last_poll is None:                     # nobody has ever polled
+        return False
+    return (time.monotonic() - _last_poll) < max(interval * 3.0, 90.0)
 
 
 # ── Marking writes ──────────────────────────────────────────────────────────
@@ -358,11 +423,11 @@ async def sweeper(session_factory, interval: float = SWEEP_SECONDS) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
-            # Nobody connected — nobody to broadcast to. Skipping keeps an idle
-            # deployment genuinely idle (this is a small internal tool; it sits
-            # unused most nights and weekends) instead of running fifteen
+            # Nobody watching — by stream OR by recent poll. Skipping keeps an
+            # idle deployment genuinely idle (this is a small internal tool; it
+            # sits unused most nights and weekends) instead of running fifteen
             # aggregates a minute against the database forever.
-            if not _subscribers:
+            if not anyone_watching(interval):
                 continue
             async with session_factory() as db:
                 await sweep_once(db)
@@ -374,7 +439,7 @@ async def sweeper(session_factory, interval: float = SWEEP_SECONDS) -> None:
 
 # ── SSE event stream ────────────────────────────────────────────────────────
 
-async def event_stream(initial: dict):
+async def event_stream(initial: dict, queue=None):
     """Yield an SSE body: an immediate snapshot, then stamp maps as they change.
 
     The snapshot matters — a window that connects mid-session must be able to
@@ -384,8 +449,14 @@ async def event_stream(initial: dict):
     are the cheapest legal SSE frame (":\\n\\n"), which is what keeps an idle
     connection's cost down around single-digit KB/hour.
     """
-    q = subscribe()
+    # The route subscribes BEFORE reading its snapshot and hands the queue in, so
+    # a broadcast landing between the two is queued rather than lost. Subscribing
+    # here instead would reopen that gap: this is a generator, and none of it runs
+    # until the first chunk is pulled. The argument is optional only so the
+    # function stays usable on its own in tests.
+    q = queue if queue is not None else subscribe()
     deadline = time.monotonic() + MAX_STREAM_SECONDS
+    last_keepalive = time.monotonic()
     try:
         yield _frame("sync", {"stamps": initial, "at": now_ms()})
         while True:
@@ -396,13 +467,20 @@ async def event_stream(initial: dict):
                 # components/live-sync.js.
                 yield _frame("bye", {"reason": "recycle"})
                 return
+            if shutdown_event().is_set():
+                # The server is stopping. Leave cleanly so uvicorn's graceful
+                # drain can finish; the client reconnects to the new process.
+                yield _frame("bye", {"reason": "shutdown"})
+                return
             try:
                 payload = await asyncio.wait_for(
-                    q.get(), timeout=min(KEEPALIVE_SECONDS, remaining))
+                    q.get(), timeout=min(KEEPALIVE_SECONDS, min(remaining, 1.0)))
             except asyncio.TimeoutError:
-                # Either an idle keepalive or the deadline — the loop top sorts
-                # out which on the next pass.
-                if deadline - time.monotonic() > 0:
+                # The wait is capped at a second so shutdown is noticed promptly;
+                # a keepalive is only actually due every KEEPALIVE_SECONDS.
+                now = time.monotonic()
+                if deadline - now > 0 and now - last_keepalive >= KEEPALIVE_SECONDS:
+                    last_keepalive = now
                     yield ": keepalive\n\n"
                 continue
             # Collapse anything that queued up behind it — the newest map wins.
@@ -426,6 +504,11 @@ def now_ms() -> int:
 def _reset_for_tests() -> None:
     """Drop all cached state. Test-only — production has no reason to call it."""
     global _seq
+    global _last_poll, _shutdown
     _stamps.clear()
     _subscribers.clear()
     _seq = 0
+    _last_poll = None
+    # Also clear the shutdown flag: it is process-wide, so a test that exercises
+    # the shutdown path would otherwise make every later stream close instantly.
+    _shutdown = None

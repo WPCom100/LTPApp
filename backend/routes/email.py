@@ -68,7 +68,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import gmail, models
+from backend import gmail, livesync, models
 from backend.activity import append_activity
 from backend.email_compose import (
     _build_view_url, _email_brand, _render_signature, email_shell,
@@ -369,6 +369,9 @@ async def send_email(
         entity.receipt_email_status = "sent"
         entity.receipt_email_sent_at = now
     await db.flush()
+    # The activity stamp and the receipt columns are both on a synced row, so
+    # every other window needs to know. get_db publishes only what was marked.
+    livesync.mark_dirty(db, "invoices" if body.entityType == "invoice" else "quotes")
 
     return {
         "ok": True,

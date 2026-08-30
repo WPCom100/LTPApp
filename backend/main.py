@@ -177,6 +177,11 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        # Release every open SSE stream FIRST. uvicorn's graceful drain waits for
+        # in-flight responses, and a stream only ends on client disconnect or its
+        # own 30-minute deadline — so one open tab could hold the whole shutdown
+        # until Railway SIGKILLed us, and this cleanup would never run at all.
+        livesync.begin_shutdown()
         # Graceful shutdown: cancel, then await so each task actually finishes
         # its current iteration (asyncio.Task.cancel() alone just sets a flag).
         for task in (sweeper, receipt_poller, bill_poller, livesync_sweeper):

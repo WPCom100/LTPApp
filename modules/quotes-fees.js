@@ -115,6 +115,13 @@
   // the whole app doesn't re-render on every keystroke.
   function FeeQuickNamesEditor({ settings, setSettings }) {
     var [names, setNames] = useState(function() { return window.LTP_feeQuickNames(settings); });
+    // Seeded once at mount and written back whole, so another admin's additions
+    // were dropped without a word. Watch just this slice of the settings blob —
+    // an unrelated settings change is not this editor's business.
+    window.LTP_useRecordWatch("settings", null,
+      { title: "Quick-add names changed elsewhere",
+        message: "Another window updated them while this list was open. Saving will replace the newer version." },
+      function(s) { return window.LTP_feeQuickNames(s); });
     var namesRef = useRef(names);
     namesRef.current = names;
 

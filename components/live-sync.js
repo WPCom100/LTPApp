@@ -116,6 +116,19 @@
     if (!seeded) {
       seeded = true;
       log("seeded", stamps);
+      // Normally nothing has fetched yet, so the seed invalidates nothing and we
+      // stay quiet. But ready() is bounded (READY_TIMEOUT_MS) and revalidate()
+      // swallows failures — so on a slow or failed /api/versions the hooks fetch
+      // BLIND and the seed arrives afterwards. Anything written between their
+      // fetch and this moment is then baked into a stamp they trust while they
+      // hold pre-write rows, and nothing ever re-checks.
+      //
+      // Subscribers existing at seed time is exactly that situation: wake them so
+      // they compare their own stamp against this one. In the normal path they
+      // recorded the seeded stamp already and no-op.
+      Object.keys(listeners).forEach(function(key) {
+        if (listeners[key] && listeners[key].length) notify(key);
+      });
       return [];
     }
     if (changed.length) {
@@ -192,6 +205,7 @@
 
     es.addEventListener("open", function() {
       log("stream open");
+      recycling = false;          // a live connection ends any recycle in progress
       sseFailures = 0;
       backoffMs = BACKOFF_MIN_MS;
       // SSE is carrying us again; drop the fallback poll and its bandwidth.
@@ -220,9 +234,13 @@
     });
 
     es.addEventListener("error", function() {
-      // A recycle closes the socket itself, which also fires error. The bye
-      // handler has already reconnected; treat this as noise.
-      if (recycling) { recycling = false; return; }
+      // Ignore an error from a socket we have already replaced. Identity is the
+      // reliable test: the previous version cleared a sticky `recycling` flag
+      // here, but a recycled socket does not always emit error after close — so
+      // the flag could stay set and swallow the NEXT genuine failure, leaving the
+      // window with no stream and no reconnect scheduled.
+      if (es !== source) return;
+      if (recycling) return;      // cleared by the replacement's open handler
       // EventSource retries on its own, so close it first — otherwise our
       // backoff and its built-in retry race and we get both.
       try { es.close(); } catch (e) { /* already gone */ }

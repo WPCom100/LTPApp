@@ -64,19 +64,24 @@ function freshLive() {
   return { seen, note: (c) => seen.push(c) };
 }
 
-{
+// Seed FIRST, then subscribe: this isolates the steady-state diffing contract
+// from the seeding wake tested further down.
+function seeded(map) {
   const { seen } = freshLive();
-  LIVE.subscribe("projects", (c) => seen.push(c));
-  const first = LIVE._applyStamps({ projects: "a:1:0", contacts: "b:2:0" });
-  eq("L1 first map seeds silently", first, []);
-  eq("L2 seeding notifies nobody", seen, []);
-  eq("L3 stamp is recorded", LIVE.stampFor("projects"), "a:1:0");
+  LIVE._applyStamps(map);
+  return { seen };
 }
 
 {
-  const { seen } = freshLive();
+  const { seen } = seeded({ projects: "a:1:0", contacts: "b:2:0" });
   LIVE.subscribe("projects", (c) => seen.push(c));
-  LIVE._applyStamps({ projects: "a:1:0", contacts: "b:2:0" });
+  eq("L1 seeding records the stamp", LIVE.stampFor("projects"), "a:1:0");
+  eq("L2 and a subscriber joining afterwards hears nothing", seen, []);
+}
+
+{
+  const { seen } = seeded({ projects: "a:1:0", contacts: "b:2:0" });
+  LIVE.subscribe("projects", (c) => seen.push(c));
   const changed = LIVE._applyStamps({ projects: "a:1:1", contacts: "b:2:0" });
   eq("L4 only the moved collection is reported", changed, ["projects"]);
   eq("L5 its subscriber fires", seen, ["projects"]);
@@ -84,17 +89,15 @@ function freshLive() {
 }
 
 {
-  const { seen } = freshLive();
+  const { seen } = seeded({ projects: "a:1:0", contacts: "b:2:0" });
   LIVE.subscribe("contacts", (c) => seen.push(c));
-  LIVE._applyStamps({ projects: "a:1:0", contacts: "b:2:0" });
   LIVE._applyStamps({ projects: "a:1:9", contacts: "b:2:0" });
   eq("L7 an unrelated write does not wake this subscriber", seen, []);
 }
 
 {
-  const { seen } = freshLive();
+  const { seen } = seeded({ projects: "a:1:0" });
   LIVE.subscribe("projects", (c) => seen.push(c));
-  LIVE._applyStamps({ projects: "a:1:0" });
   LIVE._applyStamps({ projects: "a:1:0" });
   LIVE._applyStamps({ projects: "a:1:0" });
   eq("L8 a repeated identical stamp is not a change", seen, []);
@@ -102,24 +105,44 @@ function freshLive() {
 
 {
   // A subscriber that throws must not stop the rest of the page refreshing.
-  const { seen } = freshLive();
+  const { seen } = seeded({ projects: "a:1:0" });
   LIVE.subscribe("projects", () => { throw new Error("boom"); });
   LIVE.subscribe("projects", (c) => seen.push(c));
   const realError = console.error; console.error = () => {};
-  LIVE._applyStamps({ projects: "a:1:0" });
   LIVE._applyStamps({ projects: "a:1:1" });
   console.error = realError;
   eq("L9 one broken subscriber does not block the others", seen, ["projects"]);
 }
 
 {
-  const { seen } = freshLive();
+  const { seen } = seeded({ projects: "a:1:0" });
   const off = LIVE.subscribe("projects", (c) => seen.push(c));
-  LIVE._applyStamps({ projects: "a:1:0" });
   off();
   LIVE._applyStamps({ projects: "a:1:1" });
   eq("L10 unsubscribe stops delivery", seen, []);
   eq("L11 status() reports no live subscribers", LIVE.status().subscribers.projects, undefined);
+}
+
+{
+  // The late-seed case. ready() is bounded and revalidate() swallows failures, so
+  // on a slow or failed /api/versions the hooks fetch BLIND and the seed lands
+  // afterwards. Anything written in between is baked into a stamp the client
+  // trusts while it holds pre-write rows — and nothing used to re-check.
+  // Subscribers already existing at seed time IS that situation, so wake them.
+  const { seen } = freshLive();
+  LIVE.subscribe("projects", (c) => seen.push(c));
+  LIVE.subscribe("contacts", (c) => seen.push(c));
+  LIVE._applyStamps({ projects: "a:1:0", contacts: "b:2:0" });
+  eq("L12 a seed arriving after the hooks subscribed wakes them to re-check",
+     seen.sort(), ["contacts", "projects"]);
+}
+
+{
+  // ...but only collections that actually have a subscriber.
+  const { seen } = freshLive();
+  LIVE.subscribe("projects", (c) => seen.push(c));
+  LIVE._applyStamps({ projects: "a:1:0", contacts: "b:2:0", quotes: "c:3:0" });
+  eq("L13 and wakes nobody for the collections nothing is watching", seen, ["projects"]);
 }
 
 LIVE._reset();
@@ -211,14 +234,72 @@ const M = S._mergeRemote;
   eq("M7 server ordering is preserved", M([], [], server), server);
 }
 
-eq("M8 empty everything is empty", M([], [], []), []);
-eq("M9 null inputs are tolerated", M(null, null, null), []);
+{
+  // Edited here, DELETED there. Keeping the local copy would not just show a
+  // stale row — the next diff would treat it as new and POST it back, undoing
+  // someone else's delete behind their back.
+  const base   = [{ id: 1, name: "A" }, { id: 2, name: "B" }];
+  const local  = [{ id: 1, name: "A" }, { id: 2, name: "B edited here" }];
+  const server = [{ id: 1, name: "A" }];
+  const removed = [];
+  eq("M8 a remote delete beats a local edit rather than resurrecting the row",
+     M(base, local, server, removed), [{ id: 1, name: "A" }]);
+  eq("M9 and the dropped row is reported so the user can be told", removed, ["2"]);
+}
+
+{
+  // A locally-CREATED row must still survive — it was never on the server, so
+  // its absence there is not a delete.
+  const removed = [];
+  eq("M10 a locally-created row is not mistaken for a remote delete",
+     M([], [{ id: 9, name: "New here" }], [], removed), [{ id: 9, name: "New here" }]);
+  eq("M11 and nothing is reported dropped", removed, []);
+}
+
+eq("M12 empty everything is empty", M([], [], []), []);
+eq("M13 null inputs are tolerated", M(null, null, null), []);
 
 {
   // Rows without ids (defensive — nothing in the app stores them, but a merge
   // must not crash if one appears).
   const server = [{ id: 1, name: "A" }, { name: "no id" }];
-  eq("M10 id-less server rows pass through", M([], [], server), server);
+  eq("M14 id-less server rows pass through", M([], [], server), server);
+}
+
+// ── revsRef must not advance for rows the merge kept locally ────────────────
+//
+// This is the bug that made If-Match unable to fire for exactly the rows it was
+// built for: adopting the server's newer rev for a locally-kept row handed the
+// next PUT a token the server already agreed with, so the guard passed and the
+// other window's change was overwritten with no 409 and no toast.
+
+{
+  const base   = [{ id: 1, name: "A" }, { id: 2, name: "B" }];
+  const local  = [{ id: 1, name: "A" }, { id: 2, name: "B edited here" }];
+  const server = [{ id: 1, name: "A elsewhere" }, { id: 2, name: "B elsewhere" }];
+  const removed = [], kept = [];
+  M(base, local, server, removed, kept);
+  eq("K1 a row resolved in favour of the local edit is reported", kept, ["2"]);
+  eq("K2 a row taken from the server is not", removed, []);
+}
+
+{
+  const base   = [{ id: 1, name: "A" }];
+  const local  = [{ id: 1, name: "A" }, { id: 9, name: "New here" }];
+  const server = [{ id: 1, name: "A elsewhere" }];
+  const kept = [];
+  M(base, local, server, [], kept);
+  eq("K3 a locally-CREATED row is not reported as kept — it has no server rev to hold back",
+     kept, []);
+}
+
+{
+  const base   = [{ id: 1, name: "A" }];
+  const local  = [{ id: 1, name: "A" }];
+  const server = [{ id: 1, name: "A elsewhere" }];
+  const kept = [];
+  M(base, local, server, [], kept);
+  eq("K4 an untouched row is not reported, so its rev may safely advance", kept, []);
 }
 
 // ── Settings merge ──────────────────────────────────────────────────────────
