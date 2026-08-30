@@ -685,11 +685,36 @@ client reconnects immediately rather than treating it as a fault. The safety
 sweep also idles completely when nobody is connected — this app sits unused most
 nights, and there is nothing to broadcast to.
 
-All three draft-holding editors — schedule builder, quote builder, invoice
-builder — handle a remote change through one shared hook
-(`theme.js::LTP_useRemoteEdits`): a clean editor adopts the newer version, a
-dirty one keeps the local edits and warns once per editing session. Discarding
-someone's typing to win a race is the wrong trade at this size.
+### Editing a record two people have open
+
+Every editor in the app is covered, in one of two ways. Which one depends on how
+the editor holds its state — not on how important the record is.
+
+**Draft editors** (schedule builder, quote builder, invoice builder, Settings)
+clone the record into a single `draft` and own a dirty flag, so they use
+`theme.js::LTP_useRemoteEdits`: nothing unsaved → adopt the newer version
+silently; unsaved edits → keep them and warn once per editing session.
+
+**Field-per-`useState` modals** (companies, contacts, projects, services,
+products, fees, client rates, equipment, containers, kits, crew roster, manual
+shifts, notes) seed one piece of state per field when they open. Re-seeding a
+dozen setters underneath someone mid-edit is not something to do quietly, so
+they use `theme.js::LTP_useRecordWatch` and only warn. It finds the row itself in
+`window.LTP_DATA_LIVE` (a render-time mirror kept by data-state.js), so a form
+needs one line and no new props threaded down from its parent. An optional
+`pick` narrows what counts as a change — the note editor watches its own note,
+not the whole project row it lives in.
+
+**Why a warning and not `If-Match`.** The revision guard does not catch this on
+its own: live sync refreshes a row's `_rev` underneath a form that is still
+holding values from before it, so the write looks perfectly current to the
+server. `If-Match` covers the window where a client has NOT refetched; the
+editor notice covers the window where it has. Discarding someone's typing to win
+a race is the wrong trade at this size, so in both cases the local edit survives
+and the person is told.
+
+Adding a new editor? Call one of the two hooks. A form that stays mounted after
+saving needs the dirty-flag variant, or it will warn about its own write.
 
 Not every read is in the feed. `/api/qbo/status`, `/api/users` and
 `/api/qbo/payouts/day-status` are backed by tables outside `livesync.COLLECTIONS`

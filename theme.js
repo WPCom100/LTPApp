@@ -219,6 +219,54 @@ window.LTP_useUnsavedGuard = function() {
   return [isDirty, setIsDirty];
 };
 
+// Warn-only companion to LTP_useRemoteEdits, for the ~dozen modal forms that
+// seed one useState PER FIELD from a row rather than holding a single draft.
+//
+// Those forms cannot adopt a newer version — re-seeding fifteen independent
+// setters mid-edit is not something to do behind someone's back — but they can
+// and must SAY when the row moved, because otherwise their save silently
+// overwrites it. (If-Match does not catch this on its own: live sync refreshes
+// the row's revision underneath a form that is holding field values from before
+// it, so the write looks current to the server.)
+//
+// Self-sufficient by design: it finds the record itself in
+// window.LTP_DATA_LIVE, so a form needs one line and no new props threaded down
+// from its parent.
+//
+//   collection  a persisted state key ("companies", "services", …). A singleton
+//               blob like "settings" works too — id is then ignored.
+//   id          the row's id.
+//   notice      { title, message } for the warning.
+//   pick        optional record → the slice this editor actually owns, so an
+//               editor of one note inside a project is not woken by an unrelated
+//               change to the same project.
+//
+// Deliberately fires even when the form is untouched: what it is showing is
+// stale either way, and unlike a draft editor there is nothing safe to silently
+// refresh. Forms that STAY MOUNTED after saving should use LTP_useRemoteEdits
+// with a real dirty flag instead, or they will warn about their own write.
+window.LTP_useRecordWatch = function(collection, id, notice, pick) {
+  var live = (window.LTP_DATA_LIVE || {})[collection];
+  var record = null;
+  if (Array.isArray(live)) {
+    if (id != null) {
+      for (var i = 0; i < live.length; i++) {
+        if (live[i] && live[i].id === id) { record = live[i]; break; }
+      }
+    }
+  } else if (live && typeof live === "object") {
+    record = live;                       // singleton blob
+  }
+  window.LTP_useRemoteEdits(
+    record,
+    pick || function(r) { return r; },
+    true,                                // always "dirty": warn, never adopt
+    null,
+    notice,
+    String(collection) + ":" + String(id));
+};
+
+
 // ═══════════════════════════════════════════════════════════════════════════
 //   A RECORD CHANGING WHILE AN EDITOR HAS IT OPEN
 // ═══════════════════════════════════════════════════════════════════════════
@@ -264,14 +312,21 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
   }, [resetKey]);
 
   React.useEffect(function() {
-    if (!record) return;
     var incoming;
-    try { incoming = JSON.stringify(snapshot(record)); }
-    catch (e) { return; }                 // unserializable — nothing safe to compare
+    if (!record) {
+      // No record at all. Either this editor is on something brand new and
+      // unsaved (nothing to watch), or the row we WERE watching has just been
+      // deleted in another window — which is very much worth saying.
+      if (seenRef.current === null) return;
+      incoming = "\u0000deleted";
+    } else {
+      try { incoming = JSON.stringify(snapshot(record)); }
+      catch (e) { return; }               // unserializable — nothing safe to compare
+    }
     if (seenRef.current === null) { seenRef.current = incoming; return; }
     if (incoming === seenRef.current) return;
     seenRef.current = incoming;
-    if (!isDirty) {
+    if (!isDirty && record && onAdopt) {
       warnedRef.current = false;
       onAdopt(snapshot(record));
       return;

@@ -83,7 +83,11 @@
 // refusal when their own paid-day map is stale. All three are runtime-cached, so
 // without a bump a device keeps the old client — which would hit the new 409 with
 // no way to answer it.
-var CACHE_VERSION = 'ltp-shell-v60';
+// v61: theme.js gained LTP_useRecordWatch and data-state.js publishes the
+// LTP_DATA_LIVE mirror it reads; a dozen editors across modules/ now call it.
+// theme.js is precached, so without a bump a device keeps a theme.js with no
+// such hook while its runtime-cached modules try to call one.
+var CACHE_VERSION = 'ltp-shell-v61';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -496,6 +496,15 @@
 
     latestValueRef.current = value;
 
+    // Read-only mirror of every persisted collection, kept in step at render
+    // time. theme.js::LTP_useRecordWatch reads it so a form can watch the row it
+    // is editing without its parent having to thread the live array down — there
+    // are a dozen such forms and threading a prop through each was a dozen
+    // chances to wire one up wrong. Never write to this; it is a view of state,
+    // not a second copy of it.
+    if (!window.LTP_DATA_LIVE) window.LTP_DATA_LIVE = {};
+    window.LTP_DATA_LIVE[key] = value;
+
     // One-shot hydration on mount.
     //
     // Belt-and-suspenders: the entire body is wrapped so that hydratedRef and
