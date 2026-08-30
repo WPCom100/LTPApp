@@ -8,9 +8,26 @@ internal detail.
 
 | File | What it is |
 |---|---|
-| `docs/crew-announcement-email.html` | The email, inline-styled for Gmail. Open in a browser, Select All, Copy, paste into Gmail's compose window. |
+| `assets/crew-email/announcement.html` | The email as a standalone page, inline-styled for Gmail. Served publicly (see below); also the paste source — open it, Select All, Copy, paste into Gmail's compose window. |
 | `docs/CREW_ONBOARDING_EMAIL.md` | This file — the plain-text version below. |
 | `assets/crew-email/*.jpg` | The three screenshots, served publicly by the app. |
+
+## Public page
+
+The same file is served as a standalone page, for crew whose mail client
+mangles or blocks the email:
+
+    https://app.luminarytechnology.productions/assets/crew-email/announcement.html
+
+`.html` is allow-listed for `assets/crew-email/` **only** — see
+`backend/main.py::_ALLOWED_TREES`, scoped the same way `assets/vendor/` is for
+`.js`/`.wasm`. Anywhere else, a `.html` request falls through to the SPA
+fallback, which returns 200 with `index.html` and reads as a hit; that is the
+trap `tests/test_static_serving.py` pins by asserting the page's own content
+rather than a status code.
+
+Note the published Claude artifact carries its own copy of this markup for its
+"Copy email for Gmail" button — if the email body changes, update both.
 
 ## Hosted images
 
