@@ -669,13 +669,28 @@ ok("T0 the toast policy is exposed", !!P);
 }
 
 {
-  const sticky = { sticky: true, path: "projects/7101/edit" };
-  ok("T5 a sticky toast survives while you stay on its page",
-     P.survivesNavigation(sticky, "projects/7101/edit"));
+  // Three lifetimes, and navigation is what separates the two sticky ones.
+  const pageScoped = { sticky: true, retireOnLeave: true, path: "projects/7101/edit" };
+  ok("T5 a page-scoped warning survives while you stay on its page",
+     P.survivesNavigation(pageScoped, "projects/7101/edit"));
   ok("T6 and is retired when you leave it",
-     !P.survivesNavigation(sticky, "projects/7101"));
+     !P.survivesNavigation(pageScoped, "projects/7101"));
   ok("T7 a timed toast is never touched by navigation",
      P.survivesNavigation({ variant: "warn" }, "anywhere/else"));
+  ok("T7a a sticky toast that is not page-scoped outlives any navigation",
+     P.survivesNavigation({ variant: "error", sticky: true }, "anywhere/else"));
+  ok("T7b even one that happens to carry a stale page",
+     P.survivesNavigation({ variant: "error", sticky: true, path: "projects/7101/edit" }, "dashboard"));
+}
+
+{
+  // A failure nobody saw was not reported, and the code raising one cannot know
+  // whether anybody is at the desk. So errors are sticky whether or not the
+  // caller asked — and, not being about any one page, they survive navigation.
+  ok("T7c errors are sticky by variant", P.stickyByVariant("error"));
+  ["success", "warn", "info"].forEach((v) => {
+    ok("T7d " + v + " is not sticky by variant", !P.stickyByVariant(v));
+  });
 }
 
 {
@@ -705,6 +720,33 @@ ok("T0 the toast policy is exposed", !!P);
   eq("T14 and it is the oldest", r2.dropped.map((t) => t.id), [1]);
 
   eq("T15 under the cap nothing is evicted", P.evict([stuck(1), timed(2)]).dropped, []);
+
+  // An error is sticky too, so it is protected by the same rule.
+  const err = (n) => ({ id: n, sticky: true, variant: "error", title: "e" + n });
+  const mixed = P.evict([err(1), timed(2), timed(3), timed(4), timed(5), timed(6)]);
+  ok("T15a an unread error is not evicted to make room",
+     mixed.list.some((t) => t.id === 1) && mixed.dropped.every((t) => t.variant !== "error"));
+}
+
+{
+  // Opacity. A toast is the one surface that has to be readable wherever it
+  // lands, and the theme's *Bg tokens are 10%-alpha tints meant for badges
+  // inside a panel — through them the page's own text showed on the card.
+  ["success", "warn", "info", "error"].forEach((v) => {
+    const bg = P.toastBg(v);
+    ok("T18 " + v + " has a fully opaque background", /^#[0-9a-f]{6}$/i.test(bg), String(bg));
+  });
+  ok("T19 the variants are still told apart by colour",
+     new Set(["success", "warn", "info", "error"].map(P.toastBg)).size === 4);
+
+  // The compositing itself, so a palette change cannot quietly reintroduce
+  // transparency or produce nonsense.
+  eq("T20 full alpha is the foreground", P.mix("#ffffff", "#000000", 1), "#ffffff");
+  eq("T21 zero alpha is the background", P.mix("#ffffff", "#000000", 0), "#000000");
+  eq("T22 half way is half way", P.mix("#ffffff", "#000000", 0.5), "#808080");
+  eq("T23 shorthand hex is understood", P.mix("#fff", "#000", 1), "#ffffff");
+  eq("T24 a non-hex colour composites to nothing rather than guessing",
+     P.mix("rgba(95,208,138,0.10)", "#19242B", 0.14), null);
 }
 
 {
