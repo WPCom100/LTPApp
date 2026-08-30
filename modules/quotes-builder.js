@@ -1297,6 +1297,25 @@
       setIsDirty(false);
     }, [quoteId, isNew]);
 
+    // Someone else saved this quote while we have it open. Adopt it if we have
+    // nothing unsaved, otherwise keep our edits and say so once — see
+    // theme.js::LTP_useRemoteEdits. A brand-new quote has no stored row yet, so
+    // the hook no-ops on the falsy record.
+    window.LTP_useRemoteEdits(
+      isNew ? null : quotes.find(function(x) { return x.id === quoteId; }),
+      cloneDraft, isDirty,
+      function(fresh) {
+        setDraftRaw(fresh);
+        cleanRef.current = fresh;
+        // Adopting is not an in-session date change, so it must not re-price
+        // equipment off today's inventory rates — same reasoning as the quote
+        // switch above.
+        skipDateRecalcRef.current = true;
+      },
+      { title: "This quote changed elsewhere",
+        message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
+      String(quoteId) + ":" + String(isNew));
+
     var [pickerForSection, setPickerForSection] = useState(null);
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);

@@ -252,6 +252,201 @@ const AS = S._adoptSettings;
   ok("B2 announceWrite tolerates empty input", !threw);
 }
 
+// ── Remote edits to an open draft (theme.js::LTP_useRemoteEdits) ────────────
+//
+// The three big editors clone their record into a local draft and reseed only
+// on an id change, so a record that moved underneath them is invisible until
+// they save over it. This hook is the shared response. Exercised through a
+// minimal React model — refs that persist across renders and effects that fire
+// when their deps change, in declaration order — which is all the hook uses.
+
+function mountHook(fn) {
+  const refs = [];
+  const deps = [];
+  let ri = 0, ei = 0;
+  const queued = [];
+  global.React = {
+    useRef(init) {
+      if (refs.length <= ri) refs.push({ current: init });
+      return refs[ri++];
+    },
+    useEffect(cb, d) {
+      const i = ei++;
+      const prev = deps[i];
+      const changed = !prev || d.length !== prev.length || d.some((x, k) => x !== prev[k]);
+      deps[i] = d.slice();
+      if (changed) queued.push(cb);
+    },
+  };
+  return function render() {
+    ri = 0; ei = 0; queued.length = 0;
+    fn.apply(null, arguments);
+    queued.forEach((cb) => cb());     // effects run after the body, in order
+  };
+}
+
+// theme.js only touches React inside function bodies, so it loads fine here.
+window.LTP_genId = (p) => (p || "x") + "-1";
+(0, eval)(fs.readFileSync(path.join(root, "theme.js"), "utf8"));
+ok("theme exports LTP_useRemoteEdits", typeof window.LTP_useRemoteEdits === "function");
+
+function scenario() {
+  const state = { adopted: [], toasts: [], dirty: false };
+  window.LTP_toast = (title, o) => state.toasts.push(title + " :: " + (o && o.message));
+  const snap = (r) => ({ id: r.id, body: r.body });
+  const render = mountHook((record, resetKey) => {
+    window.LTP_useRemoteEdits(record, snap, state.dirty,
+      (fresh) => state.adopted.push(fresh),
+      { title: "Changed elsewhere", message: "unsaved changes are kept" },
+      resetKey);
+  });
+  return { state, render };
+}
+
+{
+  const { state, render } = scenario();
+  render({ id: 1, body: "a" }, 1);
+  eq("H1 the first render only seeds", [state.adopted.length, state.toasts.length], [0, 0]);
+  render({ id: 1, body: "a" }, 1);          // new identity, same content
+  eq("H2 a refetch that changed nothing does nothing", [state.adopted.length, state.toasts.length], [0, 0]);
+}
+
+{
+  const { state, render } = scenario();
+  render({ id: 1, body: "a" }, 1);
+  render({ id: 1, body: "b" }, 1);
+  eq("H3 a clean editor adopts the newer version", state.adopted, [{ id: 1, body: "b" }]);
+  eq("H4 and is not nagged about it", state.toasts, []);
+}
+
+{
+  const { state, render } = scenario();
+  render({ id: 1, body: "a" }, 1);
+  state.dirty = true;
+  render({ id: 1, body: "b" }, 1);
+  eq("H5 a dirty editor keeps its edits (no adopt)", state.adopted, []);
+  eq("H6 and is told once", state.toasts.length, 1);
+  ok("H7 the notice says what happens on save", /unsaved changes are kept/.test(state.toasts[0]), state.toasts[0]);
+
+  render({ id: 1, body: "c" }, 1);
+  eq("H8 a second remote change does not nag again", state.toasts.length, 1);
+  eq("H9 and still does not clobber the draft", state.adopted, []);
+}
+
+{
+  // Saving clears the dirty flag; a later remote change should adopt again, and
+  // the one-notice budget should be back for the next editing session.
+  const { state, render } = scenario();
+  render({ id: 1, body: "a" }, 1);
+  state.dirty = true;
+  render({ id: 1, body: "b" }, 1);
+  eq("H10 warned while dirty", state.toasts.length, 1);
+  state.dirty = false;
+  render({ id: 1, body: "c" }, 1);
+  eq("H11 adopts again once the draft is clean", state.adopted, [{ id: 1, body: "c" }]);
+  state.dirty = true;
+  render({ id: 1, body: "d" }, 1);
+  eq("H12 the notice budget resets per editing session", state.toasts.length, 2);
+}
+
+{
+  // Switching records is not a remote change.
+  const { state, render } = scenario();
+  render({ id: 1, body: "a" }, 1);
+  state.dirty = true;
+  render({ id: 2, body: "z" }, 2);          // different record entirely
+  eq("H13 switching records adopts nothing", state.adopted, []);
+  eq("H14 and warns about nothing", state.toasts, []);
+}
+
+{
+  const { state, render } = scenario();
+  render(null, 1);                          // a brand-new, unsaved record
+  render(null, 1);
+  eq("H15 no stored record means no-op", [state.adopted.length, state.toasts.length], [0, 0]);
+}
+
+{
+  // A record the snapshot cannot serialize must not throw out of the effect.
+  const { state } = scenario();
+  const cyclic = { id: 1 }; cyclic.self = cyclic;
+  const render = mountHook((record, resetKey) => {
+    window.LTP_useRemoteEdits(record, (r) => r, false,
+      (f) => state.adopted.push(f), null, resetKey);
+  });
+  let threw = false;
+  try { render({ id: 1 }, 1); render(cyclic, 1); } catch (e) { threw = true; }
+  ok("H16 an unserializable record is survived, not thrown", !threw);
+}
+
+// ── The unsaved-changes guard (theme.js::LTP_useUnsavedGuard) ───────────────
+//
+// router.navigate() decides whether to prompt "You have unsaved changes" purely
+// from window.__LTP_UNSAVED, so that mirror going out of step with the real
+// dirty flag means an editor full of unsaved work navigates away in silence.
+// This models React closely enough to catch that: state that re-renders, and
+// effects whose cleanup runs before the next effect body when deps change.
+
+function mountStateful(fn) {
+  const states = [], refs = [], deps = [], cleanups = [];
+  let si = 0, ri = 0, ei = 0, lastArgs = [];
+  function render() {
+    if (arguments.length) lastArgs = Array.prototype.slice.call(arguments);
+    si = 0; ri = 0; ei = 0;
+    const queued = [];
+    global.React = {
+      useState(init) {
+        const i = si++;
+        if (states.length <= i) states.push(typeof init === "function" ? init() : init);
+        return [states[i], (v) => {
+          states[i] = typeof v === "function" ? v(states[i]) : v;
+          render();
+        }];
+      },
+      useRef(init) { if (refs.length <= ri) refs.push({ current: init }); return refs[ri++]; },
+      useEffect(cb, d) {
+        const i = ei++;
+        const prev = deps[i];
+        const changed = !prev || !d || d.length !== prev.length || d.some((x, k) => x !== prev[k]);
+        deps[i] = d ? d.slice() : null;
+        if (changed) queued.push([i, cb]);
+      },
+    };
+    const out = fn.apply(null, lastArgs);
+    queued.forEach(([i, cb]) => {
+      if (cleanups[i]) cleanups[i]();          // React: cleanup, then the new body
+      cleanups[i] = cb() || null;
+    });
+    return out;
+  }
+  render.unmount = () => cleanups.forEach((c) => c && c());
+  return render;
+}
+
+{
+  window.addEventListener = function () {};
+  window.removeEventListener = function () {};
+  let api = null;
+  const render = mountStateful(() => { api = window.LTP_useUnsavedGuard(); });
+  render();
+  eq("U1 a clean editor reports no unsaved work", window.__LTP_UNSAVED, false);
+
+  api[1](true);
+  eq("U2 the mirror survives the dirty transition", window.__LTP_UNSAVED, true);
+  eq("U3 and the hook agrees", api[0], true);
+
+  api[1](true);
+  eq("U4 staying dirty stays dirty", window.__LTP_UNSAVED, true);
+
+  api[1](false);
+  eq("U5 saving clears it", window.__LTP_UNSAVED, false);
+
+  api[1](true);
+  eq("U6 dirty again after a save", window.__LTP_UNSAVED, true);
+  render.unmount();
+  eq("U7 leaving the tree gives up ownership", window.__LTP_UNSAVED, false);
+}
+
 console.log("live-sync suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
