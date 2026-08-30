@@ -76,7 +76,13 @@
 // /assets/, and it is the page crew are sent when their mail client fails them —
 // so a device answering it from a v58 cache would hand back the SPA shell that
 // URL used to resolve to. Nothing precached moved; the bump is for that entry.
-var CACHE_VERSION = 'ltp-shell-v59';
+// v60: the crew announcement page is rebuilt through email_compose.email_shell
+// (grey canvas, 580px card, masthead, footer) instead of a hand-rolled wrapper.
+// The old one rendered with no padding: its markup carries an inline padding:0
+// for mail clients, and inline beats any stylesheet selector, so the page's own
+// <style> rule never applied. Bumped so no device answers that URL from a v59
+// cache holding the broken copy.
+var CACHE_VERSION = 'ltp-shell-v60';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

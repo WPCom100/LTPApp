@@ -7,35 +7,30 @@
 <meta name="description" content="How Luminary sends crew requests, and how to accept or pass on a shift.">
 <meta name="robots" content="noindex">
 <!--
-  Standalone copy of the crew-request announcement email — the page crew are
-  pointed at when their mail client mangles or blocks the real message. The
-  body below is byte-identical to what gets pasted into Gmail, so this file is
-  the single source for both: open it, Select All, Copy, paste into a compose
-  window. Served publicly via the "assets/crew-email/" entry in
+  Standalone copy of the crew-request announcement — the page crew are pointed
+  at when their mail client mangles or blocks the real message. The markup below
+  is the output of backend/email_compose.py::email_shell, the same wrapper every
+  crew email goes through, so this page and the email are the same artifact:
+  grey canvas, centred 580px card, masthead, footer.
+
+  It is also the Gmail paste source — open it, Select All, Copy, paste into a
+  compose window. Served publicly via the "assets/crew-email/" entry in
   backend/main.py::_ALLOWED_TREES.
+
+  Do NOT add page styling that targets the shell's elements. Everything below
+  carries inline styles (it has to, for mail clients), and inline always beats a
+  stylesheet selector — an earlier attempt to set the card's padding from a
+  <style> block was silently overridden by the markup's own padding:0.
 -->
 <style>
   html { -webkit-text-size-adjust: 100%; }
-  body {
-    margin: 0;
-    padding: 28px 16px 56px;
-    background-color: #eef1f3;
-    font-family: -apple-system, 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
-  }
-  /* The email body is a fixed 624px card; give it a page to sit on. */
-  body > div { background-color: #ffffff; padding: 30px 34px 38px; border-radius: 10px;
-               box-shadow: 0 2px 14px rgba(28, 44, 54, .10); }
-  @media (max-width: 640px) {
-    body { padding: 0; }
-    body > div { padding: 20px 18px 28px; border-radius: 0; box-shadow: none; }
-  }
+  /* The shell owns the canvas, the card and all spacing. The page only needs to
+     stop the browser adding its default 8px margin around it. */
+  body { margin: 0; background-color: #f1f3f5; }
 </style>
 </head>
 <body>
-<div style="max-width:624px;margin:0 auto;padding:0;background-color:#ffffff;font-family:-apple-system,'Segoe UI',Roboto,Arial,Helvetica,sans-serif;font-size:16px;line-height:1.62;color:#3A4A54">
-<img src="https://app.luminarytechnology.productions/assets/logos/luminary-masthead.png" alt="Luminary Technology &amp; Productions" width="340" style="display:block;border:0;width:100%;max-width:340px;height:auto;margin:0 0 -1px 0">
-<div style="height:4px;background-color:#f15927;font-size:0;line-height:0">&nbsp;</div>
-<h1 style="margin:30px 0 22px;font-size:26px;line-height:1.24;font-weight:bold;color:#233038;letter-spacing:-0.01em">How we'll send you crew requests from now on</h1>
+<div style="background-color:#f1f3f5;padding:24px 10px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;background-color:#f1f3f5"><tr><td align="center"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px;background-color:#ffffff;border:1px solid #e6e8eb;border-radius:14px"><tr><td style="padding:0"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr><td width="31" style="width:31px;font-size:0;line-height:0">&nbsp;</td><td style="padding:26px 30px 0 0;border-bottom:4px solid #f15927;font-size:0;line-height:0"><img src="https://app.luminarytechnology.productions/assets/logos/luminary-masthead.png" alt="Luminary Technology &amp; Productions" width="380" style="display:block;border:0;width:100%;max-width:380px;height:auto;margin:0 0 -1px 0"></td></tr></table></td></tr><tr><td style="padding:22px 30px 26px"><div style="font-size:16px;line-height:1.62;color:#3A4A54"><h1 style="margin:0 0 22px;font-size:26px;line-height:1.24;font-weight:bold;color:#233038;letter-spacing:-0.01em">How we'll send you crew requests from now on</h1>
 <p style="margin:0 0 18px">Hi everyone,</p>
 <p style="margin:0 0 18px">A quick heads-up about a change on our end that affects how you'll hear from us about work.</p>
 <p style="margin:0 0 18px">From now on, every crew request from Luminary goes out through our new scheduling system instead of a scattered mix of texts, calls, and one-off emails. You get a proper call sheet for every job, you can take it or pass on it in a couple of taps, and once you're booked the details stay in your pocket.</p>
@@ -94,7 +89,6 @@ Owner<br>
 <a href="tel:+19728495202" style="color:#5D6D77;text-decoration:none">(972) 849-5202</a> &nbsp;&middot;&nbsp; <a href="mailto:Landry@LuminaryTechnology.Productions" style="color:#5D6D77;text-decoration:none">Landry@LuminaryTechnology.Productions</a><br>
 <a href="https://LuminaryTechnology.Productions" style="color:#5D6D77;text-decoration:none">LuminaryTechnology.Productions</a>
 </p>
-</div>
-</div>
+</div></div></td></tr></table><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;max-width:580px"><tr><td style="padding:16px 28px 4px;text-align:center;font-size:11px;line-height:1.6;color:#9aa3ab">Luminary Technology &amp; Productions&nbsp;&nbsp;·&nbsp;&nbsp;LuminaryTechnology.Productions</td></tr></table></td></tr></table></div>
 </body>
 </html>
