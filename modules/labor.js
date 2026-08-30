@@ -2455,7 +2455,30 @@
     React.useEffect(function() { reloadCrewRequests(); }, []);
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
-    function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
+
+    // The project row may legitimately not be here yet: a request created in
+    // another window (a manual shift, say) reaches this tab through
+    // /api/crew-requests, while its project arrives via the projects
+    // collection. Live sync closes that gap in about a second — but it is a
+    // gap, so say "Syncing…" rather than inventing a name. This used to return
+    // the literal string "Project", which read as a real shift name and gave
+    // no hint that anything was missing.
+    function projName(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : null; }
+    function projLabel(id) { return projName(id) || "Syncing\u2026"; }
+
+    // Self-heal: if a request references a project we do not hold, ask the
+    // server what has changed rather than sitting on "Syncing…". Live sync
+    // normally gets there first; this covers the window where the request list
+    // arrived ahead of the project that backs it, and the case where the feed
+    // dropped a frame. Cheap — one /api/versions round trip, and only while
+    // something is actually unresolved.
+    var unresolved = (crewRequests || []).some(function(r) {
+      return r.status !== "withdrawn" && !projName(r.projectId);
+    });
+    React.useEffect(function() {
+      if (!unresolved || !window.LTP_LIVE) return;
+      window.LTP_LIVE.revalidate();
+    }, [unresolved]);
 
     // Withdraw a pending request: kill the crew link now, reopen its shifts, and
     // park the crew-withdrawn email in the notify tray (coalesced per person,
@@ -2515,6 +2538,10 @@
     function reqInfo(req) {
       var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
       var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+      // `known` distinguishes "this project has no matching positions" from
+      // "we do not have this project yet". They used to be indistinguishable —
+      // both produced all-zero counts — which is what silently hid the Confirm
+      // button on a request the crew member had already accepted.
       var positions = [];
       if (proj) (proj.schedule || []).forEach(function(s) {
         (s.positions || []).forEach(function(p) {
@@ -2523,12 +2550,19 @@
       });
       var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
-      return { proj: proj, positions: positions, counts: counts };
+      return { proj: proj, known: !!proj, positions: positions, counts: counts };
     }
 
     // Badge label/color + which actions show, from the request + its live
     // position statuses. Confirming lives HERE (not on the Assignments tab).
     function displayState(req, info) {
+      // Without the project row we cannot read the live position statuses, so
+      // every downstream decision here would be a guess — and acting on a guess
+      // is worse than waiting. Confirm/withdraw both write INTO the project's
+      // schedule, so offering them against a project we do not hold would be a
+      // click that silently does nothing. Say so instead; live sync fills this
+      // in on its own, and the effect below nudges it along.
+      if (!info.known) return { label: "Syncing\u2026", color: B.textMut, pending: true };
       if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
       if (req.status === "declined") return { label: "Declined", color: B.danger };
       // A direct book was never sent, never answered — say so, permanently, so
@@ -2628,7 +2662,13 @@
                               return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
                                 (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
                             }))
-                        : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                        : !info.known
+                          // Distinct from "no positions": we are missing the
+                          // project, not the shifts. Actions stay hidden until
+                          // it lands so a Confirm click can't quietly no-op.
+                          ? h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
+                              "Waiting for this shift\u2019s details to sync\u2026")
+                          : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
                       // Direct book — no ask was ever sent, so there's no crew
                       // note to show and none is coming.
                       r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
@@ -2719,6 +2759,18 @@
         .catch(function() {});
     }
     React.useEffect(loadCrewRequests, []);
+
+    // Crew requests are the one collection that changes without any window
+    // touching it: a crew member accepting or declining from their emailed link
+    // is a server-side write. Subscribe to the live feed so an open Labor tab
+    // learns about it instead of showing a stale answer until a hard refresh.
+    // The `projects` array behind it refreshes on its own — components/
+    // data-state.js subscribes every persisted slice — and the accept path
+    // publishes BOTH collections (backend/routes/crew.py::_respond).
+    React.useEffect(function() {
+      if (!window.LTP_LIVE) return;
+      return window.LTP_LIVE.subscribe("crew-requests", loadCrewRequests);
+    }, []);
 
     var allPositions = useMemo(function() {
       return aggregatePositions(projects, contacts, services);

@@ -10,6 +10,8 @@ from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
+from backend import livesync
+
 # ── Startup diagnostics ──────────────────────────────────────────────────────
 # init_db() runs Alembic migrations during the FastAPI lifespan. If that step
 # hangs or dies, the platform can kill the container before any traceback is
@@ -51,6 +53,13 @@ async def get_db():
         except Exception:
             await session.rollback()
             raise
+        # Publish the live-sync stamps for whatever this request wrote, AFTER
+        # the commit. Order is the whole point: a window told "projects changed"
+        # refetches on a different connection, so publishing pre-commit could
+        # hand it the old rows — and it would never refetch again, having
+        # already stored the new stamp. On the rollback path we never get here
+        # and the dirty set dies with the session, which is correct.
+        await livesync.flush(session)
 
 
 # Path to alembic.ini relative to repo root (this file lives one level down).

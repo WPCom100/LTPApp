@@ -66,7 +66,12 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
-var CACHE_VERSION = 'ltp-shell-v57';
+// v58: index.html gained a script tag (components/live-sync.js, the cross-window
+// change feed — it must load before data-state.js). The shell is precached, so
+// without this bump an installed PWA would keep serving the old index.html and
+// silently run without live sync. live-sync.js itself needs no precache entry:
+// the runtime /components/ rule below covers it.
+var CACHE_VERSION = 'ltp-shell-v58';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
