@@ -677,6 +677,19 @@ name as the literal string "Project" and hide the Confirm button, and the stale
 window would revert the acceptance on its next save. `If-Match` closes that last
 hole; live sync makes it rare in the first place.
 
+A stream is recycled every 30 minutes (`LTP_LIVESYNC_MAX_STREAM_SECONDS`).
+Auth is checked when a connection opens and never again, so without a cap a
+stream opened by a session that later expired would keep receiving for as long
+as the tab lived. The server ends a recycled stream with a `bye` frame so the
+client reconnects immediately rather than treating it as a fault. The safety
+sweep also idles completely when nobody is connected — this app sits unused most
+nights, and there is nothing to broadcast to.
+
+Editors that hold a draft (the schedule builder) handle a remote change
+themselves: a clean editor adopts the newer version, a dirty one keeps the local
+edits and warns once. Discarding someone's typing to win a race is the wrong
+trade at this size.
+
 Notes for future changes:
 - The broadcast bus is **in-process**. That is correct for one uvicorn worker on
   one pod (what `railway.json` starts). More than one and a write served by

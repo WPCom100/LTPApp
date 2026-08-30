@@ -89,6 +89,7 @@
   var polling = false;
   var channel = null;
   var started = false;
+  var recycling = false;        // true between a `bye` frame and its reconnect
   var inFlightRevalidate = null;
 
   function log(msg, extra) {
@@ -203,7 +204,25 @@
       if (payload && payload.stamps) applyStamps(payload.stamps);
     });
 
+    // The server recycles a stream every livesync.MAX_STREAM_SECONDS so a
+    // connection cannot outlive the session that opened it. That is a healthy
+    // close, not a fault: reconnect straight away and do NOT let it count
+    // toward the failure budget, or a long-lived tab would eventually decide
+    // SSE was broken and downgrade itself to polling.
+    es.addEventListener("bye", function() {
+      log("stream recycled by the server");
+      recycling = true;
+      try { es.close(); } catch (e) { /* already gone */ }
+      if (source === es) source = null;
+      sseFailures = 0;
+      backoffMs = BACKOFF_MIN_MS;
+      connect();
+    });
+
     es.addEventListener("error", function() {
+      // A recycle closes the socket itself, which also fires error. The bye
+      // handler has already reconnected; treat this as noise.
+      if (recycling) { recycling = false; return; }
       // EventSource retries on its own, so close it first — otherwise our
       // backoff and its built-in retry race and we get both.
       try { es.close(); } catch (e) { /* already gone */ }
@@ -330,7 +349,7 @@
     _applyStamps: applyStamps,
     _reset: function() {
       stamps = {}; listeners = {}; seeded = false; started = false; readyPromise = null;
-      sseFailures = 0; backoffMs = BACKOFF_MIN_MS; inFlightRevalidate = null;
+      sseFailures = 0; backoffMs = BACKOFF_MIN_MS; inFlightRevalidate = null; recycling = false;
       stopPolling();
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
       if (source) { try { source.close(); } catch (e) {} source = null; }

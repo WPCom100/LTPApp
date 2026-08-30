@@ -76,6 +76,7 @@ Who publishes
 """
 import asyncio
 import json
+import os
 import time
 
 from sqlalchemy import func, select
@@ -126,6 +127,33 @@ KEEPALIVE_SECONDS = 25
 # multi-worker degradation described above — not the primary path, so it can be
 # slow and cheap.
 SWEEP_SECONDS = 30
+
+# How long one stream may stay open before the server recycles it. Auth is
+# checked when the connection OPENS and never again, so without this a stream
+# opened by a session that later expires (or is revoked) would keep receiving
+# for as long as the tab lived. Recycling bounds that to one window: the client
+# reconnects and re-authenticates.
+#
+# Nothing is lost across a recycle — the reconnect opens with a full snapshot,
+# and the client compares it against what it holds. Note the server ends these
+# with a `bye` frame so the client can tell a scheduled recycle from a failure
+# and reconnect immediately instead of backing off.
+# Override with LTP_LIVESYNC_MAX_STREAM_SECONDS (an integer, seconds). Mostly
+# there so the recycle path can be exercised end to end without waiting half an
+# hour; a deployment has no reason to change it.
+def _env_seconds(name: str, default: int) -> int:
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        print(f"[LTP] livesync: {name}={raw!r} is not an integer; using {default}", flush=True)
+        return default
+    return value if value > 0 else default
+
+
+MAX_STREAM_SECONDS = _env_seconds("LTP_LIVESYNC_MAX_STREAM_SECONDS", 30 * 60)
 
 # Bounded per-subscriber queue. Every message carries the FULL stamp map, so a
 # queued message is strictly redundant with any newer one and a backlog can
@@ -330,6 +358,12 @@ async def sweeper(session_factory, interval: float = SWEEP_SECONDS) -> None:
     while True:
         try:
             await asyncio.sleep(interval)
+            # Nobody connected — nobody to broadcast to. Skipping keeps an idle
+            # deployment genuinely idle (this is a small internal tool; it sits
+            # unused most nights and weekends) instead of running fifteen
+            # aggregates a minute against the database forever.
+            if not _subscribers:
+                continue
             async with session_factory() as db:
                 await sweep_once(db)
         except asyncio.CancelledError:
@@ -351,13 +385,25 @@ async def event_stream(initial: dict):
     connection's cost down around single-digit KB/hour.
     """
     q = subscribe()
+    deadline = time.monotonic() + MAX_STREAM_SECONDS
     try:
         yield _frame("sync", {"stamps": initial, "at": now_ms()})
         while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Scheduled recycle. The explicit frame is what stops the client
+                # counting this as a failure and backing off — see
+                # components/live-sync.js.
+                yield _frame("bye", {"reason": "recycle"})
+                return
             try:
-                payload = await asyncio.wait_for(q.get(), timeout=KEEPALIVE_SECONDS)
+                payload = await asyncio.wait_for(
+                    q.get(), timeout=min(KEEPALIVE_SECONDS, remaining))
             except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
+                # Either an idle keepalive or the deadline — the loop top sorts
+                # out which on the next pass.
+                if deadline - time.monotonic() > 0:
+                    yield ": keepalive\n\n"
                 continue
             # Collapse anything that queued up behind it — the newest map wins.
             while not q.empty():

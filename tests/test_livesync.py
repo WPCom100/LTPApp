@@ -444,6 +444,85 @@ def test_a_write_pushes_a_frame_to_an_open_stream():
             f"{quiet} moved on a project-only write — windows would refetch it for nothing"
 
 
+def test_stream_recycles_itself_with_a_goodbye_frame():
+    """Auth is checked when a stream OPENS and never again, so a connection is
+    capped and recycled. The explicit `bye` frame is what lets the client tell a
+    scheduled recycle from a fault — without it, a tab left open all day would
+    count each recycle as a failure and eventually downgrade itself to polling
+    (components/live-sync.js)."""
+    client, tok = _setup()
+    original = livesync.MAX_STREAM_SECONDS
+    livesync.MAX_STREAM_SECONDS = 0.4
+    try:
+        status, _, frames = _drive_stream(cookie=tok, max_frames=2)
+    finally:
+        livesync.MAX_STREAM_SECONDS = original
+
+    assert status == 200
+    assert len(frames) >= 2, f"expected a snapshot then a recycle, got {frames}"
+    first_event, _ = _parse_frame(frames[0])
+    last_event, last_data = _parse_frame(frames[-1])
+    assert first_event == "sync"
+    assert last_event == "bye", f"a recycled stream must announce itself, got {last_event!r}"
+    assert last_data.get("reason") == "recycle"
+
+
+def test_stream_does_not_recycle_early():
+    """The deadline must not be confused with the keepalive tick — an idle
+    stream inside its lifetime keeps serving, it does not say goodbye."""
+    client, tok = _setup()
+    original_max = livesync.MAX_STREAM_SECONDS
+    original_keepalive = livesync.KEEPALIVE_SECONDS
+    livesync.MAX_STREAM_SECONDS = 30
+    livesync.KEEPALIVE_SECONDS = 0.2
+    try:
+        # Two keepalive ticks' worth of waiting, well inside the lifetime.
+        status, _, frames = _drive_stream(cookie=tok, max_frames=1)
+        assert status == 200
+        assert _parse_frame(frames[0])[0] == "sync"
+        assert not any("bye" in f for f in frames), f"recycled early: {frames}"
+    finally:
+        livesync.MAX_STREAM_SECONDS = original_max
+        livesync.KEEPALIVE_SECONDS = original_keepalive
+
+
+# ── Safety sweep ────────────────────────────────────────────────────────────
+
+def test_the_sweep_stays_idle_when_nobody_is_connected():
+    """This is a small internal tool that sits unused most nights. With no
+    subscribers there is nobody to broadcast to, so the sweep must not keep
+    running aggregates against the database forever."""
+    from backend.database import async_session
+
+    opened = {"count": 0}
+
+    def counting_factory():
+        opened["count"] += 1
+        return async_session()
+
+    async def body():
+        livesync._reset_for_tests()
+        task = asyncio.ensure_future(livesync.sweeper(counting_factory, interval=0.05))
+        await asyncio.sleep(0.4)                     # several intervals
+        idle_calls = opened["count"]
+
+        q = livesync.subscribe()                      # someone connects
+        await asyncio.sleep(0.4)
+        busy_calls = opened["count"]
+        livesync.unsubscribe(q)
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        return idle_calls, busy_calls
+
+    idle_calls, busy_calls = _run(body())
+    assert idle_calls == 0, f"the sweep queried the database {idle_calls}x with nobody connected"
+    assert busy_calls > 0, "the sweep must resume once a window is connected"
+
+
 def test_stream_cleans_up_its_subscriber_on_disconnect():
     client, tok = _setup()
     before = livesync.subscriber_count()
@@ -519,6 +598,9 @@ def main():
         test_stream_requires_a_session,
         test_stream_opens_with_a_snapshot_and_correct_headers,
         test_a_write_pushes_a_frame_to_an_open_stream,
+        test_stream_recycles_itself_with_a_goodbye_frame,
+        test_stream_does_not_recycle_early,
+        test_the_sweep_stays_idle_when_nobody_is_connected,
         test_stream_cleans_up_its_subscriber_on_disconnect,
         test_broadcast_reaches_every_subscriber,
         test_a_full_queue_collapses_its_backlog_instead_of_dropping_the_subscriber,

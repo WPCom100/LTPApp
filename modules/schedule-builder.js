@@ -39,19 +39,22 @@
       return svcs.filter(function(s) { return s && s.clientRate; });
     }, [svcs]);
 
-    // Deep clone schedule with positions
-    var initial = useMemo(function() {
+    // Deep clone schedule with positions. Named rather than inlined because the
+    // live-refresh effect below has to build the same shape from a project that
+    // changed under us, and the two must not drift.
+    function initialFrom(p) {
       return {
-        schedule: (project.schedule || []).map(function(s) {
+        schedule: (p.schedule || []).map(function(s) {
           return Object.assign({}, s, {
-            positions: (s.positions || []).map(function(p) { return Object.assign({}, p); }),
+            positions: (s.positions || []).map(function(x) { return Object.assign({}, x); }),
             breaks: (s.breaks || []).map(function(b) { return Object.assign({}, b); })
           });
         }),
-        scheduleNotes: project.scheduleNotes || "",
-        scheduleActivity: (project.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
+        scheduleNotes: p.scheduleNotes || "",
+        scheduleActivity: (p.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
       };
-    }, [project.id]);
+    }
+    var initial = useMemo(function() { return initialFrom(project); }, [project.id]);
 
     var [draft, setDraftRaw] = useState(initial);
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
@@ -74,7 +77,54 @@
     // null when closed. See openSend / chooseGrouping / executeSend below.
     var [sendDlg, setSendDlg] = useState(null);
 
-    useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
+    // Tracks the project as the server last showed it to us, and whether we
+    // have already warned about it moving. Both reset when the editor switches
+    // to a different project.
+    var remoteRef = useRef(null);
+    var warnedRef = useRef(false);
+
+    useEffect(function() {
+      setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false);
+      remoteRef.current = null; warnedRef.current = false;
+    }, [project.id]);
+
+    // ── The project changing while this editor is open ───────────────────────
+    //
+    // The draft above is an independent deep clone, reseeded only when
+    // project.id changes. That is what stops a background refresh from eating
+    // half-typed work — but it also means a schedule that moved underneath us
+    // (a crew member accepting from their emailed link, or the other producer
+    // saving from a second window) would otherwise be invisible right up until
+    // this editor saved over it.
+    //
+    // With two or three people sharing a workspace, the same project being open
+    // twice is the collision that actually happens. So:
+    //   nothing unsaved → adopt the newer version silently. Strictly better
+    //                     than showing data we know is stale.
+    //   unsaved edits   → keep them and say so, once. Discarding someone's
+    //                     typing to win a race is the wrong trade; a save still
+    //                     goes through, and the backend's status floor still
+    //                     protects crew answers from being reverted
+    //                     (backend/crew_integrity.py::enforce_status_floor).
+    useEffect(function() {
+      var incoming = JSON.stringify(initialFrom(project));
+      if (remoteRef.current === null) { remoteRef.current = incoming; return; }
+      if (incoming === remoteRef.current) return;
+      remoteRef.current = incoming;
+      if (!isDirty) {
+        var fresh = initialFrom(project);
+        setDraftRaw(fresh);
+        cleanRef.current = fresh;
+        warnedRef.current = false;
+        return;
+      }
+      if (warnedRef.current) return;   // one notice per editing session
+      warnedRef.current = true;
+      window.LTP_toast("This schedule changed elsewhere", {
+        message: "Another window updated it while you were editing. Your unsaved changes are kept — saving will replace the newer version.",
+        variant: "warn",
+      });
+    }, [project]);
 
     // Informational / validation notice as a non-blocking toast (modals are
     // reserved for confirm/cancel decisions). Variant defaults to "error".
