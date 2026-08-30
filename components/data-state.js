@@ -317,7 +317,39 @@
   // server forever. Instead: leave prev alone on partial failure, so the next
   // user edit re-diffs from the OLD baseline and retries the failed rows.
 
+  // ── Client-minted ids and what a 409 actually means ────────────────────
+  //
+  // Entity ids are minted CLIENT-side as max(local ids) + 1 — see
+  // components/entity-quick-form.js:150, components/client-rates.js:223,
+  // modules/quotes-fees.js:161, modules/rentals-utils.js:229. Two people
+  // creating a record at the same moment therefore mint the SAME id from their
+  // own lists, and the server rejects the second POST with 409
+  // (backend/routes/api.py:237-248). That collision is the ordinary outcome of
+  // concurrent creation, not an exotic edge case.
+  //
+  // So a 409 means one of two very different things:
+  //
+  //   (a) OUR row is already there. A POST earlier in this session succeeded
+  //       inside a batch that partially failed, so prevSyncedRef never advanced
+  //       (invariant #2) and the next diff still sees the row as new. Re-sending
+  //       it as a PUT is exactly right: same row, and our copy is the newer one.
+  //
+  //   (b) SOMEONE ELSE'S row is there — a different user, or another tab whose
+  //       list predates ours, minted the same id for a DIFFERENT record. PUTting
+  //       our copy over it destroys theirs outright: the update handler assigns
+  //       every mapped field onto the stored row (backend/routes/api.py:318-320).
+  //
+  // The response cannot tell them apart, so we track (a) ourselves: an id is
+  // eligible for the PUT fallback only if THIS session created it. Anything else
+  // is a genuine conflict — reported, never written. The local row then stays
+  // unsynced and re-reports on the next edit, which is invariant #2's stated
+  // trade-off (a loud repeated failure beats a silent loss) applied to the one
+  // case where the loss would be another user's record rather than our own.
+  var createdIds = {};                                    // "key:id" → 1
+  function ownKey(key, id) { return key + ":" + id; }
+
   function syncEntity(key, prev, next, revs) {
+    revs = revs || {};
     var prevById = indexById(prev);
     var nextById = indexById(next);
     var conflicts = {};
@@ -334,7 +366,17 @@
     // Deletes
     Object.keys(prevById).forEach(function(id) {
       if (!(id in nextById)) {
-        requests.push(jsonReq("DELETE " + key + "/" + id, API_PREFIX + key + "/" + id, "DELETE"));
+        requests.push(
+          jsonReq("DELETE " + key + "/" + id, API_PREFIX + key + "/" + id, "DELETE")
+            .then(function(r) {
+              // Stop vouching for an id we no longer own. Without this, a later
+              // locally-minted row reusing the number (max+1 of a list the row
+              // has left) would inherit the old row's PUT-fallback licence and
+              // could overwrite whatever now holds that id on the server.
+              delete createdIds[ownKey(key, id)];
+              return r;
+            })
+        );
       }
     });
 
@@ -347,19 +389,33 @@
       var item = nextById[id];
       var p = prevById[id];
       if (!p) {
-        // New item — POST. If the server already has this id (two tabs
-        // assigned the same one, or a previous sync succeeded but the
-        // local prev baseline didn't advance), it returns 409. Fall back
-        // to PUT in that case so we don't loop forever on the same row.
+        // New item — POST. On 409 see the note above syncEntity: fall back to
+        // PUT only for an id this session created, never for one that turned
+        // out to belong to somebody else's record.
         var postLabel = "POST " + key + "/" + id;
         requests.push(
-          jsonReq(postLabel, API_PREFIX + key, "POST", item).then(capture, function(err) {
-            if (err && err.status === 409) {
-              // The row exists on the server; re-route as an update. No
-              // If-Match: we have never seen this row, so we have no opinion
-              // about what it should currently be.
+          jsonReq(postLabel, API_PREFIX + key, "POST", item).then(function(r) {
+            createdIds[ownKey(key, id)] = 1;
+            return capture(r);
+          }, function(err) {
+            if (err && err.status === 409 && createdIds[ownKey(key, id)]) {
+              // Case (a): our own row, from a POST that succeeded inside a
+              // partially-failed batch. Re-route as the update it really is.
+              // No If-Match: it is our row and our copy is the newer one.
               return jsonReq("PUT " + key + "/" + id + " (after 409)",
                              API_PREFIX + key + "/" + id, "PUT", item).then(capture);
+            }
+            if (err && err.status === 409) {
+              // Case (b). Refuse the write and say so in terms that name the
+              // consequence. checkResponse deliberately stays silent on 409
+              // because a PUT conflict resolves itself; this one does not.
+              recordError("POST " + key + "/" + id + " id conflict", {
+                status: 409,
+                reason: "id " + id + " already belongs to a record this session did "
+                      + "not create — most likely someone else created one at the "
+                      + "same time. Refusing to overwrite it; this local record is "
+                      + "NOT saved.",
+              });
             }
             throw err;
           })
@@ -798,6 +854,11 @@
 
   window.LTP_STATE = {
     usePersistentState: usePersistentState,
+    // Exported so tests/test_data_state_sync.js can drive the diff directly.
+    // The POST-409 branch is unreachable through the hook without a real second
+    // client, and it is the branch that decides whether another user's record
+    // survives.
+    syncEntity: syncEntity,
     // Attach a one-shot header to the next write of one row. See the
     // "One-shot write headers" note above.
     armWrite: armWrite,

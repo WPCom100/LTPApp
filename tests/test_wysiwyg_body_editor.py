@@ -31,6 +31,9 @@ _root = os.path.dirname(_here)
 if _root not in sys.path:
     sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 
 _results: list[tuple[str, bool]] = []
 
@@ -40,6 +43,7 @@ def _check(label: str, cond: bool, detail: str = "") -> None:
     status = "PASS" if cond else "FAIL"
     suffix = f"  ({detail})" if detail else ""
     print(f"  [{status}] {label}{suffix}")
+    assert cond, f"{label} {detail}"
 
 
 # ── Python ports of theme.js helpers (must match the JS implementation
@@ -439,9 +443,10 @@ def test_body_to_editable_and_back_roundtrip():
 
 def test_theme_js_exposes_helpers():
     print("test_theme_js_exposes_helpers")
-    path = os.path.join(_root, "theme.js")
-    with open(path, encoding="utf-8") as f:
-        src = f.read()
+    # theme.js was split into components/domain-*.js; these helpers now live in
+    # domain-email.js. Read the whole layer so the assertion survives the next
+    # move too — the file list comes from index.html.
+    src = domain_source()
     _check("LTP_bodyToEditableHtml exposed",
            "window.LTP_bodyToEditableHtml" in src)
     _check("LTP_editableHtmlToBody exposed",
@@ -481,14 +486,38 @@ def test_index_html_loads_component():
 
 def test_send_modals_use_email_body_editor():
     print("test_send_modals_use_email_body_editor")
+    # The email half of all three send modals (quote, invoice, receipt) is now
+    # one shared component — components/doc-email-pane.js — so the builders
+    # reference LTPEmailComposePane and the pane references EmailBodyEditor.
+    # Assert the whole chain rather than just grepping the builders, or this
+    # passes the day the pane stops rendering the editor.
+    pane_path = os.path.join(_root, "components", "doc-email-pane.js")
+    _check("the shared email pane exists", os.path.exists(pane_path))
+    with open(pane_path, encoding="utf-8") as f:
+        pane = f.read()
+    _check("the shared email pane renders EmailBodyEditor", "EmailBodyEditor" in pane)
+    _check("the shared email pane is published as LTPEmailComposePane",
+           "window.LTPEmailComposePane" in pane)
+
     for module in ("modules/quotes-builder.js", "modules/invoices.js"):
         path = os.path.join(_root, module)
         with open(path, encoding="utf-8") as f:
             src = f.read()
-        _check(f"{module} uses EmailBodyEditor", "EmailBodyEditor" in src)
+        _check(f"{module} renders the shared email pane",
+               "window.LTPEmailComposePane" in src)
         _check(f"{module} no longer renders the textarea/preview split",
                "borderRight" not in src or src.count('gridTemplateColumns: "1fr 1fr", gap: 0') == 0,
                "found leftover split-pane grid")
+
+    # Each document type must still get its own header kind through the pane —
+    # collapsing them would send an invoice header on a quote.
+    with open(os.path.join(_root, "modules", "quotes-builder.js"), encoding="utf-8") as f:
+        q = f.read()
+    with open(os.path.join(_root, "modules", "invoices.js"), encoding="utf-8") as f:
+        i = f.read()
+    _check('the quote send modal passes headerKind "quote"', 'headerKind: "quote"' in q)
+    _check('the invoice send modal passes headerKind "invoice"', 'headerKind: "invoice"' in i)
+    _check('the receipt modal passes headerKind "receipt"', 'headerKind: "receipt"' in i)
 
 
 def py_inject_block(html, token, block):

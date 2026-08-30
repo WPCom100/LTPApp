@@ -123,3 +123,94 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+# ── Health check ───────────────────────────────────────────────────────────
+# There was no health endpoint and no healthcheckPath, so a boot that died in
+# init_db()'s Alembic run just restart-looped (restartPolicyMaxRetries: 10)
+# with nothing to distinguish it from a crash. The endpoint must be registered
+# BEFORE the SPA catch-all: the fallback returns index.html with a 200 for any
+# unmatched path, which would "pass" a health check for entirely the wrong
+# reason.
+
+def test_healthz_is_json_not_the_spa_fallback():
+    from fastapi.testclient import TestClient
+    from backend.main import app
+
+    with TestClient(app) as c:
+        r = c.get("/healthz")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/json"), r.headers
+        body = r.json()
+        assert body["status"] == "ok"
+        # The tell: an unmatched path returns the HTML shell with a 200.
+        shell = c.get("/definitely-not-a-route")
+        assert shell.status_code == 200
+        assert shell.headers["content-type"].startswith("text/html")
+        assert "<html" not in r.text.lower()
+
+
+def test_healthz_does_not_require_a_session():
+    """It answers "is this process serving?", so it must work before anyone
+    signs in — and must not depend on the database, or a transient DB blip
+    would have the platform restart a process that would recover on its own."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+
+    with TestClient(app) as c:
+        r = c.get("/healthz")
+        assert r.status_code == 200
+        # Assert the content type, not just the status: the SPA fallback also
+        # answers 200 for an unknown path, so a bare status check would pass
+        # even with no health endpoint at all.
+        assert r.headers["content-type"].startswith("application/json")
+
+
+def test_healthcheck_path_is_wired_in_railway_json():
+    import json, os
+    cfg = json.load(open(os.path.join(_root, "railway.json")))
+    assert cfg["deploy"]["healthcheckPath"] == "/healthz"
+
+
+# ── DATABASE_URL fail-fast ─────────────────────────────────────────────────
+# Without DATABASE_URL the app used to boot on a container-local SQLite file,
+# run Alembic against it to create an empty schema, and hand the first Google
+# sign-in an admin account — while every write landed on a filesystem the
+# platform discards on the next restart. The logs looked like a healthy boot.
+# database.py raises at import time, so this has to run in a subprocess.
+
+def _probe_database_import(env_overrides):
+    """Import backend.database in a clean interpreter. Returns (rc, stderr)."""
+    import subprocess, sys as _sys, os as _os
+    env = {k: v for k, v in _os.environ.items()
+           if not k.startswith(("DATABASE_URL", "LTP_FORCE_HTTPS", "LTP_OAUTH_REDIRECT_URI"))}
+    env.update(env_overrides)
+    env.setdefault("PATH", _os.environ.get("PATH", ""))
+    p = subprocess.run(
+        [_sys.executable, "-c", "import backend.database"],
+        cwd=_root, env=env, capture_output=True, text=True, timeout=120,
+    )
+    return p.returncode, (p.stderr or "")
+
+
+def test_missing_database_url_refuses_to_boot_in_production():
+    rc, err = _probe_database_import({"LTP_FORCE_HTTPS": "1"})
+    assert rc != 0, "a production boot with no DATABASE_URL must fail loudly"
+    assert "DATABASE_URL is not set" in err, err[-600:]
+
+    # The https redirect URI is the other production signal main.py uses.
+    rc, err = _probe_database_import(
+        {"LTP_OAUTH_REDIRECT_URI": "https://app.example.com/auth/callback"})
+    assert rc != 0
+    assert "DATABASE_URL is not set" in err, err[-600:]
+
+
+def test_missing_database_url_still_falls_back_for_local_dev():
+    """Development must keep working with no configuration at all — the guard
+    is about deployments, not about making a laptop harder to use."""
+    rc, err = _probe_database_import(
+        {"LTP_OAUTH_REDIRECT_URI": "http://localhost:8000/auth/callback"})
+    assert rc == 0, err[-600:]
+
+    rc, err = _probe_database_import({})   # nothing set at all
+    assert rc == 0, err[-600:]

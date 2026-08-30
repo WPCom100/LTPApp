@@ -94,7 +94,20 @@
 // data-state.js (If-Match no longer defeated, retry on a failed refetch),
 // live-sync.js (stale-socket errors, late-seed wake) and five modules all
 // changed; theme.js is precached and the rest are runtime-cached.
-var CACHE_VERSION = 'ltp-shell-v63';
+var CACHE_VERSION = 'ltp-shell-v64';
+// v64: the audit branch. theme.js — (a) breaks taken after midnight are lifted
+// into their span's frame, so an 18:00-02:00 call with a 00:30 break no longer
+// prices as 25 paid hours; (b) LTP_mealFixBreaks partitions a day into spans the
+// same way LTP_calcLaborDay does; (c) breaks are clipped to the cursor and the
+// span end; (d) times parse strictly, so a malformed value bills nothing instead
+// of inventing an 18-hour day. theme.js is also now 113 lines: the domain layer
+// moved to eight precached components/domain-*.js files (see SAME_ORIGIN_PRECACHE
+// below), so a device on an older shell would load a theme.js whose exports have
+// moved. components/data-state.js no longer answers a POST id-collision by
+// blind-PUTting over the record that already holds the id. modules/invoices.js
+// re-baselines the discard snapshot when a payment is recorded. index.html and
+// components/sanitize.js changed with the DOMPurify 3.4.14 bump. All precached or
+// runtime-cached; this is money math, and a stale shell bills the wrong amount.
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -106,6 +119,17 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/viewport-height.js',
   '/router.js',
   '/theme.js',
+  // The domain layer split out of theme.js. Precached for the same reason
+  // theme.js is: it is boot-chain code, and a cold offline launch that has to
+  // fetch it has already failed. index.html loads these in the theme slot.
+  '/components/domain-util.js',
+  '/components/domain-labor.js',
+  '/components/domain-rates.js',
+  '/components/domain-crew.js',
+  '/components/domain-payouts.js',
+  '/components/domain-email.js',
+  '/components/domain-docs.js',
+  '/components/domain-qbo.js',
   '/app.js',
   '/mount.js',
   // Icons referenced by the manifest / head.
@@ -116,10 +140,18 @@ var SAME_ORIGIN_PRECACHE = [
 
 // Cross-origin, version-pinned libraries (CORS-enabled on cdnjs). Best-effort:
 // a CDN hiccup at install time must not fail the whole install.
+//
+// These URLs MUST match index.html's <script src> tags exactly. They are
+// version-pinned in two files with nothing linking them, so a bump to one is
+// silently a no-op in the other: the worker warms a URL the page never asks
+// for, and the URL the page DOES ask for is left to runtime cache — which
+// means it is simply missing on a cold offline launch. tests/
+// test_dependency_pins.py::test_service_worker_cdn_precache_matches_index_html
+// compares the two lists so the pair cannot drift again.
 var CDN_PRECACHE = [
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.14/purify.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/signature_pad/5.0.4/signature_pad.umd.min.js',
 ];
 

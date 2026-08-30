@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from backend import livesync
+from backend.env import looks_like_production
 
 # ── Startup diagnostics ──────────────────────────────────────────────────────
 # init_db() runs Alembic migrations during the FastAPI lifespan. If that step
@@ -33,9 +34,28 @@ if DATABASE_URL.startswith("postgres://"):
 elif DATABASE_URL.startswith("postgresql://") and "+asyncpg" not in DATABASE_URL:
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-# Fallback for local dev without a database
+# Fallback for local dev without a database.
+#
+# On a real deployment this fallback is a trap, not a convenience: the app would
+# boot happily on a SQLite file inside the container, run `alembic upgrade head`
+# against it to create an empty schema, and hand the first Google sign-in an
+# admin account (routes/auth.py). Every write would then land on a filesystem
+# that Railway discards on the next deploy or restart, and nothing would say so
+# — the logs look like a normal healthy boot. Refuse instead, using the same
+# two signals main.py already uses to decide Secure cookies, HSTS and whether a
+# missing LTP_SESSION_SECRET is fatal.
 if not DATABASE_URL:
+    if looks_like_production():
+        raise RuntimeError(
+            "DATABASE_URL is not set. It is required on any real deployment "
+            "(LTP_FORCE_HTTPS is on, or LTP_OAUTH_REDIRECT_URI is https). "
+            "Refusing to start on an ephemeral container-local SQLite file, "
+            "which would silently discard every write on the next restart."
+        )
     DATABASE_URL = "sqlite+aiosqlite:///./ltp_dev.db"
+    print("[LTP] WARNING: DATABASE_URL not set — using local SQLite "
+          f"({DATABASE_URL}). Fine for development; never for a deployment.",
+          flush=True)
 
 engine = create_async_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, expire_on_commit=False)

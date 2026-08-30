@@ -1,0 +1,4278 @@
+== QuotesBuilder (existing draft) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                draft
+    <div style=4props>
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn style=9props>
+        Send Quote
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <span style=10props>
+                      Acme Co
+                      <button onClick=fn style=8props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                        ✎
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                      <span style=3props>
+                        Spring Shoot
+                      <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                        ✎
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+          <div style=6props>
+            Project dates: September 1st, 2026 → September 3rd, 2026 · rental pricing will use this period.
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort1" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Audio">
+              <div style=4props>
+                <div>
+                  $1,900.00
+                <div style=1props>
+                  margin: $700.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort1" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    PR
+                  <div style=2props>
+                    <div style=6props>
+                      Console
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $500
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="500" style=10props type="number" value="">
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $1,000.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort1" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    SV
+                  <div style=2props>
+                    <div style=6props>
+                      A1
+                  <select onChange=fn style=9props value="day">
+                    <option value="day">
+                      Day
+                    <option value="half">
+                      Half Day
+                    <option value="hourly">
+                      Hourly
+                    <option value="ot">
+                      OT
+                  <div style=1props>
+                    <div style=3props>
+                      days
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $1000
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="1000" style=10props type="number" value=900>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $900.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=false onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <anon>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort1" data-ltp-zone="sec1" style=7props>
+                    <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                      ☰
+                    <span style=7props>
+                      Note
+                    <div onDoubleClick=fn style=9props>
+                      Handle with care
+                    <button aria-label="Edit note" className=undefined onClick=fn style=9props title="Edit note">
+                      ✎
+                    <button aria-label="Remove note" className=undefined onClick=fn style=9props title="Remove note">
+                      ×
+            <button onClick=fn style=9props>
+              + Add Item to Audio
+        <SectionBlock>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort1" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Grip">
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+            <button onClick=fn style=9props>
+              + Add Item to Grip
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=9props>
+            <span>
+              Line adjustments
+            <span>
+              −$100.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="percent">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+              <input onChange=fn style=10props type="number" value=10>
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$190.00
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $1,710.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $1,200.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $510.00 (30%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec1" style=5props>
+          <div>
+            <div style=3props>
+              Audio
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $1,900.00
+        <div key="sec2" style=5props>
+          <div>
+            <div style=3props>
+              Grip
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$190.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $510.00 (30%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== QuotesBuilder (new) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-NEW
+        <div style=5props>
+          <span style=7props>
+            Untitled Quote
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                draft
+    <div style=4props>
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search companies..." style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new company" type="button">
+                        +
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search projects — or leave empty for a custom name" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new project" type="button">
+                        +
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Custom Quote Name
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder="e.g. Fall Gala Equipment Package" step=undefined style=12props type="text" value="">
+          <div style=5props>
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Start Date
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      End Date
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec-1" data-ltp-sort="section" data-ltp-sort-inst="sort2" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Equipment">
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: August 29th, 2026 → August 29th, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+            <button onClick=fn style=9props>
+              + Add Item to Equipment
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $0.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="none">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $0.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $0.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $0.00 (0%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec-1" style=5props>
+          <div>
+            <div style=3props>
+              Equipment
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $0.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $0.00 (0%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div key="act-2" onClick=undefined onMouseOut=undefined onMouseOver=undefined style=6props>
+            <div style=5props>
+            <div style=2props>
+              <div style=6props>
+                Quote created
+              <div style=2props>
+                Test User · August 29th, 2026 <CLOCK>
+
+== QuotesBuilder (sent) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                sent
+    <div style=4props>
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn style=9props>
+        ✓ Mark Accepted
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+        ✕ Decline
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+        Recall to Draft
+      <button onClick=fn style=8props>
+        Resend
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <span style=10props>
+                      Acme Co
+                      <button onClick=fn style=8props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                        ✎
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                      <span style=3props>
+                        Spring Shoot
+                      <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                        ✎
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-09">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+          <div style=6props>
+            Project dates: September 1st, 2026 → September 3rd, 2026 · rental pricing will use this period.
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort3" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Audio">
+              <div style=4props>
+                <div>
+                  $1,900.00
+                <div style=1props>
+                  margin: $700.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort3" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    PR
+                  <div style=2props>
+                    <div style=6props>
+                      Console
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $500
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="500" style=10props type="number" value="">
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $1,000.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort3" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    SV
+                  <div style=2props>
+                    <div style=6props>
+                      A1
+                  <select onChange=fn style=9props value="day">
+                    <option value="day">
+                      Day
+                    <option value="half">
+                      Half Day
+                    <option value="hourly">
+                      Hourly
+                    <option value="ot">
+                      OT
+                  <div style=1props>
+                    <div style=3props>
+                      days
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $1000
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="1000" style=10props type="number" value=900>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $900.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=false onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <anon>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort3" data-ltp-zone="sec1" style=7props>
+                    <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                      ☰
+                    <span style=7props>
+                      Note
+                    <div onDoubleClick=fn style=9props>
+                      Handle with care
+                    <button aria-label="Edit note" className=undefined onClick=fn style=9props title="Edit note">
+                      ✎
+                    <button aria-label="Remove note" className=undefined onClick=fn style=9props title="Remove note">
+                      ×
+            <button onClick=fn style=9props>
+              + Add Item to Audio
+        <SectionBlock>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort3" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Grip">
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+            <button onClick=fn style=9props>
+              + Add Item to Grip
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=9props>
+            <span>
+              Line adjustments
+            <span>
+              −$100.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="percent">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+              <input onChange=fn style=10props type="number" value=10>
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$190.00
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $1,710.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $1,200.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $510.00 (30%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec1" style=5props>
+          <div>
+            <div style=3props>
+              Audio
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $1,900.00
+        <div key="sec2" style=5props>
+          <div>
+            <div style=3props>
+              Grip
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$190.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $510.00 (30%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== InvoiceBuilder (existing draft) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  draft
+      <div style=4props>
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn style=9props>
+          Send Invoice
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div>
+            <div style=3props>
+              <div style=7props>
+                Invoice To:
+              <button key="company" onClick=fn style=8props>
+                Company
+              <button key="contact" onClick=fn style=8props>
+                Individual Contact
+            <div style=4props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Company *
+                  <div style=1props>
+                    <div style=9props>
+                      <span style=10props>
+                        Acme Co
+                        <button onClick=fn style=8props>
+                          ×
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                          ✎
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Primary Contact
+                  <div style=1props>
+                    <div style=9props>
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                          +
+            <div style=5props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Linked Projects
+                  <div style=1props>
+                    <div style=10props>
+                      <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                        <span style=3props>
+                          Spring Shoot
+                        <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                          ×
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                          ✎
+            <div style=5props>
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Invoice Date
+                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-05">
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Due Date
+                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-04">
+                <div style=4props>
+                  <button key="Today" onClick=fn style=8props>
+                    Today
+                  <button key="Net 15" onClick=fn style=8props>
+                    Net 15
+                  <button key="Net 20" onClick=fn style=8props>
+                    Net 20
+                  <button key="Net 30" onClick=fn style=8props>
+                    Net 30
+                  <button key="Net 60" onClick=fn style=8props>
+                    Net 60
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort4" key="sec1" style=3props>
+          <div style=4props>
+            <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+              ☰
+            <input onChange=fn style=9props type="text" value="Audio">
+            <div style=2props>
+              $1,900.00
+            <button onClick=fn style=7props>
+              Delete
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort4" data-ltp-zone="sec1" style=7props>
+                <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                  ☰
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <input onChange=fn placeholder="500" style=10props type="number" value="">
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <label style=7props title="Taxable in QuickBooks">
+                  <input checked=true onChange=fn type="checkbox">
+                  <span>
+                    tax
+                <button onClick=fn style=6props>
+                  ×
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort4" data-ltp-zone="sec1" style=7props>
+                <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                  ☰
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <select onChange=fn style=9props value="day">
+                  <option value="day">
+                    Day
+                  <option value="half">
+                    Half Day
+                  <option value="hourly">
+                    Hourly
+                  <option value="ot">
+                    OT
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <input onChange=fn placeholder="1000" style=10props type="number" value=900>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <label style=7props title="Taxable in QuickBooks">
+                  <input checked=false onChange=fn type="checkbox">
+                  <span>
+                    tax
+                <button onClick=fn style=6props>
+                  ×
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort4" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=fn style=9props>
+                    Handle with care
+                  <button aria-label="Edit note" className=undefined onClick=fn style=9props title="Edit note">
+                    ✎
+                  <button aria-label="Remove note" className=undefined onClick=fn style=9props title="Remove note">
+                    ×
+          <button onClick=fn style=9props>
+            + Add Item
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort4" key="sec2" style=3props>
+          <div style=4props>
+            <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+              ☰
+            <input onChange=fn style=9props type="text" value="Grip">
+            <div style=2props>
+              $0.00
+            <button onClick=fn style=7props>
+              Delete
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+          <button onClick=fn style=9props>
+            + Add Item
+        <button onClick=fn style=8props>
+          + Add Section
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=6props>
+            <span style=2props>
+              Discount:
+            <select onChange=fn style=7props value="percent">
+              <option value="none">
+                None
+              <option value="percent">
+                %
+              <option value="amount">
+                $
+              <option value="target">
+                Target
+            <input onChange=fn style=10props type="number" value=10>
+          <div style=6props>
+            <label style=4props>
+              <input checked=true onChange=fn type="checkbox">
+              <span>
+                Customer is taxable
+            <span style=3props>
+              tax pending QuickBooks
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $1,710.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $1,710.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceBuilder (new) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-NEW
+          <div style=5props>
+            <span style=7props>
+              New Invoice
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  draft
+      <div style=4props>
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div>
+            <div style=3props>
+              <div style=7props>
+                Invoice To:
+              <button key="company" onClick=fn style=8props>
+                Company
+              <button key="contact" onClick=fn style=8props>
+                Individual Contact
+            <div style=4props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Company *
+                  <div style=1props>
+                    <div style=9props>
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search companies..." style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Add a new company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new company" type="button">
+                          +
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Primary Contact
+                  <div style=1props>
+                    <div style=9props>
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                          +
+            <div style=5props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Linked Projects
+                  <div style=1props>
+                    <div style=10props>
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search projects — or leave empty for a custom name" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Add a new project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new project" type="button">
+                          +
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Custom Invoice Name
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder="e.g. Consulting — May 2026" step=undefined style=12props type="text" value="">
+            <div style=5props>
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Invoice Date
+                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Due Date
+                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+                <div style=4props>
+                  <button key="Today" onClick=fn style=8props>
+                    Today
+                  <button key="Net 15" onClick=fn style=8props>
+                    Net 15
+                  <button key="Net 20" onClick=fn style=8props>
+                    Net 20
+                  <button key="Net 30" onClick=fn style=8props>
+                    Net 30
+                  <button key="Net 60" onClick=fn style=8props>
+                    Net 60
+        <div data-ltp-id="sec-3" data-ltp-sort="section" data-ltp-sort-inst="sort5" key="sec-3" style=3props>
+          <div style=4props>
+            <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+              ☰
+            <input onChange=fn style=9props type="text" value="Items">
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+          <button onClick=fn style=9props>
+            + Add Item
+        <button onClick=fn style=8props>
+          + Add Section
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $0.00
+          <div style=6props>
+            <span style=2props>
+              Discount:
+            <select onChange=fn style=7props value="none">
+              <option value="none">
+                None
+              <option value="percent">
+                %
+              <option value="amount">
+                $
+              <option value="target">
+                Target
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $0.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec-3" style=4props>
+            <div>
+              <div style=3props>
+                Items
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $0.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+            <div key="act-4" onClick=undefined onMouseOut=undefined onMouseOver=undefined style=5props>
+              <div style=5props>
+              <div style=1props>
+                <div style=5props>
+                  Invoice created
+                <div style=2props>
+                  Test User · August 29th, 2026
+
+== InvoiceBuilder (sent) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  sent
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=8props>
+          Resend
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                September 4th, 2026
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort6" key="sec1" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Audio
+            <div style=2props>
+              $1,900.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort6" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort6" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <div style=5props>
+                  Day
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <div style=4props>
+                    $900
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <div style=1props>
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort6" data-ltp-zone="sec1" style=7props>
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=undefined style=9props>
+                    Handle with care
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort6" key="sec2" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Grip
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $1,710.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $1,710.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=5props>
+            No payments recorded.
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceList ==
+<InvoiceList>
+  <div>
+    <div style=4props>
+      <h2 style=5props>
+        Invoices
+      <input onChange=fn placeholder="Search invoices…" style=10props type="text" value="">
+      <anon>
+        <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+          + New Invoice
+    <div style=4props>
+      <anon>
+        <div style=6props>
+          <div style=6props>
+            Paid
+          <div style=6props>
+            $0.00
+      <anon>
+        <div style=6props>
+          <div style=6props>
+            Pending
+          <div style=6props>
+            $0.00
+      <anon>
+        <div style=6props>
+          <div style=6props>
+            Overdue
+          <div style=6props>
+            $0.00
+    <div style=6props>
+      <anon>
+        <div className="ltp-tabs-strip" style=3props>
+          <button className="ltp-tap" key="all" onClick=fn style=12props>
+            all
+          <button className="ltp-tap" key="draft" onClick=fn style=12props>
+            draft
+          <button className="ltp-tap" key="sent" onClick=fn style=12props>
+            sent
+          <button className="ltp-tap" key="partial" onClick=fn style=12props>
+            partial
+          <button className="ltp-tap" key="paid" onClick=fn style=12props>
+            paid
+          <button className="ltp-tap" key="overdue" onClick=fn style=12props>
+            overdue
+      <button className="ltp-tap" onClick=fn style=11props>
+        Hide Paid
+    <div style=2props>
+      <div style=2props>
+        <button key="date-desc" onClick=fn style=8props>
+          Newest
+        <button key="date-asc" onClick=fn style=8props>
+          Oldest
+        <button key="ref" onClick=fn style=8props>
+          Ref #
+    <anon>
+      <div className="ltp-list" style=3props>
+        <anon>
+          <div className="ltp-row ltp-row-click" onClick=fn style=6props>
+            <div style=2props>
+              <div style=3props>
+                INV-2026-007
+              <div style=4props>
+                Spring Shoot
+              <div style=3props>
+                Acme Co
+              <div style=3props>
+                Due: September 4th, 2026
+            <div style=4props>
+              <div style=1props>
+                <div style=3props>
+                  $1,710.00
+              <div style=2props>
+                <anon>
+                  <span style=10props>
+                    draft
+
+== InvoiceBuilder (paid) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  paid
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=9props>
+          Send Receipt
+        <button onClick=fn style=8props>
+          Resend
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                September 4th, 2026
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort7" key="sec1" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Audio
+            <div style=2props>
+              $1,900.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort7" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort7" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <div style=5props>
+                  Day
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <div style=4props>
+                    $900
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <div style=1props>
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort7" data-ltp-zone="sec1" style=7props>
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=undefined style=9props>
+                    Handle with care
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort7" key="sec2" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Grip
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=5props>
+            <span>
+              Paid
+            <span>
+              $2,000.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=2props>
+              Paid
+            <span style=3props>
+              $2,000.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=3props>
+            <div key="pay1" style=7props>
+              <div>
+                <div style=3props>
+                  $2,000.00
+                <div style=2props>
+                  Check · CHK-1 · August 20th, 2026
+              <button onClick=fn onMouseOut=fn onMouseOver=fn style=5props>
+                ×
+            <div style=6props>
+              <span style=1props>
+                Total Paid
+              <span style=2props>
+                $2,000.00
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceBuilder (partially paid) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  partial
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=8props>
+          Resend
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                September 4th, 2026
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort8" key="sec1" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Audio
+            <div style=2props>
+              $1,900.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort8" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort8" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <div style=5props>
+                  Day
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <div style=4props>
+                    $900
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <div style=1props>
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort8" data-ltp-zone="sec1" style=7props>
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=undefined style=9props>
+                    Handle with care
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort8" key="sec2" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Grip
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=5props>
+            <span>
+              Paid
+            <span>
+              $100.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $1,610.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=2props>
+              Paid
+            <span style=3props>
+              $100.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $1,610.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=3props>
+            <div key="pay1" style=7props>
+              <div>
+                <div style=3props>
+                  $100.00
+                <div style=2props>
+                  ACH · August 20th, 2026
+              <button onClick=fn onMouseOut=fn onMouseOver=fn style=5props>
+                ×
+            <div style=6props>
+              <span style=1props>
+                Total Paid
+              <span style=2props>
+                $100.00
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceBuilder (overdue) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  overdue
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=8props>
+          Resend
+        <span style=7props>
+          OVERDUE
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                July 15th, 2026
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort9" key="sec1" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Audio
+            <div style=2props>
+              $1,900.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort9" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort9" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <div style=5props>
+                  Day
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <div style=4props>
+                    $900
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <div style=1props>
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort9" data-ltp-zone="sec1" style=7props>
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=undefined style=9props>
+                    Handle with care
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort9" key="sec2" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Grip
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $1,710.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $1,710.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=5props>
+            No payments recorded.
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceBuilder (pushed to QuickBooks) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  sent
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=8props>
+          Resend
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                September 4th, 2026
+        <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort10" key="sec1" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Audio
+            <div style=2props>
+              $1,900.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort10" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  PR
+                <div style=2props>
+                  <div style=6props>
+                    Console
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $500
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $1,000.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort10" data-ltp-zone="sec1" style=7props>
+                <span style=7props>
+                  SV
+                <div style=2props>
+                  <div style=6props>
+                    A1
+                <div style=5props>
+                  Day
+                <div style=1props>
+                  <div style=3props>
+                    days
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    unit
+                  <div style=5props>
+                    $1000
+                <div style=1props>
+                  <div style=3props>
+                    adj
+                  <div style=4props>
+                    $900
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $900.00
+                <div style=1props>
+            <InvLineItem>
+              <anon>
+                <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort10" data-ltp-zone="sec1" style=7props>
+                  <span style=7props>
+                    Note
+                  <div onDoubleClick=undefined style=9props>
+                    Handle with care
+        <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort10" key="sec2" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Grip
+            <div style=2props>
+              $0.00
+          <div style=4props>
+            <div style=8props>
+              No items yet.
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $1,710.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $1,710.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              QuickBooks
+            <span style=8props>
+              QB update needed
+          <div style=3props>
+            <button disabled=false onClick=fn style=11props>
+              ↻ Update QuickBooks
+            <a href="https://app.sandbox.qbo.intuit.com/app/invoice?txnId=QB-99" rel="noopener noreferrer" style=10props target="_blank">
+              View in QuickBooks ↗
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec1" style=4props>
+            <div>
+              <div style=3props>
+                Audio
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $1,900.00
+          <div key="sec2" style=4props>
+            <div>
+              <div style=3props>
+                Grip
+              <div style=2props>
+                0 items
+            <div style=3props>
+              $0.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $1,710.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=5props>
+            No payments recorded.
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== QuotesBuilder (accepted) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                accepted
+    <div style=4props>
+      <div style=5props>
+        Locked
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+        Recall to Draft
+      <button onClick=fn style=8props>
+        Resend
+      <button onClick=fn style=11props>
+        ✓ Mark All Delivered
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div style=3props>
+          <div>
+            <div style=3props>
+              Client
+            <div style=3props>
+              Acme Co
+          <div>
+            <div style=3props>
+              Project
+            <div style=3props>
+              Spring Shoot
+          <div>
+            <div style=3props>
+              Dates
+            <div style=2props>
+              September 1st, 2026 → September 3rd, 2026
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort11" style=4props>
+            <div style=5props>
+              <div style=6props>
+                Audio
+              <div style=4props>
+                <div>
+                  $1,900.00
+                <div style=1props>
+                  margin: $700.00
+            <div style=6props>
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort11" data-ltp-zone="sec1" style=7props>
+                  <span style=9props>
+                    PR
+                  <div style=2props>
+                    <div style=6props>
+                      Console
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <div style=4props>
+                      2
+                  <div style=1props>
+                    <div style=4props>
+                      dlvd
+                    <input max=2 min=0 onChange=fn step="any" style=10props type="number" value=0>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $500
+                  <div style=1props>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $1,000.00
+              <LineItemRow>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort11" data-ltp-zone="sec1" style=7props>
+                  <span style=9props>
+                    SV
+                  <div style=2props>
+                    <div style=6props>
+                      A1
+                  <div style=5props>
+                    Day
+                  <div style=1props>
+                    <div style=3props>
+                      days
+                    <div style=4props>
+                      1
+                  <div style=1props>
+                    <div style=4props>
+                      dlvd
+                    <input max=1 min=0 onChange=fn step="any" style=10props type="number" value=0>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $1000
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <div style=4props>
+                      $900
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $900.00
+              <LineItemRow>
+                <anon>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort11" data-ltp-zone="sec1" style=7props>
+                    <span style=7props>
+                      Note
+                    <div onDoubleClick=undefined style=9props>
+                      Handle with care
+        <SectionBlock>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort11" style=4props>
+            <div style=5props>
+              <div style=6props>
+                Grip
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+            <div style=6props>
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=9props>
+            <span>
+              Line adjustments
+            <span>
+              −$100.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Global Discount
+              <span>
+                10%
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$190.00
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $1,710.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $1,200.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $510.00 (30%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec1" style=5props>
+          <div>
+            <div style=3props>
+              Audio
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $1,900.00
+        <div key="sec2" style=5props>
+          <div>
+            <div style=3props>
+              Grip
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$190.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $510.00 (30%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== QuotesBuilder (expired) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                sent
+    <div style=4props>
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn style=9props>
+        ✓ Mark Accepted
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+        ✕ Decline
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+        Recall to Draft
+      <button onClick=fn style=8props>
+        Resend
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <span style=10props>
+                      Acme Co
+                      <button onClick=fn style=8props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                        ✎
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                      <span style=3props>
+                        Spring Shoot
+                      <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                        ✎
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-06-30">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+          <div style=6props>
+            Project dates: September 1st, 2026 → September 3rd, 2026 · rental pricing will use this period.
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort12" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Audio">
+              <div style=4props>
+                <div>
+                  $1,900.00
+                <div style=1props>
+                  margin: $700.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort12" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    PR
+                  <div style=2props>
+                    <div style=6props>
+                      Console
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $500
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="500" style=10props type="number" value="">
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $1,000.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort12" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    SV
+                  <div style=2props>
+                    <div style=6props>
+                      A1
+                  <select onChange=fn style=9props value="day">
+                    <option value="day">
+                      Day
+                    <option value="half">
+                      Half Day
+                    <option value="hourly">
+                      Hourly
+                    <option value="ot">
+                      OT
+                  <div style=1props>
+                    <div style=3props>
+                      days
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $1000
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="1000" style=10props type="number" value=900>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $900.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=false onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <anon>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort12" data-ltp-zone="sec1" style=7props>
+                    <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                      ☰
+                    <span style=7props>
+                      Note
+                    <div onDoubleClick=fn style=9props>
+                      Handle with care
+                    <button aria-label="Edit note" className=undefined onClick=fn style=9props title="Edit note">
+                      ✎
+                    <button aria-label="Remove note" className=undefined onClick=fn style=9props title="Remove note">
+                      ×
+            <button onClick=fn style=9props>
+              + Add Item to Audio
+        <SectionBlock>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort12" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Grip">
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+            <button onClick=fn style=9props>
+              + Add Item to Grip
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=9props>
+            <span>
+              Line adjustments
+            <span>
+              −$100.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="percent">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+              <input onChange=fn style=10props type="number" value=10>
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$190.00
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $1,710.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $1,200.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $510.00 (30%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec1" style=5props>
+          <div>
+            <div style=3props>
+              Audio
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $1,900.00
+        <div key="sec2" style=5props>
+          <div>
+            <div style=3props>
+              Grip
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$190.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $510.00 (30%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== QuotesBuilder (declined) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                declined
+    <div style=4props>
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn style=9props>
+        Reopen as Draft
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <span style=10props>
+                      Acme Co
+                      <button onClick=fn style=8props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                        ✎
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                      <span style=3props>
+                        Spring Shoot
+                      <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                        ✎
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-09">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+          <div style=6props>
+            Project dates: September 1st, 2026 → September 3rd, 2026 · rental pricing will use this period.
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort13" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Audio">
+              <div style=4props>
+                <div>
+                  $1,900.00
+                <div style=1props>
+                  margin: $700.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort13" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    PR
+                  <div style=2props>
+                    <div style=6props>
+                      Console
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $500
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="500" style=10props type="number" value="">
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $1,000.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort13" data-ltp-zone="sec1" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    SV
+                  <div style=2props>
+                    <div style=6props>
+                      A1
+                  <select onChange=fn style=9props value="day">
+                    <option value="day">
+                      Day
+                    <option value="half">
+                      Half Day
+                    <option value="hourly">
+                      Hourly
+                    <option value="ot">
+                      OT
+                  <div style=1props>
+                    <div style=3props>
+                      days
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                  <div style=1props>
+                    <div style=3props>
+                      unit
+                    <div style=5props>
+                      $1000
+                  <div style=1props>
+                    <div style=3props>
+                      adj
+                    <input onChange=fn placeholder="1000" style=10props type="number" value=900>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $900.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=false onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <anon>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort13" data-ltp-zone="sec1" style=7props>
+                    <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                      ☰
+                    <span style=7props>
+                      Note
+                    <div onDoubleClick=fn style=9props>
+                      Handle with care
+                    <button aria-label="Edit note" className=undefined onClick=fn style=9props title="Edit note">
+                      ✎
+                    <button aria-label="Remove note" className=undefined onClick=fn style=9props title="Remove note">
+                      ×
+            <button onClick=fn style=9props>
+              + Add Item to Audio
+        <SectionBlock>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort13" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Grip">
+              <div style=4props>
+                <div>
+                  $0.00
+                <div style=1props>
+                  margin: $0.00
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <div style=8props>
+                No items. Click "Add Item" below to start.
+            <button onClick=fn style=9props>
+              + Add Item to Grip
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $2,000.00
+          <div style=9props>
+            <span>
+              Line adjustments
+            <span>
+              −$100.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="percent">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+              <input onChange=fn style=10props type="number" value=10>
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$190.00
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $1,710.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $1,200.00
+            <div style=5props>
+              <span>
+                Margin
+              <span style=2props>
+                $510.00 (30%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec1" style=5props>
+          <div>
+            <div style=3props>
+              Audio
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $1,900.00
+        <div key="sec2" style=5props>
+          <div>
+            <div style=3props>
+              Grip
+            <div style=2props>
+              0 items
+          <div style=4props>
+            $0.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Adjustments
+            <span>
+              -$100.00
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$190.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $1,710.00
+          <div style=7props>
+            <span>
+              Margin
+            <span style=2props>
+              $510.00 (30%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== QuotesBuilder overlays ==
+  -- slot 0 (flag) opens an overlay (13 lines) --
+      <button onClick=fn style=10props>
+        Send
+        <div ref={"current":null} style=2props>
+          <button aria-label="More actions" className="ltp-tap" onClick=fn style=9props>
+            ⋯
+          <anon>
+            <span style=10props>
+              draft
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort15" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort15" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort15" style=4props>
+  -- slot 3 (flag) opens an overlay (11 lines) --
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Discard
+      <anon>
+        <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+          Save Changes
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort16" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort16" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort16" style=4props>
+      <anon>
+  -- slot 11 (flag) opens an overlay (7 lines) --
+      <div style=8props>
+        ✓ Saved
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort17" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort17" style=4props>
+  -- slot 12 (flag) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
+  -- slot 15 (flag) opens an overlay (79 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
+  <anon>
+    <div className="ltp-modal-backdrop" onClick=fn style=7props>
+      <div className="ltp-modal-panel" onClick=fn style=11props>
+        <div style=4props>
+          <h3 style=5props>
+            Send Quote
+          <button onClick=fn style=5props>
+            ✕
+        <div style=3props>
+          <div style=8props>
+            <div style=6props>
+              Quote Preview
+            <div style=4props>
+              Q-2026-001
+            <div style=3props>
+              Spring Shoot
+            <div style=3props>
+              Acme Co
+            <div style=3props>
+              <div key="sec1" style=4props>
+                <span style=1props>
+                  Audio (2)
+                <span style=1props>
+                  $1,900.00
+              <div key="sec2" style=4props>
+                <span style=1props>
+                  Grip (0)
+                <span style=1props>
+                  $0.00
+              <div style=7props>
+                <span style=1props>
+                  Total
+                <span style=1props>
+                  $1,710.00
+          <LTPEmailComposePane>
+            <div style=7props>
+              <div style=3props>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=6props>
+          <anon>
+            <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+              Cancel
+          <anon>
+            <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+              Send Quote
+  -- slot 20 (flag) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
+  -- slot 21 (flag) opens an overlay (7 lines) --
+      <button disabled=true onClick=fn style=12props>
+        Generating…
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort21" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort21" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort21" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort21" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort21" style=4props>
+  -- slot 9 (object) opens an overlay (51 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort22" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort22" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort22" style=4props>
+  <AddItemPicker>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Add to ""
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            <button key="equipment" onClick=fn style=8props>
+              Equipment
+            <button key="product" onClick=fn style=8props>
+              Products
+            <button key="service" onClick=fn style=8props>
+              Services
+            <button key="fee" onClick=fn style=8props>
+              Fees
+            <button key="note" onClick=fn style=8props>
+              Note
+          <div>
+            <div style=4props>
+              <input onChange=fn placeholder="Search equipment…" style=9props type="text" value="">
+              <span style=3props>
+                3-Day Rate
+            <div style=5props>
+              <div key="e1" onMouseOut=fn onMouseOver=fn style=7props>
+                <div style=2props>
+                  <div style=6props>
+                    Speaker
+                  <div style=2props>
+                    undefined
+                <div style=2props>
+                  <div style=3props>
+                    0 / 0 avail
+                <div style=3props>
+                  <button onClick=fn style=13props>
+                    −
+                  <input min=1 onChange=fn onClick=fn style=10props type="number" value=1>
+                  <button onClick=fn style=13props>
+                    +
+                <div style=2props>
+                  <div style=3props>
+                    $0
+                <button onClick=fn style=9props>
+                  Add
+  -- slot 10 (object) opens an overlay (23 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort23" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort23" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort23" style=4props>
+  <anon>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            Seed
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=undefined style=10props>
+                OK
+  -- slot 13 (object) opens an overlay (19 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort24" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort24" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort24" style=4props>
+  <LTPActivityDetail>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=3props>
+             · 
+          <div style=3props>
+          <div style=5props>
+            No detailed changes recorded.
+  -- slot 14 (object) opens an overlay (21 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort25" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort25" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort25" style=4props>
+  <anon>
+    <div className="ltp-modal-backdrop" onClick=fn style=7props>
+      <div className="ltp-modal-panel" onClick=fn style=11props>
+        <div style=4props>
+          <h3 style=5props>
+            Send to Invoice
+          <button onClick=fn style=5props>
+            ✕
+        <p style=3props>
+          Add these items to one of this client’s draft invoices — they arrive as new sections, leaving what’s already there untouched — or create a new invoice.
+        <div style=6props>
+          <div key="_empty" style=4props>
+            No draft invoices for this client yet.
+        <anon>
+          <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+            + Create New Invoice
+  -- slot 19 (object) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort26" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort26" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort26" style=4props>
+  -- slot 25 (object) opens an overlay (5 lines) --
+          <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort27" style=4props>
+                <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+                <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+                  <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort27" data-ltp-zone="sec1" style=7props>
+          <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort27" style=4props>
+
+== InvoiceBuilder overlays ==
+  -- slot 0 (flag) opens an overlay (23 lines) --
+      <button onClick=fn style=10props>
+        Send
+        <div ref={"current":null} style=2props>
+          <button aria-label="More actions" className="ltp-tap" onClick=fn style=9props>
+            ⋯
+          <anon>
+            <span style=10props>
+              draft
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec1" style=3props>
+          <anon>
+              <button aria-label="Move section up" className="ltp-tap" disabled=true onClick=fn style=12props>
+                ▲
+              <button aria-label="Move section down" className="ltp-tap" disabled=false onClick=fn style=12props>
+                ▼
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort29" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort29" key="sec2" style=3props>
+          <anon>
+              <button aria-label="Move section up" className="ltp-tap" disabled=false onClick=fn style=12props>
+                ▲
+              <button aria-label="Move section down" className="ltp-tap" disabled=true onClick=fn style=12props>
+                ▼
+  -- slot 3 (flag) opens an overlay (11 lines) --
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Discard
+      <anon>
+        <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+          Save Changes
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort30" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort30" key="sec2" style=3props>
+      <anon>
+  -- slot 7 (flag) opens an overlay (7 lines) --
+        ✓ Saved
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec2" style=3props>
+      <div style=7props>
+  -- slot 10 (flag) opens an overlay (88 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort32" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort32" key="sec2" style=3props>
+  <LTPPaymentForm>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Record Payment
+            <button onClick=fn style=5props>
+              ✕
+          <div style=1props>
+            <div style=7props>
+              <div>
+                <div style=2props>
+                  Invoice Total
+                <div style=3props>
+                  $1,710.00
+              <div style=1props>
+                <div style=2props>
+                  Already Paid
+                <div style=3props>
+                  $0.00
+              <div style=1props>
+                <div style=2props>
+                  Balance Due
+                <div style=3props>
+                  $1,710.00
+          <div style=3props>
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Payment Date
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Amount *
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder="0.00" step=undefined style=12props type="number" value="1710">
+          <div style=4props>
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Payment Method
+                <select onBlur=fn onChange=fn onFocus=fn style=13props value="check">
+                  <option key="check" value="check">
+                    Check
+                  <option key="ach" value="ach">
+                    ACH / Bank Transfer
+                  <option key="credit_card" value="credit_card">
+                    Credit Card
+                  <option key="cash" value="cash">
+                    Cash
+                  <option key="wire" value="wire">
+                    Wire Transfer
+                  <option key="other" value="other">
+                    Other
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Reference / Check #
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder="e.g. CHK-4412" step=undefined style=12props type="text" value="">
+          <div style=1props>
+            <anon>
+              <div style=4props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Notes (optional)
+                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder="Payment notes…" step=undefined style=12props type="text" value="">
+          <div style=4props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+                Record Payment
+  -- slot 11 (flag) opens an overlay (88 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort33" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort33" key="sec2" style=3props>
+  <anon>
+    <div className="ltp-modal-backdrop" onClick=fn style=7props>
+      <div className="ltp-modal-panel" onClick=fn style=11props>
+        <div style=4props>
+          <h3 style=5props>
+            Send Invoice
+          <button onClick=fn style=5props>
+            ✕
+        <div style=3props>
+          <div style=8props>
+            <div style=6props>
+              Invoice Preview
+            <div style=4props>
+              INV-2026-007
+            <div style=3props>
+              Spring Shoot
+            <div style=3props>
+              Acme Co
+            <div style=3props>
+              <div style=4props>
+                <span style=1props>
+                  Invoice Date
+                <span style=1props>
+                  August 5th, 2026
+              <div style=4props>
+                <span style=1props>
+                  Due Date
+                <span style=1props>
+                  September 4th, 2026
+              <div style=4props>
+                <span style=1props>
+                  Line Items
+                <span style=1props>
+                  2
+              <div style=7props>
+                <span style=1props>
+                  Total
+                <span style=1props>
+                  $1,710.00
+          <LTPEmailComposePane>
+            <div style=7props>
+              <div style=3props>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=7props>
+          <label style=7props>
+            <input checked=true onChange=fn style=2props type="checkbox">
+            Attach invoice PDF
+          <div style=2props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+                Send Invoice
+  -- slot 13 (flag) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec2" style=3props>
+  -- slot 14 (flag) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec2" style=3props>
+  -- slot 15 (flag) opens an overlay (74 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec2" style=3props>
+  <anon>
+    <div className="ltp-modal-backdrop" onClick=fn style=7props>
+      <div className="ltp-modal-panel" onClick=fn style=11props>
+        <div style=4props>
+          <h3 style=5props>
+            Send Payment Receipt
+          <button onClick=fn style=5props>
+            ✕
+        <div style=3props>
+          <div style=8props>
+            <div style=6props>
+              Receipt Preview
+            <div style=4props>
+              INV-2026-007
+            <div style=3props>
+              Spring Shoot
+            <div style=3props>
+              <div style=4props>
+                <span style=1props>
+                  Invoice Total
+                <span style=1props>
+                  $1,710.00
+              <div style=4props>
+                Payments
+              <div style=7props>
+                <span style=1props>
+                  Paid in Full
+                <span style=1props>
+                  $0.00
+          <LTPEmailComposePane>
+            <div style=7props>
+              <div style=3props>
+                <div style=6props>
+                  Email Preview
+                <div style=4props>
+                  <span style=3props>
+                    From:
+                  <span style=2props>
+                    Sender <s@example.com>
+                <div style=1props>
+                  <anon>
+                    <div>
+                      <div style=4props>
+                        <span style=8props>
+                          To
+                        <div style=5props>
+                          <span style=4props>
+                            no primary recipient
+                      <div style=4props>
+                        <span style=8props>
+                          Cc
+                        <div style=5props>
+                          <span style=4props>
+                            none
+                      <div style=2props>
+                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                <div style=3props>
+                  <span style=3props>
+                    Subj:
+                  <input onChange=fn style=10props value="">
+              <anon>
+                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=6props>
+          <anon>
+            <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+              Skip
+          <anon>
+            <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+              Send Receipt
+  -- slot 20 (flag) opens an overlay (7 lines) --
+      <button disabled=true onClick=fn style=12props>
+        Generating…
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort37" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort37" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort37" key="sec2" style=3props>
+  -- slot 6 (object) opens an overlay (23 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort38" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort38" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort38" key="sec2" style=3props>
+  <anon>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=4props>
+            Seed
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=undefined style=10props>
+                OK
+  -- slot 8 (object) opens an overlay (39 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort39" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort39" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort39" key="sec2" style=3props>
+  <InvAddItemPicker>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Add Item
+            <button onClick=fn style=5props>
+              ✕
+          <anon>
+            <div style=2props>
+              <div className="ltp-tabs-strip" ref={"current":null} style=7props>
+                <button className="ltp-tap" key="equipment" onClick=fn style=14props>
+                  Equipment
+                <button className="ltp-tap" key="product" onClick=fn style=14props>
+                  Products
+                <button className="ltp-tap" key="service" onClick=fn style=14props>
+                  Services
+                <button className="ltp-tap" key="fee" onClick=fn style=14props>
+                  Fees
+                <button className="ltp-tap" key="note" onClick=fn style=14props>
+                  Note
+              <anon>
+          <div>
+            <input onChange=fn placeholder="Search equipment…" style=10props type="text" value="">
+            <div style=5props>
+              <div key="e1" onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+                <div style=1props>
+                  <div style=3props>
+                    Speaker
+                  <div style=2props>
+                    
+                <div style=3props>
+                  $0
+  -- slot 9 (object) opens an overlay (19 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort40" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort40" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort40" key="sec2" style=3props>
+  <LTPActivityDetail>
+    <anon>
+      <div className="ltp-modal-backdrop" onClick=fn style=7props>
+        <div className="ltp-modal-panel" onClick=fn style=11props>
+          <div style=4props>
+            <h3 style=5props>
+              Seed
+            <button onClick=fn style=5props>
+              ✕
+          <div style=3props>
+             · 
+          <div style=3props>
+          <div style=5props>
+            No detailed changes recorded.
+  -- slot 18 (object) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec2" style=3props>
+  -- slot 27 (object) opens an overlay (5 lines) --
+      <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort42" key="sec1" style=3props>
+            <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+            <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+              <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
+      <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort42" key="sec2" style=3props>

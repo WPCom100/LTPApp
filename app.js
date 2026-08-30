@@ -425,7 +425,8 @@ function LTPSignedInApp(props) {
         kits: kits,               setKits: setKits,
       }));
       case "quotes":    return h(window.LTPErrorBoundary, { name: "Quotes" }, h(window.QuotesView,    {
-        companies: companies, contacts: contacts, projects: projects, setProjects: setProjects, route: route,
+        // The quote builder never mutates projects — see modules/quotes-shell.js.
+        companies: companies, contacts: contacts, projects: projects, route: route,
         quotes: quotes,     setQuotes: setQuotes,
         products: products, setProducts: setProducts,
         services: services, setServices: setServices,

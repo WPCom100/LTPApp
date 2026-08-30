@@ -66,7 +66,8 @@
        it is ~134px). Same iOS dvh rationale as #root; vh first as a fallback. */
     .ltp-calendar-grid { height: calc(100vh - 134px); height: calc(100dvh - 134px); height: calc(var(--app-h, 100dvh) - 134px); }
     /* Email Send-modal editor: give every top-level paragraph the SAME spacing
-       the sent mail uses (theme.js PARA_STYLE = margin:0;line-height:1) —
+       the sent mail uses (components/domain-email.js PARA_STYLE =
+       margin:0;line-height:1) —
        single-spaced, the sender adds blank lines for gaps — regardless of
        whether the browser inserts <p> (Chrome) or <div> (Safari) on Enter.
        Keep these two values in sync. Marker blocks (<section>) and any nested
@@ -279,8 +280,31 @@
   <!-- 2. Router (seeds hash, exposes window.LTPRouter) -->
   <script src="router.js"></script>
 
-  <!-- 3. Theme + cross-cutting utilities -->
+  <!-- 3. Theme + the domain layer.
+       theme.js was 96% not-theme — 2,643 of its 2,739 lines were business
+       logic — so the domain functions now live in components/domain-*.js.
+       theme.js keeps the actual design tokens plus LTP_STATUS_COLORS, whose
+       building IIFE is the file's one load-order dependency (it calls
+       LTP_badgeFromHex at load).
+
+       These tags belong HERE, in the theme slot, not down in group 5 with the
+       other components/ files. 46 frontend files alias these exports into
+       IIFE-locals at their own load time (modules/quotes-list.js:9 is
+       `var computeTotals = window.LTP_QUOTE_TOTALS;`), so a domain file placed
+       after its consumers would be captured as undefined rather than
+       late-bound. Order AMONG these seven is free — nothing here reads another
+       LTP_ symbol at load — and is alphabetical-by-concern for readability.
+       They are also in sw.js's SAME_ORIGIN_PRECACHE boot chain; add any new
+       one there too. -->
   <script src="theme.js"></script>
+  <script src="components/domain-util.js"></script>
+  <script src="components/domain-labor.js"></script>
+  <script src="components/domain-rates.js"></script>
+  <script src="components/domain-crew.js"></script>
+  <script src="components/domain-payouts.js"></script>
+  <script src="components/domain-email.js"></script>
+  <script src="components/domain-docs.js"></script>
+  <script src="components/domain-qbo.js"></script>
 
   <!-- 4. Data fallbacks — used as usePersistentState fallback arguments.
        Mostly empty post-migration; data/settings.js still ships UI defaults
@@ -314,8 +338,8 @@
          component and module below can use window.LTP_HELPERS / LTP_STATUS.
        ui.js, *-dialog.js: read window.LTP_THEME.
        error-toasts.js: listens to "ltp-api-error" CustomEvents dispatched by data-state.js. -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js"
-          integrity="sha384-qJNkHwhlYywDHfyoEe1np+1lYvX/8x+3gHCKFhSSBMQyCFlvFnn+zXmaebXl21rV"
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.14/purify.min.js"
+          integrity="sha384-46dPGH1XlTmj7bc50bqLjTdORXs/3EP2QpA/6EWbelYWOY9VGp+87RT61S3Mcslb"
           crossorigin="anonymous"></script>
   <!-- signature_pad — exposes window.SignaturePad. Only used by
        modules/client-view.js for the client accept-quote signature canvas;
@@ -342,6 +366,14 @@
   <script src="components/recipient-editor.js"></script>
   <script src="components/client-rates.js"></script>
   <script src="components/doc-terms.js"></script>
+  <!-- Record-payment modal, lifted out of the invoice builder. -->
+  <script src="components/doc-payment-form.js"></script>
+  <!-- Shared email pane for the quote-send, invoice-send and receipt modals. -->
+  <script src="components/doc-email-pane.js"></script>
+  <!-- PDF generation, shared by the quote and invoice builders. -->
+  <script src="components/doc-pdf.js"></script>
+  <!-- Revision-log detail popup, shared by both document builders. -->
+  <script src="components/doc-activity-detail.js"></script>
   <script src="components/schedule-editor.js"></script>
   <script src="components/confirm-dialog.js"></script>
   <script src="components/error-boundary.js"></script>

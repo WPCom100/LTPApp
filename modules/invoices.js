@@ -7,6 +7,11 @@
   var useState = React.useState, useRef = React.useRef, useMemo = React.useMemo, useEffect = React.useEffect;
   var nav = window.LTPRouter.navigate;
   var fmt = window.LTP_formatDate;
+  // Pure section/line-item transforms, shared with modules/quotes-builder.js.
+  // See components/domain-docs.js — every invoice-specific rule (draft-only
+  // edits, linkedQty clamping, rollback bookkeeping, the last-section guard)
+  // stays in this file.
+  var S = window.LTP_SECTIONS;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (matches the quote builder)
@@ -633,73 +638,81 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE BUILDER
   // ═══════════════════════════════════════════════════════════════════════════
+  // A blank invoice, and a deep copy of an existing one for editing.
+  //
+  // At file scope so they can be read without scrolling through the builder,
+  // matching modules/quotes-builder.js, where the equivalent emptyDraft and
+  // cloneDraft have always lived outside the component. These reference no
+  // props at all — only the file-scope net30/genId/todayISO helpers — so they
+  // were inside InvoiceBuilder purely because that is where they were written.
+  function emptyInvoice() {
+    var today = todayISO();
+    return {
+      id: null, quoteId: null,
+      // projectId is the PRIMARY project; projectIds is every project this
+      // invoice bills work for (see window.LTP_docProjectIds in theme.js).
+      clientType: "company", companyId: null, clientContactId: null, projectId: null, projectIds: [],
+      customName: "", status: "draft",
+      invoiceDate: today, createdDate: today, sentDate: null, dueDate: net30(today), paidDate: null,
+      globalDiscount: { type: "none", value: 0 },
+      sections: [{ id: genId("sec"), label: "Items", customDates: false, startDate: "", endDate: "", items: [] }],
+      notes: window.LTP_DEFAULT_INVOICE_NOTES || "",
+      // "" = follow the workspace / built-in terms. Only set once a producer
+      // edits this document's own wording. See window.LTP_docTerms in theme.js.
+      terms: "",
+      payments: [],
+      activity: [{ id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "created", message: "Invoice created", user: (window.LTP_CURRENT_USER || "User") }],
+    };
+  }
+
+  function cloneInvoice(inv) {
+    // Spread the source FIRST so server-managed fields we don't normalize
+    // explicitly survive into the draft — notably the QuickBooks link
+    // (qbInvoiceId, qbSyncToken, qbSyncStatus, qbSyncedAt, qbTaxTotal,
+    // qbTotalAmt, qbLastError). Without this, re-opening an invoice (e.g.
+    // after editing its customer) dropped the qb link from the draft and the
+    // UI reverted to "Send to QuickBooks" even though the server still had
+    // it. The explicit keys below override/normalize and deep-clone the
+    // nested arrays so edits never mutate the shared list objects.
+    return Object.assign({}, inv, {
+      id: inv.id, quoteId: inv.quoteId || null,
+      shareToken: inv.shareToken || null,
+      clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
+      projectId: inv.projectId,
+      // Normalized (not passed through raw) so a legacy row without the field
+      // still round-trips a correct list instead of saving back an empty one
+      // and dropping its "Includes" attribution.
+      projectIds: window.LTP_docProjectIds(inv),
+      customName: inv.customName || "",
+      status: inv.status || "draft",
+      invoiceDate: inv.invoiceDate || inv.createdDate || todayISO(),
+      createdDate: inv.createdDate || todayISO(), sentDate: inv.sentDate || null,
+      dueDate: inv.dueDate || "", paidDate: inv.paidDate || null,
+      globalDiscount: Object.assign({ type: "none", value: 0 }, inv.globalDiscount || {}),
+      // A whitelist rebuild, so every section field must be named here or
+      // editing the invoice silently drops it — `projectId` records which job
+      // an appended section came from. (Items are spread, so sourceQuoteId /
+      // linkedQty survive automatically.)
+      sections: (inv.sections || []).map(function(s) {
+        return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+                 projectId: s.projectId != null ? s.projectId : null,
+                 items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
+      }),
+      notes: inv.notes || "",
+      // Carried by the spread above too; normalized here so a null from an
+      // older row reads as "follow the default" rather than reaching the
+      // editor as null.
+      terms: inv.terms || "",
+      payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
+      activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
+    });
+  }
+
   function InvoiceBuilder({ invoiceId, isNew, invoices, setInvoices, getNextInvoiceId,
                             companies, setCompanies, contacts, setContacts, projects, quotes, setQuotes,
                             equipment, products, services, clientRates, fees, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
-    function emptyInvoice() {
-      var today = todayISO();
-      return {
-        id: null, quoteId: null,
-        // projectId is the PRIMARY project; projectIds is every project this
-        // invoice bills work for (see window.LTP_docProjectIds in theme.js).
-        clientType: "company", companyId: null, clientContactId: null, projectId: null, projectIds: [],
-        customName: "", status: "draft",
-        invoiceDate: today, createdDate: today, sentDate: null, dueDate: net30(today), paidDate: null,
-        globalDiscount: { type: "none", value: 0 },
-        sections: [{ id: genId("sec"), label: "Items", customDates: false, startDate: "", endDate: "", items: [] }],
-        notes: window.LTP_DEFAULT_INVOICE_NOTES || "",
-        // "" = follow the workspace / built-in terms. Only set once a producer
-        // edits this document's own wording. See window.LTP_docTerms in theme.js.
-        terms: "",
-        payments: [],
-        activity: [{ id: genId("act"), date: today, time: new Date().toTimeString().substring(0,5), type: "created", message: "Invoice created", user: (window.LTP_CURRENT_USER || "User") }],
-      };
-    }
-
-    function cloneInvoice(inv) {
-      // Spread the source FIRST so server-managed fields we don't normalize
-      // explicitly survive into the draft — notably the QuickBooks link
-      // (qbInvoiceId, qbSyncToken, qbSyncStatus, qbSyncedAt, qbTaxTotal,
-      // qbTotalAmt, qbLastError). Without this, re-opening an invoice (e.g.
-      // after editing its customer) dropped the qb link from the draft and the
-      // UI reverted to "Send to QuickBooks" even though the server still had
-      // it. The explicit keys below override/normalize and deep-clone the
-      // nested arrays so edits never mutate the shared list objects.
-      return Object.assign({}, inv, {
-        id: inv.id, quoteId: inv.quoteId || null,
-        shareToken: inv.shareToken || null,
-        clientType: inv.clientType || "company", companyId: inv.companyId, clientContactId: inv.clientContactId,
-        projectId: inv.projectId,
-        // Normalized (not passed through raw) so a legacy row without the field
-        // still round-trips a correct list instead of saving back an empty one
-        // and dropping its "Includes" attribution.
-        projectIds: window.LTP_docProjectIds(inv),
-        customName: inv.customName || "",
-        status: inv.status || "draft",
-        invoiceDate: inv.invoiceDate || inv.createdDate || todayISO(),
-        createdDate: inv.createdDate || todayISO(), sentDate: inv.sentDate || null,
-        dueDate: inv.dueDate || "", paidDate: inv.paidDate || null,
-        globalDiscount: Object.assign({ type: "none", value: 0 }, inv.globalDiscount || {}),
-        // A whitelist rebuild, so every section field must be named here or
-        // editing the invoice silently drops it — `projectId` records which job
-        // an appended section came from. (Items are spread, so sourceQuoteId /
-        // linkedQty survive automatically.)
-        sections: (inv.sections || []).map(function(s) {
-          return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
-                   projectId: s.projectId != null ? s.projectId : null,
-                   items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
-        }),
-        notes: inv.notes || "",
-        // Carried by the spread above too; normalized here so a null from an
-        // older row reads as "follow the default" rather than reaching the
-        // editor as null.
-        terms: inv.terms || "",
-        payments: (inv.payments || []).map(function(p) { return Object.assign({}, p); }),
-        activity: (inv.activity || []).map(function(a) { return Object.assign({}, a); }),
-      });
-    }
 
     var initial = useMemo(function() {
       if (isNew) return emptyInvoice();
@@ -740,66 +753,22 @@
     // Attach the invoice PDF to invoice + reminder emails. Default ON; the
     // user can uncheck per-send in the modal. Backend generates the PDF fresh.
     var [attachPdf, setAttachPdf] = useState(true);
-    var [payDate, setPayDate] = useState(todayISO());
-    var [payAmount, setPayAmount] = useState("");
     var [generatingPdf, setGeneratingPdf] = useState(false);
 
-    // POST /api/invoices/{id}/pdf → trigger download + mirror activity entry.
-    // Same pattern as quotes-builder.js. See that file's generatePdf for
-    // detailed comments on the flow.
+    // POST /api/invoices/{id}/pdf → download + mirror the activity entry.
+    // The fetch, the iOS tab workaround, the download trigger and the error
+    // reporting are shared with the quote builder — components/doc-pdf.js.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
-      // iOS standalone blocks BOTH programmatic downloads and window.open()
-      // called after an async fetch (outside the click gesture). So on mobile
-      // open a blank tab synchronously now (inside the gesture) and redirect it
-      // to the PDF once ready — it opens in the iOS PDF viewer. Desktop keeps
-      // the direct download.
-      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
-      fetch("/api/invoices/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
-        .then(function(r) {
-          if (!r.ok) {
-            return r.text().then(function(body) {
-              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(resp) {
-          if (pdfWin) {
-            pdfWin.location = resp.downloadUrl;
-          } else {
-            var a = document.createElement("a");
-            a.href = resp.downloadUrl;
-            a.download = resp.filename || ("INV-" + draft.id + ".pdf");
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          }
-          var actEntry = {
-            id: "pdf-" + Date.now(),
-            date: todayISO(),
-            time: new Date().toTimeString().substring(0, 5),
-            type: "pdf_generated",
-            user: (window.LTP_CURRENT_USER || "User"),
-            userId: window.LTP_CURRENT_USER_ID || null,
-            message: "PDF generated",
-            pdfToken: resp.token,
-            pdfFilename: resp.filename,
-          };
+      window.LTP_generateDocPdf({ kind: "invoice", id: draft.id, isMobile: isMobile })
+        .then(function(actEntry) {
           var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
           setDraftRaw(updated);
           cleanRef.current = updated;
           setInvoices(function(prev) { return prev.map(function(inv) { return inv.id === draft.id ? updated : inv; }); });
         })
         .catch(function(err) {
-          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
-          if (window.LTP_API_ERRORS) {
-            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST invoices/" + draft.id + "/pdf", error: String(err) });
-          }
-          try {
-            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
-          } catch (e) {}
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });
@@ -820,29 +789,18 @@
         window.location.href = "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(url);
       }
     }
-    var [payMethod, setPayMethod] = useState("check");
-    var [payRef, setPayRef] = useState("");
-    var [payNotes, setPayNotes] = useState("");
 
-    function openPaymentForm() {
-      setPayDate(todayISO());
-      setPayAmount(String(Math.round((t.balance > 0 ? t.balance : 0) * 100) / 100));
-      setPayMethod("check");
-      setPayRef("");
-      setPayNotes("");
-      setShowPaymentForm(true);
-    }
 
     // ── Payment helpers ──────────────────────────────────────────────────────
     function addPayment(payment) {
       var newPayment = Object.assign({ id: genId("pay") }, payment);
-      var updatedPayments = (draft.payments || []).concat([newPayment]);
-      var newTotal = updatedPayments.reduce(function(s, p) { return s + (Number(p.amount) || 0); }, 0);
+      // The paid/partial rule lives in components/domain-docs.js so it can be
+      // tested; everything below is this builder's orchestration around it.
+      var applied = window.LTP_applyPayment(draft.payments, newPayment, t.total, draft.status);
+      var updatedPayments = applied.payments;
+      var newTotal = applied.paidTotal;
       var invoiceTotal = t.total;
-      // Auto-update status
-      var newStatus = draft.status;
-      if (newTotal >= invoiceTotal) { newStatus = "paid"; }
-      else if (newTotal > 0 && draft.status !== "draft") { newStatus = "partial"; }
+      var newStatus = applied.status;
       var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
         type: "paid", user: (window.LTP_CURRENT_USER || "User"), message: "Payment recorded: $" + window.LTP_money(payment.amount) + (newTotal >= invoiceTotal ? " \u2014 Paid in full" : ""),
 
@@ -1165,21 +1123,13 @@
           // /api/email/send validates before sending and rolls its recipient
           // rows back on both Gmail failure paths (backend/routes/email.py).
           // That makes it safe to undo the QuickBooks invoice this send created.
-          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            unwindQboPush(baseDraft, unwindableQbId, function(tail) {
-              showAlert("Reconnect Google",
-                "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect." + tail);
-            });
-            return;
-          }
-          var msg = "Send failed (HTTP " + resp.status + ").";
-          if (resp.body && resp.body.detail) {
-            var d = resp.body.detail;
-            if (typeof d === "string") msg = d;
-            else if (d.error) msg = d.error;
-            else if (d.reason) msg = d.reason;
-          }
-          unwindQboPush(baseDraft, unwindableQbId, function(tail) { showAlert("Send Failed", msg + tail); });
+          // Deciding WHAT to say is shared — components/domain-docs.js. Both
+          // branches unwound the QuickBooks push identically, so there is one
+          // path here now rather than two.
+          var failure = window.LTP_sendFailure(resp);
+          unwindQboPush(baseDraft, unwindableQbId, function(tail) {
+            showAlert(failure.title, failure.message + tail);
+          });
         })
         .catch(function(e) {
           setSending(false);
@@ -1234,7 +1184,16 @@
 
     function recallToDraft() {
       if (isDraft) return;
-      var hasPayments = (draft.payments || []).length > 0;
+      // Check the PERSISTED row as well as the draft. This guard exists to stop
+      // a recall from writing a payment-free record over one that has payments,
+      // and consulting only the in-memory draft made it trust the very state
+      // that could be wrong: a Discard against a stale baseline produced a
+      // payment-free draft, the guard passed, and onConfirm below wrote it
+      // through. The autoSavePayment fix removes that path, but a guard
+      // protecting money should not depend on another function staying correct.
+      var persisted = (invoices || []).find(function(i) { return i.id === draft.id; });
+      var hasPayments = (draft.payments || []).length > 0
+        || ((persisted && persisted.payments) || []).length > 0;
       if (hasPayments) {
         showAlert("Cannot Recall", "This invoice has recorded payments. Remove all payments before recalling to draft.");
         return;
@@ -1275,10 +1234,9 @@
     // render (hoisted var) and holds the value as of the click.
     var qbSig = "";
     function sendToQuickBooks() {
-      if (draft.id == null) { window.LTP_toast("Save first", { message: "Save the invoice before sending it to QuickBooks.", variant: "warn" }); return; }
-      if (!draft.sentDate && !draft.qbInvoiceId) { window.LTP_toast("Send the invoice first", { message: "Invoices export to QuickBooks once they've been sent.", variant: "warn" }); return; }
-      if (!isAdmin) { window.LTP_toast("Admin only", { message: "Only an admin can push invoices to QuickBooks.", variant: "warn" }); return; }
-      if (!qbo || !qbo.connected) { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings before pushing invoices.", variant: "warn" }); return; }
+      // Whether a push is allowed is decided in components/domain-qbo.js.
+      var blocked = window.LTP_qboPushBlocker(draft, isAdmin, qbo);
+      if (blocked) { window.LTP_toast(blocked.title, { message: blocked.message, variant: blocked.variant }); return; }
       setQboSyncing(true);
       fetch("/api/qbo/invoices/" + draft.id + "/push", {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
@@ -1287,25 +1245,14 @@
         .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
         .then(function(resp) {
           setQboSyncing(false);
-          if (resp.status === 200) {
-            var b = resp.body || {};
-            var updated = Object.assign({}, draft, {
-              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
-              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
-              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : qbSig
-            });
+          // What the response means, and what to say about it — domain-qbo.js.
+          var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (outcome.ok) {
+            var updated = window.LTP_applyQboPush(draft, resp.body, qbSig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-            window.LTP_toast(b.action === "created" ? "Sent to QuickBooks" : "Updated in QuickBooks", {
-              message: "Invoice " + (b.action === "created" ? "created in" : "updated in") + " QuickBooks"
-                + (b.qbTaxTotal ? " — sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "."),
-              variant: "success" });
-            return;
           }
-          var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") { window.LTP_toast("Reconnect QuickBooks", { message: "The QuickBooks connection expired. An admin should reconnect it in Settings.", variant: "error" }); return; }
-          if (resp.status === 409 && d.reason === "not_connected") { window.LTP_toast("QuickBooks not connected", { message: "An admin must connect QuickBooks in Settings first.", variant: "warn" }); return; }
-          window.LTP_toast("QuickBooks sync failed", { message: d.error || ("HTTP " + resp.status + "."), variant: "error" });
+          window.LTP_toast(outcome.title, { message: outcome.message, variant: outcome.variant });
         })
         .catch(function(e) { setQboSyncing(false); window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" }); });
     }
@@ -1337,36 +1284,40 @@
         })
         .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
         .then(function(resp) {
-          if (resp.status === 200) {
-            var b = resp.body || {};
-            var withQb = Object.assign({}, invoiceObj, {
-              qbInvoiceId: b.qbInvoiceId, qbSyncToken: b.qbSyncToken, qbSyncStatus: "synced",
-              qbSyncedAt: b.qbSyncedAt, qbTaxTotal: b.qbTaxTotal, qbTotalAmt: b.qbTotalAmt, qbLastError: null,
-              qbSyncedSignature: b.qbSyncedSignature != null ? b.qbSyncedSignature : sig
-            });
+          var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (outcome.ok) {
+            var withQb = window.LTP_applyQboPush(invoiceObj, resp.body, sig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
             setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
             if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;
             if (!opts.quiet) {
-              window.LTP_toast(b.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
-                { variant: "success", message: b.qbTaxTotal ? "Sales tax " + money2(b.qbTaxTotal) + " calculated by QuickBooks." : "" });
+              // This path runs as a side effect of SENDING, so it reads as an
+              // export rather than a manual sync.
+              window.LTP_toast(outcome.action === "created" ? "Exported to QuickBooks" : "Updated in QuickBooks",
+                { variant: "success", message: (resp.body || {}).qbTaxTotal
+                    ? "Sales tax " + money2((resp.body || {}).qbTaxTotal) + " calculated by QuickBooks." : "" });
             }
-            // `action` decides whether a failed send may unwind this push: only
-            // a create is ours to delete. An update means the QB invoice existed
-            // before this send (a resend, or an earlier push) — deleting it
-            // would destroy a record the customer may already hold.
-            return { ok: true, invoice: withQb, action: b.action, qbInvoiceId: b.qbInvoiceId };
+            // outcome.action decides whether a failed send may unwind this push:
+            // only a create is ours to delete. An update means the QB invoice
+            // existed before this send (a resend, or an earlier push) — deleting
+            // it would destroy a record the customer may already hold.
+            return { ok: true, invoice: withQb, action: outcome.action, qbInvoiceId: outcome.qbInvoiceId };
           }
+          // This path's wording differs from the manual-sync button's on
+          // purpose and is kept verbatim: here the invoice DID send and only
+          // the sync failed, and `error` below is quoted back to the user
+          // inside a sentence by the caller at :1042 rather than shown as a
+          // toast, so it reads "…could not be reached: <error>".
           var d = resp.body || {};
-          if (resp.status === 409 && d.reason === "reconnect") {
+          if (outcome.reason === "reconnect") {
             if (!opts.quiet) window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" });
             return { ok: false, reason: "reconnect", error: d.error || "The QuickBooks connection expired. Reconnect it in Settings." };
           }
-          if (resp.status === 409 && d.reason === "not_connected") {
+          if (outcome.reason === "not_connected") {
             return { ok: false, reason: "not_connected", error: d.error || "QuickBooks is not connected." };
           }
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: (d.error || ("HTTP " + resp.status)) + " — open the invoice and use Update QuickBooks to retry.", variant: "error" });
-          return { ok: false, reason: d.reason || "error", error: d.error || ("HTTP " + resp.status) };
+          return { ok: false, reason: outcome.reason, error: d.error || ("HTTP " + resp.status) };
         })
         .catch(function(e) {
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" });
@@ -1466,23 +1417,20 @@
     function updateItem(secId, itemId, patch) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.map(function(i) {
-            if (i.id !== itemId) return i;
-            var effective = Object.assign({}, patch);
-            // Clamp linkedQty when qty drops below it — qty added on top of
-            // linkedQty is "direct" and reducing back through it doesn't
-            // touch the source quote's invoicedQty. See sendToInvoice for
-            // the model.
-            if (patch.qty != null && i.sourceItemId) {
-              var newQty = Number(patch.qty) || 0;
-              var oldLinked = i.linkedQty != null ? Number(i.linkedQty) : (Number(i.qty) || 0);
-              effective.linkedQty = Math.min(newQty, oldLinked);
-            }
-            return Object.assign({}, i, effective);
-          }) });
-        })});
+        return Object.assign({}, d, { sections: S.patchItem(d.sections, secId, itemId, function(i) {
+          var effective = Object.assign({}, patch);
+          // Clamp linkedQty when qty drops below it — qty added on top of
+          // linkedQty is "direct" and reducing back through it doesn't
+          // touch the source quote's invoicedQty. See sendToInvoice for
+          // the model. Invoice-only rule, so it stays here rather than in
+          // the shared transform.
+          if (patch.qty != null && i.sourceItemId) {
+            var newQty = Number(patch.qty) || 0;
+            var oldLinked = i.linkedQty != null ? Number(i.linkedQty) : (Number(i.qty) || 0);
+            effective.linkedQty = Math.min(newQty, oldLinked);
+          }
+          return effective;
+        }) });
       });
     }
     // Which quote a converted line draws against. An invoice can gather lines
@@ -1515,19 +1463,13 @@
       });
       // Remove item from draft
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.filter(function(i) { return i.id !== itemId; }) });
-        })});
+        return Object.assign({}, d, { sections: S.removeItem(d.sections, secId, itemId) });
       });
     }
     function addItemToSection(secId, item) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.concat([item]) });
-        })});
+        return Object.assign({}, d, { sections: S.addItem(d.sections, secId, item) });
       });
     }
     function addSection() {
@@ -1539,13 +1481,13 @@
     function updateSectionLabel(secId, label) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) { return s.id === secId ? Object.assign({}, s, { label: label }) : s; }) });
+        return Object.assign({}, d, { sections: S.patchSection(d.sections, secId, { label: label }) });
       });
     }
     function deleteSection(secId) {
       if (!isDraft) return;
       if (draft.sections.length <= 1) { showAlert("Cannot Delete", "Invoice must have at least one section."); return; }
-      setDraft(function(d) { return Object.assign({}, d, { sections: d.sections.filter(function(s) { return s.id !== secId; }) }); });
+      setDraft(function(d) { return Object.assign({}, d, { sections: S.removeSection(d.sections, secId) }); });
     }
 
     // Single-step section reorder — swap a section with its neighbour. Drives
@@ -1554,13 +1496,8 @@
     function moveSection(secId, dir) {
       if (!isDraft) return;
       setDraft(function(d) {
-        var secs = d.sections.slice();
-        var idx = secs.findIndex(function(s) { return s.id === secId; });
-        if (idx === -1) return d;
-        var target = idx + dir;
-        if (target < 0 || target >= secs.length) return d;
-        var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
-        return Object.assign({}, d, { sections: secs });
+        var secs = S.nudgeSection(d.sections, secId, dir);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -1568,16 +1505,7 @@
     function moveItem(secId, itemId, dir) {
       if (!isDraft) return;
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          var items = s.items.slice();
-          var idx = items.findIndex(function(i) { return i.id === itemId; });
-          var to = idx + dir;
-          if (idx === -1 || to < 0 || to >= items.length) return s;
-          var moved = items.splice(idx, 1)[0];
-          items.splice(to, 0, moved);
-          return Object.assign({}, s, { items: items });
-        }) });
+        return Object.assign({}, d, { sections: S.nudgeItem(d.sections, secId, itemId, dir) });
       });
     }
 
@@ -1608,35 +1536,9 @@
     // "append to toZone" (released over a section's empty space).
     function sortMove(m) {
       if (!isDraft) return;
-      if (m.kind === "section") {
-        setDraft(function(d) {
-          var secs = d.sections.slice();
-          var from = secs.findIndex(function(s) { return s.id === m.id; });
-          if (from === -1) return d;
-          var moved = secs.splice(from, 1)[0];
-          var to = m.targetId == null ? secs.length : secs.findIndex(function(s) { return s.id === m.targetId; });
-          if (to === -1) to = secs.length;
-          else if (m.after) to += 1;
-          secs.splice(to, 0, moved);
-          return Object.assign({}, d, { sections: secs });
-        });
-        return;
-      }
       setDraft(function(d) {
-        var secs = d.sections.map(function(s) { return Object.assign({}, s, { items: s.items.slice() }); });
-        var from = secs.find(function(s) { return s.id === m.fromZone; });
-        var dest = secs.find(function(s) { return s.id === m.toZone; });
-        if (!from || !dest) return d;
-        var idx = from.items.findIndex(function(i) { return i.id === m.id; });
-        if (idx === -1) return d;
-        var moved = from.items.splice(idx, 1)[0];
-        // Resolve the target AFTER the removal so the index is already right
-        // for a same-section move.
-        var to = m.targetId == null ? dest.items.length : dest.items.findIndex(function(i) { return i.id === m.targetId; });
-        if (to === -1) to = dest.items.length;
-        else if (m.after) to += 1;
-        dest.items.splice(to, 0, moved);
-        return Object.assign({}, d, { sections: secs });
+        var secs = window.LTP_applySortMove(d.sections, m);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -1650,106 +1552,11 @@
     }
 
     // Section totals
-    function sectionTotals(sec) {
-      var sub = 0, cost = 0;
-      sec.items.forEach(function(it) {
-        if (it.type === "note") return;
-        var qty = Number(it.qty) || 0;
-        var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
-        sub += eff * qty;
-        cost += (Number(it.cost) || 0) * qty;
-      });
-      return { subtotal: sub, cost: cost };
-    }
+    // Shared with modules/quotes-builder.js — see components/domain-docs.js.
+    // Returns { subtotal, cost, margin }; this builder reads subtotal only.
+    var sectionTotals = window.LTP_sectionTotals;
 
     // Actions
-    function computeInvChanges(before, after) {
-      if (!before || !after) return null;
-      var changes = [];
-      var tB = window.LTP_INVOICE_TOTALS(before), tA = window.LTP_INVOICE_TOTALS(after);
-      if (Math.round(tB.total * 100) !== Math.round(tA.total * 100)) changes.push({ cat: "Invoice Total", detail: "$" + window.LTP_money(tB.total) + " \u2192 $" + window.LTP_money(tA.total) });
-      if (before.status !== after.status) changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
-      if (before.dueDate !== after.dueDate) {
-        var dbf = before.dueDate ? fmt(before.dueDate) : "Not set";
-        var daf = after.dueDate ? fmt(after.dueDate) : "Not set";
-        changes.push({ cat: "Due Date", detail: dbf + " \u2192 " + daf });
-      }
-      if (before.invoiceDate !== after.invoiceDate) {
-        var ibf = before.invoiceDate ? fmt(before.invoiceDate) : "Not set";
-        var iaf = after.invoiceDate ? fmt(after.invoiceDate) : "Not set";
-        changes.push({ cat: "Invoice Date", detail: ibf + " \u2192 " + iaf });
-      }
-      if (before.companyId !== after.companyId) {
-        var cBefore = window.LTP_diffEntityName(companies, before.companyId);
-        var cAfter = window.LTP_diffEntityName(companies, after.companyId);
-        changes.push({ cat: "Company", detail: cBefore + " \u2192 " + cAfter });
-      }
-      if (before.projectId !== after.projectId) {
-        var pBefore = window.LTP_diffEntityName(projects, before.projectId);
-        var pAfter = window.LTP_diffEntityName(projects, after.projectId);
-        changes.push({ cat: "Project", detail: pBefore + " \u2192 " + pAfter });
-      }
-      if (before.clientType !== after.clientType) changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
-      var gdB = before.globalDiscount || {}, gdA = after.globalDiscount || {};
-      if (gdB.type !== gdA.type || gdB.value !== gdA.value) {
-        var gdBLabel = gdB.type === "none" ? "None" : gdB.type === "percent" ? gdB.value + "%" : gdB.type === "target" ? "Target $" + gdB.value : "$" + gdB.value;
-        var gdALabel = gdA.type === "none" ? "None" : gdA.type === "percent" ? gdA.value + "%" : gdA.type === "target" ? "Target $" + gdA.value : "$" + gdA.value;
-        changes.push({ cat: "Discount", detail: gdBLabel + " \u2192 " + gdALabel });
-      }
-      if (before.notes !== after.notes) changes.push({ cat: "Notes", detail: "Updated" });
-      // Terms are CLIENT-facing, unlike notes, so the log says which way it
-      // moved rather than just "updated" — reverting to the default is a real
-      // decision, not a typo fix.
-      if ((before.terms || "") !== (after.terms || "")) {
-        changes.push({ cat: "Terms", detail:
-          !(after.terms || "").trim() ? "Reset to the default terms"
-          : !(before.terms || "").trim() ? "Customized for this invoice"
-          : "Edited" });
-      }
-      // Section/item level
-      var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
-      (after.sections || []).forEach(function(aSec) {
-        if (!bSecMap[aSec.id]) { changes.push({ cat: "Section Added", detail: "\"" + aSec.label + "\"" }); return; }
-        var bSec = bSecMap[aSec.id];
-        if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" \u2192 \"" + aSec.label + "\"" });
-        var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
-        (aSec.items || []).forEach(function(i) {
-          // Notes are editable in place, so an edited note has to show up here \u2014
-          // otherwise a changed note reads as a silent edit on a sent invoice.
-          if (i.type === "note") {
-            if (!bItemMap[i.id]) {
-              changes.push({ cat: aSec.label + " \u2014 Note Added", detail: window.LTP_noteSummary(i.text) });
-            } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
-              changes.push({ cat: aSec.label + " \u2014 Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " \u2192 " + window.LTP_noteSummary(i.text) });
-            }
-            return;
-          }
-          if (!bItemMap[i.id]) { changes.push({ cat: aSec.label + " \u2014 Added", detail: i.name + " \u00d7" + i.qty }); return; }
-          var bi = bItemMap[i.id];
-          // Pricing-variant switch \u2192 explicit from \u2192 to entry with both labels
-          // and prices; the plain Price entry (new name on both sides) hid what
-          // the line changed FROM, so it's suppressed for variant switches.
-          var variantChanged = i.type === "product" &&
-            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
-          if (variantChanged) {
-            changes.push({ cat: aSec.label + " \u2014 Variant", detail: bi.name + " ($" + bi.unitPrice + ") \u2192 " + i.name + " ($" + i.unitPrice + ")" });
-          }
-          if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " \u2014 Qty", detail: i.name + ": " + bi.qty + " \u2192 " + i.qty });
-          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " \u2014 Price", detail: i.name + ": $" + bi.unitPrice + " \u2192 $" + i.unitPrice });
-          if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
-            changes.push({ cat: aSec.label + " \u2014 Adj.", detail: i.name + ": " + (bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)") + " \u2192 " + (i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)") });
-          }
-        });
-        (bSec.items || []).forEach(function(i) {
-          if ((aSec.items || []).find(function(ai) { return ai.id === i.id; })) return;
-          changes.push(i.type === "note"
-            ? { cat: aSec.label + " \u2014 Note Removed", detail: window.LTP_noteSummary(i.text) }
-            : { cat: aSec.label + " \u2014 Removed", detail: i.name });
-        });
-      });
-      (before.sections || []).forEach(function(s) { if (!(after.sections || []).find(function(as) { return as.id === s.id; })) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" }); });
-      return changes.length > 0 ? changes : null;
-    }
 
     // Auto-save after payment recording — bypasses lock since payments are operational, not edits
     function autoSavePayment() {
@@ -1758,6 +1565,18 @@
           if (cur.id == null) return prev;
           return prev.map(function(inv) { return inv.id === cur.id ? Object.assign({}, cur) : inv; });
         });
+        // Advance the discard baseline too. Every other commit path pairs
+        // setDraftRaw/setIsDirty(false) with this (see :792, :1155, :1262,
+        // :1298, :1842, :1850); this one did not, so cleanRef kept the
+        // PRE-payment snapshot for as long as the editor stayed open.
+        // Discard is gated on isDirty alone — no !isLocked, unlike Save — so
+        // dirtying any un-gated field (Notes) on a locked invoice and hitting
+        // Discard reset the draft to that stale snapshot and the payment
+        // vanished from the editor. It was still in the persisted row, so the
+        // next path that wrote the draft over it (recallToDraft below) made
+        // the loss permanent. This is the state that WAS persisted, so it is
+        // the correct baseline.
+        cleanRef.current = cur;
         setIsDirty(false);
         return cur;
       });
@@ -1769,7 +1588,7 @@
         showAlert("Invalid Dates", "Due date (" + fmt(draft.dueDate) + ") is before the invoice date (" + fmt(draft.invoiceDate) + "). Please fix before saving.");
         return;
       }
-      var changes = computeInvChanges(cleanRef.current, draft);
+      var changes = window.LTP_invoiceChanges(cleanRef.current, draft, projects, companies);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Invoice saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
@@ -2380,7 +2199,7 @@
           !isDraft && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
               h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: 0 } }, "Payments"),
-              h("button", { onClick: function() { showPaymentForm ? setShowPaymentForm(false) : openPaymentForm(); },
+              h("button", { onClick: function() { setShowPaymentForm(!showPaymentForm); },
                 style: { background: showPaymentForm ? B.raised : B.success, border: "none", borderRadius: "4px", padding: "3px 10px", color: showPaymentForm ? B.textMut : B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer" } },
                 showPaymentForm ? "Cancel" : "+ Record Payment")),
             // Payment list
@@ -2471,54 +2290,23 @@
       }),
 
       // Activity detail popup
-      viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },
-        h("div", { style: { marginBottom: 10, fontSize: "11px", color: B.textMut } }, (viewActivity.user || "") + " \u00b7 " + fmt(viewActivity.date || "")),
-        h("div", { style: { display: "flex", flexDirection: "column" } },
-          (viewActivity.changes || []).map(function(ch, i) {
-            return h("div", { key: i, style: { display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { width: 120, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.accent } }, ch.cat),
-              h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec } }, ch.detail));
-          }))
-      ),
+      // Shared with the sibling builder — components/doc-activity-detail.js.
+      viewActivity && h(window.LTPActivityDetail, {
+        entry: viewActivity, onClose: function() { setViewActivity(null); },
+      }),
 
       // Confirm dialog
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Record Payment modal
-      showPaymentForm && h(window.LTPModal, { title: "Record Payment", onClose: function() { setShowPaymentForm(false); } },
-        h("div", { style: { marginBottom: 12 } },
-          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: B.raised, borderRadius: "6px", border: "1px solid " + B.border } },
-            h("div", null,
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Invoice Total"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))),
-            h("div", { style: { textAlign: "center" } },
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Already Paid"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.paid > 0 ? B.success : B.textMut } }, "$" + window.LTP_money(t.paid))),
-            h("div", { style: { textAlign: "right" } },
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, "Balance Due"),
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: t.balance > 0 ? B.warn : B.success } }, "$" + window.LTP_money(t.balance))))
-        ),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-          h(window.LTPInput, { label: "Payment Date", value: payDate, onChange: setPayDate, type: "date" }),
-          h(window.LTPInput, { label: "Amount *", value: payAmount, onChange: setPayAmount, type: "number", placeholder: "0.00" })),
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 12 } },
-          h(window.LTPSelect, { label: "Payment Method", value: payMethod, onChange: setPayMethod,
-            options: [{ value: "check", label: "Check" }, { value: "ach", label: "ACH / Bank Transfer" }, { value: "credit_card", label: "Credit Card" }, { value: "cash", label: "Cash" }, { value: "wire", label: "Wire Transfer" }, { value: "other", label: "Other" }] }),
-          h(window.LTPInput, { label: "Reference / Check #", value: payRef, onChange: setPayRef, placeholder: "e.g. CHK-4412" })),
-        h("div", { style: { marginTop: 12 } },
-          h(window.LTPInput, { label: "Notes (optional)", value: payNotes, onChange: setPayNotes, placeholder: "Payment notes\u2026" })),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setShowPaymentForm(false); } }, "Cancel"),
-          h(window.Btn, { onClick: function() {
-            var amt = Number(payAmount);
-            if (!payAmount || amt <= 0) { showAlert("Invalid Amount", "Enter a valid payment amount."); return; }
-            if (!payDate) { showAlert("Missing Date", "Enter a payment date."); return; }
-            if (amt > t.balance && t.balance > 0) {
-              if (!window.confirm("This payment ($" + window.LTP_money(amt) + ") exceeds the balance due ($" + window.LTP_money(t.balance) + "). Record anyway?")) return;
-            }
-            addPayment({ date: payDate, amount: amt, method: payMethod, reference: payRef, notes: payNotes });
-          } }, "Record Payment"))
-      ),
+      // Record Payment — components/doc-payment-form.js. It owns the form's
+      // own state; what happens to a valid payment stays here in addPayment.
+      showPaymentForm && h(window.LTPPaymentForm, {
+        totals: t,
+        onSubmit: function(payment) { addPayment(payment); },
+        onClose: function() { setShowPaymentForm(false); },
+        onAlert: showAlert,
+      }),
 
       // Send Invoice modal
       showSendModal && h(window.LTPModal, { title: isDraft ? "Send Invoice" : "Resend Invoice", onClose: function() { setShowSendModal(false); }, wide: true },
@@ -2551,35 +2339,13 @@
             )
           ),
           // Right: Email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.text } },
-                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { marginBottom: 8 } },
-                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // WYSIWYG body editor (see modules/quotes-builder.js for the
-            // matching block + rationale). sendMessage state still keeps
-            // placeholders intact; EmailBodyEditor renders the signature
-            // as a non-editable block locally and reverses the
-            // substitution on every input.
-            h(window.EmailBodyEditor, {
-              value: sendMessage,
-              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerKind: "invoice",
-              headerVars: sendHeaderVars,
-              onChange: setSendMessage,
-              minHeight: 240,
-            })
-          )
+          // Shared with the other send modals — components/doc-email-pane.js.
+          h(window.LTPEmailComposePane, {
+            recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
+            subject: sendSubject, onSubjectChange: setSendSubject,
+            body: sendMessage, onBodyChange: setSendMessage,
+            headerKind: "invoice", headerVars: sendHeaderVars, settings: settings,
+          })
         ),
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           // Attach the invoice PDF (default on). Invoice + reminder sends only;
@@ -2620,35 +2386,13 @@
             )
           ),
           // Right: Email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.text } },
-                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { marginBottom: 8 } },
-                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // WYSIWYG body editor (see modules/quotes-builder.js for the
-            // matching block + rationale). sendMessage state still keeps
-            // placeholders intact; EmailBodyEditor renders the signature
-            // as a non-editable block locally and reverses the
-            // substitution on every input.
-            h(window.EmailBodyEditor, {
-              value: sendMessage,
-              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerKind: "receipt",
-              headerVars: sendHeaderVars,
-              onChange: setSendMessage,
-              minHeight: 240,
-            })
-          )
+          // Shared with the other send modals — components/doc-email-pane.js.
+          h(window.LTPEmailComposePane, {
+            recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
+            subject: sendSubject, onSubjectChange: setSendSubject,
+            body: sendMessage, onBodyChange: setSendMessage,
+            headerKind: "receipt", headerVars: sendHeaderVars, settings: settings,
+          })
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowReceiptModal(false); } }, "Skip"),

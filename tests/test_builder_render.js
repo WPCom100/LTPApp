@@ -1,0 +1,509 @@
+#!/usr/bin/env node
+// Render-tree snapshot for QuotesBuilder and InvoiceBuilder.
+//
+// WHY THIS EXISTS
+//   These two components are 1,670 and 1,998 lines and were, until this suite,
+//   completely untested — nothing inside a closure that large can be reached by
+//   a unit test. That is fine right up until someone refactors them, at which
+//   point a dropped prop or a stale closure reference is silent in a language
+//   with no compiler, and surfaces as a blank panel on whichever screen the
+//   user opens next.
+//
+//   So this renders both builders across 14 data scenarios under a hook-capable
+//   React shim, serializes the resulting element trees, and diffs against a
+//   committed golden file. For a refactor that is supposed to be a pure move,
+//   the trees must be byte-identical. It is the same idea as the theme.js split
+//   snapshot, adapted to components.
+//
+// WHAT IT DOES AND DOES NOT COVER
+//   Covered: the initial render of every scenario below — which sub-components
+//   appear, in what nesting, with which props (functions collapsed to `fn`,
+//   style objects to a property count, everything else serialized).
+//   Composite components are INVOKED, so InvoiceBuilder — reachable only
+//   through InvoicesView — is rendered in place rather than left opaque.
+//
+//   NOT covered: anything gated on isDirty. That flag is owned by
+//   LTP_useUnsavedGuard and only flips on a user edit, so branches like
+//   `isDirty && !isLocked && Save` are dark in every static render. Verified:
+//   forcing `isLocked = false` does not move the snapshot. The scenarios below
+//   compensate where they can by varying INPUT DATA (paid / partial / overdue /
+//   pushed-to-QuickBooks invoices; accepted / expired / declined quotes) to
+//   light up the status and money branches instead.
+//
+//   Also not covered: effects (useEffect is a no-op here) and anything behind a
+//   click. This is a structural guard, not a behavioural one.
+//
+// USAGE
+//   node tests/test_builder_render.js            # compare against the golden
+//   node tests/test_builder_render.js --update   # regenerate after an
+//                                                # INTENTIONAL render change
+"use strict";
+
+const fs = require("fs"), path = require("path"), crypto = require("crypto");
+const ROOT = path.join(__dirname, "..");
+
+// ── React shim with real hook state ────────────────────────────────────────
+let CTX = null;
+function mkCtx(render) { return { idx: 0, hooks: {}, render: render, effects: [] }; }
+global.React = {
+  Fragment: "Fragment",
+  createElement: function (type, props) {
+    const children = Array.prototype.slice.call(arguments, 2);
+    return { $$: true, type: type, props: props || {}, children: children };
+  },
+  useState: function (init) {
+    const c = CTX, i = c.idx++;
+    if (!(i in c.hooks)) c.hooks[i] = { v: typeof init === "function" ? init() : init };
+    const slot = c.hooks[i];
+    return [slot.v, function (nv) { slot.v = typeof nv === "function" ? nv(slot.v) : nv; }];
+  },
+  useRef: function (init) {
+    const c = CTX, i = c.idx++;
+    if (!(i in c.hooks)) c.hooks[i] = { current: init };
+    return c.hooks[i];
+  },
+  useMemo: function (f) { const c = CTX, i = c.idx++;
+    if (!(i in c.hooks)) c.hooks[i] = { v: f() };
+    return c.hooks[i].v; },
+  useCallback: function (f) { return f; },
+  useEffect: function () {},          // effects are side-effectful; skip
+  useLayoutEffect: function () {},
+};
+
+// ── Host environment ───────────────────────────────────────────────────────
+global.window = {};
+global.document = {
+  createElement: function () { return { style: {}, setAttribute: function () {}, appendChild: function () {},
+    querySelector: function () { return null; }, focus: function () {}, select: function () {},
+    classList: { add: function () {}, remove: function () {} }, innerHTML: "", textContent: "" }; },
+  addEventListener: function () {}, removeEventListener: function () {},
+  getElementById: function () { return null; }, querySelector: function () { return null; },
+  querySelectorAll: function () { return []; },
+  body: { appendChild: function () {}, removeChild: function () {}, style: {} },
+};
+// Node 22 defines navigator as a getter-only global; define instead of assign.
+Object.defineProperty(global, "navigator", { value: { userAgent: "node", clipboard: { writeText: function () { return Promise.resolve(); } } }, configurable: true, writable: true });
+global.location = { origin: "https://ltp.example.com", href: "https://ltp.example.com/" };
+global.fetch = function () { return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({}); } }); };
+global.matchMedia = function () { return { matches: false, addEventListener: function () {}, removeEventListener: function () {} }; };
+global.requestAnimationFrame = function () { return 0; };
+Object.assign(global.window, {
+  location: global.location, document: global.document, navigator: global.navigator,
+  matchMedia: global.matchMedia, addEventListener: function () {}, removeEventListener: function () {},
+  dispatchEvent: function () {}, open: function () { return null; }, confirm: function () { return true; },
+  innerWidth: 1440, innerHeight: 900, getComputedStyle: function () { return {}; },
+});
+
+// ── Real code: the domain layer, then the real components the builders use ──
+const { domainScripts } = require(path.join(ROOT, "tests", "_load_domain.js"));
+for (const rel of domainScripts()) (0, eval)(fs.readFileSync(path.join(ROOT, rel), "utf8"));
+
+// Load every components/*.js index.html lists, in its order, best-effort. Ones
+// that need a real DOM simply throw and fall through to a stub below — but
+// anything that CAN run is exercised for real, so a sub-component lifted out of
+// a builder is covered by this snapshot the moment its <script> tag is added,
+// with no edit here.
+const indexHtml = fs.readFileSync(path.join(ROOT, "index.html"), "utf8");
+const COMPONENT_SRCS = [...indexHtml.matchAll(/<script\s+src="(components\/[^"]+)"/g)].map((m) => m[1]);
+const loadedComponents = [];
+for (const rel of COMPONENT_SRCS) {
+  const abs = path.join(ROOT, rel);
+  if (!fs.existsSync(abs)) continue;
+  try { (0, eval)(fs.readFileSync(abs, "utf8")); loadedComponents.push(rel); }
+  catch (e) { /* needs a real DOM; the stubs below cover it */ }
+}
+
+// ── Stubs for everything a real DOM would provide ──────────────────────────
+// Each UI component becomes a marker element, so the tree still records WHERE
+// it appears and WHAT props it is handed — which is the part a refactor can
+// break — without needing the component's own internals.
+function stub(name) {
+  return function (props) {
+    const p = props || {};
+    const kids = p.children == null ? [] : (Array.isArray(p.children) ? p.children : [p.children]);
+    const rest = {}; Object.keys(p).forEach(function (k) { if (k !== "children") rest[k] = p[k]; });
+    return { $$: true, type: "<" + name + ">", props: rest, children: kids };
+  };
+}
+[
+  "Badge", "Btn", "ClientRateChip", "CompanySearchField", "ContactSearchField", "EmailBodyEditor",
+  "LTPConfirmDialog", "LTPDocTerms", "LTPInput", "LTPList", "LTPModal", "LTPMoveArrows",
+  "LTPNoteLineRow", "LTPOverflowMenu", "LTPRow", "LTPScrollStrip", "LTPSelect", "LTPTabs",
+  "ProjectSearchField", "RecipientEditor", "StatCard",
+].forEach((n) => { if (!window[n]) window[n] = stub(n); });
+
+if (!window.LTP_useIsMobile) window.LTP_useIsMobile = function () { return false; };
+if (!window.LTP_useSortable) window.LTP_useSortable = function () {
+  return { zoneProps: function () { return {}; }, itemProps: function () { return {}; },
+           handleProps: function () { return {}; }, animate: function (f) { f(); },
+           dragging: null, isDragging: false };
+};
+if (!window.LTP_deriveRecipients) window.LTP_deriveRecipients = function () { return []; };
+if (!window.LTP_toast) window.LTP_toast = function () {};
+if (!window.LTPRouter) window.LTPRouter = { navigate: function () {}, current: function () { return {}; } };
+if (!window.LTP_HELPERS) window.LTP_HELPERS = {};
+window.LTP_CURRENT_USER = "Test User";
+window.LTP_CURRENT_USER_ID = "u1";
+window.LTP_SENDER_NAME = "Sender"; window.LTP_SENDER_EMAIL = "s@example.com";
+window.LTP_GMAIL_CONNECTED = true;
+window.LTP_DATA_SETTINGS = window.LTP_DATA_SETTINGS || {};
+window.LTP_DEFAULT_TERMS = window.LTP_DEFAULT_TERMS || "";
+window.LTP_DEFAULT_QUOTE_NOTES = ""; window.LTP_DEFAULT_INVOICE_NOTES = "";
+window.LTP_API_ERRORS = [];
+// The real rentals helpers, so the equipment picker (reached only now that the
+// sweep seeds object-gated slots) renders against real availability maths
+// rather than a stub that happens to satisfy it.
+if (fs.existsSync(path.join(ROOT, "modules", "rentals-utils.js"))) {
+  try { (0, eval)(fs.readFileSync(path.join(ROOT, "modules", "rentals-utils.js"), "utf8")); }
+  catch (e) { /* falls back to the stub below */ }
+}
+window.LTP_RENTALS = window.LTP_RENTALS || {};
+["eqQty", "allocatedQty"].forEach(function (k) {
+  if (typeof window.LTP_RENTALS[k] !== "function") window.LTP_RENTALS[k] = function () { return 0; };
+});
+
+// ── Deterministic ids (BEFORE the modules load) ──────────────────────────────────────────────────────
+let _n = 0;
+window.LTP_genId = function (p) { return (p || "x") + "-" + (++_n); };
+window.LTP_genShareToken = function () { return "tok-" + (++_n); };
+window.LTP_todayISO = function () { return "2026-08-29"; };
+
+// ── The builders ───────────────────────────────────────────────────────────
+(0, eval)(fs.readFileSync(path.join(ROOT, "modules", "quotes-list.js"), "utf8"));
+(0, eval)(fs.readFileSync(path.join(ROOT, "modules", "quotes-builder.js"), "utf8"));
+(0, eval)(fs.readFileSync(path.join(ROOT, "modules", "invoices.js"), "utf8"));
+
+// ── Fixtures ───────────────────────────────────────────────────────────────
+const COMPANIES = [{ id: "co1", name: "Acme Co", taxable: true, address: "1 A St", city: "LA", state: "CA", zip: "90001" }];
+const CONTACTS = [{ id: "ct1", name: "Dana Reyes", email: "dana@acme.test", companyIds: ["co1"] },
+                  { id: "c9", name: "Crew Person", isCrew: true }];
+const PROJECTS = [{ id: "pr1", name: "Spring Shoot", companyId: "co1", startDate: "2026-09-01", endDate: "2026-09-03", schedule: [] }];
+const SERVICES = [{ id: "s1", role: "A1", department: "Audio", dayRate: 1000, halfRate: 600, hourlyRate: 150, otRate: 225, cost: 500 }];
+const PRODUCTS = [{ id: "p1", name: "Console", price: 500, cost: 300, variants: [] }];
+const EQUIPMENT = [{ id: "e1", name: "Speaker", dayRate: 100, weekRate: 300, cost: 40 }];
+const FEES = [{ id: "f1", name: "Lodging", amount: 200 }];
+const SETTINGS = { defaultPaymentTerms: "Net 30", quoteValidityDays: 30, emailTemplates: {}, tagColors: {} };
+
+const QUOTE = {
+  id: 1, createdDate: "2026-08-01", status: "draft", clientType: "company", companyId: "co1",
+  projectId: "pr1", contactId: "ct1", globalDiscount: { type: "percent", value: 10 },
+  terms: "", notes: "", activity: [], sections: [
+    { id: "sec1", label: "Audio", customDates: false, startDate: "", endDate: "", items: [
+      { id: "i1", type: "product", productId: "p1", name: "Console", qty: 2, unitPrice: 500, cost: 300, taxable: true },
+      { id: "i2", type: "service", serviceId: "s1", name: "A1", qty: 1, unitPrice: 1000, adjustedPrice: 900, cost: 600, taxable: false },
+      { id: "i3", type: "note", text: "Handle with care" },
+    ] },
+    { id: "sec2", label: "Grip", customDates: false, startDate: "", endDate: "", items: [] },
+  ],
+};
+const INVOICE = Object.assign({}, JSON.parse(JSON.stringify(QUOTE)), {
+  id: 7, invoiceDate: "2026-08-05", dueDate: "2026-09-04", status: "draft", payments: [],
+});
+
+const COMMON = {
+  products: PRODUCTS, services: SERVICES, clientRates: [], fees: FEES, equipment: EQUIPMENT,
+  allocations: [], companies: COMPANIES, contacts: CONTACTS, projects: PROJECTS,
+  setProjects: function () {}, settings: SETTINGS, isAdmin: true, qbo: { connected: false },
+};
+
+function render(Component, props, label) {
+  const ctx = mkCtx(function () {});
+  CTX = ctx; ctx.idx = 0;
+  let tree;
+  try { tree = Component(props); }
+  catch (e) { return label + " THREW: " + e.constructor.name + ": " + e.message + "\n" + (e.stack || "").split("\n").slice(1, 4).join("\n"); }
+  finally { CTX = null; }
+  return label + "\n" + serialize(tree, 0);
+}
+
+// Render a builder once with every FALSE boolean useState slot flipped true, one
+// at a time. Almost all of this app's overlays are gated on exactly such a flag
+// (showSendModal, showPaymentForm, showReceiptModal, ...), and a static render
+// leaves every one of them closed — so without this, the modals are invisible to
+// the snapshot and could be refactored with nothing to catch a mistake.
+//
+// Slots are addressed by INDEX, not by name, because the shim cannot see the
+// variable names. That is fine for a golden-file guard: the index is stable for
+// a given component, and if a refactor changes the hook order the snapshot moves
+// and a human looks — which is exactly the signal wanted. Only slots that
+// actually change the tree are reported, so the output does not grow a line for
+// every unrelated boolean.
+function renderWithOverlays(Component, props, label) {
+  const probe = mkCtx(function () {});
+  CTX = probe; probe.idx = 0;
+  let base;
+  try { base = serialize(Component(props), 0); }
+  catch (e) { CTX = null; return label + " THREW: " + e.message; }
+  CTX = null;
+
+  // Two kinds of gate. `showSendModal`-style flags are booleans; but several
+  // overlays are gated on an OBJECT-or-null slot instead (dlg, pickerForSection,
+  // invPickerData, viewActivity), and flipping only booleans left every one of
+  // those shut in all 16 scenarios — which is how the two revision-log popups
+  // drifted apart with nothing noticing. Null slots are therefore also probed,
+  // seeded with a permissive object. Ones needing a specific shape throw and are
+  // skipped rather than recorded, so this reaches what it can and no more; the
+  // rest have their own suites.
+  const boolSlots = Object.keys(probe.hooks)
+    .filter((k) => probe.hooks[k] && probe.hooks[k].v === false)
+    .map((k) => ({ slot: k, value: true, kind: "flag" }));
+  const OBJ_SEED = { id: "seed", title: "Seed", label: "Seed", message: "Seed",
+                     variant: "danger", confirmLabel: "OK", sections: [], items: [],
+                     changes: [], invSections: [], updatedQuoteSections: [],
+                     invoiceDiscount: { type: "none", value: 0 }, discountNote: "" };
+  const objSlots = Object.keys(probe.hooks)
+    .filter((k) => probe.hooks[k] && probe.hooks[k].v === null)
+    .map((k) => ({ slot: k, value: OBJ_SEED, kind: "object" }));
+  const slots = boolSlots.concat(objSlots);
+
+  const out = [];
+  slots.forEach(function (spec) {
+    const slot = spec.slot;
+    const ctx = mkCtx(function () {});
+    CTX = ctx; ctx.idx = 0;
+    // Pre-seed: useState returns the seeded value for this slot on first call.
+    const seeded = {};
+    seeded[slot] = { v: spec.value };
+    ctx.hooks = seeded;
+    let tree;
+    try { tree = Component(props); }
+    catch (e) {
+      CTX = null;
+      // An object-gated overlay that needs a shape the generic seed does not
+      // satisfy is skipped, not reported — recording a throw would make the
+      // golden churn on unrelated edits and says nothing useful.
+      if (spec.kind === "object") return;
+      out.push("  slot " + slot + " -> THREW: " + e.message);
+      return;
+    }
+    CTX = null;
+    const rendered = serialize(tree, 0);
+    if (rendered === base) return;                  // this flag renders nothing
+    // Report only what the flag ADDED, so the golden stays readable — but
+    // count occurrences rather than using a Set. A Set silently swallows an
+    // added line that happens to be textually identical to one already in the
+    // base tree (`<div style=4props>` and friends are everywhere), which made
+    // a refactor look like it had DELETED content when it had not. Counting
+    // reports exactly the lines whose multiplicity went up, in order.
+    const baseCount = Object.create(null);
+    base.split("\n").forEach(function (l) { baseCount[l] = (baseCount[l] || 0) + 1; });
+    const seen = Object.create(null);
+    const added = rendered.split("\n").filter(function (l) {
+      seen[l] = (seen[l] || 0) + 1;
+      return seen[l] > (baseCount[l] || 0);
+    });
+    if (!added.length) return;
+    out.push("  -- slot " + slot + " (" + spec.kind + ") opens an overlay ("
+      + added.length + " lines) --");
+    out.push(added.join("\n"));
+  });
+  return label + "\n" + (out.length ? out.join("\n") : "  (no boolean slot opens an overlay)");
+}
+
+function serialize(node, depth) {
+  const pad = "  ".repeat(Math.min(depth, 40));
+  if (node == null || node === false || node === true) return "";
+  if (Array.isArray(node)) return node.map((n) => serialize(n, depth)).filter(Boolean).join("\n");
+  if (typeof node !== "object") return pad + String(node);
+  if (!node.$$) return pad + "{" + Object.keys(node).sort().join(",") + "}";
+
+  // A composite (function) type is INVOKED so the tree below it is captured
+  // too — otherwise InvoiceBuilder, reached only through InvoicesView, would
+  // serialize as a single opaque line and the snapshot would prove nothing
+  // about it. Each composite gets its own hook context, and the render is
+  // depth-first, exactly as React does it.
+  if (typeof node.type === "function") {
+    const name = node.type.name || "anon";
+    const saved = CTX;
+    CTX = mkCtx(function () {});
+    let sub;
+    // Children must be handed to the component, or a stubbed wrapper like
+    // LTPModal renders as an empty shell and everything inside the modal —
+    // which is the whole point of the overlay scenarios — is invisible.
+    try { sub = node.type(Object.assign({}, node.props || {},
+      (node.children && node.children.length) ? { children: node.children } : {})); }
+    catch (e) { CTX = saved; return pad + "<" + name + " RENDER-THREW=" + e.constructor.name + ":" + JSON.stringify(e.message) + ">"; }
+    CTX = saved;
+    const inner = serialize(sub, depth + 1);
+    return pad + "<" + name + ">" + (inner ? "\n" + inner : "");
+  }
+  const t = String(node.type);
+  const props = node.props || {};
+  const keys = Object.keys(props).filter((k) => k !== "children").sort();
+  const desc = keys.map((k) => {
+    const v = props[k];
+    if (typeof v === "function") return k + "=fn";
+    if (k === "style" && v && typeof v === "object") return "style=" + Object.keys(v).sort().length + "props";
+    if (v && typeof v === "object") { try { return k + "=" + JSON.stringify(v); } catch (_) { return k + "=obj"; } }
+    return k + "=" + JSON.stringify(v);
+  }).join(" ");
+  const kids = (node.children || []).concat(props.children === undefined ? [] : [props.children])
+    .map((c) => serialize(c, depth + 1)).filter(Boolean).join("\n");
+  return pad + "<" + t + (desc ? " " + desc : "") + ">" + (kids ? "\n" + kids : "");
+}
+
+const out = [];
+out.push(render(window.QuotesBuilder, Object.assign({
+  quoteId: 1, isNew: false, quotes: [QUOTE], setQuotes: function () {},
+  getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+  getNextInvoiceId: function () { return 1; },
+}, COMMON), "== QuotesBuilder (existing draft) =="));
+
+out.push(render(window.QuotesBuilder, Object.assign({
+  quoteId: null, isNew: true, quotes: [], setQuotes: function () {},
+  getNextQuoteId: function () { return 1; }, invoices: [], setInvoices: function () {},
+  getNextInvoiceId: function () { return 1; },
+}, COMMON), "\n== QuotesBuilder (new) =="));
+
+out.push(render(window.QuotesBuilder, Object.assign({
+  quoteId: 1, isNew: false, quotes: [Object.assign({}, QUOTE, { status: "sent", sentDate: "2026-08-10" })],
+  setQuotes: function () {}, getNextQuoteId: function () { return 2; },
+  invoices: [], setInvoices: function () {}, getNextInvoiceId: function () { return 1; },
+}, COMMON), "\n== QuotesBuilder (sent) =="));
+
+// InvoiceBuilder is not exported; it is reached through InvoicesView's route
+// prop. The recursive serializer above renders it in place.
+const INV_PROPS = Object.assign({
+  invoices: [INVOICE], setInvoices: function () {}, getNextInvoiceId: function () { return 8; },
+  quotes: [QUOTE], setQuotes: function () {}, setCompanies: function () {}, setContacts: function () {},
+}, COMMON);
+out.push(render(window.InvoicesView, Object.assign({ route: { id: 7, action: null } }, INV_PROPS),
+  "\n== InvoiceBuilder (existing draft) =="));
+out.push(render(window.InvoicesView, Object.assign({ route: { id: null, action: "new" } }, INV_PROPS),
+  "\n== InvoiceBuilder (new) =="));
+out.push(render(window.InvoicesView, Object.assign({ route: { id: 7, action: null } },
+  INV_PROPS, { invoices: [Object.assign({}, INVOICE, { status: "sent", sentDate: "2026-08-10" })] }),
+  "\n== InvoiceBuilder (sent) =="));
+out.push(render(window.InvoicesView, Object.assign({ route: { id: null, action: null } }, INV_PROPS),
+  "\n== InvoiceList =="));
+
+// ── Branch-widening scenarios ──────────────────────────────────────────────
+// The seven above all render a PRISTINE draft, so any branch gated on isDirty
+// (e.g. `isDirty && !isLocked && Save`) is dark. isDirty is owned by
+// LTP_useUnsavedGuard and only flips on an edit, which a static render never
+// performs — so these vary the INPUT DATA instead, to light up the status,
+// payment and QuickBooks branches that a refactor is most likely to disturb.
+const PAID = Object.assign({}, INVOICE, { status: "paid", sentDate: "2026-08-10",
+  payments: [{ id: "pay1", amount: 2000, date: "2026-08-20", method: "check", reference: "CHK-1" }] });
+const PARTIAL = Object.assign({}, INVOICE, { status: "sent", sentDate: "2026-08-10",
+  payments: [{ id: "pay1", amount: 100, date: "2026-08-20", method: "ach", reference: "" }] });
+const OVERDUE = Object.assign({}, INVOICE, { status: "sent", sentDate: "2026-07-01", dueDate: "2026-07-15" });
+const QBO_PUSHED = Object.assign({}, INVOICE, { status: "sent", sentDate: "2026-08-10",
+  qbInvoiceId: "QB-99", qbSyncedSignature: "stale" });
+[["paid", PAID], ["partially paid", PARTIAL], ["overdue", OVERDUE], ["pushed to QuickBooks", QBO_PUSHED]]
+  .forEach(function (pair) {
+    out.push(render(window.InvoicesView,
+      Object.assign({ route: { id: 7, action: null } }, INV_PROPS, { invoices: [pair[1]],
+        qbo: pair[0] === "pushed to QuickBooks" ? { connected: true, realmId: "r1" } : { connected: false } }),
+      "\n== InvoiceBuilder (" + pair[0] + ") =="));
+  });
+
+const ACCEPTED = Object.assign({}, QUOTE, { status: "accepted", sentDate: "2026-08-10", acceptedDate: "2026-08-12" });
+const EXPIRED = Object.assign({}, QUOTE, { status: "sent", sentDate: "2026-06-01", expiryDate: "2026-06-30" });
+const DECLINED = Object.assign({}, QUOTE, { status: "declined", sentDate: "2026-08-10" });
+[["accepted", ACCEPTED], ["expired", EXPIRED], ["declined", DECLINED]].forEach(function (pair) {
+  out.push(render(window.QuotesBuilder, Object.assign({
+    quoteId: 1, isNew: false, quotes: [pair[1]], setQuotes: function () {},
+    getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+    getNextInvoiceId: function () { return 1; },
+  }, COMMON), "\n== QuotesBuilder (" + pair[0] + ") =="));
+});
+
+// ── Overlay scenarios ──────────────────────────────────────────────────────
+// Every modal in both builders, opened by flipping its gating flag. This is
+// what makes the send / payment / receipt / picker overlays refactorable with
+// a net under them.
+out.push(renderWithOverlays(window.QuotesBuilder, Object.assign({
+  quoteId: 1, isNew: false, quotes: [QUOTE], setQuotes: function () {},
+  getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+  getNextInvoiceId: function () { return 1; },
+}, COMMON), "\n== QuotesBuilder overlays =="));
+
+// InvoicesView owns no state — it just routes — so probing it finds no flags.
+// Reach through to the InvoiceBuilder element it returns and probe that.
+(function () {
+  const ctx = mkCtx(function () {});
+  CTX = ctx; ctx.idx = 0;
+  const el = window.InvoicesView(Object.assign({ route: { id: 7, action: null } }, INV_PROPS));
+  CTX = null;
+  if (el && typeof el.type === "function") {
+    out.push(renderWithOverlays(el.type, el.props, "\n== InvoiceBuilder overlays =="));
+  } else {
+    out.push("\n== InvoiceBuilder overlays ==\n  COULD NOT REACH the builder through InvoicesView");
+  }
+})();
+
+// Three clock reads reach the tree and differ between two runs of the SAME
+// code, so they are normalized rather than compared: an id minted from
+// Date.now() inside a nested module, the "HH:MM" stamped onto activity
+// entries, and the "8:35 PM" rendered into activity lines. Verified by
+// diffing two unmutated runs a minute apart — nothing else moved.
+const text = out.join("\n")
+  .replace(/-1[0-9]{12}-/g, "-<EPOCH>-")
+  .replace(/"time":"\d{1,2}:\d{2}"/g, '"time":"<CLOCK>"')
+  .replace(/\b\d{1,2}:\d{2}\s?(AM|PM)\b/g, "<CLOCK>");
+
+// ── Compare against the golden ─────────────────────────────────────────────
+const GOLDEN = path.join(ROOT, "tests", "fixtures", "builder-render.snap.txt");
+const threw = (text.match(/THREW/g) || []).length;
+
+if (process.argv.includes("--update")) {
+  if (threw) {
+    console.log("REFUSING to update: " + threw + " render(s) threw. Fix them first.");
+    process.exit(1);
+  }
+  fs.writeFileSync(GOLDEN, text + "\n");
+  console.log("builder-render golden updated (" + text.split("\n").length + " lines, "
+    + out.length + " scenarios)");
+  process.exit(0);
+}
+
+let pass = 0, fail = 0; const fails = [];
+function ok(n, c, d) { if (c) pass++; else { fail++; fails.push(n + (d ? "  [" + d + "]" : "")); } }
+
+ok("real components loaded from index.html", loadedComponents.length >= 5,
+   "loaded " + loadedComponents.length + " of " + COMPONENT_SRCS.length + ": " + loadedComponents.join(", "));
+ok("the payment form is one of them (it is exercised by the overlay sweep)",
+   loadedComponents.indexOf("components/doc-payment-form.js") !== -1,
+   loadedComponents.join(", "));
+ok("every scenario rendered without throwing", threw === 0,
+   (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
+// 14 data scenarios + 2 overlay sweeps (one per builder).
+ok("all " + out.length + " scenarios produced output", out.length === 16, "got " + out.length);
+ok("the overlay sweeps actually opened modals",
+   (text.match(/opens an overlay/g) || []).length >= 24,
+   "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "
+   + "if a modal's gating slot stopped being a useState boolean-or-null, this "
+   + "sweep silently stops covering it");
+ok("object-gated overlays are covered too",
+   (text.match(/\(object\) opens an overlay/g) || []).length >= 6,
+   "only " + (text.match(/\(object\) opens an overlay/g) || []).length
+   + " — the confirm dialog, the item pickers and the invoice-target picker are "
+   + "gated on an object-or-null slot, not a boolean");
+
+if (!fs.existsSync(GOLDEN)) {
+  ok("golden snapshot exists", false, "run with --update to create it");
+} else {
+  const golden = fs.readFileSync(GOLDEN, "utf8").replace(/\n$/, "");
+  if (golden === text) {
+    ok("render trees match the golden snapshot", true);
+  } else {
+    const g = golden.split("\n"), t = text.split("\n");
+    const diffs = [];
+    for (let i = 0; i < Math.max(g.length, t.length) && diffs.length < 6; i++) {
+      if (g[i] !== t[i]) {
+        diffs.push("line " + (i + 1) + ":\n    golden: " + String(g[i]).slice(0, 150)
+                 + "\n    now   : " + String(t[i]).slice(0, 150));
+      }
+    }
+    ok("render trees match the golden snapshot", false,
+       (g.length !== t.length ? "(" + g.length + " -> " + t.length + " lines) " : "")
+       + "first differences:\n  " + diffs.join("\n  ")
+       + "\n  If this change is INTENDED, re-run with --update.");
+  }
+}
+
+console.log("builder-render suite — PASS: " + pass + "   FAIL: " + fail
+  + "   (" + out.length + " scenarios, " + text.split("\n").length + " tree lines)");
+if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
+console.log("All " + pass + " checks passed.");

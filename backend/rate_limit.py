@@ -20,6 +20,8 @@ window boundaries are acceptable for this scale (a perfectly-timed attacker
 could double the rate for one second per window — meaningless).
 """
 import os
+
+from backend.env import env_int
 import time
 from fastapi import Response
 
@@ -59,7 +61,6 @@ _RULES = [
     # Authenticated but sensitive. Per-IP backstop on top of the recipient cap
     # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.
     ("/api/email/send",   20),
-    ("/api/sync",         10),
     # Live-sync SSE feed. Not about abuse cost (it is session-gated and a
     # rejected connect 401s cheaply) but about connection churn: every accepted
     # stream holds a subscriber queue for the life of the browser tab. The
@@ -146,7 +147,11 @@ _state = _RateLimitState()
 # IP and the app sees `1.2.3.4, <real>` — XFF[0] is then the attacker's
 # choice. The new code takes XFF[-1] for the default 1-hop config, which
 # is always Railway's view of the connecting client.
-_TRUST_PROXY_HOPS = int(os.environ.get("LTP_TRUST_PROXY_HOPS", "1"))
+# env_int, not a bare int(): a typo here used to raise at import time, which
+# crash-loops the container before the app object exists — no traceback
+# route, no health surface, just restarts. Negative hops are meaningless,
+# so the floor rejects them too.
+_TRUST_PROXY_HOPS = env_int("LTP_TRUST_PROXY_HOPS", 1, minimum=0)
 
 
 def _client_ip(scope) -> str:

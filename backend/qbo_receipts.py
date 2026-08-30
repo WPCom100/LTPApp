@@ -509,9 +509,10 @@ async def run_receipt_poll() -> dict:
 
         # Sender = the admin who connected QuickBooks. No usable Gmail → cache
         # everything this cycle and retry once reconnected.
+        sender_id = conn.connected_by_user_id
         sender = None
-        if conn.connected_by_user_id:
-            r = await db.execute(select(models.User).where(models.User.id == conn.connected_by_user_id))
+        if sender_id:
+            r = await db.execute(select(models.User).where(models.User.id == sender_id))
             sender = r.scalar_one_or_none()
         can_email = sender is not None and bool(sender.gmail_refresh_token)
 
@@ -536,6 +537,20 @@ async def run_receipt_poll() -> dict:
                 conn = await quickbooks.load_connection(db)
             except quickbooks.QboNotConnected:
                 break  # connection dropped mid-cycle
+            # Re-load the sender for exactly the same reason as conn above. It
+            # was loaded once before the loop and never refreshed, so any earlier
+            # rollback in this loop — the object-level 400/404 `continue` below,
+            # or the generic handler — left it expired. _process_invoice reads
+            # sender.id, and _render_signature / build_receipt_email / gmail.send
+            # read its other columns, so the first touch raised MissingGreenlet,
+            # which the generic `except Exception` swallowed as "failed
+            # (continuing)". Candidates are ordered by id, so ONE invoice deleted
+            # in QuickBooks (404s every cycle, forever) poisoned the sender for
+            # every higher-id invoice: receipts silently stopped and the only
+            # symptom was a log line, since receipt_email_status never advanced.
+            if sender_id:
+                sender = await db.get(models.User, sender_id)
+            can_email = sender is not None and bool(sender.gmail_refresh_token)
             invoice = await db.get(models.Invoice, invoice_id)
             if invoice is None:
                 continue

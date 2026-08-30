@@ -366,10 +366,16 @@ function mountHook(fn) {
   };
 }
 
-// theme.js only touches React inside function bodies, so it loads fine here.
+// The editor hooks live in components/domain-util.js, not theme.js: the audit
+// branch split theme.js's 2,600-line domain layer into components/domain-*.js
+// and theme.js is now tokens + colours + the module registry. Both only touch
+// React inside function bodies, so they load fine here.
 window.LTP_genId = (p) => (p || "x") + "-1";
 (0, eval)(fs.readFileSync(path.join(root, "theme.js"), "utf8"));
-ok("theme exports LTP_useRemoteEdits", typeof window.LTP_useRemoteEdits === "function");
+(0, eval)(fs.readFileSync(path.join(root, "components", "domain-util.js"), "utf8"));
+ok("domain-util exports LTP_useRemoteEdits", typeof window.LTP_useRemoteEdits === "function");
+ok("domain-util exports LTP_useRecordWatch", typeof window.LTP_useRecordWatch === "function");
+ok("domain-util exports LTP_useUnsavedGuard", typeof window.LTP_useUnsavedGuard === "function");
 
 function scenario() {
   const state = { adopted: [], toasts: [], dirty: false };
