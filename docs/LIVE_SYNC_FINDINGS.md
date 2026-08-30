@@ -1,13 +1,15 @@
-# Live sync — open findings
+# Live sync — audit findings
 
 Produced by an 11-agent adversarial audit run at the end of the live-sync work: five subsystem
 reviewers, five skeptics whose instruction was to REFUTE and to default to refuted when
 uncertain, and one completeness critic. Everything below survived that refutation pass. Twelve
 further findings did not, and are listed at the end so nobody re-derives them.
 
-**None of this is fixed.** The four merged PRs — #38 live sync, #39 editor notices and the
-unsaved-guard fix, #40 the paid-day server guard, #41 all-editor coverage — are in `dev`. This
-is what the audit found sitting on top of them.
+**All eighteen are fixed in #42**, each with a regression test; the entries below are kept as
+the record of what was wrong and why. The four merged PRs — #38 live sync, #39 editor notices
+and the unsaved-guard fix, #40 the paid-day server guard, #41 all-editor coverage — are in
+`dev`, and this is what the audit found sitting on top of them. A nineteenth defect, #19, was
+caught afterwards by CI rather than by the audit, and is fixed in the same PR.
 
 | | Confirmed | Refuted |
 |---|---:|---:|
@@ -21,11 +23,11 @@ is what the audit found sitting on top of them.
 | # | Severity | Finding | Where |
 |---:|---|---|---|
 | 1 | CRITICAL | [refresh() adopts the server's fresh _rev for rows whose…](#1-refresh-adopts-the-servers-fresh-_rev-for-rows-whose-local-edit-the-merge-deliberately-kept-defeating-if-match) | `components/data-state.js:617` |
-| 2 | CRITICAL | [CRMNoteEditor / CRMNoteViewer early-return before useSta…](#2-crmnoteeditor-crmnoteviewer-early-return-before-usestate-crashes-the-whole-projects-module-when-a-note-or-project-is-deleted-in-another-window) | `modules/crm-notes.js:112` |
-| 3 | HIGH | [DELETE bypasses the paid-day guard entirely](#3-delete-bypasses-the-paid-day-guard-entirely-a-project-whose-days-are-paid-in-quickbooks-can-be-destroyed-with-no-409-no-override-header-and-no-admin-check) | `backend/routes/api.py:473` |
+| 2 | CRITICAL | [CRMNoteEditor / CRMNoteViewer early-return before useSta…](#2-crmnoteeditor--crmnoteviewer-early-return-before-usestate-crashes-the-whole-projects-module-when-a-note-or-project-is-deleted-in-another-window) | `modules/crm-notes.js:112` |
+| 3 | HIGH | [DELETE bypasses the paid-day guard entirely](#3-delete-bypasses-the-paid-day-guard-entirely--a-project-whose-days-are-paid-in-quickbooks-can-be-destroyed-with-no-409-no-override-header-and-no-admin-check) | `backend/routes/api.py:473` |
 | 4 | HIGH | [_rev is computed over server-authoritative _READONLY_COL…](#4-_rev-is-computed-over-server-authoritative-_readonly_cols-so-a-quickbooks-push-invalidates-the-clients-if-match-token-and-the-very-next-write-409s-and-discards-the-users-edit) | `backend/routes/api.py:150` |
-| 5 | HIGH | [SSE stream subscribes only after its snapshot is compute…](#5-sse-stream-subscribes-only-after-its-snapshot-is-computed-and-the-session-commits-a-write-landing-in-that-window-is-never-pushed) | `backend/routes/api.py:635` |
-| 6 | HIGH | [Client-facing and QuickBooks writes go through get_db bu…](#6-client-facing-and-quickbooks-writes-go-through-get_db-but-never-call-mark_dirty-quote-acceptdecline-email-send-pdf-stamp-qbo-sync-bulk-sync) | `backend/routes/view.py:449` |
+| 5 | HIGH | [SSE stream subscribes only after its snapshot is compute…](#5-sse-stream-subscribes-only-after-its-snapshot-is-computed-and-the-session-commits--a-write-landing-in-that-window-is-never-pushed) | `backend/routes/api.py:635` |
+| 6 | HIGH | [Client-facing and QuickBooks writes go through get_db bu…](#6-client-facing-and-quickbooks-writes-go-through-get_db-but-never-call-mark_dirty--quote-acceptdecline-email-send-pdf-stamp-qbo-sync-bulk-sync) | `backend/routes/view.py:449` |
 | 7 | HIGH | [skipNextSyncRef is left stuck true when the initial GET…](#7-skipnextsyncref-is-left-stuck-true-when-the-initial-get-fails-so-the-users-next-edit-is-silently-never-synced) | `components/data-state.js:556` |
 | 8 | HIGH | [A failed initial GET records the live stamp anyway, so t…](#8-a-failed-initial-get-records-the-live-stamp-anyway-so-that-collection-never-refetches-for-the-life-of-the-page) | `components/data-state.js:542` |
 | 9 | HIGH | [`recycling` is never cleared after a scheduled stream re…](#9-recycling-is-never-cleared-after-a-scheduled-stream-recycle-so-the-next-real-sse-failure-is-swallowed-entirely) | `components/live-sync.js:225` |
@@ -38,6 +40,7 @@ is what the audit found sitting on top of them.
 | 16 | MEDIUM | [FeeQuickNamesEditor seeds from settings once and writes…](#16-feequicknameseditor-seeds-from-settings-once-and-writes-the-whole-list-back-with-no-record-watch-dropping-another-windows-additions) | `modules/quotes-fees.js:117` |
 | 17 | MEDIUM | [Uvicorn's graceful shutdown blocks on open SSE streams f…](#17-uvicorns-graceful-shutdown-blocks-on-open-sse-streams-for-up-to-30-minutes-so-every-deploy-ends-in-sigkill) | `railway.json:5` |
 | 18 | LOW | [The `recycling` flag is never cleared by the recycle its…](#18-the-recycling-flag-is-never-cleared-by-the-recycle-itself-so-the-first-real-sse-failure-after-any-recycle-is-swallowed) | `components/live-sync.js:225` |
+| 19 | MEDIUM | [An idle process reports a watcher for the first ninety s…](#19-an-idle-process-reports-a-watcher-for-the-first-ninety-seconds-of-its-life-because-00-is-used-as-the-never-polled-sentinel-for-a-monotonic-clock-whose-zero-point-is-system-boot) | `backend/livesync.py:169` |
 
 ---
 
@@ -497,7 +500,7 @@ and A is dumped on the list with no dialog, no toast and no explanation.
 ### Evidence
 
 Two safety nets that exist for exactly this both miss it. (1) `LTP_useRemoteEdits` has a
-dedicated deleted-record branch (theme.js: `incoming = " deleted"` when `!record`) that
+dedicated deleted-record branch (theme.js: `incoming = "\0deleted"` when `!record`) that
 ScheduleBuilder wires up at modules/schedule-builder.js:86-91 — but it can never fire, because
 the parent stops rendering the child in the same commit, so the child's `[record]` effect never
 runs. (2) `mergeRemote`'s "Deleted in another window" toast (components/data-state.js,
@@ -523,7 +526,7 @@ becomes undefined, so the watch's id becomes null and the resetKey flips from "p
 "projects:null". Because LTP_useRemoteEdits declares the reset effect FIRST (theme.js:157-160),
 it lands before the compare effect in the same commit and sets seenRef.current = null; the
 compare effect at theme.js:163 then sees `!record` with `seenRef.current === null` and returns
-without ever emitting the " deleted" notice. The form silently mutates in place — title becomes
+without ever emitting the "\0deleted" notice. The form silently mutates in place — title becomes
 "Create Project", the Status select and schedule panel disappear, the button relabels to "Create
 Project" — and clicking it runs the EDIT onSave (modules/projects.js:316), whose `prev.map(x =>
 x.id === editProjectId ? ... : x)` matches nothing. Nothing is created, nothing is saved, and
@@ -763,6 +766,36 @@ past the recycle and makes the next genuine failure on the new connection hit th
 at line 225, skipping `es.close()`, the `sseFailures` increment, `startPolling()` and
 `scheduleReconnect()`, so a tab open longer than 30 minutes falls back to the browser's fixed
 ~3s unjittered retry for one cycle and arms the polling fallback one failure late.
+
+---
+
+## 19. An idle process reports a watcher for the first ninety seconds of its life, because 0.0 is used as the never-polled sentinel for a monotonic clock whose zero point is system boot
+
+**MEDIUM** · `backend/livesync.py:169` (pre-fix) · found by CI after the audit
+
+### How it fails
+
+`anyone_watching()` is the gate that keeps an unused deployment from running fifteen aggregates
+a minute forever. It returns true if any stream is subscribed, or if a poller asked recently:
+`(time.monotonic() - _last_poll) < max(interval * 3.0, 90.0)`, with `_last_poll` initialised to
+`0.0` to mean "nobody has ever polled".
+
+`time.monotonic()` has no defined zero point — on Linux it counts from system boot. So on a host
+that started a moment ago the expression is not "a very long time since the last poll", it is
+`30.0 - 0.0 = 30`, comfortably inside the ninety-second grace. Every freshly started container
+therefore believes a window is polling it and sweeps the database on its full cadence, with
+nothing connected, until its own uptime passes ninety seconds. The sentinel is now `None` and is
+tested for explicitly, so the answer does not depend on host uptime at all.
+
+### Evidence
+
+Three tests in `tests/test_livesync.py` — the two that assert the sweep stays idle with nobody
+connected, and the one that asserts `/api/versions` is what registers a watcher — passed on this
+long-running development container (`time.monotonic()` ≈ 15,500) and failed on a GitHub Actions
+runner (`the sweep queried the database 7x with nobody connected`). Re-run locally under a
+`time.monotonic` stubbed to a 30-second uptime, the same three fail identically; with the `None`
+sentinel they pass under both. `test_a_freshly_booted_process_is_not_watching_itself` pins the
+behaviour without depending on the host.
 
 ---
 

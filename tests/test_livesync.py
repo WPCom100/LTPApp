@@ -655,11 +655,34 @@ def test_a_polling_window_keeps_the_sweep_alive():
 
 def test_the_versions_endpoint_registers_the_caller_as_a_watcher():
     client, tok = _setup()
-    livesync._last_poll = 0.0
+    livesync._last_poll = None
     assert not livesync.anyone_watching(), "nothing should be watching yet"
     _stamps(client, tok)
     assert livesync.anyone_watching(), \
         "GET /api/versions must count as watching — see livesync.note_watcher"
+
+
+def test_a_freshly_booted_process_is_not_watching_itself():
+    """time.monotonic()'s zero point is system boot, not the epoch.
+
+    With 0.0 as the never-polled sentinel, "monotonic() - _last_poll" on a host
+    that booted a minute ago is 60 — inside the 90s poll grace — so a process
+    with nobody connected reported a watcher and swept for the first ninety
+    seconds of its life. This is exactly how a fresh CI runner behaves, and how
+    every Railway container starts. The check must not depend on uptime at all.
+    """
+    livesync._reset_for_tests()
+    real = livesync.time.monotonic
+    try:
+        livesync.time.monotonic = lambda: 5.0          # booted five seconds ago
+        assert not livesync.anyone_watching(), \
+            "an unpolled process must be idle however recently the host booted"
+        livesync.note_watcher()
+        assert livesync.anyone_watching(), \
+            "an actual poll must still register on a freshly booted host"
+    finally:
+        livesync.time.monotonic = real
+    livesync._reset_for_tests()
 
 
 def test_stream_cleans_up_its_subscriber_on_disconnect():

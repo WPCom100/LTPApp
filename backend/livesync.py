@@ -163,10 +163,15 @@ _QUEUE_MAXSIZE = 8
 _subscribers: set[asyncio.Queue] = set()
 _stamps: dict[str, str] = {}
 _seq = 0
-# When a polling client last asked. Streams are visible in _subscribers; pollers
-# are not, and they need the sweep just as much — more, in fact. See
-# note_watcher().
-_last_poll = 0.0
+# When a polling client last asked, or None if none ever has. Streams are visible
+# in _subscribers; pollers are not, and they need the sweep just as much — more,
+# in fact. See note_watcher().
+#
+# None, not 0.0: time.monotonic()'s zero point is unspecified (system boot, on
+# Linux), so on a freshly started host "monotonic() - 0.0" is a handful of
+# seconds — inside the poll grace below, which made an idle process report a
+# watcher for the first ninety seconds of every container's life.
+_last_poll: "float | None" = None
 # Set once at shutdown. Open streams watch it and end themselves, because
 # uvicorn's graceful shutdown waits for in-flight responses to finish and an SSE
 # response finishes only on client disconnect or its own 30-minute deadline —
@@ -305,6 +310,8 @@ def anyone_watching(interval: float = SWEEP_SECONDS) -> bool:
     """
     if _subscribers:
         return True
+    if _last_poll is None:                     # nobody has ever polled
+        return False
     return (time.monotonic() - _last_poll) < max(interval * 3.0, 90.0)
 
 
@@ -501,7 +508,7 @@ def _reset_for_tests() -> None:
     _stamps.clear()
     _subscribers.clear()
     _seq = 0
-    _last_poll = 0.0
+    _last_poll = None
     # Also clear the shutdown flag: it is process-wide, so a test that exercises
     # the shutdown path would otherwise make every later stream close instantly.
     _shutdown = None
