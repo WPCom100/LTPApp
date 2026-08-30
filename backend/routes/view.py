@@ -29,7 +29,9 @@ append + flush.
 import asyncio
 import base64
 import binascii
+import hashlib
 import io
+import json
 from datetime import datetime, timezone
 from typing import Literal, Union
 
@@ -166,6 +168,25 @@ def _sanitized_payload(
         "settings": public_settings(settings),
         "ref": doc_ref(kind, entity_d),
     }
+
+
+def _public_version(payload: dict) -> str:
+    """An opaque hash of EXACTLY what this client can see.
+
+    Not the row's updated_at, which would be wrong in both directions. Opening
+    the document appends a tracking entry to entity.activity, so every other
+    viewer's open would bump it and tell this one their document had changed
+    when nothing they can see did — the false alarm that teaches people to
+    ignore the real one. And it says nothing about the company address or the
+    branding settings, which are part of the page too.
+
+    Hashing the sanitized payload gets both right for free: the tracking types
+    are excluded from it by PUBLIC_TYPES, and everything the page renders is
+    inside it. Short hex rather than a timestamp so it carries no information
+    beyond "same" or "different".
+    """
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
 # ── Activity stamping for view / PDF tracking ─────────────────────────────
@@ -359,9 +380,49 @@ async def get_view(
     )
     project_names = await load_project_names(db, doc_project_ids(row))
     settings = await load_settings(db)
-    return _sanitized_payload(
+    payload = _sanitized_payload(
         kind, row, company, contact, project, settings, project_names=project_names
     )
+    # The version of what we are about to hand over, so the client has its
+    # baseline without a second round trip and without a gap between the two in
+    # which an edit could slip through unnoticed. Added AFTER hashing, so
+    # GET /{token}/version hashes the same bytes.
+    payload["_v"] = _public_version(payload)
+    return payload
+
+
+# ── GET /api/view/{token}/version ─────────────────────────────────────────
+
+@view_router.get("/{token}/version")
+async def get_view_version(token: str, db: AsyncSession = Depends(get_db)):
+    """Has this document changed, and is a newer app shell deployed?
+
+    A client can sit on a quote for an hour while it is re-priced underneath
+    them, and the first they would know is when they accept terms they never
+    read. This is what lets the page say so.
+
+    Deliberately does NOT call _record_open: a poll is not a view. Stamping one
+    would fill the activity feed with opens that never happened and re-notify
+    the sender every minute the tab stays open.
+
+    Rate limiting comes free — backend/rate_limit.py buckets the whole
+    /api/view family, so this cannot be used to hammer the database harder than
+    the view itself already allows.
+    """
+    kind, row = await _find_entity_by_token(db, token)
+    if row is None:
+        raise HTTPException(status_code=404, detail="not found")
+    company, contact, project = await load_related(
+        db, row.company_id, row.client_contact_id, row.project_id
+    )
+    project_names = await load_project_names(db, doc_project_ids(row))
+    settings = await load_settings(db)
+    payload = _sanitized_payload(
+        kind, row, company, contact, project, settings, project_names=project_names
+    )
+    # `app` rides along so a public tab learns about a deploy on the same terms
+    # as a signed-in one — it has no session, so no live feed to hear it on.
+    return {"doc": _public_version(payload), "app": livesync.app_version()}
 
 
 async def _notify_quote_response(db, row, decision: str, client_name: str, comment: str) -> None:
