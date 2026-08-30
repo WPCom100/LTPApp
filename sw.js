@@ -90,7 +90,11 @@
 // v62: data-state.js — mergeRemote no longer resurrects a row deleted in another
 // window. Runtime-cached, so without a bump a device keeps the version that
 // POSTs the deleted row back.
-var CACHE_VERSION = 'ltp-shell-v62';
+// v63: the audit fixes. theme.js (LTP_useRecordWatch latches its id),
+// data-state.js (If-Match no longer defeated, retry on a failed refetch),
+// live-sync.js (stale-socket errors, late-seed wake) and five modules all
+// changed; theme.js is precached and the rest are runtime-cached.
+var CACHE_VERSION = 'ltp-shell-v63';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

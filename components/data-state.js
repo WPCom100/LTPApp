@@ -266,7 +266,7 @@
   // in-flight edit. A row changed on BOTH sides keeps the local edit here and
   // resolves on write, where If-Match turns it into a visible 409 rather than a
   // silent overwrite.
-  function mergeRemote(base, local, server, removedOut) {
+  function mergeRemote(base, local, server, removedOut, keptOut) {
     var baseById = indexById(base);
     var localById = indexById(local);
     var out = (server || []).slice();
@@ -277,7 +277,11 @@
       var mine = localById[id];
       var wasBase = baseById[id];
       if (wasBase !== undefined && same(wasBase, mine)) return;   // untouched locally
-      if (at[id] !== undefined) { out[at[id]] = mine; return; }    // locally edited
+      if (at[id] !== undefined) {                                  // locally edited
+        out[at[id]] = mine;
+        if (keptOut) keptOut.push(id);
+        return;
+      }
       if (baseById[id] !== undefined) {
         // We edited it; someone else DELETED it. Keeping our copy would not
         // just show a stale row — the next diff would see it as new and POST it
@@ -388,6 +392,11 @@
               if (err && err.status === 409 && err.detail && err.detail.row) {
                 conflicts[id] = err.detail.row;
                 if (err.detail.row._rev != null) freshRevs[id] = err.detail.row._rev;
+                // The write is settled, however it went: disarm, or a one-shot
+                // header (today the paid-day override) stays live for its full
+                // TTL and silently authorises a LATER, different edit the user
+                // never confirmed.
+                disarm(key, id);
                 recordError(putLabel, {
                   status: 409,
                   conflict: "row changed in another window — server version adopted",
@@ -497,6 +506,8 @@
     var refreshingRef   = useRef(false);
     var refreshAgainRef = useRef(false);
     var refreshFnRef    = useRef(null);
+    var retryTimerRef   = useRef(null);
+    var retryDelayRef   = useRef(0);
     // Bumped every time a remote refresh replaces the baseline. A sync that
     // started before that must NOT write its own (older) baseline back over it
     // — doing so would drop the rows the refresh just learned about, and the
@@ -537,9 +548,15 @@
       var lv = live();
       var gate = lv ? lv.ready() : Promise.resolve();
 
+      // Read the stamp BEFORE the fetch, but only COMMIT it if the fetch works.
+      // Recording it unconditionally meant a failed initial GET left the hook
+      // claiming to hold data as of that stamp; refresh() then saw
+      // stampNow === stampRef.current and returned, so the collection never
+      // refetched for the life of the page and the window sat on `fallback`.
+      var stampAtHydrate;
       gate.then(function() {
         if (cancelled) return null;
-        stampRef.current = lv ? lv.stampFor(key) : undefined;
+        stampAtHydrate = lv ? lv.stampFor(key) : undefined;
         return fetchCollection(key);
       }).then(function(fetched) {
         if (cancelled) return;
@@ -556,8 +573,16 @@
             adopted = fallback;
           }
           prevSyncedRef.current = adopted;
-          skipNextSyncRef.current = true;  // adoption isn't a user change
-          setValue(adopted);
+          if (adopted !== value) {
+            // Arm the skip ONLY when this really will re-render. On a failed
+            // fetch `adopted` is the same `fallback` object the hook already
+            // holds, React bails out, the change-effect never runs to consume
+            // the flag — and the user's next edit was then swallowed as if it
+            // were server adoption, silently never syncing.
+            skipNextSyncRef.current = true;   // adoption isn't a user change
+            setValue(adopted);
+          }
+          if (fetched) stampRef.current = stampAtHydrate;
         } catch (e) {
           recordError("hydrate " + key, { error: String(e) });
         } finally {
@@ -584,6 +609,23 @@
       var lv = live();
       if (!lv || classify(key) === "unknown") return;
 
+      // Exponential backoff, capped. Bounded because the failure we are riding out
+      // is a transient one (a 502 from the edge, a dropped connection, the pool
+      // briefly exhausted by the several collection GETs one multi-collection
+      // stamp change kicks off); anything longer-lived is the user's problem to
+      // see, and they will, via the error toast fetchCollection already raised.
+      var RETRY_MIN_MS = 2000, RETRY_MAX_MS = 60000;
+      function scheduleRetry() {
+        if (retryTimerRef.current) return;
+        retryDelayRef.current = retryDelayRef.current
+          ? Math.min(retryDelayRef.current * 2, RETRY_MAX_MS)
+          : RETRY_MIN_MS;
+        retryTimerRef.current = setTimeout(function() {
+          retryTimerRef.current = null;
+          refresh();
+        }, retryDelayRef.current);
+      }
+
       function refresh() {
         if (!hydratedRef.current) return;         // mount fetch is still in flight
         var stampNow = lv.stampFor(key);
@@ -601,7 +643,17 @@
         fetchCollection(key).then(function(fetched) {
           refreshingRef.current = false;
           if (refreshAgainRef.current) { refreshAgainRef.current = false; setTimeout(refresh, 0); }
-          if (!fetched) return;                   // failed; the stamp stays stale so we retry
+          if (!fetched) {
+            // Leaving the stamp stale is necessary but NOT sufficient: refresh()
+            // only ever runs from a stamp-change notification, and live-sync has
+            // already stored this stamp, so no further notification will carry
+            // this value — and a focus revalidate re-reads that same map and sees
+            // nothing new. Without an explicit retry one dropped GET stranded the
+            // window until some unrelated later write moved the stamp again.
+            scheduleRetry();
+            return;
+          }
+          retryDelayRef.current = 0;              // a good fetch resets the backoff
           stampRef.current = stampAtFetch;
           try {
             if (key === "settings") {
@@ -614,10 +666,26 @@
               return;
             }
             if (!Array.isArray(fetched.rows)) return;
-            revsRef.current = Object.assign({}, revsRef.current, fetched.revs);
-            var removed = [];
+            var removed = [], keptLocal = [];
             var next = mergeRemote(prevSyncedRef.current, latestValueRef.current,
-                                   fetched.rows, removed);
+                                   fetched.rows, removed, keptLocal);
+            // Adopt the server's revision for every row EXCEPT the ones the merge
+            // just resolved in favour of our local copy.
+            //
+            // Those rows are precisely the ones If-Match exists for: our edit is
+            // based on the revision we last read, and the write must be judged
+            // against THAT. Taking the server's newer rev here handed the next PUT
+            // a token the server already agrees with, so _require_fresh passed and
+            // the other window's change was overwritten with no 409, no toast and
+            // no LTP_API_ERRORS entry — the exact failure this whole mechanism was
+            // built to make impossible.
+            var keepStale = {};
+            keptLocal.forEach(function(id) { keepStale[id] = true; });
+            var freshRevs = {};
+            Object.keys(fetched.revs || {}).forEach(function(id) {
+              if (!keepStale[id]) freshRevs[id] = fetched.revs[id];
+            });
+            revsRef.current = Object.assign({}, revsRef.current, freshRevs);
             if (removed.length && window.LTP_toast) {
               window.LTP_toast("Deleted in another window", {
                 message: removed.length === 1
@@ -641,15 +709,19 @@
         }, function(e) {
           refreshingRef.current = false;
           recordError("refresh " + key, { error: String(e) });
+          scheduleRetry();
         });
       }
 
       refreshFnRef.current = refresh;
       var unsubscribe = lv.subscribe(key, refresh);
+      var stopRetry = function() {
+        if (retryTimerRef.current) { clearTimeout(retryTimerRef.current); retryTimerRef.current = null; }
+      };
       // The stamp may already have moved between the mount fetch and this
       // effect running (React runs effects after paint).
       refresh();
-      return function() { refreshFnRef.current = null; unsubscribe(); };
+      return function() { refreshFnRef.current = null; stopRetry(); unsubscribe(); };
     }, []);
 
     // Debounced sync on every value change.

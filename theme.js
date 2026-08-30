@@ -246,12 +246,22 @@ window.LTP_useUnsavedGuard = function() {
 // refresh. Forms that STAY MOUNTED after saving should use LTP_useRemoteEdits
 // with a real dirty flag instead, or they will warn about their own write.
 window.LTP_useRecordWatch = function(collection, id, notice, pick) {
+  // Latch the first real id we are given. Callers usually pass something like
+  // `initial && initial.id`, which goes undefined the moment the row is deleted
+  // elsewhere — and since the id is part of the resetKey, that flipped the key,
+  // which reset the seen baseline, which made the deletion look like "a fresh
+  // editor on nothing" instead of the change it is. The warning never fired and
+  // the form went on accepting edits it could no longer save anywhere.
+  var idRef = React.useRef(null);
+  if (id != null && idRef.current === null) idRef.current = id;
+  var watchId = id != null ? id : idRef.current;
+
   var live = (window.LTP_DATA_LIVE || {})[collection];
   var record = null;
   if (Array.isArray(live)) {
-    if (id != null) {
+    if (watchId != null) {
       for (var i = 0; i < live.length; i++) {
-        if (live[i] && live[i].id === id) { record = live[i]; break; }
+        if (live[i] && live[i].id === watchId) { record = live[i]; break; }
       }
     }
   } else if (live && typeof live === "object") {
@@ -263,7 +273,9 @@ window.LTP_useRecordWatch = function(collection, id, notice, pick) {
     true,                                // always "dirty": warn, never adopt
     null,
     notice,
-    String(collection) + ":" + String(id));
+    // Keyed on the LATCHED id, so a deletion is a change to report rather than a
+    // reset that hides it.
+    String(collection) + ":" + String(watchId));
 };
 
 

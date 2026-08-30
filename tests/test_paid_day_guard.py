@@ -48,6 +48,8 @@ P_PAID = 7601        # a paid day — edits must be refused
 P_UNPAID = 7602      # billed but NOT paid — edits pass straight through
 P_OTHER = 7603       # paid day plus an untouched second day
 P_SNAP = 7604        # non-admin work change (reverted by enforce_pay_snapshot)
+P_DELPAID = 7605     # delete refused: its day is paid
+P_DELFREE = 7606     # delete allowed: nothing paid
 
 _client = None
 _seeded = False
@@ -105,7 +107,9 @@ def _setup():
                                       email="pat@crew.com", is_crew=True, crew_status="active"))
                 db.add(models.Service(id=S_ROLE, role="A1", description="Audio Lead", department="Audio"))
 
-                for pid, date in ((P_PAID, "2026-11-02"), (P_UNPAID, "2026-11-03"), (P_SNAP, "2026-11-05")):
+                for pid, date in ((P_PAID, "2026-11-02"), (P_UNPAID, "2026-11-03"),
+                                  (P_SNAP, "2026-11-05"), (P_DELPAID, "2026-11-07"),
+                                  (P_DELFREE, "2026-11-08")):
                     db.add(models.Project(id=pid, name=f"Project {pid}", schedule=[
                         _shift(f"s{pid}", date, [_pos(f"p{pid}", C_PAID, work=dict(_WORK))]),
                     ]))
@@ -131,6 +135,8 @@ def _setup():
                                           project_id=P_OTHER, date="2026-11-04", amount=400.0),
                     models.PayoutBillLine(payout_bill_id=paid.id, contact_id=C_PAID,
                                           project_id=P_SNAP, date="2026-11-05", amount=400.0),
+                    models.PayoutBillLine(payout_bill_id=paid.id, contact_id=C_PAID,
+                                          project_id=P_DELPAID, date="2026-11-07", amount=400.0),
                     models.PayoutBillLine(payout_bill_id=unpaid.id, contact_id=C_PAID,
                                           project_id=P_UNPAID, date="2026-11-03", amount=400.0),
                 ])
@@ -312,6 +318,41 @@ def test_a_junk_override_header_does_not_count_as_consent():
     assert r.status_code == 409, "only an explicit affirmative counts as an override"
 
 
+def test_deleting_a_project_with_paid_days_is_refused():
+    """DELETE used to bypass the guard entirely.
+
+    Deleting destroys Project.schedule, which is the ONLY record the payout view
+    re-derives a paid day from — while the QuickBooks bill and the PayoutBillLine
+    ledger survive. That is a worse divergence than the edit the guard refuses,
+    and it was reachable through the very delete wizard whose crew-release step
+    the guard had just blocked."""
+    client, tok = _setup()
+    r = client.delete(f"/api/projects/{P_DELPAID}", cookies={"ltp_session": tok})
+    assert r.status_code == 409, f"expected 409, got {r.status_code}: {r.text[:300]}"
+    detail = r.json()["detail"]
+    assert detail["code"] == "paid_day_conflict"
+    assert len(detail["days"]) == 1 and detail["days"][0]["name"] == "Pat Paid"
+    assert client.get(f"/api/projects/{P_DELPAID}",
+                      cookies={"ltp_session": tok}).status_code == 200, \
+        "a refused delete must leave the project standing"
+
+
+def test_deleting_with_the_override_header_is_allowed():
+    client, tok = _setup()
+    r = client.delete(f"/api/projects/{P_DELPAID}",
+                      headers={"X-LTP-Paid-Day-Override": "1"},
+                      cookies={"ltp_session": tok})
+    assert r.status_code == 200, r.text
+    assert client.get(f"/api/projects/{P_DELPAID}",
+                      cookies={"ltp_session": tok}).status_code == 404
+
+
+def test_deleting_a_project_with_no_paid_days_is_untouched():
+    client, tok = _setup()
+    r = client.delete(f"/api/projects/{P_DELFREE}", cookies={"ltp_session": tok})
+    assert r.status_code == 200, f"an unpaid project must delete freely: {r.text[:200]}"
+
+
 def main():
     tests = [
         test_signature_is_stable_for_an_unchanged_day,
@@ -326,6 +367,9 @@ def main():
         test_a_change_the_pay_snapshot_guard_reverts_is_not_reported_as_a_conflict,
         test_an_identical_resave_of_a_paid_day_is_not_a_conflict,
         test_a_junk_override_header_does_not_count_as_consent,
+        test_deleting_a_project_with_paid_days_is_refused,
+        test_deleting_a_project_with_no_paid_days_is_untouched,
+        test_deleting_with_the_override_header_is_allowed,
     ]
     failed = 0
     try:

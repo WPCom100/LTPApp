@@ -35,7 +35,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import crypto, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
+from backend import crypto, livesync, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
 
@@ -336,6 +336,10 @@ async def push_invoice_route(
         if body and body.signature:
             invoice.qb_synced_signature = body.signature
             push_result["qbSyncedSignature"] = body.signature
+        # A successful push writes the whole qb_* block plus an activity stamp on
+        # the invoice row. Publishing it is what lets other windows pick up the
+        # new sync state instead of waiting on the 30s sweep.
+        livesync.mark_dirty(db, "invoices")
         return push_result
     except quickbooks.QboNotConnected:
         return JSONResponse(status_code=409, content={"reason": "not_connected",
@@ -351,6 +355,7 @@ async def push_invoice_route(
         # progress already; that's fine to keep.
         invoice.qb_sync_status = "error"
         invoice.qb_last_error = e.safe_message[:300]
+        livesync.mark_dirty(db, "invoices")
         qbo_sync._stamp(invoice, admin, "qbo_sync_failed",
                         "QuickBooks sync failed",
                         [{"cat": "Error", "detail": e.safe_message[:300]}])
@@ -428,6 +433,7 @@ async def unwind_send_route(
     invoice.qb_last_error = None
     invoice.qb_tax_total = None
     invoice.qb_total_amt = None
+    livesync.mark_dirty(db, "invoices")
     qbo_sync._stamp(invoice, admin, "qbo_unwound",
                     "QuickBooks export undone — the email failed, so the invoice was removed",
                     [{"cat": "QB Invoice Id", "detail": deleted_id}])
@@ -913,6 +919,7 @@ async def estimate_quote_tax_route(
         calc = await qbo_sync.get_quote_estimate_tax(db, quote, user=admin)
         if body and body.signature:
             quote.qb_tax_signature = body.signature
+            livesync.mark_dirty(db, "quotes")
             calc["qbTaxSignature"] = body.signature
         return calc
     except quickbooks.QboNotConnected:

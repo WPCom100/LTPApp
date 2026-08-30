@@ -48,6 +48,20 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   // fewer hooks than during the previous render."
   if (urlId && urlAction === "schedule") {
     var schedProject = projects.find(function(p) { return p.id === urlId; });
+    // Deleted in another window while the builder was open. Falling through to
+    // the list silently unmounted ScheduleBuilder mid-edit — the draft gone, the
+    // unsaved-changes guard reset by its own unmount effect, and the user dumped
+    // on the list with no dialog and no explanation. Say what happened and make
+    // leaving deliberate.
+    if (!schedProject) {
+      return h("div", { style: { padding: "40px 20px", maxWidth: 560, margin: "0 auto", textAlign: "center" } },
+        h("h2", { style: { fontSize: "18px", fontWeight: 700, color: window.LTP_THEME.text, margin: "0 0 10px" } },
+          "This project was deleted"),
+        h("p", { style: { fontSize: "13px", color: window.LTP_THEME.textSec, lineHeight: 1.6, margin: "0 0 18px" } },
+          "Someone removed it in another window while you had its schedule open. " +
+          "Any unsaved changes to it could not be kept \u2014 there is no longer a project to save them to."),
+        h(window.Btn, { onClick: function() { nav("projects"); } }, "Back to projects"));
+    }
     if (schedProject) {
       return h(window.ScheduleBuilder, {
         project: schedProject, projects: projects, setProjects: setProjects,

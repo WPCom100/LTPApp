@@ -728,21 +728,34 @@
       var proj = editManualProject;
       setEditManualProject(null);
       if (!proj) return;
-      var before = proj.schedule || [];
-      var shift0 = (proj.schedule && proj.schedule[0]) || {};
-      var newShift0 = Object.assign({}, shift0, {
-        title: form.title, date: form.date, time: form.startTime, endDate: form.date, endTime: form.endTime,
-        breaks: form.breaks || shift0.breaks || [],
-      });
-      var newSchedule = before.length ? [newShift0].concat(before.slice(1)) : [newShift0];
+      // Build the new schedule from the LIVE row inside the updater, not from the
+      // snapshot taken when the modal opened. This modal owns the shift's name,
+      // date, times and breaks — nothing else — but it used to rewrite the whole
+      // schedule array from its stale copy, so a crew member who accepted while
+      // it was open had their status silently reverted to "open". The record
+      // watch could not warn either: its pick() covers exactly the fields the
+      // modal owns, which are exactly the ones that had NOT changed.
+      var beforeRef = { schedule: proj.schedule || [] };
       setProjects(function(prev) {
         return (prev || []).map(function(p) {
-          return p.id === proj.id ? Object.assign({}, p, {
+          if (p.id !== proj.id) return p;
+          var live = p.schedule || [];
+          beforeRef.schedule = live;         // diff against what is really there
+          var shift0 = live[0] || {};
+          var newShift0 = Object.assign({}, shift0, {
+            title: form.title, date: form.date, time: form.startTime,
+            endDate: form.date, endTime: form.endTime,
+            breaks: form.breaks || shift0.breaks || [],
+          });
+          beforeRef.after = live.length ? [newShift0].concat(live.slice(1)) : [newShift0];
+          return Object.assign({}, p, {
             name: form.title, startDate: form.date, endDate: form.date,
-            siteAddress: form.location, schedule: newSchedule,
-          }) : p;
+            siteAddress: form.location, schedule: beforeRef.after,
+          });
         });
       });
+      var before = beforeRef.schedule;
+      var newSchedule = beforeRef.after || before;
       var changed = window.LTP_diffChangedShifts(before, newSchedule, contacts, services);
       changed.forEach(function(g) {
         window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: proj.id, projectName: form.title || proj.name || "", template: g.template, shifts: g.shifts });

@@ -9,4 +9,8 @@ providers = ["python"]
 cmds = ["python -m venv --copies /opt/venv && . /opt/venv/bin/activate && pip install -r requirements.txt"]
 
 [start]
-cmd = ". /opt/venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# --timeout-graceful-shutdown bounds the drain. The lifespan already releases
+# open SSE streams (livesync.begin_shutdown), so this is the backstop, not the
+# mechanism: without both, one open browser tab could hold a deploy for the
+# full 30-minute stream lifetime and end in SIGKILL.
+cmd = ". /opt/venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000} --timeout-graceful-shutdown 20"

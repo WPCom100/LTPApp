@@ -50,6 +50,7 @@ P_REV = 7402           # If-Match happy path / stale path
 P_ACCEPT = 7403        # the crew-accept stale-write reproduction
 P_DEL = 7404           # delete moves the stamp via count(*)
 CO_GZIP = 6401         # company used for the gzip payload check
+INV_REV = 6501         # invoice used for the _rev / readonly-column check
 
 _client = None
 _seeded = False
@@ -95,6 +96,8 @@ def _setup():
                             _pos("acc_p2", C_CREW, service=S_ROLE)]),
                 ]))
                 db.add(models.Project(id=P_DEL, name="Delete Me", schedule=[]))
+                db.add(models.Invoice(id=INV_REV, status="draft", notes="rev probe",
+                                      share_token="rev-probe-share-token"))
                 await db.commit()
 
         _run(seed())
@@ -386,6 +389,92 @@ def _parse_frame(text):
     return event, data
 
 
+def test_a_quickbooks_style_readonly_write_does_not_move_rev():
+    """_rev must hash only what the CLIENT can write.
+
+    Hashing the server-authoritative qb_* block meant a QuickBooks push moved the
+    row's _rev, so the user's very next save came back 409 stale_write — and the
+    client answers a 409 by adopting the server row, discarding their unsaved
+    edit. A guard should only fire on a conflict it can actually resolve."""
+    client, tok = _setup()
+    from backend.database import async_session
+    from sqlalchemy import select as _select
+
+    before = client.get(f"/api/invoices/{INV_REV}", cookies={"ltp_session": tok}).json()
+
+    async def qbo_push():
+        async with async_session() as db:
+            row = (await db.execute(
+                _select(models.Invoice).where(models.Invoice.id == INV_REV))).scalar_one()
+            row.qb_sync_status = "synced"
+            row.qb_invoice_id = "QB-123"
+            await db.commit()
+    _run(qbo_push())
+
+    after = client.get(f"/api/invoices/{INV_REV}", cookies={"ltp_session": tok}).json()
+    assert after["qbSyncStatus"] == "synced", "the push must actually have landed"
+    assert after["_rev"] == before["_rev"], \
+        "a write to columns the client cannot send must not invalidate its If-Match token"
+
+    r = client.put(f"/api/invoices/{INV_REV}", json={"id": INV_REV, "notes": "user edit"},
+                   headers={"If-Match": before["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 200, \
+        f"the user's next save must not 409 because of a QuickBooks push: {r.text[:200]}"
+
+
+def test_a_broadcast_during_the_stream_handshake_is_not_lost():
+    """The route subscribes BEFORE reading its snapshot.
+
+    event_stream is a generator — nothing in it runs until the first chunk is
+    pulled — so subscribing there left a window across the handshake in which
+    another request's broadcast reached the existing subscribers but not this
+    one, while the snapshot it had already been handed was pre-write. The sweep
+    could not repair it: _stamps had already advanced, so nothing looked changed."""
+    async def body():
+        livesync._reset_for_tests()
+        q = livesync.subscribe()                    # what the route now does first
+        initial = {"projects": "old"}               # snapshot read afterwards
+        livesync._broadcast({"projects": "new"})    # a write lands in the gap
+
+        frames = []
+        gen = livesync.event_stream(initial, q)
+        for _ in range(2):
+            frames.append(await gen.__anext__())
+        await gen.aclose()
+        return frames
+
+    frames = _run(body())
+    assert '"stamps":{"projects":"old"}' in frames[0].replace(" ", ""), \
+        f"first frame should be the snapshot, got {frames[0]!r}"
+    assert '"projects":"new"' in frames[1].replace(" ", ""), \
+        f"the broadcast from the handshake window must still be delivered, got {frames[1]!r}"
+
+
+def test_shutdown_releases_open_streams():
+    """One open tab must not hold a deploy. uvicorn's graceful drain waits for
+    in-flight responses, and a stream ends only on disconnect or its 30-minute
+    deadline — so this used to hang until Railway SIGKILLed the container, and
+    the lifespan cleanup never ran."""
+    async def body():
+        livesync._reset_for_tests()
+        q = livesync.subscribe()
+        gen = livesync.event_stream({"projects": "a"}, q)
+        first = await gen.__anext__()               # snapshot
+        livesync.begin_shutdown()
+        closing = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        try:
+            await gen.aclose()
+        except Exception:
+            pass
+        livesync._reset_for_tests()
+        return first, closing
+
+    first, closing = _run(body())
+    assert "sync" in first
+    assert "bye" in closing and "shutdown" in closing, \
+        f"a shutting-down server must end its streams, got {closing!r}"
+
+
 def test_stream_requires_a_session():
     status, _, _ = _drive_stream(cookie=None)
     assert status == 401, f"expected 401 without a session, got {status}"
@@ -645,6 +734,9 @@ def main():
         test_put_without_if_match_keeps_last_write_wins,
         test_an_identical_rewrite_is_not_a_conflict,
         test_stale_put_after_crew_accept_is_rejected,
+        test_a_quickbooks_style_readonly_write_does_not_move_rev,
+        test_a_broadcast_during_the_stream_handshake_is_not_lost,
+        test_shutdown_releases_open_streams,
         test_stream_requires_a_session,
         test_stream_opens_with_a_snapshot_and_correct_headers,
         test_a_write_pushes_a_frame_to_an_open_stream,
