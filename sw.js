@@ -94,7 +94,6 @@
 // data-state.js (If-Match no longer defeated, retry on a failed refetch),
 // live-sync.js (stale-socket errors, late-seed wake) and five modules all
 // changed; theme.js is precached and the rest are runtime-cached.
-var CACHE_VERSION = 'ltp-shell-v68';
 // v64: the audit branch. theme.js — (a) breaks taken after midnight are lifted
 // into their span's frame, so an 18:00-02:00 call with a 00:30 break no longer
 // prices as 25 paid hours; (b) LTP_mealFixBreaks partitions a day into spans the
@@ -108,6 +107,12 @@ var CACHE_VERSION = 'ltp-shell-v68';
 // re-baselines the discard snapshot when a payment is recorded. index.html and
 // components/sanitize.js changed with the DOMPurify 3.4.14 bump. All precached or
 // runtime-cached; this is money math, and a stale shell bills the wrong amount.
+// v69: the sidebar brand block wears the masthead lockup instead of the LTP
+// chip + company name, and its header is pinned to the same height as the
+// topbar so the two bottom rules meet as one line (app.js). The lockup PNG
+// joins the precache below — it is shell chrome now, on screen everywhere, and
+// runtime caching alone would show the chip fallback on a cold offline launch.
+var CACHE_VERSION = 'ltp-shell-v69';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -132,6 +137,9 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/domain-qbo.js',
   '/app.js',
   '/mount.js',
+  // The brand masthead — the sidebar header and the sign-in screen both wear
+  // it, so it is part of the shell rather than page content.
+  '/assets/logos/luminary-masthead.png',
   // Icons referenced by the manifest / head.
   '/assets/icons/icon-192.png',
   '/assets/icons/icon-512.png',
