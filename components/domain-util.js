@@ -319,8 +319,11 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
         variant: "warn",
         // No timer: this describes the form still in front of you, and the very
         // person it is for is the one most likely to be away from the desk when
-        // it lands. It goes when they dismiss it or leave the page.
+        // it lands. Page-scoped because it is a statement about THIS form —
+        // once they have left it, "saving will replace the newer version"
+        // describes nothing.
         sticky: true,
+        retireOnLeave: true,
       });
     }
   }, [record]);

@@ -68,10 +68,10 @@
   // recent failures from the console (window.LTP_API_ERRORS) without
   // hunting through DevTools' Network tab.
   //
-  // `info.sticky` marks an entry whose toast must not time out. Reserved for
-  // divergence — a write the server refused, a row another window won — as
-  // opposed to a transient failure that will simply be retried. See the sticky
-  // note in components/error-toasts.js.
+  // Every entry here surfaces as an error toast, and error toasts do not time
+  // out — a failure nobody saw is a failure that was not reported. They end
+  // when someone dismisses them, and navigating away is not dismissing them.
+  // See the three lifetimes in components/error-toasts.js.
   if (!window.LTP_API_ERRORS) window.LTP_API_ERRORS = [];
   function recordError(label, info) {
     var entry = Object.assign({ at: new Date().toISOString(), label: label }, info || {});
@@ -439,7 +439,6 @@
                   status: 409,
                   conflict: "changes days already paid in QuickBooks — awaiting confirmation",
                   days: err.detail.days,
-                  sticky: true,         // a refused write, not a passing failure
                 });
                 try {
                   window.dispatchEvent(new CustomEvent("ltp-paid-day-conflict", {
@@ -463,7 +462,6 @@
                   status: 409,
                   conflict: "row changed in another window — server version adopted",
                   discardedLocalEdit: item,
-                  sticky: true,         // the user's edit lost; they must see it
                 });
                 return true;   // handled, not a failure
               }
@@ -775,7 +773,9 @@
                   ? "A record you were editing was deleted elsewhere, so your changes to it were dropped."
                   : removed.length + " records you were editing were deleted elsewhere, so your changes to them were dropped.",
                 variant: "warn",
-                sticky: true,           // work was lost; do not let it scroll by
+                // Sticky but NOT page-scoped: work was lost, and that stays
+                // true wherever they navigate to next.
+                sticky: true,
               });
             }
             // Baseline becomes what the SERVER actually holds, so the next diff
@@ -861,7 +861,7 @@
                   ? "One record was updated elsewhere while you were editing it. The newer version is now shown."
                   : lostIds.length + " records were updated elsewhere while you were editing them. The newer versions are now shown.",
                 variant: "warn",
-                sticky: true,           // an edit was replaced; do not let it scroll by
+                sticky: true,           // as above — an edit was replaced, full stop
               });
             }
           } else if (res.ok && baselineIsOurs) {

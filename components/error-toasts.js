@@ -14,15 +14,25 @@
 // linger longer than successes). The surface mounts inside the signed-in app
 // (see app.js) so it's available on every screen.
 //
-// STICKY toasts (opts.sticky) carry no timer at all. A clock is right for
-// "Quote sent" — you were there, you saw it happen. It is wrong for "this
-// record changed in another window", which is not news about the past but a
-// warning about the save you are about to make: nine seconds of it is nine
-// seconds you might have spent at the coffee machine, and what you do when you
-// come back is hit Save on a form you still believe is current. So a sticky
-// toast ends exactly two ways — the reader dismisses it, or they navigate away
-// from the page the warning was about, at which point it no longer describes
-// anything on screen.
+// Three lifetimes, and which one a toast gets is a question about who is
+// expected to be looking when it lands.
+//
+//   TIMED (the default) — "Quote sent". You were there, you clicked the thing,
+//     you saw it happen. A clock is right.
+//
+//   STICKY (opts.sticky) — no timer; ends only when someone dismisses it.
+//     Everything that reports a failure or a loss: nine seconds of "the save
+//     was refused" is nine seconds you might have spent at the coffee machine,
+//     and it is still true when you get back — wherever in the app you have
+//     got to by then. All error toasts are in this class automatically.
+//
+//   STICKY AND PAGE-SCOPED (opts.sticky + opts.retireOnLeave) — the same, plus
+//     it retires when the reader leaves the page it was raised on. Only right
+//     for a warning ABOUT what is on screen: "this form is stale, saving will
+//     overwrite the newer version" describes a form, and once you have left
+//     that form it describes nothing. Notices about data — a record deleted or
+//     replaced under you — are NOT page-scoped: they happened to your work, not
+//     to your current view, and no amount of navigating makes them untrue.
 (function() {
   var h = React.createElement;
 
@@ -45,6 +55,52 @@
     } catch (e) { return ""; }
   }
 
+  // ── Opaque per-variant backgrounds ────────────────────────────────────────
+  //
+  // The theme's *Bg tokens are 10%-alpha tints. That is right for a badge
+  // sitting inside a panel, and wrong for a toast floating over the page: at
+  // 10% the content underneath — table rules, headings, other text — shows
+  // straight through the card and competes with the message on it. A toast is
+  // the one surface that must be readable wherever it happens to land.
+  //
+  // So the same tint is composited over the panel colour ONCE, here, and the
+  // result is painted solid. Derived rather than hardcoded so it still tracks
+  // the theme if the palette moves.
+  var TINT = 0.14;                       // how much variant hue survives
+
+  function parseHex(hex) {                 // not `h` — that is createElement here
+    var v = String(hex || "").replace("#", "");
+    if (v.length === 3) v = v[0] + v[0] + v[1] + v[1] + v[2] + v[2];
+    if (v.length !== 6 || !/^[0-9a-f]{6}$/i.test(v)) return null;
+    var n = parseInt(v, 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+  function mix(fgHex, bgHex, alpha) {
+    var f = parseHex(fgHex), b = parseHex(bgHex);
+    if (!f || !b) return null;
+    return "#" + [0, 1, 2].map(function(i) {
+      var c = Math.round(alpha * f[i] + (1 - alpha) * b[i]);
+      return ("0" + Math.max(0, Math.min(255, c)).toString(16)).slice(-2);
+    }).join("");
+  }
+  function variantHue(variant) {
+    var B = window.LTP_THEME || {};
+    if (variant === "success") return B.success || "#5FD08A";
+    if (variant === "warn")    return B.warn    || "#F5B83D";
+    if (variant === "info")    return B.info    || "#6FA8F5";
+    return B.danger || "#F0857A";
+  }
+  function toastBg(variant) {
+    var base = (window.LTP_THEME || {}).surface || "#19242B";
+    return mix(variantHue(variant), base, TINT) || base;
+  }
+
+  // Errors are sticky whether or not the caller asked, and whichever event
+  // source raised them. A failure the reader did not see is a failure that did
+  // not get reported, and there is no way for the code raising one to know
+  // whether anybody is at the desk.
+  function stickyByVariant(variant) { return variant === "error"; }
+
   // null = no timer; this toast waits for a person.
   function dismissAfter(t) {
     if (!t || t.sticky) return null;
@@ -53,6 +109,7 @@
 
   function survivesNavigation(t, toPath) {
     if (!t || !t.sticky) return true;      // timed toasts keep their own clock
+    if (!t.retireOnLeave) return true;     // sticky, but not about any one page
     return t.path === toPath;
   }
 
@@ -93,10 +150,11 @@
   // ── Public helper ─────────────────────────────────────────────────────────
   // window.LTP_toast("Sent to QuickBooks", { message: "...", variant: "success" })
   // variant ∈ {success, error, warn, info} (default info). `duration` (ms)
-  // overrides the per-variant default. `sticky` drops the timer altogether —
-  // see the note at the top of this file for when that is the right call.
-  // Safe to call before the component mounts — the event simply has no listener
-  // yet (rare; mount is early).
+  // overrides the per-variant default. `sticky` drops the timer altogether, and
+  // `retireOnLeave` additionally ties it to the current page — see the three
+  // lifetimes at the top of this file. variant "error" is always sticky whether
+  // or not the caller says so. Safe to call before the component mounts — the
+  // event simply has no listener yet (rare; mount is early).
   window.LTP_toast = function(title, opts) {
     opts = opts || {};
     try {
@@ -107,6 +165,7 @@
           variant: opts.variant || "info",
           duration: opts.duration,
           sticky: opts.sticky === true,
+          retireOnLeave: opts.retireOnLeave === true,
           at: new Date().toISOString(),
         }
       }));
@@ -154,8 +213,9 @@
       function add(toast) {
         if (isDuplicate(listRef.current, toast)) return;
         // Stamp the page this warning is about, so navigating away retires it
-        // and navigating anywhere else does not.
-        if (toast.sticky) toast.path = routePath();
+        // and navigating anywhere else does not. Only page-scoped toasts have
+        // a page; the rest outlive every navigation.
+        if (toast.sticky && toast.retireOnLeave) toast.path = routePath();
         toast.id = nextId++;
         var res = evict(listRef.current.concat([toast]));
         commit(res.list, res.dropped);
@@ -177,21 +237,20 @@
           status: entry.status,
           body: entry.body,
           message: entry.error,
-          // recordError() marks the entries that describe divergence rather
-          // than plain failure — a lost race, a refused write. Those must not
-          // time out; see the sticky note at the top of this file.
-          sticky: entry.sticky === true,
+          sticky: true,               // see stickyByVariant
         });
       }
       function onToast(e) {
         var d = (e && e.detail) || {};
+        var variant = d.variant || "info";
         add({
           at: d.at || new Date().toISOString(),
-          variant: d.variant || "info",
+          variant: variant,
           title: d.title || "",
           message: d.message || "",
           duration: d.duration,
-          sticky: d.sticky === true,
+          sticky: d.sticky === true || stickyByVariant(variant),
+          retireOnLeave: d.retireOnLeave === true,
         });
       }
       // Leaving the page a sticky warning is about retires it: it described
@@ -222,12 +281,7 @@
 
     if (toasts.length === 0) return null;
 
-    function variantColor(v) {
-      if (v === "success") return B.success || "#3fb950";
-      if (v === "warn")    return B.warn || "#d29922";
-      if (v === "info")    return B.info || "#58a6ff";
-      return B.danger || "#e74c3c";
-    }
+    function variantColor(v) { return variantHue(v); }
 
     return h("div", {
       style: {
@@ -244,12 +298,9 @@
     }, toasts.map(function(t) {
       var color = variantColor(t.variant);
       var icon = t.variant === "success" ? "✓" : t.variant === "info" ? "i" : "!";
-      // Solid (opaque) per-variant background so toasts are easy to read — a
-      // translucent tint over the page content was the readability problem.
-      var bg = t.variant === "success" ? (B.successBg || "#0f2a10")
-             : t.variant === "warn"    ? (B.warnBg || "#2e2208")
-             : t.variant === "info"    ? (B.infoBg || "#0f1a2e")
-             : (B.dangerBg || "#2e0f0f");
+      // Fully opaque — see the note on toastBg. Nothing behind the toast shows
+      // through it, at any variant.
+      var bg = toastBg(t.variant);
       // Body excerpt: clip long server tracebacks so the toast stays small.
       var bodyExcerpt = t.body ? String(t.body).slice(0, 200) : null;
       var bodyTruncated = t.body && String(t.body).length > 200;
@@ -272,7 +323,7 @@
           h("div", {
             style: {
               width: 22, height: 22, borderRadius: "50%",
-              background: color + "33",
+              background: mix(color, bg, 0.22) || bg,
               display: "flex", alignItems: "center", justifyContent: "center",
               flexShrink: 0,
               fontSize: "12px", fontWeight: 700, color: color,
@@ -325,6 +376,9 @@
     survivesNavigation: survivesNavigation,
     isDuplicate: isDuplicate,
     evict: evict,
+    stickyByVariant: stickyByVariant,
+    toastBg: toastBg,
+    mix: mix,
     MAX_VISIBLE: MAX_VISIBLE,
   };
 })();
