@@ -66,7 +66,11 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
-var CACHE_VERSION = 'ltp-shell-v57';
+// v58: the sidebar brand block wears the masthead lockup instead of the LTP
+// chip + company name (app.js), so that PNG joins the precache below — it is
+// shell chrome now, on screen everywhere, and runtime caching alone would show
+// the chip fallback on a cold offline launch.
+var CACHE_VERSION = 'ltp-shell-v58';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -80,6 +84,9 @@ var SAME_ORIGIN_PRECACHE = [
   '/theme.js',
   '/app.js',
   '/mount.js',
+  // The brand masthead — the sidebar header and the sign-in screen both wear
+  // it, so it is part of the shell rather than page content.
+  '/assets/logos/luminary-masthead.png',
   // Icons referenced by the manifest / head.
   '/assets/icons/icon-192.png',
   '/assets/icons/icon-512.png',

@@ -143,6 +143,9 @@ function LTPSignedInApp(props) {
   var usePersistentState = window.LTP_STATE.usePersistentState;
 
   var [sidebarOpen, setSidebarOpen] = useState(true);
+  // Masthead PNG failed to load (404/offline before the SW has it cached) —
+  // flips the sidebar brand block back to the LTP chip lockup.
+  var [logoFailed, setLogoFailed] = useState(false);
   // Mobile shell: below 600px the desktop sidebar is replaced by a bottom tab
   // bar (window.LTP_useIsMobile matches the index.html CSS breakpoint). moreOpen
   // drives the "More" sheet that reaches the overflow modules + every sub-nav.
@@ -482,9 +485,19 @@ function LTPSignedInApp(props) {
    // of the real 100dvh box rather than a position:fixed element (see below).
    h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     !isMobile && h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
+      // Brand block — the masthead lockup, the same asset the sign-in screen
+      // and the branded email wear. objectFit keeps the 4.8:1 wordmark whole
+      // inside a fixed 34px band so toggling the rail can't reflow the header.
+      // Collapsed to 52px there is nowhere to put a wordmark, so the rail wears
+      // the LTP chip instead — which is also the fallback if the PNG never
+      // loads, alongside the company name it replaces.
       h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
-        h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
-        sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE"))
+        sidebarOpen && !logoFailed
+          ? h("img", { src: "/assets/logos/luminary-masthead.png", alt: "Luminary Technology & Productions", draggable: false, onError: function() { setLogoFailed(true); },
+              style: { display: "block", width: "100%", height: 34, objectFit: "contain", objectPosition: "left center" } })
+          : h(React.Fragment, null,
+              h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
+              sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE")))
       ),
       h("nav", { style: { flex: 1, padding: "10px 6px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" } },
         MODULES.filter(function(m) {
