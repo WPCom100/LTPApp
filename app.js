@@ -143,6 +143,9 @@ function LTPSignedInApp(props) {
   var usePersistentState = window.LTP_STATE.usePersistentState;
 
   var [sidebarOpen, setSidebarOpen] = useState(true);
+  // Masthead PNG failed to load (404/offline before the SW has it cached) —
+  // flips the sidebar brand block back to the LTP chip lockup.
+  var [logoFailed, setLogoFailed] = useState(false);
   // Mobile shell: below 600px the desktop sidebar is replaced by a bottom tab
   // bar (window.LTP_useIsMobile matches the index.html CSS breakpoint). moreOpen
   // drives the "More" sheet that reaches the overflow modules + every sub-nav.
@@ -477,15 +480,43 @@ function LTPSignedInApp(props) {
     );
   }
 
+  // Does the rail header show the masthead? Only when it is expanded enough
+  // to hold one and the PNG actually loaded — it drives the header's own box
+  // (bottom-flush logo vs. the evenly padded chip header) as well as what goes
+  // inside it.
+  var brandLogo = sidebarOpen && !logoFailed;
+  // Height of BOTH header rules — the rail's brand block and the topbar beside
+  // it — so the two hairlines meet at the same y instead of stepping. Shared
+  // rather than written twice because the whole point is that they are equal;
+  // border-box means this includes each header's own 1px bottom border.
+  var HEADER_H = 52;
+
   return h(React.Fragment, null,
    // Shell frame. Desktop = a row (sidebar | content). Mobile = a column
    // (content | bottom tab bar) so the tab bar is an in-flow row at the bottom
    // of the real 100dvh box rather than a position:fixed element (see below).
    h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     !isMobile && h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
-      h("div", { style: { padding: sidebarOpen ? "18px 16px" : "18px 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
-        h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
-        sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE"))
+      // Brand block — the masthead lockup, the same asset the sign-in screen
+      // and the branded email wear. The header is pinned to HEADER_H in EVERY
+      // state, so its rule meets the topbar's as one line whichever way the
+      // rail is toggled; the vertical inset is left to align-items rather than
+      // padding for the same reason. The logo keeps a 16px side inset and
+      // bottom-aligns with nothing under it — sitting ON the rule while inset
+      // from the top and both edges. The PNG is cropped tight to the artwork —
+      // zero transparent margin — so that bottom edge really is ink meeting the
+      // border, not a transparent gutter.
+      // Collapsed to 52px there is nowhere to put a 4.8:1 wordmark, so the rail
+      // wears the LTP chip instead — which is also the fallback if the PNG
+      // never loads, alongside the company name it replaces. Those centre in
+      // the same box.
+      h("div", { style: { padding: sidebarOpen ? "0 16px" : "0 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: brandLogo ? "flex-end" : "center", gap: 10, cursor: "pointer", height: HEADER_H, minHeight: HEADER_H }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
+        brandLogo
+          ? h("img", { src: "/assets/logos/luminary-masthead.png", alt: "Luminary Technology & Productions", draggable: false, onError: function() { setLogoFailed(true); },
+              style: { display: "block", width: "100%", height: "auto" } })
+          : h(React.Fragment, null,
+              h("div", { style: { width: 30, height: 30, background: B.gradBtn, borderRadius: "8px", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px", fontWeight: 700, color: B.btnInk, flexShrink: 0, boxShadow: "0 2px 10px rgba(239,88,34,0.25)" } }, "LTP"),
+              sidebarOpen && h("div", null, h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text, lineHeight: 1.2 } }, settings.companyShort || "LTP"), h("div", { style: { fontSize: "9px", color: B.textMut, letterSpacing: "0.05em" } }, settings.tagline ? settings.tagline.toUpperCase().substring(0, 30) : "BUSINESS SUITE")))
       ),
       h("nav", { style: { flex: 1, padding: "10px 6px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" } },
         MODULES.filter(function(m) {
@@ -592,7 +623,7 @@ function LTPSignedInApp(props) {
       // On mobile the topbar extends under the translucent status bar via
       // env(safe-area-inset-top) (height auto so the inset adds to the 52px bar
       // rather than eating into it), with tighter horizontal padding.
-      h("div", { style: { height: isMobile ? "auto" : 52, minHeight: 52, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 4px" : "0 22px", background: B.surface, flexShrink: 0 } },
+      h("div", { style: { height: isMobile ? "auto" : HEADER_H, minHeight: HEADER_H, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 4px" : "0 22px", background: B.surface, flexShrink: 0 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
           h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" } },
             window.LTP_NAV_ICON(activeModule, 18, B.accent)),
