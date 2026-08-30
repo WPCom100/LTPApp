@@ -1262,6 +1262,57 @@ referenced it (`ad57d48`).
 
 ---
 
+### Batch 8 — The last High: the 409 blind PUT — Effort S · Blast radius: entity sync  ·  **DONE**
+
+Finding #5, `components/data-state.js:156-171`. A POST that collided on id was answered by re-sending the row
+as a PUT, unconditionally. The comment said "the row exists on the server; re-route as an update" — it never
+read what was there.
+
+**This is not an exotic race.** Entity ids are minted client-side as `max(local ids) + 1`
+(`components/entity-quick-form.js:150`, `components/client-rates.js:223`, `modules/quotes-fees.js:161`,
+`modules/rentals-utils.js:229`), so two people creating a record in the same window mint the *same* id from
+their own lists. Collision is the ordinary outcome of concurrent creation, and the loser's blind PUT assigned
+every field of its own row onto the winner's stored row (`backend/routes/api.py:318-320`). One record, silently
+replaced by an unrelated one.
+
+A 409 has two causes that the response cannot distinguish:
+
+- **(a) our own row** — a POST earlier in this session succeeded inside a batch that partially failed, so
+  `prevSyncedRef` never advanced (invariant #2) and the next diff still sees the row as new. PUT is correct.
+- **(b) someone else's row** — a different user, or a tab whose list predates ours, minted the same id for a
+  different record. PUT is destructive.
+
+So the client now tracks (a) itself: an id is eligible for the PUT fallback only if **this session created it**,
+recorded on a successful POST and released on a successful DELETE (a later locally-minted row can reuse the
+number once the original leaves the list, and that new row is not the one we created). Anything else is
+reported — in terms that name the consequence, since `checkResponse`'s generic `POST failed: 409` reads like a
+transient server error — and never written.
+
+**What this does not fix, stated plainly.** In case (b) the user's own new record now stays unsynced and
+re-reports on every subsequent edit. That is invariant #2's existing trade-off (a loud repeated failure beats a
+silent loss) applied to the one case where the loss would be *another user's* record; it is strictly better than
+before, and it is not good. The real cure is server-assigned ids. That was not taken here because adopting a
+server id means rewriting every local reference to the temporary one — and those references live in *other*
+`usePersistentState` slices (`sourceQuoteId`, `docProjectIds`, linked line items), each with its own hook and no
+cross-slice remap facility. Getting that wrong orphans rows, which is worse than the bug being fixed. **New
+finding, carried forward: client-minted entity ids need to become server-assigned, with a cross-slice id-remap
+step.**
+
+`syncEntity` is now exported on `window.LTP_STATE` — the 409 branch is unreachable through the hook without a
+real second client, and it is the branch that decides whether another user's record survives. This also dents
+finding #120 (the file's helpers being IIFE-private is why none of this was testable). New suite
+`tests/test_data_state_sync.js`: 41 assertions, 8/8 mutations caught, including the original blanket fallback
+restored as M1.
+
+Two of the suite's own probes were bad on the first run — both cleared `calls` before a handler that keyed off
+it, so the conflict never fired and the assertion passed vacuously. Caught by the paired "did the batch
+actually fail?" assertion next to each, which is why those pairs exist.
+
+`components/data-state.js` folds into the already-unreleased `ltp-shell-v58`; `tests/check_shell_version.py`
+confirms 20 cached files changed against `origin/master` with the version moved v57 → v58.
+
+---
+
 ## 5. Open questions
 
 Answers change specific findings; none blocked the review.
