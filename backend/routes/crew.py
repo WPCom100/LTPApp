@@ -30,6 +30,8 @@ Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
 """
 from datetime import datetime, timezone
 from html import escape
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -555,11 +557,20 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
 
 # ── PUBLIC: GET /api/crew/{token} ───────────────────────────────────────────
 
-@crew_public_router.get("/{token}")
-async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
-    """Sanitized crew-facing payload. Exposes only this crew member's shifts on
-    this request + branding — no cost, no internal notes, no other crew, and
-    never the token itself (the holder already has it in their URL)."""
+async def _crew_payload(db: AsyncSession, token: str) -> dict:
+    """Build the crew-facing payload, healing the request on the way.
+
+    Shared verbatim by GET /{token} and GET /{token}/version so the two can
+    never disagree about what the page says — a version computed from a
+    different shape than the one rendered would banner for ever.
+
+    The reconcile stays IN here, deliberately, even though it can write. It is
+    the same "heal staleness on read" the GET has always done, it is idempotent
+    (a no-op the moment the request is terminal), and leaving it out of the
+    version path would be worse than a write: the poll would hash the unhealed
+    request while the page held the healed one, so they would differ on the very
+    first tick and stay differing — a permanent false alarm.
+    """
     req = await _find_request_by_token(db, token)
     if req is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -598,6 +609,38 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
         "shifts": shifts,
         "settings": public_settings(settings),
     }
+
+
+def _crew_version(payload: dict) -> str:
+    """Opaque hash of exactly what this crew member can see. See view.py's
+    _public_version — same reasoning, same shape."""
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
+@crew_public_router.get("/{token}")
+async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
+    """Sanitized crew-facing payload. Exposes only this crew member's shifts on
+    this request + branding — no cost, no internal notes, no other crew, and
+    never the token itself (the holder already has it in their URL)."""
+    payload = await _crew_payload(db, token)
+    # The version of what we are handing over, so the page has its baseline
+    # with no second round trip. Added AFTER hashing, so /{token}/version
+    # hashes the same bytes.
+    payload["_v"] = _crew_version(payload)
+    return payload
+
+
+@crew_public_router.get("/{token}/version")
+async def get_crew_request_version(token: str, db: AsyncSession = Depends(get_db)):
+    """Has this crew request changed, and is a newer app shell deployed?
+
+    A crew member can leave the link open while the shift is moved, retimed or
+    withdrawn under them, and the page has no session for live sync to reach.
+    This is what lets it notice.
+    """
+    payload = await _crew_payload(db, token)
+    return {"doc": _crew_version(payload), "app": livesync.app_version()}
 
 
 # ── PUBLIC: POST /api/crew/{token}/accept | /decline ────────────────────────

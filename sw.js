@@ -94,7 +94,7 @@
 // data-state.js (If-Match no longer defeated, retry on a failed refetch),
 // live-sync.js (stale-socket errors, late-seed wake) and five modules all
 // changed; theme.js is precached and the rest are runtime-cached.
-var CACHE_VERSION = 'ltp-shell-v68';
+var CACHE_VERSION = 'ltp-shell-v69';
 // v64: the audit branch. theme.js — (a) breaks taken after midnight are lifted
 // into their span's frame, so an 18:00-02:00 call with a 00:30 break no longer
 // prices as 25 paid hours; (b) LTP_mealFixBreaks partitions a day into spans the

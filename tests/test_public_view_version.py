@@ -1,9 +1,11 @@
-"""The public share view learning that its document moved.
+"""The public share views learning that their document moved.
 
 A client can sit on a quote for an hour while it is re-priced underneath them,
 and without this the first they would know is accepting terms they never read.
-The page has no session, so none of the app's live sync reaches it; it polls
-GET /api/view/{token}/version instead.
+A crew member can sit on a request while the call time moves and turn up at the
+wrong hour. Neither page has a session, so none of the app's live sync reaches
+them; they poll GET /api/view/{token}/version and GET /api/crew/{token}/version
+instead.
 
 The load-bearing test here is test_another_viewer_opening_does_not_look_like_a_change.
 The obvious implementation — compare the row's updated_at — is wrong in exactly
@@ -42,8 +44,13 @@ _TOK = "viewver-admin-session"
 CO = 6801
 QUOTE = 6802
 INVOICE = 6803
+CONTACT = 6804
+PROJECT = 6805
+CREWREQ = 6806
 Q_SHARE = "viewver-quote-share-token"
 I_SHARE = "viewver-invoice-share-token"
+C_TOKEN = "viewver-crew-request-token"
+POS = "vv-pos-1"
 
 _client = None
 _seeded = False
@@ -70,17 +77,43 @@ def _setup():
 
         async def seed():
             async with async_session() as db:
+                # Idempotent: conftest gives the whole pytest session one shared
+                # database, and a module's fixtures are expected to survive
+                # accumulation in it. Adding blind collided on the crew request's
+                # unique token when the rows were already there.
+                async def missing(model, pk):
+                    return await db.get(model, pk) is None
+
                 admin = models.User(google_sub=U_SUB, email="viewver-admin@biz.com",
                                     name="Viewver Admin", role="admin")
                 db.add(admin)
                 await db.flush()
                 db.add(models.Session(id=hash_session_token(_TOK), user_id=admin.id,
                                       expires_at=datetime.now(timezone.utc) + timedelta(days=7)))
-                db.add(models.Company(id=CO, name="Acme Co", status="active", is_client=True))
-                db.add(models.Quote(id=QUOTE, company_id=CO, status="sent",
-                                    share_token=Q_SHARE, sections=[], activity=[]))
-                db.add(models.Invoice(id=INVOICE, company_id=CO, status="sent",
-                                      share_token=I_SHARE, sections=[], activity=[]))
+                if await missing(models.Company, CO):
+                    db.add(models.Company(id=CO, name="Acme Co", status="active", is_client=True))
+                if await missing(models.Quote, QUOTE):
+                    db.add(models.Quote(id=QUOTE, company_id=CO, status="sent",
+                                        share_token=Q_SHARE, sections=[], activity=[]))
+                if await missing(models.Invoice, INVOICE):
+                    db.add(models.Invoice(id=INVOICE, company_id=CO, status="sent",
+                                          share_token=I_SHARE, sections=[], activity=[]))
+                if await missing(models.Contact, CONTACT):
+                    db.add(models.Contact(id=CONTACT, first_name="Pat", last_name="Crew",
+                                          email="pat@crew.example", is_crew=True,
+                                          crew_status="active"))
+                if await missing(models.Project, PROJECT):
+                    db.add(models.Project(id=PROJECT, name="Gala", start_date="2026-09-01",
+                                          end_date="2026-09-01", schedule=[{
+                                              "id": "vv-s1", "title": "Show", "date": "2026-09-01",
+                                              "time": "08:00", "endTime": "17:00", "breaks": [],
+                                              "positions": [{"id": POS, "role": "", "serviceId": None,
+                                                             "crewId": CONTACT, "status": "requested"}],
+                                          }]))
+                if await missing(models.CrewRequest, CREWREQ):
+                    db.add(models.CrewRequest(id=CREWREQ, token=C_TOKEN, project_id=PROJECT,
+                                              contact_id=CONTACT, position_ids=[POS],
+                                              status="pending"))
                 await db.commit()
 
         _run(seed())
@@ -243,3 +276,100 @@ def test_a_change_the_client_cannot_see_does_not_move_it():
     # public, the assertion above would be silently vacuous.
     assert "notes" not in _view(client, Q_SHARE)["entity"], \
         "notes reached a share-link holder — this test's premise has changed"
+
+
+# ── The crew request share view ─────────────────────────────────────────────
+#
+# Same exposure, different hazard: a crew member who does not notice a retimed
+# call turns up at the wrong hour.
+#
+# The wrinkle here is that GET /api/crew/{token} HEALS a stale request on read —
+# crew_integrity.reconcile_one writes. Leaving that out of the version path
+# would be worse than the write it avoids: the poll would hash the unhealed
+# request while the page held the healed one, so they would differ on the very
+# first tick and never converge. Both paths run it, through one shared builder.
+
+
+def _crew_version(client):
+    r = client.get(f"/api/crew/{C_TOKEN}/version")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _crew_view(client):
+    r = client.get(f"/api/crew/{C_TOKEN}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _edit_project(client, schedule):
+    ck = {"ltp_session": _TOK}
+    cur = client.get(f"/api/projects/{PROJECT}", cookies=ck).json()
+    cur.pop("_rev", None)
+    cur["schedule"] = schedule
+    r = client.put(f"/api/projects/{PROJECT}", json=cur, cookies=ck)
+    assert r.status_code == 200, r.text
+
+
+def _shift(time="08:00", end="17:00", title="Show"):
+    return [{"id": "vv-s1", "title": title, "date": "2026-09-01", "time": time,
+             "endTime": end, "breaks": [],
+             "positions": [{"id": POS, "role": "", "serviceId": None,
+                            "crewId": CONTACT, "status": "requested"}]}]
+
+
+def test_crew_version_needs_a_real_token():
+    client = _setup()
+    r = client.get("/api/crew/not-a-real-crew-token/version")
+    assert r.status_code == 404
+
+
+def test_crew_version_needs_no_session():
+    client = _setup()
+    assert client.get(f"/api/crew/{C_TOKEN}/version").status_code == 200
+
+
+def test_crew_view_and_version_agree():
+    """They must be built from the same bytes, reconcile included, or the page
+    disagrees with its own poll from the first tick onwards."""
+    client = _setup()
+    assert _crew_view(client)["_v"] == _crew_version(client)["doc"]
+
+
+def test_crew_version_reports_the_shell_too():
+    client = _setup()
+    assert _crew_version(client)["app"] == livesync.app_version()
+
+
+def test_crew_version_is_stable_when_nothing_changes():
+    client = _setup()
+    assert _crew_version(client)["doc"] == _crew_version(client)["doc"]
+    _crew_view(client)      # the crew member re-reads their own page
+    assert _crew_view(client)["_v"] == _crew_version(client)["doc"], \
+        "reading the request must not look like a change to it"
+
+
+def test_retiming_the_shift_moves_the_crew_version():
+    """The call time moving is the whole reason this exists."""
+    client = _setup()
+    before = _crew_version(client)["doc"]
+    _edit_project(client, _shift(time="06:00"))
+    assert _crew_version(client)["doc"] != before, \
+        "a crew member must not turn up for a call time that changed"
+
+
+def test_renaming_the_shift_moves_it_too():
+    client = _setup()
+    before = _crew_version(client)["doc"]
+    _edit_project(client, _shift(time="06:00", title="Load In"))
+    assert _crew_version(client)["doc"] != before
+
+
+def test_withdrawing_the_request_moves_it():
+    client = _setup()
+    before = _crew_version(client)["doc"]
+    ck = {"ltp_session": _TOK}
+    r = client.post(f"/api/crew-requests/{CREWREQ}/withdraw", cookies=ck)
+    assert r.status_code in (200, 204), r.text
+    assert _crew_version(client)["doc"] != before, \
+        "being stood down is the most important thing to notice"

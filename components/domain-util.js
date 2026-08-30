@@ -329,6 +329,86 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
   }, [record]);
 };
 
+// ═══════════════════════════════════════════════════════════════════════════
+//   A PUBLIC PAGE NOTICING THAT ITS DOCUMENT MOVED
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The share views — a client on a quote or invoice, a crew member on a shift
+// request — have no session, so none of the app's live sync reaches them. There
+// is nothing to hold a stream open for an anonymous reader, and it would be the
+// wrong thing to open for one anyway.
+//
+// They poll one small endpoint instead. A client reading a quote does not need
+// sub-second news; they need to not be looking at last week's price, and a crew
+// member needs to not turn up for a call time that moved. Paused while the tab
+// is hidden and checked the moment it comes back, because the case this exists
+// for IS the tab left open in the background.
+//
+//   versionUrl  "/api/view/<token>/version" or "/api/crew/<token>/version",
+//               answering { doc, app }. Falsy disables the watch.
+//   current     the `_v` handed over with the page being displayed. The
+//               comparison baseline; changing it (a reload) clears the flag.
+//
+// Returns true once the stored document no longer matches what is on screen.
+// Both public views render a full-page notice on that, rather than a banner
+// over content that is no longer true.
+window.LTP_useDocFreshness = function(versionUrl, current) {
+  var pair = React.useState(false);
+  var stale = pair[0], setStale = pair[1];
+  var curRef = React.useRef(current);
+  curRef.current = current;
+
+  // Whatever was just loaded is, by definition, current.
+  React.useEffect(function() { setStale(false); }, [current]);
+
+  React.useEffect(function() {
+    if (!versionUrl) return undefined;
+    var POLL_MS = 60000;
+    var timer = null;
+    var cancelled = false;
+
+    function check() {
+      if (cancelled) return;
+      fetch(versionUrl)
+        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(v) {
+          if (cancelled || !v) return;
+          // A public tab has no live feed to hear a deploy on, so it raises the
+          // same event the signed-in app does and components/register-sw.js
+          // takes it from there.
+          if (v.app) {
+            try {
+              window.dispatchEvent(new CustomEvent("ltp-app-version", { detail: { version: v.app } }));
+            } catch (e) { /* CustomEvent unsupported */ }
+          }
+          // Before the first load lands there is nothing to compare against.
+          if (!curRef.current || !v.doc) return;
+          if (v.doc !== curRef.current) setStale(true);
+        })
+        .catch(function() { /* offline or a blip — the next tick retries */ });
+    }
+
+    function tick() {
+      if (!document.hidden) check();
+      timer = setTimeout(tick, POLL_MS);
+    }
+    function onVisible() { if (!document.hidden) check(); }
+
+    timer = setTimeout(tick, POLL_MS);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return function() {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
+  }, [versionUrl]);
+
+  return stale;
+};
+
+
 // ── Invoice & Quote display helpers (used across modules) ────────────────
 // Format a client's billing address (Company or Contact) into one string:
 // "<street>, City, ST ZIP". `joiner` (default ", ") also replaces newlines in
