@@ -127,14 +127,162 @@ window.LTP_useUnsavedGuard = function() {
   React.useEffect(function() {
     function onBeforeUnload(e) { if (isDirty) { e.preventDefault(); e.returnValue = ""; } }
     window.addEventListener("beforeunload", onBeforeUnload);
-    return function() {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      // Component leaving the tree no longer owns any dirty state.
-      window.__LTP_UNSAVED = false;
-    };
+    return function() { window.removeEventListener("beforeunload", onBeforeUnload); };
   }, [isDirty]);
 
+  // "No longer owns any dirty state" is an UNMOUNT concern, so it gets its own
+  // effect with empty deps. It used to live in the cleanup above, which re-runs
+  // on every isDirty change — and React runs that cleanup AFTER the render-time
+  // mirror, so the flag was wiped by the very transition it exists to record:
+  //
+  //   setIsDirty(true) → global = true      (synchronous setter)
+  //   re-render        → global = true      (render-time mirror)
+  //   effect cleanup   → global = FALSE     ← deps [isDirty] changed
+  //   effect body      → (never restored it)
+  //
+  // The result was an editor full of unsaved work that router.navigate() saw as
+  // clean, so leaving the page discarded it with no prompt at all.
+  React.useEffect(function() {
+    return function() { window.__LTP_UNSAVED = false; };
+  }, []);
+
   return [isDirty, setIsDirty];
+};
+
+// Warn-only companion to LTP_useRemoteEdits, for the ~dozen modal forms that
+// seed one useState PER FIELD from a row rather than holding a single draft.
+//
+// Those forms cannot adopt a newer version — re-seeding fifteen independent
+// setters mid-edit is not something to do behind someone's back — but they can
+// and must SAY when the row moved, because otherwise their save silently
+// overwrites it. (If-Match does not catch this on its own: live sync refreshes
+// the row's revision underneath a form that is holding field values from before
+// it, so the write looks current to the server.)
+//
+// Self-sufficient by design: it finds the record itself in
+// window.LTP_DATA_LIVE, so a form needs one line and no new props threaded down
+// from its parent.
+//
+//   collection  a persisted state key ("companies", "services", …). A singleton
+//               blob like "settings" works too — id is then ignored.
+//   id          the row's id.
+//   notice      { title, message } for the warning.
+//   pick        optional record → the slice this editor actually owns, so an
+//               editor of one note inside a project is not woken by an unrelated
+//               change to the same project.
+//
+// Deliberately fires even when the form is untouched: what it is showing is
+// stale either way, and unlike a draft editor there is nothing safe to silently
+// refresh. Forms that STAY MOUNTED after saving should use LTP_useRemoteEdits
+// with a real dirty flag instead, or they will warn about their own write.
+window.LTP_useRecordWatch = function(collection, id, notice, pick) {
+  // Latch the first real id we are given. Callers usually pass something like
+  // `initial && initial.id`, which goes undefined the moment the row is deleted
+  // elsewhere — and since the id is part of the resetKey, that flipped the key,
+  // which reset the seen baseline, which made the deletion look like "a fresh
+  // editor on nothing" instead of the change it is. The warning never fired and
+  // the form went on accepting edits it could no longer save anywhere.
+  var idRef = React.useRef(null);
+  if (id != null && idRef.current === null) idRef.current = id;
+  var watchId = id != null ? id : idRef.current;
+
+  var live = (window.LTP_DATA_LIVE || {})[collection];
+  var record = null;
+  if (Array.isArray(live)) {
+    if (watchId != null) {
+      for (var i = 0; i < live.length; i++) {
+        if (live[i] && live[i].id === watchId) { record = live[i]; break; }
+      }
+    }
+  } else if (live && typeof live === "object") {
+    record = live;                       // singleton blob
+  }
+  window.LTP_useRemoteEdits(
+    record,
+    pick || function(r) { return r; },
+    true,                                // always "dirty": warn, never adopt
+    null,
+    notice,
+    // Keyed on the LATCHED id, so a deletion is a change to report rather than a
+    // reset that hides it.
+    String(collection) + ":" + String(watchId));
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+//   A RECORD CHANGING WHILE AN EDITOR HAS IT OPEN
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The three big editors — schedule builder, quote builder, invoice builder —
+// all work the same way: deep-clone the record into a local `draft`, reseed
+// only when the record's ID changes. That is what stops a background refresh
+// from eating half-typed work, but it also means a record that moved
+// underneath them (live sync — components/live-sync.js) stays invisible right
+// up until the editor saves over it.
+//
+// This hook is the shared response, and the branch is whether there is unsaved
+// work to protect:
+//
+//   nothing unsaved → adopt the newer version silently. Strictly better than
+//                     continuing to show data we already know is stale.
+//   unsaved edits   → keep them and say so, ONCE per editing session.
+//                     Discarding someone's typing to win a race is the wrong
+//                     trade for a workspace this size, and repeating the notice
+//                     on every remote change would be noise.
+//
+// Args:
+//   record    the live row out of persisted state. Live sync hands back a new
+//             object identity whenever it refetches, which is the trigger.
+//             Falsy (a brand-new unsaved record) makes this a no-op.
+//   snapshot  record → the editor's draft shape. Must be deterministic: its
+//             JSON is compared against the previous call to decide "moved".
+//   isDirty   from LTP_useUnsavedGuard.
+//   onAdopt   called with a fresh snapshot when it is safe to swap it in.
+//   notice    { title, message } shown in the dirty case.
+//   resetKey  changing it forgets everything — the editor switched records.
+window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey) {
+  var seenRef = React.useRef(null);
+  var warnedRef = React.useRef(false);
+
+  // Switching records starts a fresh editing session: nothing seen, nothing
+  // warned. Declared BEFORE the compare effect so it lands first in the same
+  // commit — the compare then simply re-seeds instead of firing on a change
+  // that is really just "different record".
+  React.useEffect(function() {
+    seenRef.current = null;
+    warnedRef.current = false;
+  }, [resetKey]);
+
+  React.useEffect(function() {
+    var incoming;
+    if (!record) {
+      // No record at all. Either this editor is on something brand new and
+      // unsaved (nothing to watch), or the row we WERE watching has just been
+      // deleted in another window — which is very much worth saying.
+      if (seenRef.current === null) return;
+      incoming = "\u0000deleted";
+    } else {
+      try { incoming = JSON.stringify(snapshot(record)); }
+      catch (e) { return; }               // unserializable — nothing safe to compare
+    }
+    if (seenRef.current === null) { seenRef.current = incoming; return; }
+    if (incoming === seenRef.current) return;
+    seenRef.current = incoming;
+    if (!isDirty && record && onAdopt) {
+      warnedRef.current = false;
+      onAdopt(snapshot(record));
+      return;
+    }
+    if (warnedRef.current) return;
+    warnedRef.current = true;
+    if (window.LTP_toast) {
+      window.LTP_toast((notice && notice.title) || "Changed elsewhere", {
+        message: (notice && notice.message) ||
+          "Another window updated this while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version.",
+        variant: "warn",
+      });
+    }
+  }, [record]);
 };
 
 // ── Invoice & Quote display helpers (used across modules) ────────────────

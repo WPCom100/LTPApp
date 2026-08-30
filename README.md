@@ -634,8 +634,135 @@ All entities follow REST conventions:
 
 Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`
 
+`PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
+row the API returns includes one). If the row changed since you read it, the PUT
+is refused with `409` and the response body carries the current row so the client
+can adopt it. Omitting the header keeps last-write-wins. See *Live sync* below.
+
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
+- `GET /api/versions` — Per-collection change stamps (live sync)
+- `GET /api/stream` — Server-sent change feed (live sync)
+
+## Live sync (cross-window)
+
+Every open window stays current without polling the data itself, and without a
+hard refresh. The design is deliberately narrow: **the server pushes stamps, not
+rows.**
+
+`GET /api/versions` returns one stamp per collection, derived from
+`max(updated_at)` + `count(*)` + an in-process sequence number
+(`backend/livesync.py`). `GET /api/stream` pushes the same map over SSE whenever
+anything changes. A client diffs the map against its own and refetches only the
+collections that moved — so the cost of being live does not grow with the size of
+the workspace.
+
+Three channels feed one code path (`components/live-sync.js`), so they can
+overlap freely; whichever notices first wins and the rest see no stamp change:
+
+| Channel | Reach | Idle cost |
+|---------|-------|-----------|
+| `BroadcastChannel` | same-browser tabs | zero — never touches the network |
+| SSE `/api/stream` | everywhere | one `: keepalive` per 25s (~KB/hour) |
+| Poll `/api/versions` | fallback when SSE won't stay up | ~400 bytes/tick, **foreground tabs only** |
+
+Plus a one-shot revalidation on `visibilitychange`, `focus` and bfcache restore —
+the moments a window is most likely to be wrong.
+
+**Why this mattered.** Crew accept/decline is a *server-side* write: it moves
+position statuses on the project row (`backend/routes/crew.py::_respond`). No
+open window could learn about it, so the Crew Requests tab would show the shift
+name as the literal string "Project" and hide the Confirm button, and the stale
+window would revert the acceptance on its next save. `If-Match` closes that last
+hole; live sync makes it rare in the first place.
+
+A stream is recycled every 30 minutes (`LTP_LIVESYNC_MAX_STREAM_SECONDS`).
+Auth is checked when a connection opens and never again, so without a cap a
+stream opened by a session that later expired would keep receiving for as long
+as the tab lived. The server ends a recycled stream with a `bye` frame so the
+client reconnects immediately rather than treating it as a fault. The safety
+sweep also idles completely when nobody is connected — this app sits unused most
+nights, and there is nothing to broadcast to.
+
+### Editing a record two people have open
+
+Every editor in the app is covered, in one of two ways. Which one depends on how
+the editor holds its state — not on how important the record is.
+
+**Draft editors** (schedule builder, quote builder, invoice builder, Settings)
+clone the record into a single `draft` and own a dirty flag, so they use
+`theme.js::LTP_useRemoteEdits`: nothing unsaved → adopt the newer version
+silently; unsaved edits → keep them and warn once per editing session.
+
+**Field-per-`useState` modals** (companies, contacts, projects, services,
+products, fees, client rates, equipment, containers, kits, crew roster, manual
+shifts, notes) seed one piece of state per field when they open. Re-seeding a
+dozen setters underneath someone mid-edit is not something to do quietly, so
+they use `theme.js::LTP_useRecordWatch` and only warn. It finds the row itself in
+`window.LTP_DATA_LIVE` (a render-time mirror kept by data-state.js), so a form
+needs one line and no new props threaded down from its parent. An optional
+`pick` narrows what counts as a change — the note editor watches its own note,
+not the whole project row it lives in.
+
+**Why a warning and not `If-Match`.** The revision guard does not catch this on
+its own: live sync refreshes a row's `_rev` underneath a form that is still
+holding values from before it, so the write looks perfectly current to the
+server. `If-Match` covers the window where a client has NOT refetched; the
+editor notice covers the window where it has. Discarding someone's typing to win
+a race is the wrong trade at this size, so in both cases the local edit survives
+and the person is told.
+
+Adding a new editor? Call one of the two hooks. A form that stays mounted after
+saving needs the dirty-flag variant, or it will warn about its own write.
+
+Not every read is in the feed. `/api/qbo/status`, `/api/users` and
+`/api/qbo/payouts/day-status` are backed by tables outside `livesync.COLLECTIONS`
+and still load once per mount. The first two change only when an admin acts.
+
+`day-status` used to be the one to watch — it drives the paid-day warn+confirm,
+and a stale copy meant the guard silently did not fire. That is now enforced
+server-side instead of relying on the client being fresh; see below.
+
+## Paid days
+
+Once a crew day is billed to QuickBooks AND that bill is paid, the money is gone.
+Editing the schedule underneath it claws nothing back — it just makes the app
+disagree with the accounts.
+
+`PUT /api/projects/{id}` refuses such a write with `409 paid_day_conflict`,
+listing who and which dates, unless the request carries
+`X-LTP-Paid-Day-Override: 1`. The comparison
+(`backend/payouts.py::paid_day_signature`) fingerprints everything that decides
+what a crew member is owed for a day — shift times, crew-wide and per-position
+breaks, service, role, status, and the frozen `work`/`adj` snapshot — so an
+unrelated edit elsewhere in the project passes straight through.
+
+Two ordering details worth keeping:
+
+- The check runs on the FINAL schedule, after `crew_integrity`'s status-floor
+  and pay-snapshot guards have had their say. On the raw incoming schedule it
+  would refuse writes those guards had already reverted to a no-op.
+- It mirrors `modules/schedule-builder.js::_paidSig`, and is deliberately
+  stricter (it also covers `work`/`adj`, which the pay-snapshot guard only
+  restrains for non-admins). Keep the two in step: a field one side fingerprints
+  and the other does not is a paid day that changes without anyone being asked.
+
+The client still warns first, from `day-status`, so the common case never round-
+trips a refusal. When that map is stale the server refuses, the editor prompts
+from the server's answer, and confirming re-sends with the override — so the
+client being out of date is now harmless rather than silent.
+
+Notes for future changes:
+- The broadcast bus is **in-process**. That is correct for one uvicorn worker on
+  one pod (what `railway.json` starts). More than one and a write served by
+  worker A never reaches a window subscribed to worker B — swap `_broadcast()`
+  for a real bus. The 30s safety sweep limits the damage but degrades push to
+  slow polling.
+- Only mark a collection dirty when you actually **wrote** to it. A read path
+  that marks itself dirty is a refetch loop: every window refetches, and each
+  refetch republishes. See `livesync.mark_dirty`.
+- Responses are gzipped (`GZipMiddleware`). SSE is excluded by Starlette, which
+  is what keeps the feed from being buffered.
 
 QuickBooks Online (admin-only except `status`):
 - `GET /api/qbo/status` — connection status (booleans + masked realm; any signed-in user)
@@ -674,10 +801,13 @@ ltp-app/
 │   ├── quickbooks.py      # QuickBooks Online REST client (OAuth + transport)
 │   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
 │   ├── pdf_generator.py   # Quote/invoice PDF rendering
+│   ├── livesync.py        # Cross-window change stamps + SSE broadcast bus
 │   └── routes/
 │       ├── api.py         # REST API routes
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete
 ├── components/            # Frontend: shared React components
+│   ├── live-sync.js       # Change feed: SSE + poll fallback + BroadcastChannel
+│   ├── data-state.js      # Persisted-state hooks (refetch on change, If-Match)
 │   └── client-rates.js    # Per-client rate editor + the CLIENT RATE chip
 ├── modules/               # Frontend: page modules
 ├── data/                  # Frontend: default/seed data

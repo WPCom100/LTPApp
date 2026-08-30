@@ -1340,6 +1340,24 @@
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); pendingRollbacks.current = []; }, [invoiceId, isNew]);
 
+    // Someone else saved this invoice while we have it open. Adopt it if we
+    // have nothing unsaved, otherwise keep our edits and say so once — see
+    // theme.js::LTP_useRemoteEdits. A brand-new invoice has no stored row yet,
+    // so the hook no-ops on the falsy record.
+    window.LTP_useRemoteEdits(
+      isNew ? null : invoices.find(function(x) { return x.id === invoiceId; }),
+      cloneInvoice, isDirty,
+      function(fresh) {
+        setDraftRaw(fresh);
+        cleanRef.current = fresh;
+        // Rollbacks track lines deleted from THIS draft; the adopted row is a
+        // different starting point, so the pending list no longer applies.
+        pendingRollbacks.current = [];
+      },
+      { title: "This invoice changed elsewhere",
+        message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
+      String(invoiceId) + ":" + String(isNew));
+
     // Informational / validation notice as a non-blocking toast (modals are
     // reserved for confirm/cancel decisions). Variant defaults to "error";
     // pass "info" for advisory notices.

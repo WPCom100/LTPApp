@@ -66,24 +66,48 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
-// v58: labor-engine correctness in theme.js. (a) Breaks taken after midnight
-// are lifted into their span's frame, so an 18:00-02:00 call with a 00:30 break
-// no longer prices as 25 paid hours. (b) LTP_mealFixBreaks now partitions a day
-// into spans the same way LTP_calcLaborDay does, so "fix meal breaks" can no
-// longer no-op on a day with a nested block and leave the penalty standing.
-// (c) Breaks are clipped to the cursor and the span end, so a crew-wide break
-// duplicated as an individual one cannot bill time nobody worked, and a break
-// overhanging the shift end cannot either. (d) Times parse strictly: a
-// malformed value bills nothing instead of inventing an 18-hour day.
-// (e) modules/invoices.js: recording a payment now re-baselines the editor's
-// discard snapshot, so Discard can no longer revert a saved payment back out.
-// index.html is untouched, but theme.js is precached (SAME_ORIGIN_PRECACHE
-// below), so without a new string every installed device keeps serving the old
-// pricing engine for one more launch — and no worker installs, so there is no
-// refresh banner either. This is money math: a stale shell bills the wrong
-// amount. Both changes ship under the one string because v58 has never been
-// released — nothing out there is holding a v58 shell to invalidate.
-var CACHE_VERSION = 'ltp-shell-v58';
+// v58: index.html gained a script tag (components/live-sync.js, the cross-window
+// change feed — it must load before data-state.js). The shell is precached, so
+// without this bump an installed PWA would keep serving the old index.html and
+// silently run without live sync. live-sync.js itself needs no precache entry:
+// the runtime /components/ rule below covers it.
+// v59: theme.js gained LTP_useRemoteEdits and fixed LTP_useUnsavedGuard's
+// __LTP_UNSAVED mirror (it was cleared by the very transition it records, so the
+// "You have unsaved changes" prompt never fired). theme.js is precached, so
+// without a bump every installed device keeps the broken guard for one more
+// launch. The three editors that consume the hook (schedule/quote/invoice) are
+// runtime-cached under /modules/ and need no precache entry.
+// v60: the paid-day guard moved server-side. components/data-state.js can now
+// attach a one-shot override header to a write, and both editors that touch paid
+// days (modules/schedule-builder.js, modules/labor.js) prompt from the SERVER's
+// refusal when their own paid-day map is stale. All three are runtime-cached, so
+// without a bump a device keeps the old client — which would hit the new 409 with
+// no way to answer it.
+// v61: theme.js gained LTP_useRecordWatch and data-state.js publishes the
+// LTP_DATA_LIVE mirror it reads; a dozen editors across modules/ now call it.
+// theme.js is precached, so without a bump a device keeps a theme.js with no
+// such hook while its runtime-cached modules try to call one.
+// v62: data-state.js — mergeRemote no longer resurrects a row deleted in another
+// window. Runtime-cached, so without a bump a device keeps the version that
+// POSTs the deleted row back.
+// v63: the audit fixes. theme.js (LTP_useRecordWatch latches its id),
+// data-state.js (If-Match no longer defeated, retry on a failed refetch),
+// live-sync.js (stale-socket errors, late-seed wake) and five modules all
+// changed; theme.js is precached and the rest are runtime-cached.
+var CACHE_VERSION = 'ltp-shell-v64';
+// v64: the audit branch. theme.js — (a) breaks taken after midnight are lifted
+// into their span's frame, so an 18:00-02:00 call with a 00:30 break no longer
+// prices as 25 paid hours; (b) LTP_mealFixBreaks partitions a day into spans the
+// same way LTP_calcLaborDay does; (c) breaks are clipped to the cursor and the
+// span end; (d) times parse strictly, so a malformed value bills nothing instead
+// of inventing an 18-hour day. theme.js is also now 113 lines: the domain layer
+// moved to eight precached components/domain-*.js files (see SAME_ORIGIN_PRECACHE
+// below), so a device on an older shell would load a theme.js whose exports have
+// moved. components/data-state.js no longer answers a POST id-collision by
+// blind-PUTting over the record that already holds the id. modules/invoices.js
+// re-baselines the discard snapshot when a payment is recorded. index.html and
+// components/sanitize.js changed with the DOMPurify 3.4.14 bump. All precached or
+// runtime-cached; this is money math, and a stale shell bills the wrong amount.
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

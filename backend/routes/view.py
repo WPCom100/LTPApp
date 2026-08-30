@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import models, view_tracking, webpush
+from backend import livesync, models, view_tracking, webpush
 from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
@@ -454,6 +454,10 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     )
     row.status = "accepted"
     await db.flush()
+    # Publish. get_db broadcasts only what the request marked dirty, and a client
+    # answering a share link is the canonical change-behind-the-producer's-back
+    # write — the exact case live sync exists for — yet it published nothing.
+    livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
     await _notify_quote_response(db, row, "accepted", client_name, comment)
     return {"status": "accepted", "activityId": entry["id"]}
 
@@ -495,6 +499,7 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
     )
     row.status = "declined"
     await db.flush()
+    livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
     await _notify_quote_response(db, row, "declined", client_name, comment)
     return {"status": "declined", "activityId": entry["id"]}
 

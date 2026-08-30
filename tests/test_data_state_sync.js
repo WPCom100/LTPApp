@@ -69,6 +69,9 @@ function reset(handler) {
   syncEntity = global.window.LTP_STATE.syncEntity;
 }
 
+// syncEntity resolves to {ok, conflicts, revs} since live sync landed — `ok`
+// is the old boolean, and a PUT conflict the hook resolved does NOT count as a
+// failure. These tests care about `ok`; the live-sync suite covers the rest.
 function reqs(method) { return calls.filter(function (c) { return c.method === method; }); }
 function urls(method) { return reqs(method).map(function (c) { return c.url; }); }
 
@@ -83,7 +86,7 @@ const Q43 = { id: 43, title: "other" };
 (async function () {
   // ── The finding: a 409 on a row we did not create must not be written ────
   reset(router({ "POST /api/quotes": { status: 409, text: "quotes 42 already exists" } }));
-  let okAll = await syncEntity("quotes", [], [Q42]);
+  let okAll = (await syncEntity("quotes", [], [Q42])).ok;
   eq("C1 the POST is attempted", urls("POST"), ["/api/quotes"]);
   eq("C2 no PUT follows a conflict on a row this session did not create", urls("PUT"), []);
   eq("C3 only the one request is made", calls.length, 1);
@@ -116,12 +119,12 @@ const Q43 = { id: 43, title: "other" };
       return Promise.resolve({ ok: false, status: status, text: function () { return Promise.resolve(""); } });
     };
   })();
-  okAll = await syncEntity("quotes", [], [Q42, Q43]);
+  okAll = (await syncEntity("quotes", [], [Q42, Q43])).ok;
   ok("R1 a partially failed batch reports failure", okAll === false, String(okAll));
   eq("R2 both rows were POSTed", urls("POST").length, 2);
 
   stage = 2; calls = [];
-  okAll = await syncEntity("quotes", [], [Q42, Q43]);
+  okAll = (await syncEntity("quotes", [], [Q42, Q43])).ok;
   eq("R3 the retry re-POSTs both rows", urls("POST").length, 2);
   eq("R4 the 409 on our own row falls back to PUT", urls("PUT"), ["/api/quotes/42"]);
   eq("R5 the PUT carries our copy of the row", reqs("PUT")[0].body, Q42);
@@ -134,7 +137,7 @@ const Q43 = { id: 43, title: "other" };
   });
   await syncEntity("quotes", [], [Q42]);          // creates 42 only
   calls = [];
-  okAll = await syncEntity("quotes", [], [Q43]);  // 43 conflicts, never created here
+  okAll = (await syncEntity("quotes", [], [Q43])).ok;  // 43 conflicts, never created here
   eq("I1 creating id 42 does not license a fallback for id 43", urls("PUT"), []);
   ok("I2 the id-43 conflict fails the batch", okAll === false, String(okAll));
 
@@ -145,7 +148,7 @@ const Q43 = { id: 43, title: "other" };
   });
   await syncEntity("quotes", [], [Q42]);           // creates quotes:42
   calls = [];
-  okAll = await syncEntity("invoices", [], [Q42]); // invoices:42 is a different row
+  okAll = (await syncEntity("invoices", [], [Q42])).ok; // invoices:42 is a different row
   eq("K1 creating quotes/42 does not license a fallback for invoices/42", urls("PUT"), []);
   ok("K2 the cross-key conflict fails the batch", okAll === false, String(okAll));
 
@@ -162,7 +165,7 @@ const Q43 = { id: 43, title: "other" };
   await syncEntity("quotes", [Q42], []);            // delete 42
   ok("D0 the delete really happened", deleted === true, String(deleted));
   calls = [];
-  okAll = await syncEntity("quotes", [], [{ id: 42, title: "a different record" }]);
+  okAll = (await syncEntity("quotes", [], [{ id: 42, title: "a different record" }])).ok;
   eq("D1 a deleted id no longer licenses the PUT fallback", urls("PUT"), []);
   ok("D2 the post-delete conflict fails the batch", okAll === false, String(okAll));
 
@@ -184,13 +187,13 @@ const Q43 = { id: 43, title: "other" };
 
   // ── Everything else about the diff still holds ──────────────────────────
   reset(router({}));
-  okAll = await syncEntity("quotes", [Q42], [Object.assign({}, Q42, { title: "edited" })]);
+  okAll = (await syncEntity("quotes", [Q42], [Object.assign({}, Q42, { title: "edited" })])).ok;
   eq("S1 a changed existing row is a PUT", urls("PUT"), ["/api/quotes/42"]);
   eq("S2 no POST for a row already in the baseline", urls("POST"), []);
   ok("S3 a clean batch succeeds", okAll === true, String(okAll));
 
   reset(router({}));
-  okAll = await syncEntity("quotes", [Q42], [Q42]);
+  okAll = (await syncEntity("quotes", [Q42], [Q42])).ok;
   eq("S4 an unchanged row makes no request", calls.length, 0);
   ok("S5 an empty diff succeeds", okAll === true, String(okAll));
 
@@ -206,13 +209,13 @@ const Q43 = { id: 43, title: "other" };
 
   // A 409 answering a PUT is a different thing entirely and gets no fallback.
   reset(router({ "PUT /api/quotes/42": { status: 409 } }));
-  okAll = await syncEntity("quotes", [Q42], [Object.assign({}, Q42, { title: "edited" })]);
+  okAll = (await syncEntity("quotes", [Q42], [Object.assign({}, Q42, { title: "edited" })])).ok;
   eq("S10 a 409 on PUT is not retried", calls.length, 1);
   ok("S11 a 409 on PUT fails the batch", okAll === false, String(okAll));
 
   // A non-409 POST failure is not a conflict and must not be reported as one.
   reset(router({ "POST /api/quotes": { status: 422, text: "bad field" } }));
-  okAll = await syncEntity("quotes", [], [Q42]);
+  okAll = (await syncEntity("quotes", [], [Q42])).ok;
   eq("S12 a 422 on POST issues no PUT", urls("PUT"), []);
   eq("S13 a 422 is not reported as an id conflict",
      errors.filter(function (e) { return /id conflict/.test(e.label); }).length, 0);
@@ -228,7 +231,7 @@ const Q43 = { id: 43, title: "other" };
   });
   await syncEntity("quotes", [], [Q42]);            // creates 42 — id now ours
   calls = [];
-  okAll = await syncEntity("quotes", [], [Q42]);    // 422 this time, not 409
+  okAll = (await syncEntity("quotes", [], [Q42])).ok;    // 422 this time, not 409
   eq("S15 a 422 on an id we DID create is still not a PUT", urls("PUT"), []);
   ok("S16 that 422 fails the batch", okAll === false, String(okAll));
 
@@ -238,7 +241,7 @@ const Q43 = { id: 43, title: "other" };
     if (rec.method === "POST" && rec.body && rec.body.id === 42) return { status: 409 };
     return {};
   });
-  okAll = await syncEntity("quotes", [], [Q42, Q43]);
+  okAll = (await syncEntity("quotes", [], [Q42, Q43])).ok;
   eq("B1 the non-conflicting row is still created", reqs("POST").filter(function (c) {
     return c.body.id === 43;
   }).length, 1);
