@@ -13,13 +13,78 @@
 // Toasts stack newest-on-top, cap at MAX_VISIBLE, and auto-dismiss (errors
 // linger longer than successes). The surface mounts inside the signed-in app
 // (see app.js) so it's available on every screen.
+//
+// STICKY toasts (opts.sticky) carry no timer at all. A clock is right for
+// "Quote sent" — you were there, you saw it happen. It is wrong for "this
+// record changed in another window", which is not news about the past but a
+// warning about the save you are about to make: nine seconds of it is nine
+// seconds you might have spent at the coffee machine, and what you do when you
+// come back is hit Save on a form you still believe is current. So a sticky
+// toast ends exactly two ways — the reader dismisses it, or they navigate away
+// from the page the warning was about, at which point it no longer describes
+// anything on screen.
 (function() {
   var h = React.createElement;
 
   // Per-variant auto-dismiss. Errors linger so the user can read the cause;
-  // successes clear quickly.
+  // successes clear quickly. Sticky toasts opt out of this entirely.
   var DISMISS_MS = { error: 20000, warn: 9000, info: 7000, success: 5000 };
   var MAX_VISIBLE = 5;
+
+  // ── Toast policy ──────────────────────────────────────────────────────────
+  // Pure functions, no React: the component below is the only caller, and
+  // tests/test_live_sync.js exercises them directly rather than mounting a DOM.
+
+  // Which page we are on, ignoring the query string. Compared by value rather
+  // than "did the hash change at all" so a sticky toast raised DURING a
+  // navigation is judged against the page it names, not the one being left.
+  function routePath() {
+    try {
+      return String((window.location && window.location.hash) || "")
+        .replace(/^#\/?/, "").split("?")[0];
+    } catch (e) { return ""; }
+  }
+
+  // null = no timer; this toast waits for a person.
+  function dismissAfter(t) {
+    if (!t || t.sticky) return null;
+    return t.duration || DISMISS_MS[t.variant] || 9000;
+  }
+
+  function survivesNavigation(t, toPath) {
+    if (!t || !t.sticky) return true;      // timed toasts keep their own clock
+    return t.path === toPath;
+  }
+
+  // Two identical warnings say nothing the first one didn't, and live sync can
+  // legitimately notice the same row moving more than once. Sticky toasts are
+  // therefore deduplicated by content — the one already on screen is, by
+  // definition, still unread.
+  function dedupeKey(t) {
+    return [t.variant, t.title || "", t.message || "", t.body || ""].join("\u0000");
+  }
+  function isDuplicate(list, t) {
+    if (!t.sticky) return false;
+    var key = dedupeKey(t);
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].sticky && dedupeKey(list[i]) === key) return true;
+    }
+    return false;
+  }
+
+  // Over the cap, evict the oldest TIMED toast first. A sticky one is unread by
+  // definition, and dropping it would be exactly the silent disappearance the
+  // sticky mode exists to prevent — so those go only when nothing else is left.
+  function evict(list) {
+    var next = list.slice(), dropped = [];
+    while (next.length > MAX_VISIBLE) {
+      var i = 0;
+      for (var k = 0; k < next.length; k++) { if (!next[k].sticky) { i = k; break; } }
+      dropped.push(next[i]);
+      next.splice(i, 1);
+    }
+    return { list: next, dropped: dropped };
+  }
 
   // Monotonic id for keying toasts so React doesn't reuse DOM nodes when
   // an older toast disappears.
@@ -28,8 +93,10 @@
   // ── Public helper ─────────────────────────────────────────────────────────
   // window.LTP_toast("Sent to QuickBooks", { message: "...", variant: "success" })
   // variant ∈ {success, error, warn, info} (default info). `duration` (ms)
-  // overrides the per-variant default. Safe to call before the component
-  // mounts — the event simply has no listener yet (rare; mount is early).
+  // overrides the per-variant default. `sticky` drops the timer altogether —
+  // see the note at the top of this file for when that is the right call.
+  // Safe to call before the component mounts — the event simply has no listener
+  // yet (rare; mount is early).
   window.LTP_toast = function(title, opts) {
     opts = opts || {};
     try {
@@ -39,6 +106,7 @@
           message: opts.message || "",
           variant: opts.variant || "info",
           duration: opts.duration,
+          sticky: opts.sticky === true,
           at: new Date().toISOString(),
         }
       }));
@@ -65,33 +133,38 @@
     var toasts = pair[0], setToasts = pair[1];
     // Hold the active dismiss timers so cleanup is clean on unmount.
     var timersRef = useRef({});
+    // The authoritative list. Three things mutate it — a new toast, a dismiss,
+    // and a navigation — and the dedupe and eviction rules need to see the
+    // others' results immediately rather than after a render, so the ref leads
+    // and state exists only to draw it.
+    var listRef = useRef([]);
+
+    function commit(next, dropped) {
+      (dropped || []).forEach(function(t) {
+        if (timersRef.current[t.id]) {
+          clearTimeout(timersRef.current[t.id]);
+          delete timersRef.current[t.id];
+        }
+      });
+      listRef.current = next;
+      setToasts(next);
+    }
 
     useEffect(function() {
       function add(toast) {
-        var id = nextId++;
-        toast.id = id;
-        setToasts(function(prev) {
-          var next = prev.concat([toast]);
-          // Drop oldest if over the cap. We slice from the tail so the
-          // newest 5 are always visible.
-          if (next.length > MAX_VISIBLE) {
-            var dropped = next.slice(0, next.length - MAX_VISIBLE);
-            dropped.forEach(function(t) {
-              if (timersRef.current[t.id]) {
-                clearTimeout(timersRef.current[t.id]);
-                delete timersRef.current[t.id];
-              }
-            });
-            next = next.slice(next.length - MAX_VISIBLE);
-          }
-          return next;
-        });
-        var dur = toast.duration || DISMISS_MS[toast.variant] || 9000;
-        timersRef.current[id] = setTimeout(function() {
-          delete timersRef.current[id];
-          setToasts(function(prev) {
-            return prev.filter(function(t) { return t.id !== id; });
-          });
+        if (isDuplicate(listRef.current, toast)) return;
+        // Stamp the page this warning is about, so navigating away retires it
+        // and navigating anywhere else does not.
+        if (toast.sticky) toast.path = routePath();
+        toast.id = nextId++;
+        var res = evict(listRef.current.concat([toast]));
+        commit(res.list, res.dropped);
+
+        var dur = dismissAfter(toast);
+        if (dur == null) return;          // sticky — dismissed by hand or by nav
+        timersRef.current[toast.id] = setTimeout(function() {
+          delete timersRef.current[toast.id];
+          commit(listRef.current.filter(function(t) { return t.id !== toast.id; }));
         }, dur);
       }
 
@@ -104,6 +177,10 @@
           status: entry.status,
           body: entry.body,
           message: entry.error,
+          // recordError() marks the entries that describe divergence rather
+          // than plain failure — a lost race, a refused write. Those must not
+          // time out; see the sticky note at the top of this file.
+          sticky: entry.sticky === true,
         });
       }
       function onToast(e) {
@@ -114,13 +191,23 @@
           title: d.title || "",
           message: d.message || "",
           duration: d.duration,
+          sticky: d.sticky === true,
         });
+      }
+      // Leaving the page a sticky warning is about retires it: it described
+      // what was on screen, and that is no longer on screen.
+      function onNavigate() {
+        var now = routePath();
+        var next = listRef.current.filter(function(t) { return survivesNavigation(t, now); });
+        if (next.length !== listRef.current.length) commit(next);
       }
       window.addEventListener("ltp-api-error", onError);
       window.addEventListener("ltp-toast", onToast);
+      window.addEventListener("hashchange", onNavigate);
       return function() {
         window.removeEventListener("ltp-api-error", onError);
         window.removeEventListener("ltp-toast", onToast);
+        window.removeEventListener("hashchange", onNavigate);
         Object.keys(timersRef.current).forEach(function(k) {
           clearTimeout(timersRef.current[k]);
         });
@@ -129,13 +216,8 @@
     }, []);
 
     function dismiss(id) {
-      if (timersRef.current[id]) {
-        clearTimeout(timersRef.current[id]);
-        delete timersRef.current[id];
-      }
-      setToasts(function(prev) {
-        return prev.filter(function(t) { return t.id !== id; });
-      });
+      var gone = listRef.current.filter(function(t) { return t.id === id; });
+      commit(listRef.current.filter(function(t) { return t.id !== id; }), gone);
     }
 
     if (toasts.length === 0) return null;
@@ -235,4 +317,14 @@
   }
 
   window.LTPErrorToasts = ErrorToasts;
+
+  // Test seam (tests/test_live_sync.js). Not used by the app.
+  window.LTP_TOAST_POLICY = {
+    routePath: routePath,
+    dismissAfter: dismissAfter,
+    survivesNavigation: survivesNavigation,
+    isDuplicate: isDuplicate,
+    evict: evict,
+    MAX_VISIBLE: MAX_VISIBLE,
+  };
 })();

@@ -173,8 +173,9 @@ window.LTP_useUnsavedGuard = function() {
 //
 // Deliberately fires even when the form is untouched: what it is showing is
 // stale either way, and unlike a draft editor there is nothing safe to silently
-// refresh. Forms that STAY MOUNTED after saving should use LTP_useRemoteEdits
-// with a real dirty flag instead, or they will warn about their own write.
+// refresh. It does NOT fire on this window's own writes — a form that saves and
+// stays mounted for a commit used to tell the person who saved that another
+// window had changed the row; see the remote-epoch note in LTP_useRemoteEdits.
 window.LTP_useRecordWatch = function(collection, id, notice, pick) {
   // Latch the first real id we are given. Callers usually pass something like
   // `initial && initial.id`, which goes undefined the moment the row is deleted
@@ -205,7 +206,8 @@ window.LTP_useRecordWatch = function(collection, id, notice, pick) {
     notice,
     // Keyed on the LATCHED id, so a deletion is a change to report rather than a
     // reset that hides it.
-    String(collection) + ":" + String(watchId));
+    String(collection) + ":" + String(watchId),
+    collection);
 };
 
 
@@ -240,9 +242,19 @@ window.LTP_useRecordWatch = function(collection, id, notice, pick) {
 //   onAdopt   called with a fresh snapshot when it is safe to swap it in.
 //   notice    { title, message } shown in the dirty case.
 //   resetKey  changing it forgets everything — the editor switched records.
-window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey) {
+window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey, collection) {
   var seenRef = React.useRef(null);
   var warnedRef = React.useRef(false);
+  // The remote epoch as of the last time we looked at this record.
+  //
+  // A row changing is not by itself news: the commonest reason a watched row
+  // changes is that the person watching it just saved. Both cases arrive here
+  // identically — a new object with new content — so the only way to tell them
+  // apart is to ask the state layer, which knows whether IT installed those
+  // rows from a server response. data-state.js bumps this counter exactly
+  // there. Unchanged since our last look ⇒ this window caused the change ⇒
+  // nothing happened "elsewhere" and there is nothing to warn about.
+  var epochRef = React.useRef(undefined);
 
   // Switching records starts a fresh editing session: nothing seen, nothing
   // warned. Declared BEFORE the compare effect so it lands first in the same
@@ -251,9 +263,13 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
   React.useEffect(function() {
     seenRef.current = null;
     warnedRef.current = false;
+    epochRef.current = undefined;
   }, [resetKey]);
 
   React.useEffect(function() {
+    var epochNow = collection != null
+      ? (window.LTP_DATA_REMOTE_EPOCH || {})[collection]
+      : undefined;
     var incoming;
     if (!record) {
       // No record at all. Either this editor is on something brand new and
@@ -265,9 +281,30 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
       try { incoming = JSON.stringify(snapshot(record)); }
       catch (e) { return; }               // unserializable — nothing safe to compare
     }
-    if (seenRef.current === null) { seenRef.current = incoming; return; }
-    if (incoming === seenRef.current) return;
+    if (seenRef.current === null) {
+      seenRef.current = incoming;
+      epochRef.current = epochNow;
+      return;
+    }
+    if (incoming === seenRef.current) { epochRef.current = epochNow; return; }
     seenRef.current = incoming;
+
+    // Ours, not theirs. Re-baseline and say nothing — but DO clear the
+    // once-per-session gate: having just saved, this editor is level with the
+    // stored row again, so the next change that really does come from
+    // somewhere else is worth hearing about.
+    //
+    // Suppress ONLY on a positive answer — two real epochs that agree. No
+    // collection, or no epoch published for it (a collection the state layer
+    // does not manage, a watch mounted before it), falls back to warning. A
+    // warning that fires when it need not is a nuisance; one that has quietly
+    // stopped firing is the data loss it was put here to prevent.
+    var fromServer = collection == null
+      || epochNow == null || epochRef.current == null
+      || epochNow !== epochRef.current;
+    epochRef.current = epochNow;
+    if (!fromServer) { warnedRef.current = false; return; }
+
     if (!isDirty && record && onAdopt) {
       warnedRef.current = false;
       onAdopt(snapshot(record));
@@ -280,6 +317,10 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
         message: (notice && notice.message) ||
           "Another window updated this while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version.",
         variant: "warn",
+        // No timer: this describes the form still in front of you, and the very
+        // person it is for is the one most likely to be away from the desk when
+        // it lands. It goes when they dismiss it or leave the page.
+        sticky: true,
       });
     }
   }, [record]);

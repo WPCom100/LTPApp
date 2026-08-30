@@ -88,7 +88,7 @@
       function(fresh) { setDraftRaw(fresh); cleanRef.current = fresh; },
       { title: "This schedule changed elsewhere",
         message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
-      project.id);
+      project.id, "projects");
 
     // Informational / validation notice as a non-blocking toast (modals are
     // reserved for confirm/cancel decisions). Variant defaults to "error".

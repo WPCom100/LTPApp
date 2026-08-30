@@ -195,7 +195,7 @@
       function(fresh) { setDraft(Object.assign({}, fresh)); cleanRef.current = fresh; },
       { title: "Settings changed elsewhere",
         message: "Another window updated settings while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer values." },
-      "settings");
+      "settings", "settings");
 
     function loadUsers() {
       fetch("/api/users")

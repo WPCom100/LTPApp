@@ -1356,7 +1356,7 @@
       },
       { title: "This invoice changed elsewhere",
         message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
-      String(invoiceId) + ":" + String(isNew));
+      String(invoiceId) + ":" + String(isNew), "invoices");
 
     // Informational / validation notice as a non-blocking toast (modals are
     // reserved for confirm/cancel decisions). Variant defaults to "error";
