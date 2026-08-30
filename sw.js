@@ -71,7 +71,12 @@
 // v57 cache would serve its own (empty) view of the new tree for one more launch.
 // The images are linked from an email that renders outside the app entirely, so
 // they have to be right the first time a crew member opens it.
-var CACHE_VERSION = 'ltp-shell-v58';
+// v59: the standalone crew announcement page (assets/crew-email/announcement.html)
+// and the allow-list entry that serves it. Runtime-cached like everything under
+// /assets/, and it is the page crew are sent when their mail client fails them —
+// so a device answering it from a v58 cache would hand back the SPA shell that
+// URL used to resolve to. Nothing precached moved; the bump is for that entry.
+var CACHE_VERSION = 'ltp-shell-v59';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

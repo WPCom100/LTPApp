@@ -45,11 +45,28 @@ def test_vendored_files_exist_on_disk():
     assert os.path.isfile(os.path.join(_root, "assets", "vendor", "zxing_reader.wasm"))
 
 
+def test_crew_announcement_resolves():
+    """The standalone crew announcement page must be reachable — it is the
+    fallback crew are pointed at when their mail client mangles the email."""
+    rel = "assets/crew-email/announcement.html"
+    resolved = _resolve_static(rel)
+    assert resolved is not None, f"{rel} should be allow-listed"
+    assert resolved.replace(os.sep, "/").endswith(rel)
+
+
+def test_crew_announcement_exists_on_disk():
+    """The page is committed, not just allow-listed."""
+    assert os.path.isfile(os.path.join(_root, "assets", "crew-email", "announcement.html"))
+
+
 def test_deny_by_default_preserved():
     """Non-frontend files at the repo root stay unreachable — the allowlist must
-    not have widened beyond assets/vendor/*.{js,wasm}."""
+    not have widened beyond assets/vendor/*.{js,wasm} and
+    assets/crew-email/*.html."""
     for denied in ("requirements.txt", "backend/main.py", "alembic.ini", "pytest.ini",
-                   "assets/foo.wasm", "assets/bar.js"):  # .wasm/.js only under vendor/
+                   "assets/foo.wasm", "assets/bar.js",  # .wasm/.js only under vendor/
+                   "assets/rogue.html", "index2.html",  # .html only under crew-email/
+                   "assets/crew-email/notes.txt"):      # and only .html in there
         assert _resolve_static(denied) is None, f"{denied} must not be servable"
 
 
@@ -85,6 +102,23 @@ def test_wasm_served_as_application_wasm():
         ct = r.headers.get("content-type", "").lower()
         assert "application/wasm" in ct, f"expected application/wasm, got {ct!r}"
         assert r.content[:4] == b"\x00asm", "not a valid wasm binary"
+
+
+def test_crew_announcement_served_as_html():
+    """GET the announcement page through the real app: 200 + text/html, and the
+    page's OWN content — not the index.html SPA fallback, which also returns 200
+    and is the failure mode this allow-list entry exists to prevent."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    with TestClient(app) as client:
+        r = client.get("/assets/crew-email/announcement.html")
+        assert r.status_code == 200, f"got {r.status_code}"
+        ct = r.headers.get("content-type", "").lower()
+        assert "text/html" in ct, f"expected text/html, got {ct!r}"
+        # Distinguishing marker: the announcement's <title>, which the SPA shell
+        # does not carry. A status-code-only check cannot tell these apart.
+        assert "Crew Requests" in r.text, "served the SPA fallback, not the page"
+        assert "LTP Business Suite" not in r.text, "this is the app shell, not the page"
 
 
 def test_csp_allows_wasm():

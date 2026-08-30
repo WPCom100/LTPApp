@@ -1,3 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Crew Requests — Luminary Technology &amp; Productions</title>
+<meta name="description" content="How Luminary sends crew requests, and how to accept or pass on a shift.">
+<meta name="robots" content="noindex">
+<!--
+  Standalone copy of the crew-request announcement email — the page crew are
+  pointed at when their mail client mangles or blocks the real message. The
+  body below is byte-identical to what gets pasted into Gmail, so this file is
+  the single source for both: open it, Select All, Copy, paste into a compose
+  window. Served publicly via the "assets/crew-email/" entry in
+  backend/main.py::_ALLOWED_TREES.
+-->
+<style>
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    padding: 28px 16px 56px;
+    background-color: #eef1f3;
+    font-family: -apple-system, 'Segoe UI', Roboto, Arial, Helvetica, sans-serif;
+  }
+  /* The email body is a fixed 624px card; give it a page to sit on. */
+  body > div { background-color: #ffffff; padding: 30px 34px 38px; border-radius: 10px;
+               box-shadow: 0 2px 14px rgba(28, 44, 54, .10); }
+  @media (max-width: 640px) {
+    body { padding: 0; }
+    body > div { padding: 20px 18px 28px; border-radius: 0; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
 <div style="max-width:624px;margin:0 auto;padding:0;background-color:#ffffff;font-family:-apple-system,'Segoe UI',Roboto,Arial,Helvetica,sans-serif;font-size:16px;line-height:1.62;color:#3A4A54">
 <img src="https://app.luminarytechnology.productions/assets/logos/luminary-masthead.png" alt="Luminary Technology &amp; Productions" width="340" style="display:block;border:0;width:100%;max-width:340px;height:auto;margin:0 0 -1px 0">
 <div style="height:4px;background-color:#f15927;font-size:0;line-height:0">&nbsp;</div>
@@ -62,3 +96,5 @@ Owner<br>
 </p>
 </div>
 </div>
+</body>
+</html>
