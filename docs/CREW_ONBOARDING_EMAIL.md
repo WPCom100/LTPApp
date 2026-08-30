@@ -1,23 +1,38 @@
 # Crew Announcement Email — the new request flow
 
 Ready-to-send announcement for LTP crew explaining how job requests now
-arrive and how to accept a shift. Deliberately crew-facing: no internals,
-no mention of the producer-side tooling.
+arrive and how to accept a shift. Crew-facing only: no producer-side or
+internal detail.
 
-**Before sending**, fill in `[Your Name]`, `[Your Title]`, `[your phone]`,
-and `[your email]` in the sign-off, and attach/inline the three screenshots
-in `docs/crew-email/`:
+## Files
 
-| Marker | File | Shows |
-|---|---|---|
-| Screenshot 1 | `01-request-email.webp` | The request email as it lands in the inbox |
-| Screenshot 2 | `02-call-sheet-respond.webp` | The call sheet with Accept / I Can't Make It + note |
-| Screenshot 3 | `03-confirmed.webp` | The confirmed call sheet with Add to Calendar |
+| File | What it is |
+|---|---|
+| `docs/crew-announcement-email.html` | The email, inline-styled for Gmail. Open in a browser, Select All, Copy, paste into Gmail's compose window. |
+| `docs/CREW_ONBOARDING_EMAIL.md` | This file — the plain-text version below. |
+| `assets/crew-email/*.jpg` | The three screenshots, served publicly by the app. |
+
+## Hosted images
+
+The email references its screenshots by URL rather than embedding them, so
+the message stays a few KB and Gmail never clips it. They live in the
+`assets/` tree, which `backend/main.py::_ALLOWED_TREES` serves publicly and
+unauthenticated:
+
+- `https://app.luminarytechnology.productions/assets/crew-email/01-request-email.jpg`
+- `https://app.luminarytechnology.productions/assets/crew-email/02-call-sheet-respond.jpg`
+- `https://app.luminarytechnology.productions/assets/crew-email/03-confirmed.jpg`
+- `https://app.luminarytechnology.productions/assets/logos/luminary-masthead.png` (existing)
+
+**These files must stay deployed** — deleting or renaming them breaks the
+images in every copy of the email already sent. HTTPS is required: mail
+clients and browsers block or flag plain-http images.
 
 Screenshots are live captures of `modules/crew-view.js` and the rendered
 `crewRequest` email from `backend/routes/crew.py`, against seeded demo data
-(project "Autumn Summit 2026", crew member "Jordan Reyes"). The venue map
-embed is omitted — it needs outbound network the capture sandbox lacks.
+(project "Autumn Summit 2026", crew member "Jordan Reyes"). JPEG, because
+WebP is unsupported in Outlook desktop. The venue map embed is omitted from
+the captures — it needs outbound network the capture sandbox lacks.
 
 ---
 
@@ -93,11 +108,12 @@ A FEW THINGS WORTH KNOWING
   • Keep your contact details current. Requests go to the email address we have on file — if yours has changed, let us know.
 
 
-Questions or problems — come straight to me. If anything about the new system is unclear, or something doesn't work right — a link that won't open, an email that never showed up, a shift that looks wrong — contact me directly. I'd much rather hear about it early than have anyone miss a call over it.
+Questions or problems — come straight to me. If anything about the new system is unclear, or something doesn't work right — a link that won't open, an email that never showed up, a shift that looks wrong — contact me directly at (972) 849-5202 or Landry@LuminaryTechnology.Productions. I'd much rather hear about it early than have anyone miss a call over it.
 
 Thanks, all. Looking forward to getting you out on more shows.
 
-[Your Name]
-[Your Title]
+Landry Strickland
+Owner
 Luminary Technology & Productions
-[your phone] · [your email]
+(972) 849-5202 · Landry@LuminaryTechnology.Productions
+LuminaryTechnology.Productions
