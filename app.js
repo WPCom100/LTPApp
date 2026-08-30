@@ -481,8 +481,14 @@ function LTPSignedInApp(props) {
 
   // Does the rail header show the masthead? Only when it is expanded enough
   // to hold one and the PNG actually loaded — it drives the header's own box
-  // (full bleed vs. the padded chip header) as well as what goes inside it.
+  // (bottom-flush logo vs. the evenly padded chip header) as well as what goes
+  // inside it.
   var brandLogo = sidebarOpen && !logoFailed;
+  // Height of BOTH header rules — the rail's brand block and the topbar beside
+  // it — so the two hairlines meet at the same y instead of stepping. Shared
+  // rather than written twice because the whole point is that they are equal;
+  // border-box means this includes each header's own 1px bottom border.
+  var HEADER_H = 52;
 
   return h(React.Fragment, null,
    // Shell frame. Desktop = a row (sidebar | content). Mobile = a column
@@ -491,17 +497,19 @@ function LTPSignedInApp(props) {
    h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", height: "100%", background: B.bg, fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text, overflow: "hidden" } },
     !isMobile && h("div", { style: { width: sidebarOpen ? 210 : 52, transition: "width 0.25s ease", background: B.surface, borderRight: "1px solid " + B.border, display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0 } },
       // Brand block — the masthead lockup, the same asset the sign-in screen
-      // and the branded email wear. It spans the rail edge to edge and the
-      // header takes its height FROM the image (no padding, no minHeight), so
-      // the lockup is the whole header: flush on the bottom rule, no dead space
-      // around it, and the rail header ends up shorter than the chip's 66px
-      // rather than taller. The PNG is cropped tight to the artwork — zero
-      // transparent margin — so full bleed really is ink touching the border.
+      // and the branded email wear. The header is pinned to HEADER_H in EVERY
+      // state, so its rule meets the topbar's as one line whichever way the
+      // rail is toggled; the vertical inset is left to align-items rather than
+      // padding for the same reason. The logo keeps a 16px side inset and
+      // bottom-aligns with nothing under it — sitting ON the rule while inset
+      // from the top and both edges. The PNG is cropped tight to the artwork —
+      // zero transparent margin — so that bottom edge really is ink meeting the
+      // border, not a transparent gutter.
       // Collapsed to 52px there is nowhere to put a 4.8:1 wordmark, so the rail
       // wears the LTP chip instead — which is also the fallback if the PNG
-      // never loads, alongside the company name it replaces. Both of those keep
-      // the padded 58px-min header the chip was drawn for.
-      h("div", { style: { padding: brandLogo ? 0 : (sidebarOpen ? "18px 16px" : "18px 10px"), borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", gap: 10, cursor: "pointer", minHeight: brandLogo ? 0 : 58 }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
+      // never loads, alongside the company name it replaces. Those centre in
+      // the same box.
+      h("div", { style: { padding: sidebarOpen ? "0 16px" : "0 10px", borderBottom: "1px solid " + B.border, display: "flex", alignItems: brandLogo ? "flex-end" : "center", gap: 10, cursor: "pointer", height: HEADER_H, minHeight: HEADER_H }, onClick: function() { setSidebarOpen(!sidebarOpen); } },
         brandLogo
           ? h("img", { src: "/assets/logos/luminary-masthead.png", alt: "Luminary Technology & Productions", draggable: false, onError: function() { setLogoFailed(true); },
               style: { display: "block", width: "100%", height: "auto" } })
@@ -614,7 +622,7 @@ function LTPSignedInApp(props) {
       // On mobile the topbar extends under the translucent status bar via
       // env(safe-area-inset-top) (height auto so the inset adds to the 52px bar
       // rather than eating into it), with tighter horizontal padding.
-      h("div", { style: { height: isMobile ? "auto" : 52, minHeight: 52, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 4px" : "0 22px", background: B.surface, flexShrink: 0 } },
+      h("div", { style: { height: isMobile ? "auto" : HEADER_H, minHeight: HEADER_H, borderBottom: "1px solid " + B.border, display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "env(safe-area-inset-top) 12px 4px" : "0 22px", background: B.surface, flexShrink: 0 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
           h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" } },
             window.LTP_NAV_ICON(activeModule, 18, B.accent)),
