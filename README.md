@@ -693,9 +693,40 @@ someone's typing to win a race is the wrong trade at this size.
 
 Not every read is in the feed. `/api/qbo/status`, `/api/users` and
 `/api/qbo/payouts/day-status` are backed by tables outside `livesync.COLLECTIONS`
-and still load once per mount. The first two change only when an admin acts. The
-third is the one to watch: it drives the schedule editor's paid-day warn+confirm,
-that guard is client-side only, and a stale copy means it silently does not fire.
+and still load once per mount. The first two change only when an admin acts.
+
+`day-status` used to be the one to watch — it drives the paid-day warn+confirm,
+and a stale copy meant the guard silently did not fire. That is now enforced
+server-side instead of relying on the client being fresh; see below.
+
+## Paid days
+
+Once a crew day is billed to QuickBooks AND that bill is paid, the money is gone.
+Editing the schedule underneath it claws nothing back — it just makes the app
+disagree with the accounts.
+
+`PUT /api/projects/{id}` refuses such a write with `409 paid_day_conflict`,
+listing who and which dates, unless the request carries
+`X-LTP-Paid-Day-Override: 1`. The comparison
+(`backend/payouts.py::paid_day_signature`) fingerprints everything that decides
+what a crew member is owed for a day — shift times, crew-wide and per-position
+breaks, service, role, status, and the frozen `work`/`adj` snapshot — so an
+unrelated edit elsewhere in the project passes straight through.
+
+Two ordering details worth keeping:
+
+- The check runs on the FINAL schedule, after `crew_integrity`'s status-floor
+  and pay-snapshot guards have had their say. On the raw incoming schedule it
+  would refuse writes those guards had already reverted to a no-op.
+- It mirrors `modules/schedule-builder.js::_paidSig`, and is deliberately
+  stricter (it also covers `work`/`adj`, which the pay-snapshot guard only
+  restrains for non-admins). Keep the two in step: a field one side fingerprints
+  and the other does not is a paid day that changes without anyone being asked.
+
+The client still warns first, from `day-status`, so the common case never round-
+trips a refusal. When that map is stale the server refuses, the editor prompts
+from the server's answer, and confirming re-sends with the override — so the
+client being out of date is now harmless rather than silent.
 
 Notes for future changes:
 - The broadcast bus is **in-process**. That is correct for one uvicorn worker on

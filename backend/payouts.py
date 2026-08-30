@@ -23,6 +23,7 @@ Two responsibilities:
 
 Money is float dollars rounded to the cent, matching the rest of the app.
 """
+import json
 import math
 from datetime import date, timedelta
 
@@ -299,6 +300,119 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
         })
     drafts.sort(key=lambda g: g["name"])
     return drafts
+
+
+# ── Paid-day integrity ──────────────────────────────────────────────────────
+#
+# Once a crew member's day has been billed to QuickBooks AND that bill is paid,
+# the money is out the door. Editing the schedule underneath it does not claw
+# anything back — it just makes the app disagree with the accounts.
+#
+# The Schedule Builder and Payouts tab both warn before such an edit, but that
+# check reads a `paidDays` map fetched once when the editor opened. Two windows,
+# or a bill paid while an editor sat open, and the warning simply does not fire.
+# The client check is a courtesy; THIS is the enforcement.
+
+
+def _ser_breaks(breaks) -> str:
+    """Order-independent serialization of a break list."""
+    parts = []
+    for b in (breaks or []):
+        if not isinstance(b, dict):
+            continue
+        parts.append("%s:%s:%s" % (b.get("startTime") or "", b.get("endTime") or "", b.get("type") or ""))
+    return "|".join(sorted(parts))
+
+
+def paid_day_signature(schedule) -> dict:
+    """`"{crewId}|{date}"` → a fingerprint of everything that decides what that
+    crew member is owed for that day.
+
+    Mirrors modules/schedule-builder.js::_paidSig — shift times, the crew-wide
+    breaks AND the position's own breaks, and each of that crew's positions
+    (service, role, status) — because any of those changing means the frozen
+    `work.pay` snapshot we already billed no longer describes the day worked.
+
+    Deliberately STRICTER than the client in one respect: it also covers `work`
+    and `adj` themselves. Those are the billed money, and crew_integrity's
+    pay-snapshot guard only restrains non-admins — so an admin re-pricing a day
+    that is already paid must trip this too. Being stricter than the client is
+    safe (the worst case is a prompt the client did not predict); being looser
+    would be a hole.
+
+    KEEP IN STEP with _paidSig. A field one side fingerprints and the other does
+    not is a paid day that changes without anyone being asked.
+    """
+    m: dict = {}
+    for shift in (schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        d = shift.get("date")
+        if not d:
+            continue
+        shift_breaks = _ser_breaks(shift.get("breaks"))
+        for pos in (shift.get("positions") or []):
+            if not isinstance(pos, dict):
+                continue
+            cid = pos.get("crewId")
+            if cid is None:
+                continue
+            m.setdefault("%s|%s" % (cid, d), []).append(json.dumps([
+                shift.get("time"), shift.get("endTime"),
+                pos.get("serviceId"), pos.get("role"), pos.get("status"),
+                shift_breaks, _ser_breaks(pos.get("breaks")),
+                pos.get("work"), pos.get("adj"),
+            ], sort_keys=True, default=str))
+    # Sorted, so reordering positions within a day is not a "change".
+    return {k: "\u0000".join(sorted(v)) for k, v in m.items()}
+
+
+async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule) -> list:
+    """Days on `project_id` that are PAID in QuickBooks and whose payout inputs
+    this write would change.
+
+    Compare against the FINAL incoming schedule — after crew_integrity's status
+    floor and pay-snapshot guards have had their say — or a change those guards
+    already reverted would be reported as a conflict that does not exist.
+
+    Empty list = nothing paid is affected, which is the overwhelmingly common
+    case and costs one indexed query.
+    """
+    from sqlalchemy import select
+    from backend import models
+
+    rows = (await db.execute(
+        select(models.PayoutBillLine, models.PayoutBill)
+        .join(models.PayoutBill, models.PayoutBillLine.payout_bill_id == models.PayoutBill.id)
+        .where(models.PayoutBillLine.project_id == project_id,
+               models.PayoutBill.qb_paid_at.isnot(None))
+    )).all()
+    if not rows:
+        return []
+
+    before = paid_day_signature(stored_schedule)
+    after = paid_day_signature(incoming_schedule)
+
+    hits = []
+    for line, bill in rows:
+        key = "%s|%s" % (line.contact_id, line.date)
+        if before.get(key) == after.get(key):
+            continue
+        hits.append({"contactId": line.contact_id, "date": line.date,
+                     "docNumber": bill.doc_number, "amount": line.amount, "name": ""})
+    if not hits:
+        return []
+
+    # Names, so the refusal can say WHO rather than a bare contact id.
+    ids = {h["contactId"] for h in hits if h["contactId"] is not None}
+    if ids:
+        people = (await db.execute(
+            select(models.Contact).where(models.Contact.id.in_(ids)))).scalars().all()
+        by_id = {c.id: ((c.first_name or "") + " " + (c.last_name or "")).strip() for c in people}
+        for h in hits:
+            h["name"] = by_id.get(h["contactId"]) or "A crew member"
+    hits.sort(key=lambda h: (h["date"], h["name"]))
+    return hits
 
 
 async def load_projects_and_crew(db):

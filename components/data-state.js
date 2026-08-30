@@ -112,7 +112,7 @@
     });
   }
 
-  function jsonReq(label, url, method, body, ifMatch) {
+  function jsonReq(label, url, method, body, ifMatch, extraHeaders) {
     var opts = { method: method, headers: {} };
     if (body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
@@ -122,8 +122,43 @@
     // server response for) means "no opinion", and the server falls back to
     // last-write-wins for that row — same as before this existed.
     if (ifMatch) opts.headers["If-Match"] = ifMatch;
+    if (extraHeaders) {
+      Object.keys(extraHeaders).forEach(function(h) { opts.headers[h] = extraHeaders[h]; });
+    }
     return apiFetch(url, opts).then(function(r) { return checkResponse(label, r); });
   }
+
+  // ── One-shot write headers ──────────────────────────────────────────────
+  //
+  // Some writes need a confirmation the row itself cannot carry — today that is
+  // "yes, I really mean to change a day already paid in QuickBooks"
+  // (X-LTP-Paid-Day-Override; see backend/routes/api.py::_paid_day_override).
+  // The editor that showed the confirmation is not the code that issues the
+  // PUT — persisted state does that, on a debounce — so it arms the header here
+  // and the next sync of that row picks it up.
+  //
+  // Armed headers expire, and clear on a successful write, so a confirmation
+  // can never leak onto an unrelated later save.
+  var ARM_TTL_MS = 120000;
+  var armed = {};
+
+  function armKey(key, id) { return key + "/" + id; }
+
+  function armWrite(key, id, headers) {
+    armed[armKey(key, id)] = { headers: headers, expires: Date.now() + ARM_TTL_MS };
+  }
+
+  function peekArmed(key, id) {
+    var slot = armed[armKey(key, id)];
+    if (!slot) return null;
+    if (slot.expires < Date.now()) { delete armed[armKey(key, id)]; return null; }
+    return slot.headers;
+  }
+
+  // Cleared on SUCCESS, not on send: a write that fails for an unrelated reason
+  // (a network blip) is retried by the next diff, and disarming mid-flight would
+  // make that retry fail the very check the user already answered.
+  function disarm(key, id) { delete armed[armKey(key, id)]; }
 
   // ── Revisions ───────────────────────────────────────────────────────────
   //
@@ -319,8 +354,25 @@
       } else if (!same(p, item)) {
         var putLabel = "PUT " + key + "/" + id;
         requests.push(
-          jsonReq(putLabel, API_PREFIX + key + "/" + id, "PUT", item, revs[id])
-            .then(capture, function(err) {
+          jsonReq(putLabel, API_PREFIX + key + "/" + id, "PUT", item, revs[id], peekArmed(key, id))
+            .then(function(resp) { disarm(key, id); return capture(resp); }, function(err) {
+              // A day already paid in QuickBooks would be re-priced by this
+              // write. The server refuses unless the user has confirmed it —
+              // hand the decision to whoever is editing rather than swallowing
+              // it, so a stale client is prompted instead of silently blocked.
+              if (err && err.status === 409 && err.detail && err.detail.code === "paid_day_conflict") {
+                recordError(putLabel, {
+                  status: 409,
+                  conflict: "changes days already paid in QuickBooks — awaiting confirmation",
+                  days: err.detail.days,
+                });
+                try {
+                  window.dispatchEvent(new CustomEvent("ltp-paid-day-conflict", {
+                    detail: { collection: key, id: item.id, days: err.detail.days || [] },
+                  }));
+                } catch (e) { /* CustomEvent unsupported */ }
+                throw err;   // NOT handled — the baseline must not advance
+              }
               // Someone else wrote this row between our last read and now.
               // The server hands back its current version so we can adopt it
               // without another round trip.
@@ -646,6 +698,9 @@
 
   window.LTP_STATE = {
     usePersistentState: usePersistentState,
+    // Attach a one-shot header to the next write of one row. See the
+    // "One-shot write headers" note above.
+    armWrite: armWrite,
     // Exported for tests (tests/test_live_sync.js).
     _mergeRemote: mergeRemote,
     _splitRevs: splitRevs,
