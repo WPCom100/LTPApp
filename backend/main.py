@@ -647,14 +647,13 @@ _ALLOWED_TREES = {
     # refuses to execute HTML as a script. `.wasm` is here for the ZXing-C++
     # barcode decoder binary (served as application/wasm below).
     "assets/vendor/": (".js", ".wasm"),
-    # The crew announcement page (assets/crew-email/announcement.html) — the
-    # standalone copy of the crew-request email, linked as a fallback for crew
-    # whose mail client mangles or blocks the real thing. Scoped to this one
-    # subtree so ONLY it serves .html; the broad assets/ tree above deliberately
-    # still won't, and neither does anywhere else. Without this the request
-    # falls through to the SPA index.html fallback, which returns 200 and looks
-    # like a hit while serving the app shell instead of the page.
-    "assets/crew-email/": (".html",),
+    # The crew announcement page (assets/crew-email/announcement.html) plus the
+    # small script that drives its sender toolbar. The script is a FILE rather
+    # than an inline block because script-src is 'self' with no 'unsafe-inline'
+    # (see _CSP above) — inline would be refused and the toolbar would render
+    # dead. Scoped to this one subtree, like assets/vendor/ above, so the broad
+    # assets/ tree still serves neither .html nor .js.
+    "assets/crew-email/": (".html", ".js"),
 }
 
 
