@@ -79,6 +79,9 @@
   var stamps = {};              // collection → last stamp we have seen
   var listeners = {};           // collection → [fn]
   var seeded = false;
+  // The shell version the SERVER says it is serving, as of the last frame.
+  // Null until something reports one. See noteAppVersion.
+  var appVersion = null;
   var readyPromise = null;
 
   var source = null;            // live EventSource, if any
@@ -138,6 +141,30 @@
     return changed;
   }
 
+  // ── Which shell the server is serving ─────────────────────────────────────
+  //
+  // Rides along on the feed the window is already listening to, so a tab open
+  // across a deploy finds out without being reloaded first — which was the
+  // catch-22 before: the update banner appeared on load, so you had to refresh
+  // to learn that you needed to refresh.
+  //
+  // The delivery is a consequence of how a deploy goes: it replaces the server
+  // process, the old one releases its streams on the way out, every window
+  // reconnects, and the first frame from the new process carries the new
+  // version. Nothing has to be pushed to a live connection.
+  //
+  // Announced on change only (null → value counts), because the interesting
+  // moment is the transition, and every frame carries the field.
+  function noteAppVersion(v) {
+    if (typeof v !== "string" || !v || v === appVersion) return;
+    var first = appVersion === null;
+    appVersion = v;
+    log(first ? "server shell" : "server shell changed", v);
+    try {
+      window.dispatchEvent(new CustomEvent("ltp-app-version", { detail: { version: v } }));
+    } catch (e) { /* CustomEvent unsupported — the footer just won't update */ }
+  }
+
   function notify(collection) {
     (listeners[collection] || []).slice().forEach(function(fn) {
       // One subscriber throwing must never stop the others from refreshing.
@@ -158,7 +185,11 @@
         if (r.status === 401) { window.location.href = "/auth/login"; return null; }
         return r.ok ? r.json() : null;
       })
-      .then(function(body) { return body ? applyStamps(body.stamps) : []; })
+      .then(function(body) {
+        if (!body) return [];
+        noteAppVersion(body.app);
+        return applyStamps(body.stamps);
+      })
       .catch(function(e) { log("revalidate failed", e); return []; })
       .then(function(changed) { inFlightRevalidate = null; return changed; });
     return inFlightRevalidate;
@@ -215,7 +246,9 @@
     es.addEventListener("sync", function(ev) {
       var payload;
       try { payload = JSON.parse(ev.data); } catch (e) { return; }
-      if (payload && payload.stamps) applyStamps(payload.stamps);
+      if (!payload) return;
+      noteAppVersion(payload.app);
+      if (payload.stamps) applyStamps(payload.stamps);
     });
 
     // The server recycles a stream every livesync.MAX_STREAM_SECONDS so a
@@ -355,7 +388,7 @@
     status: function() {
       return {
         connected: !!source, polling: polling, sseFailures: sseFailures,
-        seeded: seeded, stamps: Object.assign({}, stamps),
+        seeded: seeded, appVersion: appVersion, stamps: Object.assign({}, stamps),
         subscribers: Object.keys(listeners).reduce(function(acc, k) {
           if (listeners[k].length) acc[k] = listeners[k].length;
           return acc;
@@ -363,10 +396,16 @@
       };
     },
 
+    // The shell version the server last reported, for anything that missed the
+    // ltp-app-version event (components/register-sw.js loads after this one).
+    appVersion: function() { return appVersion; },
+
     // Test seam. Not used by the app.
     _applyStamps: applyStamps,
+    _noteAppVersion: noteAppVersion,
     _reset: function() {
       stamps = {}; listeners = {}; seeded = false; started = false; readyPromise = null;
+      appVersion = null;
       sseFailures = 0; backoffMs = BACKOFF_MIN_MS; inFlightRevalidate = null; recycling = false;
       stopPolling();
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
