@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
-from backend import models, qbo_bill_poll, qbo_receipts
+from backend import livesync, models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.api import public_router as users_public_router
+from backend.routes.api import stream_router as livesync_stream_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
@@ -166,14 +168,20 @@ async def lifespan(app: FastAPI):
     sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
     receipt_poller = asyncio.create_task(_qbo_receipt_poll_loop(), name="ltp_qbo_receipt_poller")
     bill_poller = asyncio.create_task(_qbo_payout_poll_loop(), name="ltp_qbo_payout_poller")
+    # Live-sync safety sweep. Request-scoped writes publish themselves from
+    # get_db; this catches the writers that bypass it (the QuickBooks sync
+    # engine and both pollers above open their own sessions). ONE task for the
+    # whole process, so its cost doesn't scale with connected windows.
+    livesync_sweeper = asyncio.create_task(
+        livesync.sweeper(async_session), name="ltp_livesync_sweeper")
     try:
         yield
     finally:
         # Graceful shutdown: cancel, then await so each task actually finishes
         # its current iteration (asyncio.Task.cancel() alone just sets a flag).
-        for task in (sweeper, receipt_poller, bill_poller):
+        for task in (sweeper, receipt_poller, bill_poller, livesync_sweeper):
             task.cancel()
-        for task in (sweeper, receipt_poller, bill_poller):
+        for task in (sweeper, receipt_poller, bill_poller, livesync_sweeper):
             try:
                 await task
             except (asyncio.CancelledError, Exception):
@@ -472,6 +480,15 @@ app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=MAX_PAYLOAD_BYTES)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(CsrfOriginMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
+# Response compression, outermost so it also covers the static frontend. This
+# API's payloads are arrays of objects that repeat every key on every row —
+# close to the best case for gzip, and by far the cheapest single win available
+# on hydration bandwidth, which live sync makes the app pay more often.
+#
+# Safe with SSE: Starlette excludes text/event-stream from compression by
+# default (starlette.middleware.gzip.DEFAULT_EXCLUDED_CONTENT_TYPES), so
+# /api/stream frames are neither buffered nor re-encoded.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 # ── Starlette SessionMiddleware ─────────────────────────────────────────────
@@ -590,6 +607,9 @@ app.include_router(api_router)
 # must be able to load it. Distinct GET path from the session-gated /api/users
 # routes, so registration order is not load-bearing here. See backend/routes/api.py.
 app.include_router(users_public_router)
+# Live-sync SSE feed. Separate router because it authenticates by hand rather
+# than through the api router's Depends(require_session) — see the route.
+app.include_router(livesync_stream_router)
 # PDF: api_pdf_router holds the session-gated POST endpoints (under /api/);
 # public_pdf_router holds the tokenized GET endpoint (under /pdf/) which
 # intentionally bypasses session auth — the token is the credential.

@@ -60,6 +60,13 @@ _RULES = [
     # (H4) for the Gmail relay, and on the destructive bulk wipe/repopulate.
     ("/api/email/send",   20),
     ("/api/sync",         10),
+    # Live-sync SSE feed. Not about abuse cost (it is session-gated and a
+    # rejected connect 401s cheaply) but about connection churn: every accepted
+    # stream holds a subscriber queue for the life of the browser tab. The
+    # client backs off exponentially on reconnect (components/data-state.js), so
+    # honest traffic sits far below this even when the server restarts and every
+    # open window reconnects at once — an office behind one NAT IP included.
+    ("/api/stream",       120),
     # Label OCR — each hit is a paid Anthropic API call, so bound per-IP spend.
     # 30/min is far above real scanning cadence (it only fires on barcode
     # misses) while capping a hostile/runaway client at pennies per minute.

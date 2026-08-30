@@ -92,6 +92,23 @@ async def require_session(
     return user
 
 
+async def load_session_user(db: AsyncSession, request: Request):
+    """Session lookup WITHOUT the FastAPI dependency wrapper.
+
+    require_session takes its database session from Depends(get_db), which
+    FastAPI keeps open until the response has finished sending. That is fine for
+    a normal request and wrong for a long-lived one: GET /api/stream holds its
+    response open for as long as the browser tab lives, so a router-level
+    Depends(require_session) would pin one pooled connection per open tab and
+    exhaust the pool after a handful of windows. The stream route therefore
+    authenticates through here, inside a short-lived `async with async_session()`
+    block it closes before streaming begins.
+
+    Returns the User row, or None when the cookie is missing/expired/unknown —
+    callers raise their own 401 so they control the response shape."""
+    return await _load_session_user(db, request.cookies.get(SESSION_COOKIE_NAME))
+
+
 async def require_admin(
     user: models.User = Depends(require_session),
 ) -> models.User:

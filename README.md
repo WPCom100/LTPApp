@@ -634,9 +634,60 @@ All entities follow REST conventions:
 
 Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`
 
+`PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
+row the API returns includes one). If the row changed since you read it, the PUT
+is refused with `409` and the response body carries the current row so the client
+can adopt it. Omitting the header keeps last-write-wins. See *Live sync* below.
+
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
 - `POST /api/sync` — Bulk import from localStorage
+- `GET /api/versions` — Per-collection change stamps (live sync)
+- `GET /api/stream` — Server-sent change feed (live sync)
+
+## Live sync (cross-window)
+
+Every open window stays current without polling the data itself, and without a
+hard refresh. The design is deliberately narrow: **the server pushes stamps, not
+rows.**
+
+`GET /api/versions` returns one stamp per collection, derived from
+`max(updated_at)` + `count(*)` + an in-process sequence number
+(`backend/livesync.py`). `GET /api/stream` pushes the same map over SSE whenever
+anything changes. A client diffs the map against its own and refetches only the
+collections that moved — so the cost of being live does not grow with the size of
+the workspace.
+
+Three channels feed one code path (`components/live-sync.js`), so they can
+overlap freely; whichever notices first wins and the rest see no stamp change:
+
+| Channel | Reach | Idle cost |
+|---------|-------|-----------|
+| `BroadcastChannel` | same-browser tabs | zero — never touches the network |
+| SSE `/api/stream` | everywhere | one `: keepalive` per 25s (~KB/hour) |
+| Poll `/api/versions` | fallback when SSE won't stay up | ~400 bytes/tick, **foreground tabs only** |
+
+Plus a one-shot revalidation on `visibilitychange`, `focus` and bfcache restore —
+the moments a window is most likely to be wrong.
+
+**Why this mattered.** Crew accept/decline is a *server-side* write: it moves
+position statuses on the project row (`backend/routes/crew.py::_respond`). No
+open window could learn about it, so the Crew Requests tab would show the shift
+name as the literal string "Project" and hide the Confirm button, and the stale
+window would revert the acceptance on its next save. `If-Match` closes that last
+hole; live sync makes it rare in the first place.
+
+Notes for future changes:
+- The broadcast bus is **in-process**. That is correct for one uvicorn worker on
+  one pod (what `railway.json` starts). More than one and a write served by
+  worker A never reaches a window subscribed to worker B — swap `_broadcast()`
+  for a real bus. The 30s safety sweep limits the damage but degrades push to
+  slow polling.
+- Only mark a collection dirty when you actually **wrote** to it. A read path
+  that marks itself dirty is a refetch loop: every window refetches, and each
+  refetch republishes. See `livesync.mark_dirty`.
+- Responses are gzipped (`GZipMiddleware`). SSE is excluded by Starlette, which
+  is what keeps the feed from being buffered.
 
 QuickBooks Online (admin-only except `status`):
 - `GET /api/qbo/status` — connection status (booleans + masked realm; any signed-in user)
@@ -678,10 +729,13 @@ ltp-app/
 │   ├── quickbooks.py      # QuickBooks Online REST client (OAuth + transport)
 │   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
 │   ├── pdf_generator.py   # Quote/invoice PDF rendering
+│   ├── livesync.py        # Cross-window change stamps + SSE broadcast bus
 │   └── routes/
 │       ├── api.py         # REST API routes + /sync
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete
 ├── components/            # Frontend: shared React components
+│   ├── live-sync.js       # Change feed: SSE + poll fallback + BroadcastChannel
+│   ├── data-state.js      # Persisted-state hooks (refetch on change, If-Match)
 │   └── client-rates.js    # Per-client rate editor + the CLIENT RATE chip
 ├── modules/               # Frontend: page modules
 ├── data/                  # Frontend: default/seed data

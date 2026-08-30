@@ -1,14 +1,17 @@
+import hashlib
 import json
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import undefer
-from backend.database import get_db
-from backend import crew_integrity, models
-from backend.auth_deps import require_session, require_admin
+from backend.database import async_session, get_db
+from backend import crew_integrity, livesync, models
+from backend.auth_deps import load_session_user, require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
 from backend.email_validate import parse_recipients, RecipientError
@@ -112,17 +115,75 @@ def _tax_inputs_fingerprint(row) -> str:
                       sort_keys=True, default=str)
 
 
+def _row_rev(d: dict) -> str:
+    """Content revision for a serialized row — the If-Match token.
+
+    A CONTENT hash rather than a timestamp or a version column, for three
+    reasons. It needs no migration across thirteen tables. It cannot be defeated
+    by clock resolution (SQLite's CURRENT_TIMESTAMP only ticks once a second, so
+    two writes to one row inside the same second share an updated_at). And it
+    means exactly what the guard wants it to mean: "the row is still what I last
+    saw", which also makes a genuinely idempotent rewrite a non-conflict.
+
+    Truncated to 16 hex chars — 64 bits, which is far past collision relevance
+    for a guard whose failure mode is one skipped conflict warning."""
+    payload = json.dumps(d, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _row_to_dict(row):
     """Convert SQLAlchemy row to camelCase dict for frontend compatibility.
     Only top-level column names are converted — JSON column contents are
-    passed through as-is so nested camelCase (e.g. rates.threeDay) is preserved."""
+    passed through as-is so nested camelCase (e.g. rates.threeDay) is preserved.
+
+    Every row carries `_rev`, the optimistic-concurrency token. The client
+    stores it per row and echoes it back as `If-Match` on the next PUT; see
+    _require_fresh() for what happens when it no longer matches. It is computed
+    over the row WITHOUT `_rev` (self-reference would be circular) and dropped
+    on the way back in by _dict_to_row, since `_rev` maps to no column."""
     d = {}
     for col in row.__table__.columns:
         if col.name in _HIDDEN_COLS:
             continue
         val = getattr(row, col.name)
         d[_snake_to_camel(col.name)] = val
+    d["_rev"] = _row_rev(d)
     return d
+
+
+def _require_fresh(request: Request, row, path: str, item_id) -> None:
+    """Reject a PUT whose If-Match no longer matches the stored row.
+
+    This is the guard that stops a window which loaded before a crew member
+    accepted from PUTting its stale project row back and silently reverting the
+    acceptance. backend/crew_integrity.py::enforce_status_floor patches that one
+    symptom for one column family; this closes the general case for every table.
+
+    The header is OPTIONAL. Callers that do not send it keep the previous
+    last-write-wins behaviour, which keeps the two hand-rolled PUT call sites
+    (modules/settings.js, modules/invoices.js) working untouched and lets the
+    guard roll out without a flag day.
+
+    On conflict the CURRENT server row rides along in the 409 body, so the
+    client can adopt it without a second round trip."""
+    want = (request.headers.get("if-match") or "").strip()
+    if not want:
+        return
+    current = _row_to_dict(row)
+    if want.strip('"') == current["_rev"]:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=jsonable_encoder({
+            "code": "stale_write",
+            "field": "_rev",
+            # Don't try to singularize `path` — rstrip('s') turns "companies"
+            # into "companie". The client renders its own message anyway.
+            "message": f"This {path} row changed in another window since you loaded it.",
+            "rev": current["_rev"],
+            "row": current,
+        }),
+    )
 
 
 def _dict_to_row(data, model_cls):
@@ -271,11 +332,13 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         db.add(row)
         await db.flush()
         await db.refresh(row)
+        livesync.mark_dirty(db, path)
         return _row_to_dict(row)
 
     async def update(
         item_id: int,
         data: dict,
+        request: Request,
         db: AsyncSession = Depends(get_db),
         user: models.User = Depends(require_session),
     ):
@@ -298,6 +361,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # Proper REST: PUT to nonexistent id is 404. New rows go through
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
+        # Optimistic concurrency — BEFORE any mutation, so a rejected write
+        # leaves the row untouched.
+        _require_fresh(request, row, path, item_id)
         mapped = _dict_to_row(data, model_cls)
         await _validate_fks(mapped, model_cls, db)
         # Stale-write guard (Project only): the frontend PUTs its whole
@@ -348,7 +414,12 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # removal is traced the moment it's saved instead of leaving a stale hire.
         if model_cls is models.Project:
             await crew_integrity.reconcile_project(db, row)
+            # reconcile_project can trim or auto-withdraw crew requests, so the
+            # crew-requests collection moved too even though this was a project
+            # write. Same on the delete path below.
+            livesync.mark_dirty(db, "crew-requests")
         await db.refresh(row)
+        livesync.mark_dirty(db, path)
         return _row_to_dict(row)
 
     async def remove(item_id: int, db: AsyncSession = Depends(get_db),
@@ -362,12 +433,14 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # trace. (Project only; a no-op for every other entity.)
         if model_cls is models.Project:
             await crew_integrity.reconcile_project(db, row, deleted=True)
+            livesync.mark_dirty(db, "crew-requests")
         await db.delete(row)
         # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
         # level by design (trusted staff delete their own drafts) but are now
         # attributable in the server log: who deleted what, when.
         print(f"[LTP] audit: user id={user.id} ({user.email}) deleted "
               f"{path} id={item_id}", flush=True)
+        livesync.mark_dirty(db, path)
         return {"ok": True, "id": item_id}
 
     router.add_api_route(f"/{path}",             get_all, methods=["GET"])
@@ -455,7 +528,73 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
         merged.update(data)
         row.data = merged
     await db.flush()
+    livesync.mark_dirty(db, "settings")
     return row.data
+
+
+# ── Live sync: what changed, and a push channel that says so ──────────────
+#
+# See backend/livesync.py for the design. Both routes deal only in per-collection
+# STAMPS — never row data — so their cost is flat no matter how large the
+# workspace grows.
+
+@router.get("/versions")
+async def get_versions(db: AsyncSession = Depends(get_db)):
+    """Current stamp for every synced collection.
+
+    The polling half of live sync, and the reconciliation point after a tab
+    wakes from background. A client compares this against its own stamps and
+    refetches only what moved.
+
+    Clients MUST read this BEFORE fetching the collections it names. Reading it
+    after would let a write that lands between the two be lost forever: the
+    client would hold pre-write rows alongside the post-write stamp and never
+    refetch. Fetching in the other order costs at worst one redundant refetch."""
+    return {"stamps": await livesync.ensure_seeded(db), "at": livesync.now_ms()}
+
+
+# NOT mounted on `router`: that router carries a Depends(require_session) whose
+# database session FastAPI holds open until the response finishes — which for a
+# stream is "until the tab closes". See auth_deps.load_session_user.
+stream_router = APIRouter(prefix="/api", tags=["livesync"])
+
+
+@stream_router.get("/stream")
+async def stream_changes(request: Request):
+    """Server-sent stamp feed: an immediate snapshot, then a frame per change.
+
+    SSE rather than WebSocket because nothing needs to travel client→server here
+    (writes already go over REST), EventSource reconnects on its own, and the
+    connection is an ordinary GET that passes through the existing cookie auth
+    and middleware stack unchanged.
+
+    Idle cost is one `: keepalive` comment every livesync.KEEPALIVE_SECONDS.
+    Starlette's GZipMiddleware excludes text/event-stream from compression by
+    default (DEFAULT_EXCLUDED_CONTENT_TYPES), so frames are not buffered."""
+    # Short-lived session: authenticate, seed the stamp map, release the pooled
+    # connection — all BEFORE the long-lived response body begins.
+    async with async_session() as db:
+        user = await load_session_user(db, request)
+        if user is None:
+            raise HTTPException(
+                status_code=401, detail="Not signed in",
+                headers={"WWW-Authenticate": "Cookie"},
+            )
+        initial = await livesync.ensure_seeded(db)
+        await db.commit()          # persist the throttled last_used_at touch
+
+    return StreamingResponse(
+        livesync.event_stream(initial),
+        media_type="text/event-stream",
+        headers={
+            # no-transform additionally tells intermediaries not to buffer or
+            # re-encode; X-Accel-Buffering is the nginx-specific form of the
+            # same instruction.
+            "Cache-Control": "no-cache, no-store, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Users (admin-only management of team-member title/phone) ──────────────

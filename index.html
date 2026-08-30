@@ -325,6 +325,10 @@
           crossorigin="anonymous"></script>
   <script src="components/sanitize.js"></script>
   <script src="components/helpers.js"></script>
+  <!-- Cross-window change feed (window.LTP_LIVE). MUST precede data-state.js:
+       every persisted-state hook waits on LTP_LIVE.ready() before its first
+       fetch so it starts life with a stamp it can trust. -->
+  <script src="components/live-sync.js"></script>
   <script src="components/data-state.js"></script>
   <script src="components/ui.js"></script>
   <!-- Drag-to-reorder engine + the mobile ▲▼ arrows. Reads LTP_THEME only;

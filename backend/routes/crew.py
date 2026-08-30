@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import crew_integrity, gmail, models, view_tracking, webpush
+from backend import crew_integrity, gmail, livesync, models, view_tracking, webpush
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_compose import (
@@ -571,6 +571,7 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
     # sweep haven't run yet. A no-op once the request is already terminal.
     if crew_integrity.reconcile_one(req, project):
         await db.flush()
+        livesync.mark_dirty(db, "crew-requests")
     contact = None
     if req.contact_id is not None:
         r = await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))
@@ -654,6 +655,12 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
     req.respondent_ip = ip or None
     req.respondent_ua = (ua or "")[:300] or None
     await db.flush()
+    # A crew member answering is the canonical "changed behind the producer's
+    # back" write: it moves position statuses on the PROJECT row as well as the
+    # request. Publishing both is what lets the producer's already-open Labor
+    # tab resolve the project, show the shift name, and render Confirm — the
+    # three things that needed a hard refresh before live sync.
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     # Push-notify the producer who sent this request. Crew accept/decline had no
     # in-app channel before — the producer only found out by re-opening Labor —
@@ -704,7 +711,12 @@ async def list_crew_requests(projectId: int | None = None, db: AsyncSession = De
     # auto-withdraws the fully-orphaned ones (including ones orphaned before this
     # engine existed, so opening the tab cleans up the existing backlog). The
     # frontend already hides withdrawn requests, so they simply drop out.
-    await crew_integrity.reconcile_all(db)
+    # ONLY publish when the heal actually changed something. Marking this GET
+    # dirty unconditionally would be a refetch loop: an unchanged collection that
+    # is explicitly marked still gets its stamp bumped (see livesync.refresh),
+    # so every list would tell every window to list again, forever.
+    if await crew_integrity.reconcile_all(db):
+        livesync.mark_dirty(db, "crew-requests", "projects")
     q = select(models.CrewRequest).order_by(models.CrewRequest.id)
     if projectId is not None:
         q = q.where(models.CrewRequest.project_id == projectId)
@@ -811,6 +823,7 @@ async def send_crew_request(
                       require_from=_SENDABLE_FROM)
     await db.flush()
     await db.refresh(req)
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
     if silent:
@@ -868,6 +881,7 @@ async def withdraw_crew_request(
     req.status = "withdrawn"
     await db.flush()
     await db.refresh(req)
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
     if bool((body or {}).get("notify")):
