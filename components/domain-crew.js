@@ -424,6 +424,23 @@ window.LTP_setPayAdjustments = function(schedule, crewId, date, adjustments) {
   });
 };
 
+// Read back what LTP_setPayAdjustments stored, for ONE person's day.
+//
+// Matches domain-payouts.js's rollup exactly — same day, same person, confirmed
+// positions only, first non-empty list wins — so an editor reading this and a
+// payout row reading that can never disagree about what is on the day.
+window.LTP_getPayAdjustments = function(schedule, crewId, date) {
+  var found = null;
+  (schedule || []).forEach(function(s) {
+    if (!s || s.date !== date || found) return;
+    (s.positions || []).forEach(function(p) {
+      if (found) return;
+      if (p && p.crewId === crewId && p.status === "confirmed" && p.adj && p.adj.length) found = p.adj;
+    });
+  });
+  return found || [];
+};
+
 // Undo a sign-off: strip `work` from the person's positions on that date so the
 // day returns to pending. Returns a new schedule.
 window.LTP_unsignDay = function(schedule, crewId, date) {
