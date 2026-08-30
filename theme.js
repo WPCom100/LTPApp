@@ -197,14 +197,95 @@ window.LTP_useUnsavedGuard = function() {
   React.useEffect(function() {
     function onBeforeUnload(e) { if (isDirty) { e.preventDefault(); e.returnValue = ""; } }
     window.addEventListener("beforeunload", onBeforeUnload);
-    return function() {
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      // Component leaving the tree no longer owns any dirty state.
-      window.__LTP_UNSAVED = false;
-    };
+    return function() { window.removeEventListener("beforeunload", onBeforeUnload); };
   }, [isDirty]);
 
+  // "No longer owns any dirty state" is an UNMOUNT concern, so it gets its own
+  // effect with empty deps. It used to live in the cleanup above, which re-runs
+  // on every isDirty change — and React runs that cleanup AFTER the render-time
+  // mirror, so the flag was wiped by the very transition it exists to record:
+  //
+  //   setIsDirty(true) → global = true      (synchronous setter)
+  //   re-render        → global = true      (render-time mirror)
+  //   effect cleanup   → global = FALSE     ← deps [isDirty] changed
+  //   effect body      → (never restored it)
+  //
+  // The result was an editor full of unsaved work that router.navigate() saw as
+  // clean, so leaving the page discarded it with no prompt at all.
+  React.useEffect(function() {
+    return function() { window.__LTP_UNSAVED = false; };
+  }, []);
+
   return [isDirty, setIsDirty];
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//   A RECORD CHANGING WHILE AN EDITOR HAS IT OPEN
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The three big editors — schedule builder, quote builder, invoice builder —
+// all work the same way: deep-clone the record into a local `draft`, reseed
+// only when the record's ID changes. That is what stops a background refresh
+// from eating half-typed work, but it also means a record that moved
+// underneath them (live sync — components/live-sync.js) stays invisible right
+// up until the editor saves over it.
+//
+// This hook is the shared response, and the branch is whether there is unsaved
+// work to protect:
+//
+//   nothing unsaved → adopt the newer version silently. Strictly better than
+//                     continuing to show data we already know is stale.
+//   unsaved edits   → keep them and say so, ONCE per editing session.
+//                     Discarding someone's typing to win a race is the wrong
+//                     trade for a workspace this size, and repeating the notice
+//                     on every remote change would be noise.
+//
+// Args:
+//   record    the live row out of persisted state. Live sync hands back a new
+//             object identity whenever it refetches, which is the trigger.
+//             Falsy (a brand-new unsaved record) makes this a no-op.
+//   snapshot  record → the editor's draft shape. Must be deterministic: its
+//             JSON is compared against the previous call to decide "moved".
+//   isDirty   from LTP_useUnsavedGuard.
+//   onAdopt   called with a fresh snapshot when it is safe to swap it in.
+//   notice    { title, message } shown in the dirty case.
+//   resetKey  changing it forgets everything — the editor switched records.
+window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey) {
+  var seenRef = React.useRef(null);
+  var warnedRef = React.useRef(false);
+
+  // Switching records starts a fresh editing session: nothing seen, nothing
+  // warned. Declared BEFORE the compare effect so it lands first in the same
+  // commit — the compare then simply re-seeds instead of firing on a change
+  // that is really just "different record".
+  React.useEffect(function() {
+    seenRef.current = null;
+    warnedRef.current = false;
+  }, [resetKey]);
+
+  React.useEffect(function() {
+    if (!record) return;
+    var incoming;
+    try { incoming = JSON.stringify(snapshot(record)); }
+    catch (e) { return; }                 // unserializable — nothing safe to compare
+    if (seenRef.current === null) { seenRef.current = incoming; return; }
+    if (incoming === seenRef.current) return;
+    seenRef.current = incoming;
+    if (!isDirty) {
+      warnedRef.current = false;
+      onAdopt(snapshot(record));
+      return;
+    }
+    if (warnedRef.current) return;
+    warnedRef.current = true;
+    if (window.LTP_toast) {
+      window.LTP_toast((notice && notice.title) || "Changed elsewhere", {
+        message: (notice && notice.message) ||
+          "Another window updated this while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version.",
+        variant: "warn",
+      });
+    }
+  }, [record]);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -71,7 +71,13 @@
 // without this bump an installed PWA would keep serving the old index.html and
 // silently run without live sync. live-sync.js itself needs no precache entry:
 // the runtime /components/ rule below covers it.
-var CACHE_VERSION = 'ltp-shell-v58';
+// v59: theme.js gained LTP_useRemoteEdits and fixed LTP_useUnsavedGuard's
+// __LTP_UNSAVED mirror (it was cleared by the very transition it records, so the
+// "You have unsaved changes" prompt never fired). theme.js is precached, so
+// without a bump every installed device keeps the broken guard for one more
+// launch. The three editors that consume the hook (schedule/quote/invoice) are
+// runtime-cached under /modules/ and need no precache entry.
+var CACHE_VERSION = 'ltp-shell-v59';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

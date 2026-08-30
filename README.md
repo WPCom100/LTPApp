@@ -685,10 +685,17 @@ client reconnects immediately rather than treating it as a fault. The safety
 sweep also idles completely when nobody is connected — this app sits unused most
 nights, and there is nothing to broadcast to.
 
-Editors that hold a draft (the schedule builder) handle a remote change
-themselves: a clean editor adopts the newer version, a dirty one keeps the local
-edits and warns once. Discarding someone's typing to win a race is the wrong
-trade at this size.
+All three draft-holding editors — schedule builder, quote builder, invoice
+builder — handle a remote change through one shared hook
+(`theme.js::LTP_useRemoteEdits`): a clean editor adopts the newer version, a
+dirty one keeps the local edits and warns once per editing session. Discarding
+someone's typing to win a race is the wrong trade at this size.
+
+Not every read is in the feed. `/api/qbo/status`, `/api/users` and
+`/api/qbo/payouts/day-status` are backed by tables outside `livesync.COLLECTIONS`
+and still load once per mount. The first two change only when an admin acts. The
+third is the one to watch: it drives the schedule editor's paid-day warn+confirm,
+that guard is client-side only, and a stale copy means it silently does not fire.
 
 Notes for future changes:
 - The broadcast bus is **in-process**. That is correct for one uvicorn worker on
