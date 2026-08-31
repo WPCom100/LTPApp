@@ -417,7 +417,7 @@
     // A client can sit on a quote for an hour while it is re-priced underneath
     // them, and without this the first they would know is accepting terms they
     // never read. See LTP_useDocFreshness in components/domain-util.js.
-    var stale = window.LTP_useDocFreshness(
+    var freshness = window.LTP_useDocFreshness(
       token ? "/api/view/" + token + "/version" : null, data && data._v);
 
     function _buildTrackingQs() {
@@ -502,7 +502,32 @@
     // — someone accepting figures that have been superseded. Nothing is
     // reloaded automatically: taking the page away mid-signature would be its
     // own kind of rude, so the refresh is theirs to press.
-    if (stale) {
+    if (freshness === "gone") {
+      var goneKind = data.kind === "quote" ? "quote" : "invoice";
+      return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
+        h("div", { style: { maxWidth: 460, textAlign: "center" } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: DECLINE } }, "Withdrawn"),
+          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } },
+            "This " + goneKind + " is no longer available"),
+          h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
+            "It was removed while this page was open. Nothing here is current any more \u2014 " +
+            "please get in touch with us if you were expecting it."),
+          h("button", {
+            type: "button",
+            onClick: reload,
+            style: {
+              marginTop: 24, minHeight: 46, padding: "0 26px",
+              background: GRAD_BTN, color: BTN_INK, border: "none", borderRadius: 10,
+              fontFamily: "inherit", fontSize: "14px", fontWeight: 800, cursor: "pointer",
+            }
+          }, "Refresh"),
+          h("div", { style: { marginTop: 36, display: "flex", justifyContent: "center", opacity: 0.9 } },
+            mastheadFailed
+              ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
+              : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
+    }
+
+    if (freshness === "stale") {
       var whatKind = data.kind === "quote" ? "quote" : "invoice";
       return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
         h("div", { style: { maxWidth: 460, textAlign: "center" } },

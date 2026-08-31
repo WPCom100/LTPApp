@@ -307,7 +307,7 @@
     // is added or dropped, or the whole request is withdrawn. Turning up for a
     // time that changed is the failure this prevents. See LTP_useDocFreshness
     // in components/domain-util.js.
-    var stale = window.LTP_useDocFreshness(
+    var freshness = window.LTP_useDocFreshness(
       token ? "/api/crew/" + token + "/version" : null, data && data._v);
 
     function reload() {
@@ -370,7 +370,31 @@
     // no longer the ones being asked for, and someone accepting a call that has
     // moved is the exact mistake this is here to stop. Nothing reloads on its
     // own — the refresh is theirs to press.
-    if (stale) {
+    if (freshness === "gone") {
+      return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
+        h("div", { style: { maxWidth: 460, textAlign: "center" } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: DECLINE } }, "Withdrawn"),
+          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } },
+            "This request is no longer available"),
+          h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
+            "It was removed while this page was open, so there is nothing here to accept or " +
+            "decline. Please check with your producer if you were expecting a call."),
+          h("button", {
+            type: "button",
+            onClick: reload,
+            style: {
+              marginTop: 24, minHeight: 46, padding: "0 26px",
+              background: GRAD_BTN, color: BTN_INK, border: "none", borderRadius: 10,
+              fontFamily: "inherit", fontSize: "14px", fontWeight: 800, cursor: "pointer",
+            }
+          }, "Refresh"),
+          h("div", { style: { marginTop: 36, display: "flex", justifyContent: "center", opacity: 0.9 } },
+            mastheadFailed
+              ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
+              : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
+    }
+
+    if (freshness === "stale") {
       return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
         h("div", { style: { maxWidth: 460, textAlign: "center" } },
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE } }, "Updated"),

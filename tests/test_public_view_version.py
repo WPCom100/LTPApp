@@ -278,6 +278,33 @@ def test_a_change_the_client_cannot_see_does_not_move_it():
         "notes reached a share-link holder — this test's premise has changed"
 
 
+def test_a_deleted_document_answers_404():
+    """The contract the client leans on for the deleted case.
+
+    Deletes here are hard — no tombstone — so the token simply stops resolving.
+    The page turns that 404 into "no longer available"; it used to be
+    indistinguishable from a network blip and was silently ignored, leaving a
+    client reading a quote that no longer existed.
+    """
+    client = _setup()
+    ck = {"ltp_session": _TOK}
+    gone_id = 6807
+    r = client.post("/api/quotes", json={"id": gone_id, "company_id": CO, "status": "sent",
+                                         "sections": [], "activity": []}, cookies=ck)
+    assert r.status_code in (200, 201), r.text
+    token = r.json().get("shareToken") or r.json().get("share_token")
+    assert token, f"no share token on the created quote: {sorted(r.json())}"
+
+    assert client.get(f"/api/view/{token}/version").status_code == 200, \
+        "the fixture must be reachable before it is deleted"
+
+    assert client.delete(f"/api/quotes/{gone_id}", cookies=ck).status_code in (200, 204)
+
+    assert client.get(f"/api/view/{token}/version").status_code == 404, \
+        "a deleted document must say so, not answer with a stale version"
+    assert client.get(f"/api/view/{token}").status_code == 404
+
+
 # ── The crew request share view ─────────────────────────────────────────────
 #
 # Same exposure, different hazard: a crew member who does not notice a retimed
