@@ -105,7 +105,12 @@
 // are #233038 — so on the page it sits on its own white card rather than having
 // its colours overridden, and scrolls inside itself on narrow screens. Page and
 // script both moved.
-var CACHE_VERSION = 'ltp-shell-v64';
+// v65: the signature's company name rendered white-on-white. The page's own
+// `.letter strong{color:var(--ink-strong)}` was repainting it: unlike the
+// person's name, the company line carries its orange on the span WRAPPING the
+// <strong>, so the page rule won. Page typography is now blocked from reaching
+// inside .sig at all, rather than patching the one colour.
+var CACHE_VERSION = 'ltp-shell-v65';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
