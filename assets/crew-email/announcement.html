@@ -149,9 +149,17 @@ figcaption b{color:var(--ink-mute); font-weight:500}
    a fixed ~570px, so it scrolls inside itself instead of widening the page. */
 .sig{
   margin:0; padding:16px 18px; border-radius:10px;
-  background:#ffffff; overflow-x:auto;
+  background:#ffffff; color:#233038; overflow-x:auto;
 }
 .sig table{border-collapse:collapse}
+/* Page typography must not reach inside the signature. It is a self-contained
+   block from the mail client and carries every colour it needs inline; letting
+   rules like `.letter strong{color:var(--ink-strong)}` apply repaints text the
+   signature never asked to change — that is what turned the company name white
+   on white, because its orange sits on the span WRAPPING the <strong>, not on
+   the <strong> itself (unlike the person's name, where it sits inside). Two
+   classes beat `.letter strong`, so this holds regardless of rule order. */
+.letter .sig *{color:inherit}
 
 .foot{
   margin-top:34px; text-align:center;
