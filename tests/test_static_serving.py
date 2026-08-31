@@ -156,6 +156,25 @@ def test_crew_page_has_no_inline_script():
     assert "<script>" not in html, "inline <script> would be refused by the CSP"
 
 
+def test_crew_page_hides_the_sender_toolbar():
+    """The sender toolbar must not be painted for crew.
+
+    It carries the `hidden` attribute, but that is only a UA-stylesheet
+    `display:none` — and `.tools` sets `display:flex`, which as author CSS
+    beats it. Without an explicit `[hidden]` reset the bar renders in full for
+    every visitor while `element.hidden` still reads true, so checking the
+    property (or the attribute) cannot catch this. Assert the reset exists.
+    """
+    path = os.path.join(_root, "assets", "crew-email", "announcement.html")
+    with open(path, encoding="utf-8") as fh:
+        html = fh.read()
+    assert 'id="tools" hidden' in html, "the toolbar must carry the hidden attribute"
+    assert "display:flex" in html, "sanity: .tools still sets a display that beats the UA rule"
+    assert "[hidden]{display:none !important}" in html, (
+        "no [hidden] reset — the toolbar would render for crew despite the attribute"
+    )
+
+
 def test_csp_allows_wasm():
     """The CSP script-src must include 'wasm-unsafe-eval' so the decoder can
     instantiate WebAssembly (without it the browser blocks the whole module)."""
