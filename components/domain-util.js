@@ -347,30 +347,43 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
 //   versionUrl  "/api/view/<token>/version" or "/api/crew/<token>/version",
 //               answering { doc, app }. Falsy disables the watch.
 //   current     the `_v` handed over with the page being displayed. The
-//               comparison baseline; changing it (a reload) clears the flag.
+//               comparison baseline; changing it (a reload) resets the state.
 //
-// Returns true once the stored document no longer matches what is on screen.
-// Both public views render a full-page notice on that, rather than a banner
-// over content that is no longer true.
+// Returns "fresh", "stale" (the stored document no longer matches what is on
+// screen) or "gone" (there is no document there any more). Both public views
+// replace the whole page on the latter two, rather than leaving content up that
+// is no longer true.
 window.LTP_useDocFreshness = function(versionUrl, current) {
-  var pair = React.useState(false);
-  var stale = pair[0], setStale = pair[1];
+  var pair = React.useState("fresh");
+  var state = pair[0], setState = pair[1];
   var curRef = React.useRef(current);
   curRef.current = current;
 
   // Whatever was just loaded is, by definition, current.
-  React.useEffect(function() { setStale(false); }, [current]);
+  React.useEffect(function() { setState("fresh"); }, [current]);
 
   React.useEffect(function() {
     if (!versionUrl) return undefined;
-    var POLL_MS = 60000;
+    // Ten seconds, not sixty. This is watched by someone who has been told the
+    // document is live; a minute of a stale price still on screen reads as the
+    // check not working at all. One small request every ten seconds sits far
+    // inside the /api/view rate limit that already covers this route.
+    var POLL_MS = 10000;
     var timer = null;
     var cancelled = false;
 
     function check() {
       if (cancelled) return;
       fetch(versionUrl)
-        .then(function(r) { return r.ok ? r.json() : null; })
+        .then(function(r) {
+          // 404 is the document itself going away — deleted, or its link
+          // revoked. It was silently indistinguishable from a network blip
+          // here, so a client left on a deleted quote was told nothing at all
+          // and went on reading it. It is not a blip: it will not come back,
+          // and "refresh this page" would be the wrong thing to say.
+          if (r.status === 404) { setState("gone"); return null; }
+          return r.ok ? r.json() : null;
+        })
         .then(function(v) {
           if (cancelled || !v) return;
           // A public tab has no live feed to hear a deploy on, so it raises the
@@ -383,7 +396,9 @@ window.LTP_useDocFreshness = function(versionUrl, current) {
           }
           // Before the first load lands there is nothing to compare against.
           if (!curRef.current || !v.doc) return;
-          if (v.doc !== curRef.current) setStale(true);
+          // Set both ways: a 404 that turns out to have been wrong, or a
+          // document edited back to exactly what is on screen, both recover.
+          setState(v.doc === curRef.current ? "fresh" : "stale");
         })
         .catch(function() { /* offline or a blip — the next tick retries */ });
     }
@@ -395,6 +410,7 @@ window.LTP_useDocFreshness = function(versionUrl, current) {
     function onVisible() { if (!document.hidden) check(); }
 
     timer = setTimeout(tick, POLL_MS);
+    check();                               // and once now, not in ten seconds
     document.addEventListener("visibilitychange", onVisible);
     window.addEventListener("focus", onVisible);
     return function() {
@@ -405,7 +421,7 @@ window.LTP_useDocFreshness = function(versionUrl, current) {
     };
   }, [versionUrl]);
 
-  return stale;
+  return state;
 };
 
 

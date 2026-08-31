@@ -118,7 +118,13 @@
 // a banner. modules/client-view.js and modules/crew-view.js render it,
 // components/domain-util.js polls for it (LTP_useDocFreshness). Precached, and
 // a stale shell here means a client reading a price that is no longer offered.
-var CACHE_VERSION = 'ltp-shell-v70';
+// v71: a deleted quote, invoice or crew request now takes the public page over
+// too — the 404 its version poll gets was previously indistinguishable from a
+// network blip and silently ignored, so a client sat reading a document that no
+// longer existed. The poll also drops from 60s to 10s: a minute of a superseded
+// price still on screen reads as the check not working.
+// components/domain-util.js, modules/client-view.js, modules/crew-view.js.
+var CACHE_VERSION = 'ltp-shell-v71';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
