@@ -94,7 +94,12 @@
 // display:flex overrides, so the page needs its own [hidden] reset — the
 // artifact host injects one, the standalone page had nothing. Bumped so no
 // device answers that URL from a v61 cache showing the toolbar to crew.
-var CACHE_VERSION = 'ltp-shell-v62';
+// v63: crew announcement copy edit — sections rewritten to stand on their own,
+// "pencilled" corrected to the "penciled in" the app actually renders, and two
+// content fixes from the owner: a request is ALWAYS sent even for work agreed
+// by phone, and accepting is the first step in getting paid. Page + script both
+// moved, so a v62 cache would serve the old wording.
+var CACHE_VERSION = 'ltp-shell-v63';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
