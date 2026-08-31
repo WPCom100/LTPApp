@@ -89,7 +89,12 @@
 // is 'self' with no 'unsafe-inline', so the inline block it used to carry was
 // refused and the buttons rendered dead. Both files are runtime-cached, so a
 // device on a v60 cache would pair the new page with no script at all.
-var CACHE_VERSION = 'ltp-shell-v61';
+// v62: the announcement page's sender toolbar was painted for everyone. The
+// `hidden` attribute only carries a UA-stylesheet display:none, which .tools's
+// display:flex overrides, so the page needs its own [hidden] reset — the
+// artifact host injects one, the standalone page had nothing. Bumped so no
+// device answers that URL from a v61 cache showing the toolbar to crew.
+var CACHE_VERSION = 'ltp-shell-v62';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

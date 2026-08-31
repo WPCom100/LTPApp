@@ -33,6 +33,12 @@ __FONTLINK__
 }
 
 *{box-sizing:border-box}
+/* The UA stylesheet's [hidden]{display:none} is beaten by ANY author display
+   declaration — .tools sets display:flex, so without this the sender toolbar
+   renders in full for everyone despite carrying the attribute. The artifact
+   host injects an equivalent reset; the standalone page has no such head, so
+   the template has to carry it or the two targets disagree. */
+[hidden]{display:none !important}
 body{
   background:var(--ground); color:var(--ink);
   font-family:'DM Sans','Segoe UI',system-ui,sans-serif;
