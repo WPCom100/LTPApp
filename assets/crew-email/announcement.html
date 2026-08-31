@@ -142,14 +142,16 @@ figcaption b{color:var(--ink-mute); font-weight:500}
 
 .signoff{margin-top:38px; padding-top:28px; border-top:1px solid var(--hair-soft)}
 .signoff p{margin:0 0 16px}
+/* The email signature is a fixed block built for a white mail-client ground:
+   its links and phone numbers are #233038, which is invisible on this page's
+   dark field. Give it the background it was designed for rather than
+   overriding its colours, so page and email show the same thing. Its table is
+   a fixed ~570px, so it scrolls inside itself instead of widening the page. */
 .sig{
-  font-family:'SFMono-Regular',ui-monospace,'Roboto Mono','DM Mono',Menlo,monospace; font-size:13.5px; line-height:1.85;
-  color:var(--ink-mute); margin:0; overflow-wrap:anywhere;
+  margin:0; padding:16px 18px; border-radius:10px;
+  background:#ffffff; overflow-x:auto;
 }
-.sig .nm{display:block; color:var(--ink-strong); font-size:15px; font-weight:500}
-.sig .co{color:var(--accent)}
-.sig a{color:var(--ink-mute); text-decoration:none; border-bottom:1px solid var(--hair)}
-.sig a:hover{color:var(--ink-strong); border-bottom-color:var(--accent)}
+.sig table{border-collapse:collapse}
 
 .foot{
   margin-top:34px; text-align:center;
@@ -218,27 +220,27 @@ figcaption b{color:var(--ink-mute); font-weight:500}
 
   <article class="letter">
 
-    <h1>How we'll send you crew requests from now on</h1>
+    <h1>How We'll Send You Crew Requests From Now On</h1>
 
     <p class="lead">Hi everyone,</p>
 
     <p>A quick heads-up about a change on our end that affects how you'll hear from us about work.</p>
 
-    <p>From now on, every crew request from Luminary goes out through our new scheduling system instead of a scattered mix of texts, calls, and one-off emails. You get a proper call sheet for every job; you can take the job or pass on it in a couple of taps; and once you're booked, the details stay in your pocket.</p>
+    <p>From now on, every crew request from Luminary goes out through our new scheduling system instead of a scattered mix of texts, calls, and one-off emails. You'll get a proper call sheet for every job. You can take the job or pass on it in a couple of taps. Once you're booked, the details stay in your pocket.</p>
 
     <div class="nut">
-      <p><strong>There's nothing for you to install.</strong> No app to download, no account to create, no password to remember. It all works from a link in your email &mdash; on your phone or your computer.</p>
+      <p><strong>There's nothing for you to install.</strong> No app to download, no account to create, no password to remember. It all works from a link in your email, on your phone or your computer.</p>
     </div>
 
     <div class="step">
       <div class="n">01</div>
       <div class="body">
         <h2>The request arrives by email</h2>
-        <p>You'll get an email from us with a subject line like <em>"Crew request: Autumn Summit 2026 &mdash; Luminary Technology &amp; Productions."</em></p>
-        <p>It lists the project, the location, and every call we're asking you to cover &mdash; date, call time, wrap time, and your role. If a production manager has left a note on a shift (parking, gate code, wardrobe, catering), that's in there too.</p>
+        <p>You'll get an email from us with a subject line like <em>"Crew request: Autumn Summit 2026 | Luminary Technology &amp; Productions."</em></p>
+        <p>It lists the project, the location, and every call we're asking you to cover, including the date, call time, wrap time, and your role. If a production manager has left a note on a shift, such as parking, gate code, wardrobe, or catering, that's in there too.</p>
         <p>There's one button: <strong>View &amp; Respond</strong>.</p>
         <figure>
-          <img src="/assets/crew-email/01-request-email.jpg" alt="The crew request email: Luminary masthead, project name, address, three shifts with call and wrap times, and a View and Respond button.">
+          <img src="/assets/crew-email/01-request-email.jpg" alt="The crew request email: Luminary masthead, project name, address, three shifts with call and wrap times, and a View &amp; Respond button.">
           <figcaption><b>The request email.</b> Project, location, shift count, and one button. The shift list sits right underneath, notes and all.</figcaption>
         </figure>
       </div>
@@ -248,8 +250,8 @@ figcaption b{color:var(--ink-mute); font-weight:500}
       <div class="n">02</div>
       <div class="body">
         <h2>Tap &ldquo;View &amp; Respond&rdquo; to open your call sheet</h2>
-        <p>That button opens a web page we call your call sheet. It shows <strong>only the calls we're asking you to cover</strong> on this job: the project, the venue with a map to the address, and each shift in order with its times, your role, and any notes.</p>
-        <p>Read your call sheet through before you answer. Everything we know about the job is on that page, and it stays there for you to come back to.</p>
+        <p>That button opens a web page we call your call sheet. It shows <strong>only the calls we're asking you to cover</strong> on this job. You'll see the project, the venue with a map to the address, and each shift in order with its times, your role, and any notes.</p>
+        <p>Read through your call sheet before you answer. Everything we know about the job is on that page, and it stays there for you to come back to.</p>
       </div>
     </div>
 
@@ -262,11 +264,11 @@ figcaption b{color:var(--ink-mute); font-weight:500}
           <li class="yes"><span class="btnface">Accept These Calls</span> You're taking every shift listed on your call sheet.</li>
           <li class="no"><span class="btnface">I Can't Make It</span> You're passing on the job.</li>
         </ul>
-        <p>Whichever button you choose, you can add a short note before you submit. Please use it &mdash; that note comes straight back to us.</p>
+        <p>Whichever button you choose, you can add a short note before you submit. Please use it. That note comes straight back to us.</p>
         <p><strong>Accepting is also the first step in getting paid.</strong> Your acceptance is what starts the payment process for that job, so a shift you never accepted can hold up your pay. Please answer every request you get, even one we've already talked through.</p>
-        <p><strong>If you can only do some of the days:</strong> each request covers all of its calls as a single block, so there is no way to accept some and decline others on the same page. Choose <strong>I Can't Make It</strong>, then use the note to tell us which days do work &mdash; something like <em>"Can't do the Saturday load-in, but Friday and Sunday are fine."</em> We'll read it and usually send you a fresh request covering just those days. Replying to the email works too.</p>
+        <p><strong>If you can only do some of the days,</strong> each request covers all of its calls as a single block. There is no way to accept some and decline others on the same page. Choose <strong>I Can't Make It</strong>, then use the note to tell us which days do work. For example, <em>"Can't do the Saturday load-in, but Friday and Sunday are fine."</em> We'll read it and usually send you a fresh request covering just those days. Replying to the email works too.</p>
         <figure>
-          <img src="/assets/crew-email/02-call-sheet-respond.jpg" alt="The crew call sheet: three shifts listed with dates, times and roles, then Accept These Calls and I Can't Make It buttons with an optional note field open.">
+          <img src="/assets/crew-email/02-call-sheet-respond.jpg" alt="The crew call sheet: three shifts listed with dates, times, and roles, then Accept These Calls and I Can't Make It buttons with an optional note field open.">
           <figcaption><b>Your call sheet.</b> Your shifts, then the two buttons and the optional note.</figcaption>
         </figure>
       </div>
@@ -277,9 +279,9 @@ figcaption b{color:var(--ink-mute); font-weight:500}
       <div class="body">
         <h2>Accepting is not the same as being booked</h2>
         <p>This is the part people most often get wrong.</p>
-        <p>Tapping <strong>Accept These Calls</strong> puts you down as <strong>penciled in</strong>, and your call sheet will say <em>"awaiting confirmation."</em> A production manager still has to confirm you before the job is yours.</p>
-        <p>When that happens you'll get a <strong>separate confirmation email</strong>, and your call sheet will change to <em>"You're confirmed."</em> That email is what makes the job yours, so please don't count on the work until it arrives. Your call sheet always shows where you currently stand.</p>
-        <p>While you're penciled in, <strong>put the dates in your own calendar and hold them</strong>. If something else comes up for those dates and you still haven't heard back from us, call or email and let us know &mdash; we would much rather re-plan early than lose you on the day.</p>
+        <p>Tapping <strong>Accept These Calls</strong> puts you down as <strong>penciled in</strong>, and your call sheet will say <em>"Awaiting confirmation."</em> A production manager still has to confirm you before the job is yours.</p>
+        <p>When that happens, you'll get a <strong>separate confirmation email</strong>, and your call sheet will change to <em>"You're confirmed."</em> That email is what makes the job yours. Please don't count on the work until it arrives. Your call sheet always shows where you currently stand.</p>
+        <p>While you're penciled in, <strong>put the dates in your own calendar and hold them</strong>. If something else comes up for those dates and you still haven't heard back from us, call or email and let us know. We would much rather re-plan early than lose you on the day.</p>
       </div>
     </div>
 
@@ -287,7 +289,7 @@ figcaption b{color:var(--ink-mute); font-weight:500}
       <div class="n">05</div>
       <div class="body">
         <h2>Add your confirmed calls to your calendar</h2>
-        <p>Once a production manager has confirmed you, your call sheet shows an <strong>Add to Calendar</strong> button beside each call. One tap drops that call's date, times, role, location, and any notes straight into your own calendar &mdash; so you still have the details when there's no signal at the loading dock.</p>
+        <p>Once a production manager has confirmed you, your call sheet shows an <strong>Add to Calendar</strong> button beside each call. One tap drops that call's date, times, role, location, and any notes straight into your own calendar. You'll still have the details when there's no signal at the loading dock.</p>
         <figure>
           <img src="/assets/crew-email/03-confirmed.jpg" alt="The confirmed call sheet: a green You're confirmed banner with an Add to Calendar button for each of the three calls, above the full shift list.">
           <figcaption><b>Confirmed.</b> One calendar button per call, plus the site address.</figcaption>
@@ -300,25 +302,34 @@ figcaption b{color:var(--ink-mute); font-weight:500}
       <div class="body">
         <h2>A few things worth knowing</h2>
         <ul class="notes">
-          <li><b>Your link is yours.</b> The link in your request email opens your call sheet without asking for a password, so please don't forward it &mdash; anyone who has it could answer in your place.</li>
-          <li><b>Your answer locks once you submit it.</b> You can't change it yourself, so if your availability changes, reply to your request email or call us and we'll sort it out on our end.</li>
-          <li><b>We'll email you about changes too.</b> If a call time moves, a production manager adds a note to one of your shifts, or a booking has to be cancelled, you'll get an email spelling out exactly which shifts are affected.</li>
-          <li><b>Agreed a job by phone or text?</b> You'll still get a request email for it, and you still need to accept it. We always send the request, however we first agreed the work &mdash; and shifts arranged by phone are the ones most likely to go unaccepted, which is the most common cause of delayed pay.</li>
+          <li><b>Your link is yours.</b> The link in your request email opens your call sheet without asking for a password, so please don't forward it. Anyone who has it could answer in your place.</li>
+          <li><b>Your answer locks once you submit it.</b> You can't change it yourself. If your availability changes, reply to your request email or call us and we'll sort it out on our end.</li>
+          <li><b>We'll email you about changes, too.</b> If a call time moves, a production manager adds a note to one of your shifts, or a booking has to be canceled, you'll get an email spelling out exactly which shifts are affected.</li>
+          <li><b>Agreed to a job by phone or text?</b> You'll still get a request email for it, and you still need to accept it. We always send the request, regardless of how we first agreed to the work. Shifts arranged by phone are the ones most likely to go unaccepted, which is the most common cause of delayed pay.</li>
           <li><b>Keep your contact details current.</b> Requests go to whichever email address we have on file for you, so please tell us if yours changes.</li>
         </ul>
       </div>
     </div>
 
     <div class="signoff">
-      <p><strong>Questions or problems &mdash; come straight to me.</strong> If anything here is unclear, or something doesn't work the way it should &mdash; a link that won't open, an email that never arrived, a shift that looks wrong &mdash; contact me directly at <a href="tel:+19728495202">(972)&nbsp;849-5202</a> or <a href="mailto:Landry@LuminaryTechnology.Productions">Landry@LuminaryTechnology.Productions</a>. I'd much rather hear about it early than have anyone miss a call over it.</p>
+      <p><strong>Questions or problems? Come straight to me.</strong></p>
+      <p>If anything here is unclear or something doesn't work the way it should, such as a link that won't open, an email that never arrived, or a shift that looks wrong, contact me directly at <a href="tel:+19728495202">(972)&nbsp;849-5202</a> or <a href="mailto:Landry@LuminaryTechnology.Productions">Landry@LuminaryTechnology.Productions</a>. I'd much rather hear about it early than have anyone miss a call over it.</p>
       <p>Thanks, all. Looking forward to getting you out on more shows.</p>
-      <p class="sig">
-        <span class="nm">Landry Strickland</span>
-        Owner<br>
-        <span class="co">Luminary Technology &amp; Productions</span><br>
-        <a href="tel:+19728495202">(972) 849-5202</a> &nbsp;&middot;&nbsp; <a href="mailto:Landry@LuminaryTechnology.Productions">Landry@LuminaryTechnology.Productions</a><br>
-        <a href="https://LuminaryTechnology.Productions">LuminaryTechnology.Productions</a>
-      </p>
+      <div class="sig"><table style="padding:0px;margin:10px 0;border:none"><tbody><tr><td style="padding:0 5px"><span style="font-family:'verdana','geneva',sans-serif"><img alt="Company logo" height="135" src="https://www.luminarytechnology.productions/?attachment_id=581"></span></td><td style="border-left:3px solid #dddddd;padding:7px 0px 0px 10px;font-family:'arial black','arial bold','gadget',sans-serif;font-size:12px;line-height:14px;color:#ff921e">
+			<table style="padding:0px;margin:10px 0;border:none"><tbody><tr><td style="vertical-align:middle;padding:10px 7px 0 0"><span style="font-family:'verdana','geneva',sans-serif"><img alt="Image" src="https://www.luminarytechnology.productions/wp-content/uploads/2024/07/Landry-Profile1.png" style="border:0" width="100"></span></td><td>
+						<div style="margin-bottom:10px"><span style="font-family:'verdana','geneva',sans-serif"><strong><span style="font-size:16px"><span style="line-height:17px;color:#ef5822">Landry</span></span> <span style="font-size:16px"><span style="line-height:17px;color:#ef5822">Strickland</span></span></strong><br>
+						Owner</span></div>
+
+						<div style="margin-bottom:10px"><span style="font-family:'verdana','geneva',sans-serif"><span style="color:#233038;text-decoration:none"><a href="mailto:Landry@LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">Landry@LuminaryTechnology.Productions</a></span><br>
+						W:&nbsp;<span style="color:#233038;text-decoration:none"><a href="tel:9722468084" style="color:#233038;text-decoration:none" target="_blank">(972) 246-8084</a></span> <span style="color:#999999">|</span> M:&nbsp;<span style="color:#233038;text-decoration:none"><a href="tel:9728495202" style="color:#233038;text-decoration:none" target="_blank">(972) 849-5202</a></span></span></div>
+						</td></tr></tbody></table>
+
+			<div style="margin-bottom:10px"><span style="font-family:'verdana','geneva',sans-serif"><span style="font-size:17px"><span style="color:#ef5822"><strong>Luminary Technology &amp; Productions</strong></span></span><br>
+			3786 Arapaho Rd.<br>Addison, TX 75001<br>
+			<span style="color:#233038;text-decoration:none"><a href="http://LuminaryTechnology.Productions" style="color:#233038;text-decoration:none" target="_blank">LuminaryTechnology.Productions</a></span></span></div>
+
+			<div><span style="font-family:'verdana','geneva',sans-serif"><a href="https://www.facebook.com/profile.php?id=61563798680454" style="color:rgb(255,146,30)" target="_blank"><img alt="facebook icon" height="16" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png" width="16"></a>&nbsp;<a href="https://www.instagram.com/luminarytechnologyproductions/" style="color:rgb(255,146,30)" target="_blank"><img alt="instagram icon" height="16" src="https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png" width="16"></a>&nbsp;</span></div>
+			</td></tr></tbody></table></div>
     </div>
 
   </article>

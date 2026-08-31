@@ -99,7 +99,13 @@
 // content fixes from the owner: a request is ALWAYS sent even for work agreed
 // by phone, and accepting is the first step in getting paid. Page + script both
 // moved, so a v62 cache would serve the old wording.
-var CACHE_VERSION = 'ltp-shell-v63';
+// v64: the crew announcement takes the owner's own email signature, his revised
+// copy throughout, and (email only) a "view this in your browser" link pointing
+// at the page. The signature is built for a white mail-client ground — its links
+// are #233038 — so on the page it sits on its own white card rather than having
+// its colours overridden, and scrolls inside itself on narrow screens. Page and
+// script both moved.
+var CACHE_VERSION = 'ltp-shell-v64';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

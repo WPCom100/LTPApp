@@ -51,6 +51,25 @@ IMAGES = {
 }
 MIME = {".png": "image/png", ".jpg": "image/jpeg"}
 
+# The email signature's images. Email and page use the owner's own hosted URLs
+# (the app's CSP img-src already allows both hosts, and they stay in step with
+# whatever he updates on the website); the artifact inlines local copies,
+# because its host blocks external images outright.
+SIG_IMAGES = {
+    "__SIG_LOGO__":  ("https://www.luminarytechnology.productions/?attachment_id=581",
+                      "docs/crew-briefing/sig/logo.png"),
+    "__SIG_PHOTO__": ("https://www.luminarytechnology.productions/wp-content/uploads/2024/07/Landry-Profile1.png",
+                      "docs/crew-briefing/sig/photo.png"),
+    "__SIG_FB__":    ("https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/facebook.png",
+                      "docs/crew-briefing/sig/facebook.png"),
+    "__SIG_IG__":    ("https://storage.googleapis.com/signaturesatori/icons/cf/16/ff6633/instagram.png",
+                      "docs/crew-briefing/sig/instagram.png"),
+}
+
+# Where the standalone page lives — the target of the email's "view in browser"
+# link. Only the email carries that link: the page IS the browser view.
+PAGE_URL = ORIGIN + "/assets/crew-email/announcement.html"
+
 # The page's toolbar script, split out of the template (CSP: script-src 'self').
 SCRIPT_REL = "assets/crew-email/briefing.js"
 
@@ -77,6 +96,14 @@ def write(path, text):
         fh.write(text)
 
 
+def signature(target):
+    """The email signature, with its images resolved for this target."""
+    sig = open(os.path.join(HERE, "signature.html"), encoding="utf-8").read().strip()
+    for tok, (url, local) in SIG_IMAGES.items():
+        sig = sig.replace(tok, data_uri(local) if target == "artifact" else url)
+    return sig
+
+
 def data_uri(rel):
     with open(os.path.join(REPO, rel), "rb") as fh:
         blob = base64.b64encode(fh.read()).decode()
@@ -91,7 +118,14 @@ def render_email():
     # build does not depend on the developer's environment.
     os.environ.setdefault("LTP_OAUTH_REDIRECT_URI", ORIGIN + "/auth/callback")
     os.environ.setdefault("LTP_TOKEN_ENCRYPTION_KEY", "")
-    body = open(os.path.join(HERE, "email-body.html")).read()
+    body = open(os.path.join(HERE, "email-body.html"), encoding="utf-8").read()
+    body = body.replace("__SIGNATURE__", signature("email")).replace("__PAGEURL__", PAGE_URL)
+    # A mail client has no site-relative base, so the screenshots need absolute
+    # URLs — unlike the page, which links them site-relative.
+    for tok, rel in IMAGES.items():
+        body = body.replace(tok, ORIGIN + "/" + rel)
+    left = re.findall(r"__[A-Z_]+__", body)
+    assert not left, "unsubstituted placeholders in email body: %s" % left
     brand = _email_brand({"companyName": "Luminary Technology & Productions",
                           "website": "LuminaryTechnology.Productions",
                           "accentColor": "#EF5822"})
@@ -115,6 +149,7 @@ def build(target, email_html, plain):
 
     # Substitute BEFORE splitting the script out, so the emitted .js carries the
     # real payload rather than the placeholders.
+    s = s.replace("__SIGNATURE__", signature(target)).replace("__PAGEURL__", PAGE_URL)
     s = s.replace("__EMAILHTML__", json.dumps(email_html)).replace("__PLAINTEXT__", json.dumps(plain))
     left = re.findall(r"__[A-Z]+__", s)
     assert not left, "unsubstituted placeholders: %s" % left
