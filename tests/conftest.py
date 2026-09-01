@@ -34,8 +34,23 @@ provide a strong test default here. Real deployments set this in the
 environment.
 
 Uses setdefault throughout so explicitly-exported values still win.
+
+Session-factory guard
+=====================
+Because collection imports every module into one process, a module that
+repoints backend.database.async_session at IMPORT time (rather than inside the
+test that needs it) silently redirects the whole app — backend.database.get_db
+resolves that same global — for the rest of the run. On a developer checkout
+the damage hides: the offending module's private SQLite file already carries a
+schema from an earlier run, so the misdirected writes land somewhere valid and
+the suite passes. On a cold checkout, which is what CI always has, the file is
+created empty on first connect and every module that relies on the shared
+schema dies with "no such table: users". pytest_collection_finish below fails
+the run outright instead, naming the cause.
 """
 import os
+
+import pytest
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _root = os.path.dirname(_here)
@@ -51,3 +66,30 @@ for _suffix in ("", "-wal", "-shm"):
         pass
 
 os.environ.setdefault("LTP_SESSION_SECRET", "test-session-secret-" + "x" * 40)
+
+
+def pytest_collection_finish(session):
+    """Fail loudly if importing the test modules repointed the app's DB.
+
+    Checked after collection (when every module has been imported) and before
+    any test runs, so the failure names the cause instead of surfacing as a
+    wall of "no such table" errors in unrelated modules.
+    """
+    import sys
+
+    database = sys.modules.get("backend.database")
+    if database is None:  # no module touched the app DB — nothing to guard
+        return
+    from sqlalchemy.engine import make_url
+
+    bind = getattr(database.async_session, "kw", {}).get("bind")
+    actual = getattr(bind, "url", None)
+    expected = make_url(os.environ["DATABASE_URL"])
+    if actual != expected:
+        raise pytest.UsageError(
+            "a test module repointed backend.database.async_session at import "
+            f"time (bind is {actual!r}, expected {expected!r}). Collection "
+            "imports every module into one process, so that redirects the whole "
+            "app for the rest of the run. Scope the patch to the test that "
+            "needs it."
+        )

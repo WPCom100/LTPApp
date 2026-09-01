@@ -32,6 +32,9 @@ import sys
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 from backend.pdf_generator import (  # noqa: E402
     _DocPDF, _register_fonts, _wrap_plain, generate_pdf,
 )
@@ -224,7 +227,7 @@ def test_notes_still_carry_no_money():
 # this change fixed — so a regression should fail here loudly.
 
 def test_theme_exports_the_note_helpers():
-    src = _read("theme.js")
+    src = domain_source()
     for pin in ("window.LTP_noteText", "window.LTP_noteHasText",
                 "window.LTP_noteSummary", "window.LTP_NOTE_TEXT_STYLE"):
         assert pin in src, f"theme.js missing {pin}"
@@ -257,11 +260,19 @@ def test_client_view_note_row_preserves_whitespace():
 def test_note_edits_reach_the_change_log():
     """Notes are editable now, so an edited note must appear in the revision
     log — otherwise it reads as a silent change on a sent document."""
-    for mod in ("quotes-builder.js", "invoices.js"):
-        src = _read("modules", mod)
-        assert "Note Edited" in src, mod
-        assert "Note Added" in src, mod
-        assert "Note Removed" in src, mod
+    # The change-log categories used to live in each module's own
+    # computeChanges/computeInvChanges. Both moved verbatim into
+    # components/domain-docs.js (window.LTP_quoteChanges / LTP_invoiceChanges)
+    # so they could be unit-tested, so assert on the domain layer — and assert
+    # on BOTH functions, since each document type builds its own list.
+    src = domain_source()
+    for cat in ("Note Edited", "Note Added", "Note Removed"):
+        assert cat in src, cat
+    q = src[src.index("window.LTP_quoteChanges"):src.index("window.LTP_invoiceChanges")]
+    i = src[src.index("window.LTP_invoiceChanges"):]
+    for cat in ("Note Edited", "Note Added", "Note Removed"):
+        assert cat in q, f"quote change log is missing {cat!r}"
+        assert cat in i, f"invoice change log is missing {cat!r}"
 
 
 if __name__ == "__main__":

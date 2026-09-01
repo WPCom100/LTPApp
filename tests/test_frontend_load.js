@@ -34,21 +34,222 @@ files.forEach((f) => {
   catch (e) { ok("syntax: " + rel, false, String(e.stderr || e.message || "").split("\n").filter(Boolean).slice(-1)[0]); }
 });
 
-// 2) theme.js loads under a minimal shim and exports its public API.
-global.window = {};
-let _seq = 0; window.LTP_genId = (p) => (p || "x") + "-" + (++_seq);
+// 2) The theme + domain layer loads under a minimal shim and exports its full
+//    public API. theme.js was split into components/domain-*.js; the loader
+//    reads the file list out of index.html so this can never diverge from what
+//    the browser actually loads.
+const { domainScripts, loadDomain } = require("./_load_domain.js");
+let scripts = [];
 let loaded = true;
-try { (0, eval)(fs.readFileSync(path.join(root, "theme.js"), "utf8")); }
-catch (e) { loaded = false; ok("theme.js loads under shim", false, e.message); }
+try { scripts = domainScripts(); loadDomain(); }
+catch (e) { loaded = false; ok("domain layer loads under shim", false, e.message); }
+
 if (loaded) {
-  ok("theme.js loads under shim", true);
+  ok("domain layer loads under shim", true);
+  ok("index.html still loads theme.js first", scripts[0] === "theme.js", scripts[0]);
+  ok("index.html loads the domain files", scripts.length > 1, "n=" + scripts.length);
+
+  // Spot-checks kept from before the split, one per destination file.
   ["LTP_THEME", "LTP_MODULES", "LTP_calcDayLabor", "LTP_calcLaborDay", "LTP_mealFixBreaks",
    "LTP_QUOTE_TOTALS", "LTP_INVOICE_TOTALS", "LTP_QUOTE_REF", "LTP_INVOICE_REF",
    "LTP_safeUrl", "LTP_formatDate", "LTP_formatTime", "LTP_resolveTemplate",
    "LTP_detectCrewConflicts", "LTP_diffRemovedCrew", "LTP_manualShiftProject",
    "LTP_clientRef", "LTP_servicesForClient", "LTP_applyClientRate", "LTP_clientRateMap"].forEach((k) => {
-    ok("theme exports " + k, typeof window[k] !== "undefined");
+    ok("domain exports " + k, typeof window[k] !== "undefined");
   });
+
+  // ── The split guard ─────────────────────────────────────────────────────
+  // A spot-check list cannot catch an export that silently stops being
+  // published — the failure is a ReferenceError at CALL time, in whichever
+  // screen happens to use it. So assert on the COUNT and on set membership:
+  // every window.LTP_* assigned at column 0 (or from inside one of the two
+  // IIFEs) across the domain files must actually be on window afterwards.
+  const declared = new Set();
+  scripts.forEach((rel) => {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    // Column 0 for a normal export; up to 4 spaces for one published from
+    // inside an IIFE (LTP_STATUS_COLORS, and the four crew-removal helpers).
+    for (const m of src.matchAll(/^ {0,4}window\.(LTP_\w+)\s*=/gm)) declared.add(m[1]);
+  });
+  const live = new Set(Object.keys(window).filter((k) => k.startsWith("LTP_")));
+  const missing = [...declared].filter((k) => !live.has(k));
+  ok("every declared LTP_ export reaches window", missing.length === 0, missing.join(", "));
+  // A bare count is a tripwire: "got 103" does not say WHICH export appeared,
+  // and a legitimate addition should be a one-line edit with an obvious reason.
+  // So name the expected set and diff against it — a failure prints exactly
+  // what was added or lost.
+  const added = [...live].filter((k) => !declared.has(k));
+  ok("no export appears on window that no domain file declares", added.length === 0,
+     added.join(", "));
+  // A bare count was a tripwire that fired on every legitimate addition and
+  // said only "got 107". What actually needs guarding is REMOVAL: the `added`
+  // check above catches an export appearing undeclared, but nothing catches one
+  // quietly disappearing — which in this codebase is a call-time ReferenceError
+  // on whichever screen uses it. So pin the load-bearing exports by name.
+  //
+  // This list is not every export. It is the ones whose loss would be a money
+  // or data bug rather than a cosmetic one: the pricing engine, the document
+  // totals and references, the payout path, and the transforms lifted out of
+  // the builders.
+  [
+    "LTP_THEME", "LTP_MODULES", "LTP_STATUS_COLORS",
+    "LTP_calcLaborDay", "LTP_mealFixBreaks", "LTP_calcDayLabor", "LTP_calcLaborRate",
+    "LTP_servicesForClient", "LTP_applyClientRate", "LTP_clientRateMap",
+    "LTP_payoutRows", "LTP_crewDayPay", "LTP_signOffDay", "LTP_stampPay",
+    "LTP_QUOTE_TOTALS", "LTP_INVOICE_TOTALS", "LTP_QUOTE_REF", "LTP_INVOICE_REF",
+    "LTP_docTerms", "LTP_quoteExpiry", "LTP_displayStatus", "LTP_money",
+    "LTP_sectionTotals", "LTP_applySortMove", "LTP_SECTIONS",
+    "LTP_quoteChanges", "LTP_invoiceChanges",
+    "LTP_renderHeader", "LTP_renderSignature", "LTP_textToHtml",
+    "LTP_genId", "LTP_genShareToken", "LTP_formatDate", "LTP_safeUrl",
+  ].forEach(function (k) {
+    ok("load-bearing export " + k + " is still published", live.has(k),
+       "it was removed or renamed — every caller now fails at call time");
+  });
+  // A floor, not an equality: additions are routine, wholesale loss is not.
+  ok("the domain layer still publishes a full complement of exports",
+     live.size >= 100, "got " + live.size + " (declared " + declared.size + ")");
+
+  // No export may be published by two files: the later <script> would silently
+  // win, and which one that is depends on index.html's ordering.
+  const seen = new Map(); const dupes = [];
+  scripts.forEach((rel) => {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    for (const m of src.matchAll(/^ {0,4}window\.(LTP_\w+)\s*=/gm)) {
+      if (seen.has(m[1]) && seen.get(m[1]) !== rel) dupes.push(m[1] + " (" + seen.get(m[1]) + " + " + rel + ")");
+      else seen.set(m[1], rel);
+    }
+  });
+  ok("no export is published by two domain files", dupes.length === 0, dupes.join("; "));
+
+  // theme.js keeps ONLY the theme. The whole point of the split was that it was
+  // 96% business logic; a regression here means domain code drifted back in.
+  const themeSrc = fs.readFileSync(path.join(root, "theme.js"), "utf8");
+  ok("theme.js stayed small after the split", themeSrc.split("\n").length < 200,
+     themeSrc.split("\n").length + " lines");
+
+  // ── Helpers stay with the code that uses them ───────────────────────────
+  // theme.js was never IIFE-wrapped, so a `function _timeToDecimal()` at its
+  // top level is a GLOBAL and separate <script> tags share one global scope —
+  // verified in Chromium. So splitting a helper away from its callers would
+  // still RUN today; this is not a correctness guard.
+  //
+  // It is here because that is a latent trap. The right cleanup for this layer
+  // is to wrap each domain file in an IIFE so `_timeToDecimal` stops leaking
+  // onto window — and the moment anyone does, every helper that drifted into a
+  // different file from its callers becomes a ReferenceError at call time, in
+  // whichever screen happens to call it. Keeping them co-located now means that
+  // cleanup is a safe one-line change per file later.
+  const declFiles = new Map();   // private name -> file that declares it
+  const useFiles = new Map();    // private name -> Set of files referencing it
+  const srcOf = new Map();
+  scripts.forEach((rel) => srcOf.set(rel, fs.readFileSync(path.join(root, rel), "utf8")));
+  scripts.forEach((rel) => {
+    for (const m of srcOf.get(rel).matchAll(/^(?:var|function|const|let)\s+(_\w+)/gm)) {
+      declFiles.set(m[1], rel);
+    }
+  });
+  declFiles.forEach((_declFile, name) => {
+    scripts.forEach((rel) => {
+      // A reference is any other mention of the identifier in that file.
+      const hits = (srcOf.get(rel).match(new RegExp("\\b" + name + "\\b", "g")) || []).length;
+      const decls = (srcOf.get(rel).match(
+        new RegExp("^(?:var|function|const|let)\\s+" + name + "\\b", "gm")) || []).length;
+      if (hits > decls) {
+        if (!useFiles.has(name)) useFiles.set(name, new Set());
+        useFiles.get(name).add(rel);
+      }
+    });
+  });
+  const strayed = [];
+  useFiles.forEach((users, name) => {
+    users.forEach((u) => { if (u !== declFiles.get(name)) strayed.push(`${name}: declared in ${declFiles.get(name)}, used in ${u}`); });
+  });
+  ok("every file-scope helper is used only in the file that declares it",
+     strayed.length === 0, strayed.join("; "));
+  ok("the helper scan found the known helpers", declFiles.size >= 8, "found " + declFiles.size);
+
+  // Every domain file must be precached, or it is missing on a cold offline
+  // launch — the boot chain is not something the runtime cache can cover.
+  const sw = fs.readFileSync(path.join(root, "sw.js"), "utf8");
+  const precache = sw.slice(sw.indexOf("SAME_ORIGIN_PRECACHE"), sw.indexOf("CDN_PRECACHE"));
+  scripts.filter((s) => s !== "theme.js").forEach((rel) => {
+    ok("sw.js precaches /" + rel, precache.includes("'/" + rel + "'"));
+  });
+}
+
+// ── No state mutation inside a render tree's inline handlers ──────────────
+// The quote builder had the "reopen a declined quote" mutation written inline
+// TWICE — once in the mobile header, once in the desktop one — with the same
+// six lines of activity-stamping and three setters in each. That is how a state
+// mutation drifts: someone fixes one copy and the other quietly keeps the old
+// behaviour. It is also invisible to the render snapshot, which serializes
+// every handler as `fn` and so cannot tell one inline closure from another.
+//
+// Both are now calls to a named reopenQuote(). This guards the invariant rather
+// than that one instance: no `onClick: function(){...}` inside either builder's
+// render return may call a state setter. Named handlers defined above the
+// return are the point — they can be read, reused, and eventually tested.
+(function () {
+  const SETTER = /\bset(Quotes|Invoices|DraftRaw|Draft|Projects|Contacts|Companies)\s*\(/;
+  ["modules/quotes-builder.js", "modules/invoices.js"].forEach(function (rel) {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    const at = src.indexOf("\n    return h(");
+    ok(rel + ": found the render return", at !== -1);
+    if (at === -1) return;
+    const body = src.slice(at);
+    const offenders = [];
+    const re = /onClick: function\(\)\s*\{/g;
+    let m;
+    while ((m = re.exec(body)) !== null) {
+      if (SETTER.test(body.slice(m.index, m.index + 500))) {
+        offenders.push(rel + ":" + (src.slice(0, at).split("\n").length + body.slice(0, m.index).split("\n").length - 1));
+      }
+    }
+    ok(rel + ": no inline render handler mutates state", offenders.length === 0,
+       offenders.join(", ") + " — lift it to a named function above the return");
+  });
+})();
+
+// ── Invoice payment durability (source-level) ─────────────────────────────
+// There is no React harness here, so these assert the invariant at the source.
+// Recording a payment auto-saves it to the invoices list but the editor kept a
+// PRE-payment discard baseline, because autoSavePayment was the one commit path
+// that did not advance cleanRef. Discard is gated on isDirty alone — no
+// !isLocked, unlike Save — so dirtying any un-gated field on a locked invoice
+// and hitting Discard reset the draft to that stale snapshot and the payment
+// disappeared from the editor. recallToDraft then wrote the payment-free draft
+// over the persisted row, past a guard written to prevent exactly that.
+const invSrc = fs.readFileSync(path.join(root, "modules", "invoices.js"), "utf8");
+
+function fnBody(src, name) {
+  const m = new RegExp("function\\s+" + name + "\\s*\\([^)]*\\)\\s*\\{").exec(src);
+  if (!m) return null;
+  let i = m.index + m[0].length - 1, depth = 0;
+  for (; i < src.length; i++) {
+    if (src[i] === "{") depth++;
+    else if (src[i] === "}") { depth--; if (depth === 0) return src.slice(m.index, i + 1); }
+  }
+  return null;
+}
+
+const autoSave = fnBody(invSrc, "autoSavePayment");
+ok("invoices.js defines autoSavePayment", autoSave !== null);
+if (autoSave) {
+  ok("autoSavePayment advances the discard baseline (cleanRef.current)",
+     /cleanRef\.current\s*=/.test(autoSave),
+     "a payment auto-save must re-baseline or Discard reverts it away");
+  ok("autoSavePayment still clears the dirty flag", /setIsDirty\(false\)/.test(autoSave));
+}
+
+const recall = fnBody(invSrc, "recallToDraft");
+ok("invoices.js defines recallToDraft", recall !== null);
+if (recall) {
+  ok("recallToDraft checks the persisted row, not just the draft",
+     /invoices\s*\|\|\s*\[\]/.test(recall) && /persisted/.test(recall),
+     "a money guard must not trust the in-memory draft alone");
+  ok("recallToDraft still blocks when payments exist",
+     /Cannot Recall/.test(recall));
 }
 
 console.log("frontend load/syntax suite — PASS: " + pass + "   FAIL: " + fail + "   (" + files.length + " files syntax-checked)");

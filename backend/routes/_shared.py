@@ -236,10 +236,51 @@ async def load_settings(db: AsyncSession) -> dict:
 
 
 # ── Public-view sanitization ───────────────────────────────────────────────
-# Keys removed from the public payload because they're either internal-only
-# or expose information the client should never see (our cost basis,
-# internal notes, FK IDs that hint at table layout, etc.).
-_PUBLIC_ITEM_DROP_KEYS = {"cost", "deliveredQty", "invoicedQty"}
+# ALLOW-lists, not drop-lists. A drop-list only omits what someone remembered
+# to name, so every new column ships to unauthenticated share-link holders by
+# default until someone notices. That is exactly how two leaks survived the
+# SECURITY_REVIEW.md M1 pass: the document-level `notes` column (models.py
+# annotates it "internal free-form text; never rendered client-side", and the
+# `terms` comment right below it says "NOT `notes`, which is internal and never
+# leaves the app") and the per-line-item `notes` field, which only the staff
+# builders render (modules/quotes-builder.js, modules/invoices.js).
+#
+# Both lists are derived from what the public client view actually reads, so
+# adding a field here is a deliberate act with a reader to point at.
+
+# modules/client-view.js reads exactly these off a line item: it.id, it.type,
+# it.name, it.qty, it.unitPrice, it.adjustedPrice, it.rentalLabel, and for a
+# note row n.text / n.name / n.id. Everything else — cost, deliveredQty,
+# invoicedQty, notes, taxable, rateType and every *Id foreign key — is internal.
+# NOTE: this scrub feeds ONLY the JSON at GET /api/view/{token}. The public PDF
+# (routes/view.py::public_pdf) renders from the unsanitized quote_dict, so
+# narrowing here cannot change what the PDF prints.
+_PUBLIC_ITEM_KEYS = {
+    "id", "type", "name", "text", "qty", "unitPrice", "adjustedPrice",
+    "rentalLabel",
+}
+
+# Document-level keys the public payload may carry. Everything quote_dict /
+# invoice_dict produce that is NOT here is internal: the FK ids, the
+# shareToken credential, the payments ledger, `notes`, and qbTaxSignature
+# (an internal QuickBooks fingerprint with no client meaning).
+_PUBLIC_ENTITY_KEYS = {
+    "id", "clientType", "status",
+    # dates the view and doc_ref need
+    "sentDate", "expiryDate", "invoiceDate", "dueDate", "paidDate",
+    "createdDate", "customStartDate", "customEndDate",
+    "customName", "globalDiscount", "sections", "terms", "activity",
+    "qbTaxTotal",
+    # resolved display names, replacing the projectIds we strip
+    "projectNames",
+}
+
+
+def public_entity(entity_d: dict) -> dict:
+    """Keep only the client-safe document keys. See _PUBLIC_ENTITY_KEYS."""
+    if not isinstance(entity_d, dict):
+        return {}
+    return {k: v for k, v in entity_d.items() if k in _PUBLIC_ENTITY_KEYS}
 
 
 def public_section_items(sections: list) -> list:
@@ -257,7 +298,7 @@ def public_section_items(sections: list) -> list:
         for it in items:
             if not isinstance(it, dict):
                 continue
-            scrubbed = {k: v for k, v in it.items() if k not in _PUBLIC_ITEM_DROP_KEYS}
+            scrubbed = {k: v for k, v in it.items() if k in _PUBLIC_ITEM_KEYS}
             scrubbed_items.append(scrubbed)
         out.append({
             "id": sec.get("id"),
@@ -327,6 +368,11 @@ def public_settings(settings: dict) -> dict:
             # does — window.LTP_quoteExpiry takes it as an override, since the
             # public view has no session for app.js to mirror globals from.
             "defaultQuoteValidity",
+            # Same bargain for invoices: theme.js::LTP_docTerms resolves the
+            # {{paymentTerms}} token as `String(s.defaultPaymentTerms || 30)`,
+            # so omitting this made every share link say "Net 30" while the PDF
+            # (pdf_generator.py::_payment_terms_days) printed the real number.
+            "defaultPaymentTerms",
             # The workspace terms a document falls back to when it carries none
             # of its own. Client-facing by definition — they are printed on the
             # very page this blob feeds.

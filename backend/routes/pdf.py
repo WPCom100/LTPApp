@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import models
+from backend import livesync, models
 from backend.activity import append_activity
 from backend.auth_deps import require_session
 from backend.database import get_db
@@ -60,6 +60,15 @@ def _append_pdf_activity_entry(entity_row, user, token, filename):
         user=user.name, user_id=user.id, message="PDF generated",
         now=datetime.now(), pdfToken=token, pdfFilename=filename,
     )
+
+
+def _publish_pdf_activity(db, kind):
+    """Mark the entity's collection dirty after a pdf_generated stamp.
+
+    The stamp lands on the synced quote/invoice row, and get_db broadcasts only
+    what the request marked — so without this the activity trail appeared in one
+    window and nowhere else until the sweep."""
+    livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
 
 
 async def _generate_and_archive(
@@ -108,6 +117,7 @@ async def _generate_and_archive(
     )
     db.add(archive)
     _append_pdf_activity_entry(entity_row, user, token, filename)
+    _publish_pdf_activity(db, kind)
     await db.flush()
     return {"token": token, "downloadUrl": f"/pdf/{token}", "filename": filename}
 

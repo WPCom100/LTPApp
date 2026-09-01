@@ -59,13 +59,21 @@
 
   // Note Viewer — read-only view with print, copy, edit buttons
   window.CRMNoteViewer = function({ ctx }) {
-    var vn = ctx.viewNote; if (!vn) return null;
-    var project = ctx.projects.find(function(p) { return p.id === vn.projectId; });
-    if (!project) return null;
-    var note = project.notes.find(function(n) { return n.id === vn.noteId; });
-    if (!note) return null;
-    var linkedMeeting = note.linkedMeetingId ? project.meetings.find(function(m) { return m.id === note.linkedMeetingId; }) : null;
+    // EVERY hook runs before the first early return. React counts hooks per
+    // render of the same fiber: this component is re-rendered (not remounted)
+    // whenever `projects` changes, because ctx.viewNote is ProjectsView state
+    // that a remote delete never clears. Returning null above a useState made a
+    // note deleted in another window render fewer hooks than the render before
+    // it, which React throws on — and the "Projects" error boundary then blanked
+    // the whole page.
     var [copied, setCopied] = useState(false);
+
+    var vn = ctx.viewNote;
+    var project = vn ? ctx.projects.find(function(p) { return p.id === vn.projectId; }) : null;
+    var note = (vn && project && project.notes)
+      ? project.notes.find(function(n) { return n.id === vn.noteId; }) : null;
+    if (!vn || !project || !note) return null;
+    var linkedMeeting = note.linkedMeetingId ? project.meetings.find(function(m) { return m.id === note.linkedMeetingId; }) : null;
 
     function copyNote() {
       var plain = stripHtml(note.text);
@@ -107,14 +115,30 @@
 
   // Note Editor — edit existing note
   window.CRMNoteEditor = function({ ctx }) {
-    var en = ctx.editNote; if (!en) return null;
-    var project = ctx.projects.find(function(p) { return p.id === en.projectId; });
-    if (!project) return null;
-    var note = project.notes.find(function(n) { return n.id === en.noteId; });
-    if (!note) return null;
-    var [text, setText] = useState(note.text);
-    var [author, setAuthor] = useState(note.author);
-    var [linkedMeetingId, setLinkedMeetingId] = useState(note.linkedMeetingId || null);
+    // EVERY hook runs before the first early return — see CRMNoteViewer above for
+    // why. This one mattered twice over: the record watch below exists precisely
+    // to warn that the note was deleted elsewhere, and it sat underneath the
+    // early return that the deletion triggered, so it could never fire.
+    var en = ctx.editNote;
+    var project = en ? ctx.projects.find(function(p) { return p.id === en.projectId; }) : null;
+    var note = (en && project && project.notes)
+      ? project.notes.find(function(n) { return n.id === en.noteId; }) : null;
+
+    var [text, setText] = useState(note ? note.text : "");
+    var [author, setAuthor] = useState(note ? note.author : "");
+    var [linkedMeetingId, setLinkedMeetingId] = useState(note ? (note.linkedMeetingId || null) : null);
+    // Notes live inside the project row, so watch just THIS note — an unrelated
+    // change elsewhere in the project is not this editor's business. `pick`
+    // returning null means the note itself was deleted in another window, which
+    // is worth saying. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("projects", en && en.projectId,
+      { title: "This note changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." },
+      function(p) {
+        return (p.notes || []).find(function(x) { return x.id === (en && en.noteId); }) || null;
+      });
+
+    if (!en || !project || !note) return null;   // after every hook, never before
     var meetings = project.meetings;
 
     return h(window.LTPModal, { title: "Edit Note", onClose: function() { ctx.setEditNote(null); }, disableBackdrop: true },

@@ -39,19 +39,22 @@
       return svcs.filter(function(s) { return s && s.clientRate; });
     }, [svcs]);
 
-    // Deep clone schedule with positions
-    var initial = useMemo(function() {
+    // Deep clone schedule with positions. Named rather than inlined because the
+    // live-refresh effect below has to build the same shape from a project that
+    // changed under us, and the two must not drift.
+    function initialFrom(p) {
       return {
-        schedule: (project.schedule || []).map(function(s) {
+        schedule: (p.schedule || []).map(function(s) {
           return Object.assign({}, s, {
-            positions: (s.positions || []).map(function(p) { return Object.assign({}, p); }),
+            positions: (s.positions || []).map(function(x) { return Object.assign({}, x); }),
             breaks: (s.breaks || []).map(function(b) { return Object.assign({}, b); })
           });
         }),
-        scheduleNotes: project.scheduleNotes || "",
-        scheduleActivity: (project.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
+        scheduleNotes: p.scheduleNotes || "",
+        scheduleActivity: (p.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
       };
-    }, [project.id]);
+    }
+    var initial = useMemo(function() { return initialFrom(project); }, [project.id]);
 
     var [draft, setDraftRaw] = useState(initial);
     // Owned-state guard — see theme.js. Synchronous global mirror prevents
@@ -75,6 +78,17 @@
     var [sendDlg, setSendDlg] = useState(null);
 
     useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); }, [project.id]);
+
+    // Someone else moved this project while we have it open — a crew member
+    // accepting from their emailed link, or the other producer saving from a
+    // second window. Adopt it if we have nothing unsaved, otherwise keep our
+    // edits and say so once. See theme.js::LTP_useRemoteEdits.
+    window.LTP_useRemoteEdits(
+      project, initialFrom, isDirty,
+      function(fresh) { setDraftRaw(fresh); cleanRef.current = fresh; },
+      { title: "This schedule changed elsewhere",
+        message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
+      project.id, "projects");
 
     // Informational / validation notice as a non-blocking toast (modals are
     // reserved for confirm/cancel decisions). Variant defaults to "error".
@@ -149,6 +163,38 @@
       fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ contactId: cp.crewId, projectId: project.id, date: cp.date, where: "schedule" }) }).catch(function() {});
     }
+
+    // The producer confirmed the override. Record it, arm the header the server
+    // requires (backend/routes/api.py::_paid_day_override), then save. Arming
+    // BEFORE the save matters: persisted state issues the PUT on a debounce, and
+    // it reads the armed header when it fires.
+    function confirmPaidEdit(cps) {
+      (cps || []).forEach(notifyPaidEdit);
+      if (window.LTP_STATE && window.LTP_STATE.armWrite) {
+        window.LTP_STATE.armWrite("projects", project.id, { "X-LTP-Paid-Day-Override": "1" });
+      }
+      _runSave();
+    }
+
+    // The server refused the save because it reprices a paid day this window did
+    // not know about — `paidDays` is fetched once when the editor opens, so a
+    // bill paid since then, or a second window's save, leaves it stale.
+    //
+    // This is why the check moved server-side: rather than trusting a map that
+    // can be wrong, we let the server tell us and prompt from ITS answer. Saving
+    // again after confirming works because the failed write never advanced the
+    // sync baseline, so the same change is still pending.
+    useEffect(function() {
+      function onConflict(e) {
+        var d = e && e.detail;
+        if (!d || d.collection !== "projects" || d.id !== project.id) return;
+        setPaidWarn((d.days || []).map(function(day) {
+          return { crewId: day.contactId, date: day.date, ds: { docNumber: day.docNumber } };
+        }));
+      }
+      window.addEventListener("ltp-paid-day-conflict", onConflict);
+      return function() { window.removeEventListener("ltp-paid-day-conflict", onConflict); };
+    }, [project.id]);
 
     // ── Compute summary stats ────────────────────────────────────────────────
     var stats = useMemo(function() {
@@ -635,7 +681,7 @@
           })),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setPaidWarn(null); } }, "Cancel"),
-          h(window.Btn, { variant: "danger", onClick: function() { var cps = paidWarn; setPaidWarn(null); cps.forEach(notifyPaidEdit); _runSave(); } }, "Save anyway"))),
+          h(window.Btn, { variant: "danger", onClick: function() { var cps = paidWarn; setPaidWarn(null); confirmPaidEdit(cps); } }, "Save anyway"))),
 
       // Activity detail modal
       viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },

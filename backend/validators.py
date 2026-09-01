@@ -9,11 +9,18 @@ What this catches:
   - String fields that exceed the underlying column's char limit
     (would either truncate or throw a DB error at flush time — we'd
     rather fail with a clear 400 here).
+  - The CONTAINER TYPE of every JSON column, derived from the column's own
+    declared default so it cannot drift from models.py (see _json_rules_for).
+    A column declared `default=list` must receive a list; `default=dict`
+    must receive a dict; null is allowed and clears to the default.
 
 What it deliberately does NOT catch:
   - Nested JSON structure validation (Quote.sections[i].items[j].qty
     being non-negative, Project.budget.lighting being numeric, etc.).
-    That's a much bigger surface; revisit when needed.
+    That's a much bigger surface; revisit when needed. Only the top-level
+    container type is asserted — the readers that matter already guard
+    per-element (backend/payouts.py:213 skips a non-dict schedule entry),
+    so the container is the one assumption none of them can defend against.
   - Cross-field consistency (e.g. clientType="company" implies
     companyId != null). Frontend enforces this; defer.
   - Foreign-key validity. Postgres enforces FK constraints at INSERT.
@@ -120,12 +127,89 @@ def _str_max(maxlen):
 _RULES = None
 
 
+def _json_shape(kind):
+    """Require a JSON column to arrive as the container type it was declared
+    with. None is allowed — it clears the field to the column default.
+
+    Every JSON column in models.py is declared `default=list` or
+    `default=dict`, and every reader assumes that shape. Nothing enforced it:
+    `PUT /api/projects/{id}` with `{"schedule": true}` returned 200 and stored
+    the bool verbatim, after which backend/payouts.py::derive_payout_drafts
+    raised `TypeError: 'bool' object is not iterable` for EVERY project — one
+    member's write took the payouts page down for the whole workspace until
+    the row was repaired by hand.
+
+    This is a shape check only. Nested contents stay unvalidated (see the
+    module docstring): the readers that matter already guard per-element
+    (payouts.py:213 skips a non-dict entry), so the container type is the one
+    assumption none of them can defend against.
+    """
+    name = kind.__name__
+
+    def check(v):
+        if v is None:
+            return
+        # bool is an int subclass but never a list/dict, so isinstance is safe.
+        if not isinstance(v, kind):
+            raise ValueError(f"must be a JSON {name}, got {type(v).__name__}")
+    return check
+
+
+def _snake_to_camel(s):
+    parts = s.split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
+def _json_rules_for(model_cls):
+    """Derive {field: shape-validator} for a model's JSON columns, from the
+    column definitions themselves so this can never drift from models.py.
+
+    Registered under BOTH spellings: _dict_to_row accepts camelCase and
+    snake_case alike, so checking only one leaves the other as a bypass.
+    """
+    from sqlalchemy import JSON
+    out = {}
+    for col in model_cls.__table__.columns:
+        if not isinstance(col.type, JSON):
+            continue
+        # `Column(JSON, default=list)` stores a CallableColumnDefault wrapping
+        # the callable, so `col.default.arg` is a wrapper — not the `list`
+        # builtin. Call it (it takes an execution context, unused here) and
+        # look at what it actually produces. A column with no declared default
+        # (Quote.send_recipients) asserts nothing.
+        default_obj = None
+        d = col.default
+        if d is not None and getattr(d, "is_callable", False):
+            try:
+                default_obj = d.arg(None)
+            except Exception:
+                default_obj = None
+        elif d is not None:
+            default_obj = getattr(d, "arg", None)
+        if isinstance(default_obj, list):
+            declared = list
+        elif isinstance(default_obj, dict):
+            declared = dict
+        else:
+            continue
+        check = _json_shape(declared)
+        out[col.name] = check
+        camel = _snake_to_camel(col.name)
+        if camel != col.name:
+            out[camel] = check
+    return out
+
+
 def _build_rules():
     """Build the {model_cls: {field: validator}} map. Called once on first
     use of validate() to avoid forcing models to be imported at module load
-    time (would create a circular dep with backend/__init__.py)."""
+    time (would create a circular dep with backend/__init__.py).
+
+    Hand-written field rules below, then a derived JSON container-shape rule
+    per model (see _json_rules_for). Hand-written entries win on collision.
+    """
     from backend import models
-    return {
+    rules = {
         models.Company: {
             "name":    _str_max(255),
             "status":  _enum("company_status"),
@@ -241,6 +325,12 @@ def _build_rules():
             "category": _str_max(100),
         },
     }
+    # Derived JSON container-shape rules, added under any field the
+    # hand-written map above does not already claim.
+    for model_cls, field_rules in rules.items():
+        for field, check in _json_rules_for(model_cls).items():
+            field_rules.setdefault(field, check)
+    return rules
 
 
 def validate(model_cls, data: dict) -> None:

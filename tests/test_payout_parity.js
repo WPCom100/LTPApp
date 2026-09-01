@@ -7,10 +7,9 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-global.window = {};
-let _seq = 0;
-window.LTP_genId = (p) => (p || "x") + "-" + (++_seq);
-(0, eval)(fs.readFileSync(path.join(__dirname, "..", "theme.js"), "utf8"));
+// theme.js is now theme.js + components/domain-*.js; the loader reads the
+// order straight out of index.html so it cannot drift from production.
+require("./_load_domain.js").loadDomain();
 
 let pass = 0, fail = 0; const fails = [];
 function ok(n, c, d) { if (c) pass++; else { fail++; fails.push(n + (d ? "  [" + d + "]" : "")); } }
@@ -45,6 +44,75 @@ periods.cases.forEach((c, i) => {
 periods.payday.forEach((p, i) => {
   eq("PP payday " + i, window.LTP_payPeriodPayDay(p.end, p.offset), p.payDay);
 });
+
+// ── Pay adjustments: the getter must agree with the payout rollup ────────────
+//
+// The adjustments modal reads LTP_getPayAdjustments and the payout row reads
+// its own rollup in domain-payouts.js. They walk the same schedule looking for
+// the same thing, so if they ever disagree the modal shows one list while the
+// money is computed from another. These pin them together.
+
+function dayWith(positions) {
+  return [{ id: "s1", date: "2026-05-04", time: "08:00", endTime: "17:00", breaks: [], positions: positions }];
+}
+const ADJ = [{ id: "a1", amount: 25, label: "parking" }, { id: "a2", amount: -10, label: "advance" }];
+
+{
+  const sched = window.LTP_setPayAdjustments(
+    dayWith([{ id: "p1", crewId: 9, status: "confirmed", serviceId: 1 }]), 9, "2026-05-04", ADJ);
+  eq("PA1 what the setter stored is what the getter reads",
+     JSON.stringify(window.LTP_getPayAdjustments(sched, 9, "2026-05-04")), JSON.stringify(ADJ));
+  eq("PA2 a different person on the same day has none",
+     window.LTP_getPayAdjustments(sched, 8, "2026-05-04").length, 0);
+  eq("PA3 a different day has none",
+     window.LTP_getPayAdjustments(sched, 9, "2026-05-05").length, 0);
+}
+
+{
+  // Clearing must read back as empty, not as the old list.
+  let sched = window.LTP_setPayAdjustments(
+    dayWith([{ id: "p1", crewId: 9, status: "confirmed", serviceId: 1 }]), 9, "2026-05-04", ADJ);
+  sched = window.LTP_setPayAdjustments(sched, 9, "2026-05-04", []);
+  eq("PA4 clearing empties it", window.LTP_getPayAdjustments(sched, 9, "2026-05-04").length, 0);
+}
+
+{
+  // Unconfirmed positions are not the person's day — the rollup skips them and
+  // so must the getter, or the modal offers to edit something nothing bills.
+  const sched = dayWith([{ id: "p1", crewId: 9, status: "requested", serviceId: 1, adj: ADJ }]);
+  eq("PA5 an unconfirmed position is not read", window.LTP_getPayAdjustments(sched, 9, "2026-05-04").length, 0);
+}
+
+{
+  // The zero-amount filter lives in the setter; the getter reports what is
+  // stored, so a zero can never reach the row through either path.
+  const sched = window.LTP_setPayAdjustments(
+    dayWith([{ id: "p1", crewId: 9, status: "confirmed", serviceId: 1 }]), 9, "2026-05-04",
+    [{ id: "z", amount: 0, label: "nothing" }, { id: "a1", amount: 25, label: "parking" }]);
+  const read = window.LTP_getPayAdjustments(sched, 9, "2026-05-04");
+  eq("PA6 a zero-amount adjustment is not stored", read.length, 1);
+  eq("PA7 and the real one survives", read[0].label, "parking");
+}
+
+{
+  // The whole point: the modal's list and the payout row's list are the same
+  // list, on the real rollup path.
+  const projects = [{ id: 1, name: "Gala", status: "upcoming",
+    startDate: "2026-05-04", endDate: "2026-05-04",
+    schedule: window.LTP_setPayAdjustments(
+      dayWith([{ id: "p1", crewId: 9, status: "confirmed", serviceId: 1,
+                 work: { state: "worked", pay: { total: 400, tier: "day" }, signedAt: "2026-05-04" } }]),
+      9, "2026-05-04", ADJ) }];
+  const contacts = [{ id: 9, firstName: "Pat", lastName: "Paid", isCrew: true }];
+  const services = [{ id: 1, role: "A1", description: "Audio", department: "Audio" }];
+  const rows = window.LTP_payoutRows(projects, contacts, services, "2026-05-01", "2026-05-31");
+  const row = rows.groups[0] && rows.groups[0].rows[0];
+  ok("PA8 the payout row carries the adjustments", !!row && row.adjustments.length === 2);
+  eq("PA9 and the getter reads exactly the same list",
+     JSON.stringify(window.LTP_getPayAdjustments(projects[0].schedule, 9, "2026-05-04")),
+     JSON.stringify(row.adjustments));
+  eq("PA10 net matches the row's adjTotal", row.adjTotal, 15);
+}
 
 console.log("payout-parity suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

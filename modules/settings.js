@@ -182,6 +182,21 @@
 
     useEffect(function() { setDraft(Object.assign({}, settings)); cleanRef.current = settings; setIsDirty(false); }, []);
 
+    // Settings is a real draft editor (it owns a dirty flag), so it gets the
+    // full treatment rather than the warn-only watch: adopt a newer blob when
+    // nothing is unsaved, keep the local edits and warn once when there is.
+    // Having a dirty flag is also what stops it warning about its OWN save —
+    // save() clears the flag first, so the write coming back reads as an adopt.
+    //
+    // Note the server SHALLOW-MERGES settings, so two admins editing different
+    // keys compose rather than collide; this covers the same-key case.
+    window.LTP_useRemoteEdits(
+      settings, function(s) { return s; }, isDirty,
+      function(fresh) { setDraft(Object.assign({}, fresh)); cleanRef.current = fresh; },
+      { title: "Settings changed elsewhere",
+        message: "Another window updated settings while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer values." },
+      "settings", "settings");
+
     function loadUsers() {
       fetch("/api/users")
         .then(function(r) {

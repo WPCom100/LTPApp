@@ -51,6 +51,7 @@ def _check(label: str, cond: bool, detail: str = "") -> None:
     status = "PASS" if cond else "FAIL"
     suffix = f"  ({detail})" if detail else ""
     print(f"  [{status}] {label}{suffix}")
+    assert cond, f"{label} {detail}"
 
 
 # ── Setup ─────────────────────────────────────────────────────────────────

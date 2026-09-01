@@ -131,6 +131,13 @@ async def refresh_if_needed(
 
     now = datetime.now(timezone.utc)
     expires_at = user.gmail_token_expires_at
+    # SQLite drops tzinfo on DateTime(timezone=True) reads; Postgres keeps it.
+    # Normalize to UTC-aware before comparing, the same way
+    # backend/auth_deps.py:55-59 does for session expiry — without this the
+    # comparison below raises "can't compare offset-naive and offset-aware
+    # datetimes" on every refresh under SQLite, i.e. on every local dev run.
+    if expires_at is not None and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
     fresh_enough = (
         not force
         and expires_at is not None
@@ -204,7 +211,45 @@ async def refresh_if_needed(
     if rotated_refresh:
         # Google occasionally rotates the refresh token; persist immediately
         # or we'll lose access on the next refresh attempt.
-        user.gmail_refresh_token = crypto.encrypt_token(rotated_refresh)
+        encrypted_refresh = crypto.encrypt_token(rotated_refresh)
+        user.gmail_refresh_token = encrypted_refresh
+        # "Immediately" has to mean COMMITTED, not flushed. Google has already
+        # invalidated the old refresh token by this point, so if the caller's
+        # transaction later rolls back we lose the only working credential and
+        # the user's Gmail is dead until they reconnect by hand. That rollback
+        # is a normal path, not a rare one: qbo_receipts._send_receipt deletes
+        # its EmailRecipient rows and the poller rolls the whole iteration back
+        # whenever a send fails.
+        #
+        # Committing the CALLER's session here is not an option — it would make
+        # those recipient rows permanent, and the failure path is written to
+        # delete them. So write just this one column in its own session.
+        #
+        # Ordering matters: this runs BEFORE the flush below, while the caller's
+        # transaction has not yet written the users row, so the two cannot
+        # contend for the same row lock. No current caller of gmail.send touches
+        # the users row before sending (checked: routes/email.py,
+        # routes/crew.py, qbo_receipts.py) — keep it that way, or move this.
+        #
+        # Best-effort: a failure here must not break a send that is otherwise
+        # fine. The in-memory user object and the caller's transaction still
+        # carry the new value, so the old flush-only behaviour remains as the
+        # fallback.
+        try:
+            from sqlalchemy import update as _update
+            from backend.database import async_session as _async_session
+
+            async with _async_session() as _s:
+                await _s.execute(
+                    _update(models.User)
+                    .where(models.User.id == user.id)
+                    .values(gmail_refresh_token=encrypted_refresh)
+                )
+                await _s.commit()
+        except Exception as e:  # pragma: no cover - durability is best-effort
+            print(f"[LTP] gmail: rotated refresh token for user {user.id} could not be "
+                  f"committed independently ({e}); relying on the caller's transaction",
+                  flush=True)
     new_scope = data.get("scope")
     if new_scope:
         user.gmail_granted_scopes = new_scope

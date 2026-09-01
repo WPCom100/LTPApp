@@ -240,6 +240,12 @@
     var [deptFilter, setDeptFilter] = useState("all");
     var [editingCrew, setEditingCrew] = useState(null);
     var [crewDlg, setCrewDlg] = useState(null);
+    // editingCrew is a COPY of the contact, taken when the editor opened. If the
+    // real row moves in another window, say so — this form cannot re-seed itself
+    // mid-edit. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("contacts", editingCrew && editingCrew.id,
+      { title: "This crew member changed elsewhere",
+        message: "Another window updated them while this form was open. Saving will replace the newer version." });
     var [customRole, setCustomRole] = useState("");
     var crew = contacts.filter(function(c) { return c.isCrew; });
     var q = search.toLowerCase();
@@ -439,6 +445,17 @@
     // untouched (its ids/crew/status survive, and so do any crew requests).
     var editing = !!editProject;
     var editShift = editing ? ((editProject.schedule && editProject.schedule[0]) || {}) : {};
+    // Watch only the fields THIS modal owns. Roles and crew on the same internal
+    // project are managed from the Assignments tab, and a crew member accepting
+    // there must not look like someone editing this form's shift out from under
+    // it. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("projects", editProject && editProject.id,
+      { title: "This shift changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." },
+      function(p) {
+        var sh = (p.schedule && p.schedule[0]) || {};
+        return [p.name, p.startDate, p.venue, sh.title, sh.date, sh.time, sh.endTime, sh.notes];
+      });
     var [title, setTitle] = useState(editing ? (editProject.name || editShift.title || "") : "");
     var [date, setDate] = useState(editing ? (editShift.date || editProject.startDate || "") : todayISO());
     var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");
@@ -711,21 +728,34 @@
       var proj = editManualProject;
       setEditManualProject(null);
       if (!proj) return;
-      var before = proj.schedule || [];
-      var shift0 = (proj.schedule && proj.schedule[0]) || {};
-      var newShift0 = Object.assign({}, shift0, {
-        title: form.title, date: form.date, time: form.startTime, endDate: form.date, endTime: form.endTime,
-        breaks: form.breaks || shift0.breaks || [],
-      });
-      var newSchedule = before.length ? [newShift0].concat(before.slice(1)) : [newShift0];
+      // Build the new schedule from the LIVE row inside the updater, not from the
+      // snapshot taken when the modal opened. This modal owns the shift's name,
+      // date, times and breaks — nothing else — but it used to rewrite the whole
+      // schedule array from its stale copy, so a crew member who accepted while
+      // it was open had their status silently reverted to "open". The record
+      // watch could not warn either: its pick() covers exactly the fields the
+      // modal owns, which are exactly the ones that had NOT changed.
+      var beforeRef = { schedule: proj.schedule || [] };
       setProjects(function(prev) {
         return (prev || []).map(function(p) {
-          return p.id === proj.id ? Object.assign({}, p, {
+          if (p.id !== proj.id) return p;
+          var live = p.schedule || [];
+          beforeRef.schedule = live;         // diff against what is really there
+          var shift0 = live[0] || {};
+          var newShift0 = Object.assign({}, shift0, {
+            title: form.title, date: form.date, time: form.startTime,
+            endDate: form.date, endTime: form.endTime,
+            breaks: form.breaks || shift0.breaks || [],
+          });
+          beforeRef.after = live.length ? [newShift0].concat(live.slice(1)) : [newShift0];
+          return Object.assign({}, p, {
             name: form.title, startDate: form.date, endDate: form.date,
-            siteAddress: form.location, schedule: newSchedule,
-          }) : p;
+            siteAddress: form.location, schedule: beforeRef.after,
+          });
         });
       });
+      var before = beforeRef.schedule;
+      var newSchedule = beforeRef.after || before;
       var changed = window.LTP_diffChangedShifts(before, newSchedule, contacts, services);
       changed.forEach(function(g) {
         window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: proj.id, projectName: form.title || proj.name || "", template: g.template, shifts: g.shifts });
@@ -2002,6 +2032,22 @@
       fetch("/api/qbo/payouts/notify-edit", { method: "POST", headers: { "Content-Type": "application/json" },
         credentials: "include", body: JSON.stringify({ contactId: r.crewId, projectId: r.projectId, date: r.date, where: "payouts" }) }).catch(function() {});
     }
+    // The admin confirmed. Record the override, arm the header the server now
+    // requires on a write that reprices a paid day (backend/routes/api.py
+    // ::_paid_day_override), then run the action. Arming BEFORE it matters:
+    // persisted state issues the PUT on a debounce and reads the header then.
+    //
+    // Armed even in the `unverified` case — we could not confirm the day is
+    // unpaid, and the server refuses either way if it turns out to be.
+    function confirmPaidEdit(g) {
+      if (!g) return;
+      if (!g.unverified) notifyPaidEdit(g.row);
+      if (window.LTP_STATE && window.LTP_STATE.armWrite) {
+        window.LTP_STATE.armWrite("projects", g.row.projectId, { "X-LTP-Paid-Day-Override": "1" });
+      }
+      g.run();
+    }
+
     function guardPaid(r, proceed) {
       // Payout pay-writes (sign-off, lock, adjust, no-show, undo) are admin-only —
       // the amount is billed verbatim to QuickBooks, and the server reverts a
@@ -2018,6 +2064,32 @@
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
 
+    // The server refused a write because it reprices a paid day this tab did not
+    // know about — `dayStatus` is fetched per period, so a bill paid since then
+    // (or another window's edit) leaves it stale. Prompt from the SERVER's
+    // answer; re-running the action after confirming works because the refused
+    // write never advanced the sync baseline.
+    React.useEffect(function() {
+      function onConflict(e) {
+        var d = e && e.detail;
+        if (!d || d.collection !== "projects" || !(d.days || []).length) return;
+        var first = d.days[0];
+        setPaidGuard({
+          row: { crewId: first.contactId, projectId: d.id, date: first.date },
+          ds: { docNumber: first.docNumber, paid: true },
+          run: function() {
+            if (window.LTP_STATE && window.LTP_STATE.armWrite) {
+              window.LTP_STATE.armWrite("projects", d.id, { "X-LTP-Paid-Day-Override": "1" });
+            }
+            // Re-issue the same edit: the pending change is still in local state.
+            setProjects(function(prev) { return prev.slice(); });
+          },
+        });
+      }
+      window.addEventListener("ltp-paid-day-conflict", onConflict);
+      return function() { window.removeEventListener("ltp-paid-day-conflict", onConflict); };
+    }, []);
+
     // ── Day-of sign-off ──────────────────────────────────────────────────────
     var [adjustDlg, setAdjustDlg] = useState(null);  // { row, shifts, actuals }
     var [noShowDlg, setNoShowDlg] = useState(null);  // row awaiting no-show confirm
@@ -2026,21 +2098,33 @@
     var canExport = isAdmin && qbo && qbo.connected;
 
     // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
-    function savePayAdjustments(row, list) {
+    //
+    // Called once per added or removed item rather than once per modal session:
+    // an adjustment cannot be edited after the fact — you delete it and add
+    // another — so each one is a complete decision and there is nothing a Save
+    // button could still be waiting for. `what` names the single change, both
+    // for the toast and for the project's activity log, which is a better audit
+    // trail than one "2 items, net +$40" entry per visit.
+    function savePayAdjustments(row, list, what) {
       var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+      var who = crewLabel(row.crewId) + " \u00b7 " + fmt(row.date);
+      var netLabel = (net < 0 ? "\u2212" : "+") + fmtMoney(Math.abs(net));
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
           var updated = Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
-            message: "Pay adjustments: " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " +
-              (list.length ? (list.length + " item" + (list.length > 1 ? "s" : "") + ", net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))) : "cleared"),
-            changes: [{ cat: "Pay Adjusted", detail: crewLabel(row.crewId) + " " + fmt(row.date) + " net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) }] };
+            message: "Pay adjustments: " + who + " \u2014 " + what + " \u2192 " +
+              (list.length ? (list.length + " item" + (list.length > 1 ? "s" : "") + ", net " + netLabel) : "cleared"),
+            changes: [{ cat: "Pay Adjusted", detail: who + " " + what + " (net " + netLabel + ")" }] };
           return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
         });
       });
-      window.LTP_toast("Pay adjustments saved", { message: crewLabel(row.crewId) + " · " + fmt(row.date) + (list.length ? " — net " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net)) : " — cleared"), variant: "success" });
+      window.LTP_toast(what, {
+        message: who + (list.length ? " \u2014 net " + netLabel : " \u2014 no adjustments left"),
+        variant: "success",
+      });
     }
 
     // The person's confirmed shifts on a row's day — the entries the adjust
@@ -2320,7 +2404,7 @@
                             canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
                             canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
-                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, list: (r.adjustments || []).slice(), label: "", amount: "" }); }); }, null,
+                      sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
           }),
@@ -2329,29 +2413,44 @@
       // before or after sign-off (independent of the worked-hours math).
       adjPayDlg && (function() {
         var d = adjPayDlg;
-        var net = Math.round(d.list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+        // Read the list LIVE rather than from a copy taken when the modal
+        // opened. Two things fall out of that. Another window adding or
+        // removing an adjustment simply appears here — there is no local draft
+        // for it to conflict with, so nothing to warn about and nothing to
+        // reconcile. And since every add and delete below writes immediately,
+        // what is on screen is always what is stored.
+        var adjProj = projects.find(function(x) { return x.id === d.row.projectId; });
+        var list = window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
+        var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
         var pendingAmt = parseFloat(d.amount);
         var canAdd = !isNaN(pendingAmt) && pendingAmt !== 0;
+        function adjLabel(a) {
+          return (a.amount < 0 ? "\u2212" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : "");
+        }
         function addItem() {
           if (!canAdd) return;
-          setAdjPayDlg(Object.assign({}, d, { list: d.list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]), label: "", amount: "" }));
+          var item = { id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(),
+                       addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") };
+          setAdjPayDlg(Object.assign({}, d, { label: "", amount: "" }));
+          savePayAdjustments(d.row, list.concat([item]), "Added " + adjLabel(item));
         }
-        function save() {
-          var list = d.list;
-          if (canAdd) list = list.concat([{ id: genId("adj"), amount: Math.round(pendingAmt * 100) / 100, label: d.label.trim(), addedAt: todayISO(), addedBy: (window.LTP_CURRENT_USER || "User") }]);
-          setAdjPayDlg(null);
-          savePayAdjustments(d.row, list);
+        function removeItem(a) {
+          // By id where there is one — the list is re-derived every render, so
+          // matching on object identity would depend on which render's closure
+          // fired. Items predating ids fall back to identity.
+          var without = list.filter(function(x) { return a.id ? x.id !== a.id : x !== a; });
+          savePayAdjustments(d.row, without, "Removed " + adjLabel(a));
         }
         return h(window.LTPModal, { title: "Pay adjustments — " + crewLabel(d.row.crewId) + " · " + fmt(d.row.date), onClose: function() { setAdjPayDlg(null); } },
           h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
-            "Extras or deductions on top of the day's pay — parking, gear rental, a bonus, an advance. Use a negative amount to deduct. These are payout-only and never billed to the client."),
-          d.list.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } },
-            d.list.map(function(a, ai) {
+            "Extras or deductions on top of the day's pay — parking, gear rental, a bonus, an advance. Use a negative amount to deduct. These are payout-only and never billed to the client. Each saves as you add or remove it; to change one, remove it and add it again."),
+          list.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 } },
+            list.map(function(a, ai) {
               return h("div", { key: a.id || ai, style: { display: "flex", gap: 10, alignItems: "center", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 10px" } },
                 h("span", { style: { fontSize: "12px", fontWeight: 700, color: a.amount < 0 ? B.danger : B.success, width: 80 } }, (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount))),
                 h("span", { style: { flex: 1, fontSize: "11px", color: B.text } }, a.label || "—"),
                 a.addedBy && h("span", { style: { fontSize: "9px", color: B.textMut } }, a.addedBy + (a.addedAt ? " · " + fmt(a.addedAt) : "")),
-                h("button", { onClick: function() { setAdjPayDlg(Object.assign({}, d, { list: d.list.filter(function(x, xi) { return xi !== ai; }) })); },
+                h("button", { onClick: function() { removeItem(a); }, title: "Remove this adjustment",
                   style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "13px", padding: 0, lineHeight: 1 } }, "×"));
             })),
           h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14 } },
@@ -2363,9 +2462,10 @@
           h("div", { style: { display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center" } },
             h("span", { style: { fontSize: "12px", fontWeight: 700, color: net < 0 ? B.danger : B.accent } },
               "Net: " + (net < 0 ? "−" : "+") + fmtMoney(Math.abs(net))),
-            h("div", { style: { display: "flex", gap: 8 } },
-              h(window.Btn, { variant: "ghost", onClick: function() { setAdjPayDlg(null); } }, "Cancel"),
-              h(window.Btn, { onClick: save }, "Save"))));
+            // No Save. Each "+ Add" and each "×" has already been written, so a
+            // Save button could only imply something was still pending, and a
+            // Cancel would falsely promise to undo what is already stored.
+            h(window.Btn, { onClick: function() { setAdjPayDlg(null); } }, "Done")));
       })(),
 
       // No-show confirm
@@ -2389,7 +2489,7 @@
                + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?")),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setPaidGuard(null); } }, "Cancel"),
-          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); if (!g.unverified) notifyPaidEdit(g.row); g.run(); } }, "Edit anyway"))),
+          h(window.Btn, { variant: "danger", onClick: function() { var g = paidGuard; setPaidGuard(null); confirmPaidEdit(g); } }, "Edit anyway"))),
 
       // Adjust-day sign-off
       adjustDlg && (function() {
@@ -2455,7 +2555,30 @@
     React.useEffect(function() { reloadCrewRequests(); }, []);
 
     function crewLabel(id) { var c = contacts.find(function(x) { return x.id === id; }); return c ? (c.firstName + " " + c.lastName).trim() : "Unknown"; }
-    function projLabel(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : "Project"; }
+
+    // The project row may legitimately not be here yet: a request created in
+    // another window (a manual shift, say) reaches this tab through
+    // /api/crew-requests, while its project arrives via the projects
+    // collection. Live sync closes that gap in about a second — but it is a
+    // gap, so say "Syncing…" rather than inventing a name. This used to return
+    // the literal string "Project", which read as a real shift name and gave
+    // no hint that anything was missing.
+    function projName(id) { var p = (projects || []).find(function(x) { return x.id === id; }); return p ? p.name : null; }
+    function projLabel(id) { return projName(id) || "Syncing\u2026"; }
+
+    // Self-heal: if a request references a project we do not hold, ask the
+    // server what has changed rather than sitting on "Syncing…". Live sync
+    // normally gets there first; this covers the window where the request list
+    // arrived ahead of the project that backs it, and the case where the feed
+    // dropped a frame. Cheap — one /api/versions round trip, and only while
+    // something is actually unresolved.
+    var unresolved = (crewRequests || []).some(function(r) {
+      return r.status !== "withdrawn" && !projName(r.projectId);
+    });
+    React.useEffect(function() {
+      if (!unresolved || !window.LTP_LIVE) return;
+      window.LTP_LIVE.revalidate();
+    }, [unresolved]);
 
     // Withdraw a pending request: kill the crew link now, reopen its shifts, and
     // park the crew-withdrawn email in the notify tray (coalesced per person,
@@ -2515,6 +2638,10 @@
     function reqInfo(req) {
       var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
       var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+      // `known` distinguishes "this project has no matching positions" from
+      // "we do not have this project yet". They used to be indistinguishable —
+      // both produced all-zero counts — which is what silently hid the Confirm
+      // button on a request the crew member had already accepted.
       var positions = [];
       if (proj) (proj.schedule || []).forEach(function(s) {
         (s.positions || []).forEach(function(p) {
@@ -2523,12 +2650,19 @@
       });
       var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
-      return { proj: proj, positions: positions, counts: counts };
+      return { proj: proj, known: !!proj, positions: positions, counts: counts };
     }
 
     // Badge label/color + which actions show, from the request + its live
     // position statuses. Confirming lives HERE (not on the Assignments tab).
     function displayState(req, info) {
+      // Without the project row we cannot read the live position statuses, so
+      // every downstream decision here would be a guess — and acting on a guess
+      // is worse than waiting. Confirm/withdraw both write INTO the project's
+      // schedule, so offering them against a project we do not hold would be a
+      // click that silently does nothing. Say so instead; live sync fills this
+      // in on its own, and the effect below nudges it along.
+      if (!info.known) return { label: "Syncing\u2026", color: B.textMut, pending: true };
       if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
       if (req.status === "declined") return { label: "Declined", color: B.danger };
       // A direct book was never sent, never answered — say so, permanently, so
@@ -2628,7 +2762,13 @@
                               return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
                                 (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
                             }))
-                        : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+                        : !info.known
+                          // Distinct from "no positions": we are missing the
+                          // project, not the shifts. Actions stay hidden until
+                          // it lands so a Confirm click can't quietly no-op.
+                          ? h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
+                              "Waiting for this shift\u2019s details to sync\u2026")
+                          : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
                       // Direct book — no ask was ever sent, so there's no crew
                       // note to show and none is coming.
                       r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
@@ -2719,6 +2859,18 @@
         .catch(function() {});
     }
     React.useEffect(loadCrewRequests, []);
+
+    // Crew requests are the one collection that changes without any window
+    // touching it: a crew member accepting or declining from their emailed link
+    // is a server-side write. Subscribe to the live feed so an open Labor tab
+    // learns about it instead of showing a stale answer until a hard refresh.
+    // The `projects` array behind it refreshes on its own — components/
+    // data-state.js subscribes every persisted slice — and the accept path
+    // publishes BOTH collections (backend/routes/crew.py::_respond).
+    React.useEffect(function() {
+      if (!window.LTP_LIVE) return;
+      return window.LTP_LIVE.subscribe("crew-requests", loadCrewRequests);
+    }, []);
 
     var allPositions = useMemo(function() {
       return aggregatePositions(projects, contacts, services);

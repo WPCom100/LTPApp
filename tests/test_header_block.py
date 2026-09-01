@@ -40,6 +40,9 @@ import sys
 _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _root)
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _domain_source import domain_source  # noqa: E402
+
 _results = []
 
 
@@ -48,6 +51,7 @@ def _check(label, ok, detail=""):
     suffix = f"  ({detail})" if detail else ""
     print(f"  [{status}] {label}{suffix}")
     _results.append((label, ok))
+    assert ok, f"{label} {detail}"
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────
@@ -214,7 +218,7 @@ def test_render_header_per_type_cta():
     """LTP_renderHeader builds the box with the right CTA per kind, and
     theme.js declares those labels in LTP_HEADER_CTA."""
     print("test_render_header_per_type_cta")
-    theme = _read("theme.js")
+    theme = domain_source()
     _check("theme.js declares LTP_HEADER_CTA", "LTP_HEADER_CTA" in theme)
     for kind, label in _CTA.items():
         _check(f"theme.js carries the {kind} CTA label", label in theme)
@@ -290,7 +294,7 @@ def test_invoice_header_due_date_and_larger_fonts():
            "font-size:14px;color:#8a949e" in no_due and "font-size:17px" in no_due)
     _check("invoice w/o due date omits the due-date line", ">Due " not in no_due)
     # Source-level: the variant is gated to kind === "invoice" in theme.js.
-    theme = _read("theme.js")
+    theme = domain_source()
     _check('theme.js gates the invoice variant on kind === "invoice"',
            'kind === "invoice"' in theme)
     _check("theme.js renders a 'Due ' line for invoices", ">Due " in theme)
@@ -349,6 +353,44 @@ def test_frontend_sanitizer_allowlist_pinned():
 # ── Total formatting ──────────────────────────────────────────────────────
 
 
+def _fn_body(src, fn_name):
+    """Return the source text of `function <fn_name>(...) { ... }`, or None.
+
+    Brace-matched from the opening `{`, skipping braces inside string and
+    template literals and line comments so a `"}"` in a message can't close
+    the body early. Good enough for these hand-written modules; it is only
+    used to scope a search, never to execute anything.
+    """
+    m = re.search(r"function\s+" + re.escape(fn_name) + r"\s*\([^)]*\)\s*{", src)
+    if not m:
+        return None
+    i = m.end() - 1
+    depth = 0
+    quote = None
+    while i < len(src):
+        c = src[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+        elif c in "\"'`":
+            quote = c
+        elif c == "/" and src[i + 1:i + 2] == "/":
+            nl = src.find("\n", i)
+            i = len(src) if nl == -1 else nl
+            continue
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.end() - 1:i + 1]
+        i += 1
+    return None
+
+
 def test_total_renders_with_cents_in_all_three_modals():
     """{{total}} must always render with two decimal places (e.g.
     $197.00, $0.00). Three call sites: quotes-builder.js openQuoteSendModal,
@@ -356,21 +398,46 @@ def test_total_renders_with_cents_in_all_three_modals():
     print("test_total_renders_with_cents_in_all_three_modals")
     qb = _read("modules", "quotes-builder.js")
     inv = _read("modules", "invoices.js")
-    qb_matches = qb.count('minimumFractionDigits: 2')
-    inv_matches = inv.count('minimumFractionDigits: 2')
-    _check("quotes-builder uses minimumFractionDigits: 2",
-           qb_matches >= 1, f"got {qb_matches} matches")
-    _check("invoices uses minimumFractionDigits: 2 in BOTH send + receipt",
-           inv_matches >= 2, f"got {inv_matches} matches")
-    email_total_blocks = re.findall(
-        r'total:\s*"\$"\s*\+\s*Math\.round\(\w+\.total\)\.toLocaleString\(([^)]*)\)',
-        qb + inv,
-    )
-    cents_blocks = [a for a in email_total_blocks if "minimumFractionDigits" in a]
-    _check("every email-substitution `total:` uses minimumFractionDigits",
-           len(cents_blocks) == len(email_total_blocks),
-           f"found {len(email_total_blocks)} total: lines, "
-           f"{len(cents_blocks)} have cents config")
+    theme = domain_source()
+
+    # This used to count occurrences of the literal `minimumFractionDigits: 2`
+    # in each module. That proxy broke when the modals were refactored onto the
+    # shared window.LTP_money helper: the literal moved into theme.js, the
+    # invoices count dropped to 1, and the regex below stopped matching
+    # anything at all (so it passed vacuously on an empty set). The behaviour
+    # was correct the whole time — only the proxy was wrong. Assert the actual
+    # invariant instead: every currency-valued `total:` substitution routes
+    # through LTP_money, and LTP_money pins two decimals.
+    _TOTAL_SUB = r'total:\s*"\$"\s*\+\s*([^,\n}]+)'
+    # Anchor to the three named modal openers rather than to file-wide counts.
+    # A per-file floor stayed green when the specific documented site was
+    # removed but an unrelated one remained; scoping to the function body is
+    # what the docstring actually means.
+    for module, src, fn_name in (
+        ("quotes-builder.js", qb, "openQuoteSendModal"),
+        ("invoices.js", inv, "openSendModal"),
+        ("invoices.js", inv, "openReceiptModal"),
+    ):
+        body = _fn_body(src, fn_name)
+        _check(f"{module}::{fn_name} found", body is not None)
+        if body is None:
+            continue
+        subs = re.findall(_TOTAL_SUB, body)
+        _check(f"{module}::{fn_name} substitutes `total:`",
+               len(subs) >= 1, f"found {len(subs)}")
+        non_money = [t.strip() for t in subs if "window.LTP_money(" not in t]
+        _check(f"{module}::{fn_name} routes `total:` through LTP_money",
+               not non_money, f"bypassing LTP_money: {non_money}")
+
+    money_fn = re.search(
+        r"window\.LTP_money\s*=\s*function[^}]+}", theme, re.S)
+    _check("theme.js defines window.LTP_money", money_fn is not None)
+    if money_fn:
+        body = money_fn.group(0)
+        _check("LTP_money pins minimumFractionDigits: 2",
+               "minimumFractionDigits: 2" in body)
+        _check("LTP_money pins maximumFractionDigits: 2",
+               "maximumFractionDigits: 2" in body)
 
 
 def test_per_template_variable_lists():
@@ -500,7 +567,7 @@ def test_text_to_html_block_detect_re_includes_section():
     include <section> so a body that already has the WYSIWYG-rendered
     section block passes through unchanged instead of being paragraph-wrapped."""
     print("test_text_to_html_block_detect_re_includes_section")
-    src = _read("theme.js")
+    src = domain_source()
     m = re.search(r'BLOCK_DETECT_RE\s*=\s*(.{,200})', src)
     _check("BLOCK_DETECT_RE found in theme.js", m is not None)
     if m:

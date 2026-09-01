@@ -8,11 +8,17 @@ share_token IS the credential, mirroring the PDF download model):
     POST /api/view/{token}/decline      → body {clientName, comment?}
     GET  /api/view/{token}/pdf          → fresh-generated PDF, attachment
 
-Sanitization is done in backend/routes/_shared.py (public_section_items,
-public_activity, public_settings). The principle: the client sees what
-they'd see on the printed quote, never anything internal (no `cost`,
-no `internal_notes`, no full activity log with LTP userIDs, no full
-settings blob with email templates / crew options / tagColors).
+Sanitization is done in backend/routes/_shared.py (public_entity,
+public_section_items, public_activity, public_settings). The principle: the
+client sees what they'd see on the printed quote, never anything internal
+(no `cost`, no `notes` — the document-level column OR the per-line-item one,
+both staff-only — no full activity log with LTP userIDs, no full settings blob
+with email templates / crew options / tagColors).
+
+The entity and line-item scrubs are ALLOW-lists. This docstring used to say
+"no `internal_notes`", and so did the strip list; no such field has ever
+existed, which is precisely how the real `notes` column shipped to every
+share-link holder unnoticed. Name a key here only when a reader needs it.
 
 The accept/decline endpoints bypass the existing `_stamp_activity` helper
 in api.py — those force the authenticated user as the activity actor, but
@@ -23,7 +29,9 @@ append + flush.
 import asyncio
 import base64
 import binascii
+import hashlib
 import io
+import json
 from datetime import datetime, timezone
 from typing import Literal, Union
 
@@ -31,7 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import models, view_tracking, webpush
+from backend import livesync, models, view_tracking, webpush
 from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
@@ -40,7 +48,7 @@ from backend.routes._shared import (
     quote_dict, invoice_dict, doc_display_name,
     doc_project_ids, load_project_names,
     load_related, load_settings,
-    public_section_items, public_activity, public_settings,
+    public_section_items, public_activity, public_settings, public_entity,
     safe_pdf_filename as _safe_filename,
 )
 
@@ -139,18 +147,18 @@ def _sanitized_payload(
     entity_d["sections"] = public_section_items(entity_d.get("sections", []))
     # Sanitize activity (whitelist of public types, strip userId)
     entity_d["activity"] = public_activity(entity_d.get("activity", []))
-    # Strip internal-only fields the client should never see
-    for k in ("internalNotes", "internal_notes"):
-        entity_d.pop(k, None)
-    # No FK ids in the public response
-    for k in ("companyId", "clientContactId", "projectId", "projectIds", "quoteId"):
-        entity_d.pop(k, None)
     entity_d["projectNames"] = list(project_names or [])
-    # The share_token IS the credential (the client already holds it in the
-    # URL) — never echo it back. The payments ledger is internal financial
-    # detail the client view doesn't consume. SECURITY_REVIEW.md M1.
-    for k in ("shareToken", "share_token", "payments"):
-        entity_d.pop(k, None)
+    # Keep only client-safe keys (_shared._PUBLIC_ENTITY_KEYS). This replaced
+    # three hand-maintained pop() lists which between them named "internalNotes"
+    # and "internal_notes" — neither of which quote_dict/invoice_dict ever
+    # produce. The column is `notes`, so it was never stripped and shipped to
+    # every share-link holder; qbTaxSignature leaked the same way. An allow-list
+    # cannot fail that way: a new column is absent until someone adds it here.
+    # Still dropped, now by omission: the FK ids (companyId, clientContactId,
+    # projectId, projectIds, quoteId), the shareToken credential the client
+    # already holds in the URL, and the internal payments ledger.
+    # SECURITY_REVIEW.md M1.
+    entity_d = public_entity(entity_d)
     return {
         "kind": kind,
         "entity": entity_d,
@@ -160,6 +168,25 @@ def _sanitized_payload(
         "settings": public_settings(settings),
         "ref": doc_ref(kind, entity_d),
     }
+
+
+def _public_version(payload: dict) -> str:
+    """An opaque hash of EXACTLY what this client can see.
+
+    Not the row's updated_at, which would be wrong in both directions. Opening
+    the document appends a tracking entry to entity.activity, so every other
+    viewer's open would bump it and tell this one their document had changed
+    when nothing they can see did — the false alarm that teaches people to
+    ignore the real one. And it says nothing about the company address or the
+    branding settings, which are part of the page too.
+
+    Hashing the sanitized payload gets both right for free: the tracking types
+    are excluded from it by PUBLIC_TYPES, and everything the page renders is
+    inside it. Short hex rather than a timestamp so it carries no information
+    beyond "same" or "different".
+    """
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
 
 
 # ── Activity stamping for view / PDF tracking ─────────────────────────────
@@ -353,9 +380,49 @@ async def get_view(
     )
     project_names = await load_project_names(db, doc_project_ids(row))
     settings = await load_settings(db)
-    return _sanitized_payload(
+    payload = _sanitized_payload(
         kind, row, company, contact, project, settings, project_names=project_names
     )
+    # The version of what we are about to hand over, so the client has its
+    # baseline without a second round trip and without a gap between the two in
+    # which an edit could slip through unnoticed. Added AFTER hashing, so
+    # GET /{token}/version hashes the same bytes.
+    payload["_v"] = _public_version(payload)
+    return payload
+
+
+# ── GET /api/view/{token}/version ─────────────────────────────────────────
+
+@view_router.get("/{token}/version")
+async def get_view_version(token: str, db: AsyncSession = Depends(get_db)):
+    """Has this document changed, and is a newer app shell deployed?
+
+    A client can sit on a quote for an hour while it is re-priced underneath
+    them, and the first they would know is when they accept terms they never
+    read. This is what lets the page say so.
+
+    Deliberately does NOT call _record_open: a poll is not a view. Stamping one
+    would fill the activity feed with opens that never happened and re-notify
+    the sender every minute the tab stays open.
+
+    Rate limiting comes free — backend/rate_limit.py buckets the whole
+    /api/view family, so this cannot be used to hammer the database harder than
+    the view itself already allows.
+    """
+    kind, row = await _find_entity_by_token(db, token)
+    if row is None:
+        raise HTTPException(status_code=404, detail="not found")
+    company, contact, project = await load_related(
+        db, row.company_id, row.client_contact_id, row.project_id
+    )
+    project_names = await load_project_names(db, doc_project_ids(row))
+    settings = await load_settings(db)
+    payload = _sanitized_payload(
+        kind, row, company, contact, project, settings, project_names=project_names
+    )
+    # `app` rides along so a public tab learns about a deploy on the same terms
+    # as a signed-in one — it has no session, so no live feed to hear it on.
+    return {"doc": _public_version(payload), "app": livesync.app_version()}
 
 
 async def _notify_quote_response(db, row, decision: str, client_name: str, comment: str) -> None:
@@ -448,6 +515,10 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     )
     row.status = "accepted"
     await db.flush()
+    # Publish. get_db broadcasts only what the request marked dirty, and a client
+    # answering a share link is the canonical change-behind-the-producer's-back
+    # write — the exact case live sync exists for — yet it published nothing.
+    livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
     await _notify_quote_response(db, row, "accepted", client_name, comment)
     return {"status": "accepted", "activityId": entry["id"]}
 
@@ -489,6 +560,7 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
     )
     row.status = "declined"
     await db.flush()
+    livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
     await _notify_quote_response(db, row, "declined", client_name, comment)
     return {"status": "declined", "activityId": entry["id"]}
 

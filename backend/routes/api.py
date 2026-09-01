@@ -1,14 +1,17 @@
+import hashlib
 import json
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select
 from sqlalchemy.orm import undefer
-from backend.database import get_db
-from backend import crew_integrity, models
-from backend.auth_deps import require_session, require_admin
+from backend.database import async_session, get_db
+from backend import crew_integrity, livesync, models, payouts
+from backend.auth_deps import load_session_user, require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
 from backend.email_validate import parse_recipients, RecipientError
@@ -112,17 +115,102 @@ def _tax_inputs_fingerprint(row) -> str:
                       sort_keys=True, default=str)
 
 
+def _row_rev(d: dict) -> str:
+    """Content revision for a serialized row — the If-Match token.
+
+    A CONTENT hash rather than a timestamp or a version column, for three
+    reasons. It needs no migration across thirteen tables. It cannot be defeated
+    by clock resolution (SQLite's CURRENT_TIMESTAMP only ticks once a second, so
+    two writes to one row inside the same second share an updated_at). And it
+    means exactly what the guard wants it to mean: "the row is still what I last
+    saw", which also makes a genuinely idempotent rewrite a non-conflict.
+
+    Truncated to 16 hex chars — 64 bits, which is far past collision relevance
+    for a guard whose failure mode is one skipped conflict warning."""
+    # Hash ONLY what the client can actually write. _READONLY_COLS are
+    # server-authoritative (the QuickBooks sync block, receipt state, share_token)
+    # and _dict_to_row strips them from every incoming write, so the client
+    # provably cannot be the cause of a change to them. Including them made a
+    # QuickBooks push move the row's _rev, which turned the user's very next save
+    # into a spurious 409 stale_write — and the client's handler answers a 409 by
+    # adopting the server row, so their unsaved edit was discarded, with a
+    # "Changed in another window" toast, on every single push.
+    #
+    # A guard should only fire on a conflict the guard can actually resolve.
+    hashable = {k: v for k, v in d.items()
+                if _camel_to_snake(k) not in _READONLY_COLS}
+    payload = json.dumps(hashable, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
 def _row_to_dict(row):
     """Convert SQLAlchemy row to camelCase dict for frontend compatibility.
     Only top-level column names are converted — JSON column contents are
-    passed through as-is so nested camelCase (e.g. rates.threeDay) is preserved."""
+    passed through as-is so nested camelCase (e.g. rates.threeDay) is preserved.
+
+    Every row carries `_rev`, the optimistic-concurrency token. The client
+    stores it per row and echoes it back as `If-Match` on the next PUT; see
+    _require_fresh() for what happens when it no longer matches. It is computed
+    over the row WITHOUT `_rev` (self-reference would be circular) and dropped
+    on the way back in by _dict_to_row, since `_rev` maps to no column."""
     d = {}
     for col in row.__table__.columns:
         if col.name in _HIDDEN_COLS:
             continue
         val = getattr(row, col.name)
         d[_snake_to_camel(col.name)] = val
+    d["_rev"] = _row_rev(d)
     return d
+
+
+def _paid_day_override(request: Request) -> bool:
+    """Did the caller explicitly confirm editing a day already paid in QuickBooks?
+
+    A header rather than a body field: the body is the row, and anything in it
+    would be persisted. Same reasoning as If-Match.
+
+    Any signed-in user may override — the Schedule Builder is member-accessible
+    and its existing warn+confirm has always been open to members, so requiring
+    admin here would silently change who can edit a schedule. The override is
+    logged server-side either way.
+    """
+    raw = (request.headers.get("x-ltp-paid-day-override") or "").strip().lower()
+    return raw in ("1", "true", "yes")
+
+
+def _require_fresh(request: Request, row, path: str, item_id) -> None:
+    """Reject a PUT whose If-Match no longer matches the stored row.
+
+    This is the guard that stops a window which loaded before a crew member
+    accepted from PUTting its stale project row back and silently reverting the
+    acceptance. backend/crew_integrity.py::enforce_status_floor patches that one
+    symptom for one column family; this closes the general case for every table.
+
+    The header is OPTIONAL. Callers that do not send it keep the previous
+    last-write-wins behaviour, which keeps the two hand-rolled PUT call sites
+    (modules/settings.js, modules/invoices.js) working untouched and lets the
+    guard roll out without a flag day.
+
+    On conflict the CURRENT server row rides along in the 409 body, so the
+    client can adopt it without a second round trip."""
+    want = (request.headers.get("if-match") or "").strip()
+    if not want:
+        return
+    current = _row_to_dict(row)
+    if want.strip('"') == current["_rev"]:
+        return
+    raise HTTPException(
+        status_code=409,
+        detail=jsonable_encoder({
+            "code": "stale_write",
+            "field": "_rev",
+            # Don't try to singularize `path` — rstrip('s') turns "companies"
+            # into "companie". The client renders its own message anyway.
+            "message": f"This {path} row changed in another window since you loaded it.",
+            "rev": current["_rev"],
+            "row": current,
+        }),
+    )
 
 
 def _dict_to_row(data, model_cls):
@@ -271,11 +359,13 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         db.add(row)
         await db.flush()
         await db.refresh(row)
+        livesync.mark_dirty(db, path)
         return _row_to_dict(row)
 
     async def update(
         item_id: int,
         data: dict,
+        request: Request,
         db: AsyncSession = Depends(get_db),
         user: models.User = Depends(require_session),
     ):
@@ -298,6 +388,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # Proper REST: PUT to nonexistent id is 404. New rows go through
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
+        # Optimistic concurrency — BEFORE any mutation, so a rejected write
+        # leaves the row untouched.
+        _require_fresh(request, row, path, item_id)
         mapped = _dict_to_row(data, model_cls)
         await _validate_fks(mapped, model_cls, db)
         # Stale-write guard (Project only): the frontend PUTs its whole
@@ -324,6 +417,39 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        # Paid-day integrity. Runs LAST among the schedule guards, on the FINAL
+        # incoming schedule, so a change the floor/pay-snapshot guards already
+        # reverted is not reported as a conflict that no longer exists.
+        #
+        # Once a day is billed AND that bill is paid, the money is gone; editing
+        # the schedule underneath it only makes the app disagree with the
+        # accounts. The Schedule Builder warns first, but it warns from a
+        # `paidDays` map fetched when the editor opened — stale the moment a bill
+        # is paid, or a second window saves. That check is a courtesy; this is
+        # the enforcement, and it is what makes the client's staleness harmless.
+        if model_cls is models.Project and isinstance(mapped.get("schedule"), list):
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, mapped["schedule"])
+            if paid_hits:
+                if not _paid_day_override(request):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=jsonable_encoder({
+                            "code": "paid_day_conflict",
+                            "message": (
+                                f"This save changes {len(paid_hits)} day"
+                                f"{'' if len(paid_hits) == 1 else 's'} already paid in QuickBooks."
+                            ),
+                            "days": paid_hits,
+                        }),
+                    )
+                # Overridden deliberately. The client also POSTs
+                # /api/qbo/payouts/notify-edit, which stamps the bill and pushes
+                # admins — but that is best-effort and client-driven, so leave a
+                # server-side trace that cannot be skipped.
+                print(f"[LTP] payout-integrity: user id={user.id} ({user.email}) overrode "
+                      f"{len(paid_hits)} paid-day change(s) on project {item_id}: "
+                      + ", ".join(f"{h['name']}@{h['date']}" for h in paid_hits), flush=True)
+
         # Keep server-stamped history the client's snapshot doesn't know about.
         if has_activity and "activity" in mapped:
             mapped["activity"] = _merge_activity(row.activity, mapped["activity"])
@@ -348,26 +474,61 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # removal is traced the moment it's saved instead of leaving a stale hire.
         if model_cls is models.Project:
             await crew_integrity.reconcile_project(db, row)
+            # reconcile_project can trim or auto-withdraw crew requests, so the
+            # crew-requests collection moved too even though this was a project
+            # write. Same on the delete path below.
+            livesync.mark_dirty(db, "crew-requests")
         await db.refresh(row)
+        livesync.mark_dirty(db, path)
         return _row_to_dict(row)
 
-    async def remove(item_id: int, db: AsyncSession = Depends(get_db),
+    async def remove(item_id: int, request: Request,
+                     db: AsyncSession = Depends(get_db),
                      user: models.User = Depends(require_session)):
         result = await db.execute(select(model_cls).where(model_cls.id == item_id))
         row = result.scalar_one_or_none()
         if not row:
             return {"ok": True, "id": item_id}  # idempotent delete
+        # Paid-day guard, same as update(). Deleting a project destroys the
+        # Project.schedule JSON, which is the ONLY record the payout view
+        # re-derives a paid day from (backend/payouts.py::load_projects_and_crew)
+        # — while the QuickBooks bill and the PayoutBillLine ledger survive. That
+        # is a worse version of the divergence the guard exists to prevent, and
+        # it was reachable through the very delete wizard whose crew-release step
+        # the guard had just refused. Deleting is compared against an EMPTY
+        # schedule: every paid day on the project disappears, so every one of
+        # them is a conflict.
+        if model_cls is models.Project:
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [])
+            if paid_hits and not _paid_day_override(request):
+                raise HTTPException(
+                    status_code=409,
+                    detail=jsonable_encoder({
+                        "code": "paid_day_conflict",
+                        "message": (
+                            f"Deleting this project removes {len(paid_hits)} day"
+                            f"{'' if len(paid_hits) == 1 else 's'} already paid in QuickBooks."
+                        ),
+                        "days": paid_hits,
+                    }),
+                )
+            if paid_hits:
+                print(f"[LTP] payout-integrity: user id={user.id} ({user.email}) overrode "
+                      f"{len(paid_hits)} paid-day change(s) DELETING project {item_id}: "
+                      + ", ".join(f"{h['name']}@{h['date']}" for h in paid_hits), flush=True)
         # Auto-withdraw this project's active crew requests BEFORE the delete nulls
         # their project_id FK — otherwise they'd be orphaned with no link back to
         # trace. (Project only; a no-op for every other entity.)
         if model_cls is models.Project:
             await crew_integrity.reconcile_project(db, row, deleted=True)
+            livesync.mark_dirty(db, "crew-requests")
         await db.delete(row)
         # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
         # level by design (trusted staff delete their own drafts) but are now
         # attributable in the server log: who deleted what, when.
         print(f"[LTP] audit: user id={user.id} ({user.email}) deleted "
               f"{path} id={item_id}", flush=True)
+        livesync.mark_dirty(db, path)
         return {"ok": True, "id": item_id}
 
     router.add_api_route(f"/{path}",             get_all, methods=["GET"])
@@ -455,7 +616,101 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
         merged.update(data)
         row.data = merged
     await db.flush()
+    livesync.mark_dirty(db, "settings")
     return row.data
+
+
+# ── Live sync: what changed, and a push channel that says so ──────────────
+#
+# See backend/livesync.py for the design. Both routes deal only in per-collection
+# STAMPS — never row data — so their cost is flat no matter how large the
+# workspace grows.
+
+@router.get("/versions")
+async def get_versions(db: AsyncSession = Depends(get_db)):
+    """Current stamp for every synced collection.
+
+    The polling half of live sync, and the reconciliation point after a tab
+    wakes from background. A client compares this against its own stamps and
+    refetches only what moved.
+
+    Clients MUST read this BEFORE fetching the collections it names. Reading it
+    after would let a write that lands between the two be lost forever: the
+    client would hold pre-write rows alongside the post-write stamp and never
+    refetch. Fetching in the other order costs at worst one redundant refetch."""
+    # A poller is a watcher too, even though it holds no stream. Without this the
+    # safety sweep would idle out underneath it and it would never see a write
+    # that bypassed get_db — see livesync.note_watcher.
+    livesync.note_watcher()
+    # `app` is the shell this process serves, so a window on the polling
+    # fallback learns about a deploy on the same terms as a streaming one.
+    return {
+        "stamps": await livesync.ensure_seeded(db),
+        "at": livesync.now_ms(),
+        "app": livesync.app_version(),
+    }
+
+
+# NOT mounted on `router`: that router carries a Depends(require_session) whose
+# database session FastAPI holds open until the response finishes — which for a
+# stream is "until the tab closes". See auth_deps.load_session_user.
+stream_router = APIRouter(prefix="/api", tags=["livesync"])
+
+
+@stream_router.get("/stream")
+async def stream_changes(request: Request):
+    """Server-sent stamp feed: an immediate snapshot, then a frame per change.
+
+    SSE rather than WebSocket because nothing needs to travel client→server here
+    (writes already go over REST), EventSource reconnects on its own, and the
+    connection is an ordinary GET that passes through the existing cookie auth
+    and middleware stack unchanged.
+
+    Idle cost is one `: keepalive` comment every livesync.KEEPALIVE_SECONDS.
+    Starlette's GZipMiddleware excludes text/event-stream from compression by
+    default (DEFAULT_EXCLUDED_CONTENT_TYPES), so frames are not buffered."""
+    # Short-lived session: authenticate, seed the stamp map, release the pooled
+    # connection — all BEFORE the long-lived response body begins.
+    async with async_session() as db:
+        user = await load_session_user(db, request)
+        if user is None:
+            raise HTTPException(
+                status_code=401, detail="Not signed in",
+                headers={"WWW-Authenticate": "Cookie"},
+            )
+        # Subscribe BEFORE reading the snapshot, and hand the queue to the
+        # generator. event_stream is an async generator: nothing inside it runs
+        # until Starlette pulls the first chunk, several awaits later. Subscribing
+        # there left a window — across this commit's round trip and the response
+        # handshake — in which another request's broadcast reached the existing
+        # subscribers but not this one, while the snapshot it had already been
+        # handed was pre-write. The sweep could not repair it either: it compares
+        # against _stamps, which that broadcast had already advanced, so nothing
+        # looked changed. The window stayed wrong until the next unrelated write.
+        #
+        # Subscribing first inverts the race: a broadcast in the gap is queued and
+        # delivered right after the snapshot. Worst case the client sees a stamp
+        # it already has, which costs nothing.
+        queue = livesync.subscribe()
+        try:
+            initial = await livesync.ensure_seeded(db)
+            await db.commit()      # persist the throttled last_used_at touch
+        except BaseException:
+            livesync.unsubscribe(queue)
+            raise
+
+    return StreamingResponse(
+        livesync.event_stream(initial, queue),
+        media_type="text/event-stream",
+        headers={
+            # no-transform additionally tells intermediaries not to buffer or
+            # re-encode; X-Accel-Buffering is the nginx-specific form of the
+            # same instruction.
+            "Cache-Control": "no-cache, no-store, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ── Users (admin-only management of team-member title/phone) ──────────────
@@ -627,61 +882,3 @@ async def get_user_photo(photo_token: str, db: AsyncSession = Depends(get_db)):
         # changes the URL — safe to cache the bytes hard.
         headers={"Cache-Control": "public, max-age=86400, immutable"},
     )
-
-
-# ── Bulk sync (one-shot localStorage → server migration) ─────────────────
-
-@router.post("/sync", dependencies=[Depends(require_admin)])
-async def bulk_sync(payload: dict, db: AsyncSession = Depends(get_db)):
-    """Wipe + repopulate all entities from a full localStorage dump.
-    Used once per client to seed the server from their browser state.
-    Admin-only because it's destructive."""
-    model_map = {
-        "companies":   models.Company,
-        "contacts":    models.Contact,
-        "projects":    models.Project,
-        "quotes":      models.Quote,
-        "invoices":    models.Invoice,
-        "equipment":   models.Equipment,
-        "products":    models.Product,
-        "services":    models.Service,
-        "fees":        models.Fee,
-        "allocations": models.Allocation,
-        "containers":  models.Container,
-        "kits":        models.Kit,
-    }
-    counts = {}
-    for key, model_cls in model_map.items():
-        items = payload.get(key)
-        if items is None:
-            continue
-        await db.execute(delete(model_cls))
-        for item in items:
-            # Run the same field validation as the per-entity create path so a
-            # bulk import can't seed forged enum/date/length values
-            # (SECURITY_REVIEW.md H5). Activity attribution is intentionally NOT
-            # re-stamped here — this is a one-time migration of the admin's own
-            # data and rewriting every historical actor to the importer would
-            # lose the original attribution.
-            validate(model_cls, item)
-            mapped = _dict_to_row(item, model_cls)
-            row = model_cls(**mapped)
-            # share_token is server-authoritative (stripped by _dict_to_row).
-            # Mint one for token-bearing rows so the NOT NULL invariant holds; a
-            # full re-import regenerates share links, which is acceptable for
-            # this one-time wipe-and-reseed migration. SECURITY_REVIEW.md H3.
-            if hasattr(row, "share_token") and not getattr(row, "share_token"):
-                row.share_token = secrets.token_urlsafe(32)
-            db.add(row)
-        counts[key] = len(items)
-
-    if "settings" in payload:
-        result = await db.execute(select(models.Settings).where(models.Settings.id == 1))
-        row = result.scalar_one_or_none()
-        if not row:
-            db.add(models.Settings(id=1, data=payload["settings"]))
-        else:
-            row.data = payload["settings"]
-        counts["settings"] = 1
-
-    return {"synced": counts}

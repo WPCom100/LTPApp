@@ -13,10 +13,9 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
-global.window = {};
-let _seq = 0;
-window.LTP_genId = (p) => (p || "x") + "-" + (++_seq);
-(0, eval)(fs.readFileSync(path.join(__dirname, "..", "theme.js"), "utf8"));
+// theme.js is now theme.js + components/domain-*.js; the loader reads the
+// order straight out of index.html so it cannot drift from production.
+require("./_load_domain.js").loadDomain();
 
 const services = [
   { id: 1, role: "L1", dayRate: 1000, dayCost: 600, halfDay: 500, halfDayCost: 300, otRate: 150, otCost: 90 },

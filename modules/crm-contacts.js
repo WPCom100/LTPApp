@@ -81,6 +81,13 @@
   // the typed name and the document's company already linked.
   window.CRMContactForm = function({ ctx, initial, prefill, onSave, onClose, modalZIndex }) {
     var seed = initial || prefill || {};
+    // The row this form is editing can change in another window while it sits
+    // open. Field state was seeded when it opened and cannot be safely
+    // re-seeded underneath the user, so say so rather than let Save quietly
+    // overwrite the newer version. See theme.js::LTP_useRecordWatch.
+    window.LTP_useRecordWatch("contacts", initial && initial.id,
+      { title: "This contact changed elsewhere",
+        message: "Another window updated it while this form was open. Saving will replace the newer version." });
     var [fn, setFn] = useState(seed.firstName || "");
     var [ln, setLn] = useState(seed.lastName || "");
     var [email, setEmail] = useState(seed.email || "");

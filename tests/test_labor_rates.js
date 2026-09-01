@@ -15,11 +15,9 @@ const fs = require("fs");
 const path = require("path");
 
 // Load theme.js in a browser-less shim.
-global.window = {};
-let _seq = 0;
-window.LTP_genId = (p) => (p || "x") + "-" + (++_seq);
-const themePath = path.join(__dirname, "..", "theme.js");
-(0, eval)(fs.readFileSync(themePath, "utf8"));
+// theme.js is now theme.js + components/domain-*.js; the loader reads the
+// order straight out of index.html so it cannot drift from production.
+require("./_load_domain.js").loadDomain();
 
 const D = window.LTP_calcLaborDay;      // (dayRate, items) -> single rate calc
 const DAY = window.LTP_calcDayLabor;    // (items, services) -> per-person units
@@ -58,6 +56,210 @@ r = D(R, [sh("20:00", "04:00")]);                       eq("A9 overnight 8h", r.
 r = D(0, [sh("09:00", "14:00")]);                       eq("A10 zero rate", r.rate, 0); eq("A10 zero paid", r.paidHours, 0);
 r = D(R, []);                                           eq("A11 empty items rate 0", r.rate, 0);
 r = D(R, [sh("", "")]);                                 eq("A12 blank times rate 0", r.rate, 0);
+
+// ── A13-A20. Overnight breaks ────────────────────────────────────────────────
+// A9 covers an overnight shift with NO breaks, which is why the frame bug hid
+// here for so long. Blocks are normalized into a >24h frame (18:00-02:00 is
+// 18..26) but breaks parse back as wall-clock 0..24, so a break taken after
+// midnight landed at 00:30 -> 0.5 — apparently before the shift began. That
+// rewound the segment cursor and emitted one giant segment: this exact case
+// returned 25 paid hours, 20h of meal penalty and $3500 on a $1000 day rate.
+const nb = (a, b, t) => ({ startTime: a, endTime: b, type: t || "unpaid" });
+
+// The headline case. 8h shift, 0.5h unpaid break -> 7.5h paid. The 6.5h
+// unbroken stretch before the break legitimately earns 1.5h of meal penalty.
+r = D(R, [sh("18:00", "02:00", [nb("00:30", "01:00")])]);
+eq("A13 post-midnight break paid 7.5", r.paidHours, 7.5); eq("A13 unpaid break 0.5", r.unpaidBreakHours, 0.5);
+eq("A13 meal 1.5 (6.5h stretch)", r.mealPenaltyHours, 1.5); near("A13 rate 1225", r.rate, 1225);
+ok("A13 paid+break never exceeds the 8h shift", r.paidHours + r.unpaidBreakHours <= 8 + 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// A break that straddles midnight (the one case the old self-normalization
+// did handle) must keep working.
+r = D(R, [sh("18:00", "02:00", [nb("23:30", "00:30")])]);
+eq("A14 straddling break paid 7", r.paidHours, 7); eq("A14 unpaid break 1", r.unpaidBreakHours, 1);
+eq("A14 meal 0.5 (5.5h stretch)", r.mealPenaltyHours, 0.5); near("A14 rate 1075", r.rate, 1075);
+
+// Ordering: breaks were sorted on the RAW parse, so 01:00 (1) sorted ahead of
+// 21:00 (21) and the cursor ran backwards even before the frame fix.
+r = D(R, [sh("18:00", "04:00", [nb("21:00", "21:30"), nb("01:00", "01:30")])]);
+eq("A15 two breaks across midnight paid 9", r.paidHours, 9); eq("A15 unpaid break 1", r.unpaidBreakHours, 1);
+eq("A15 no meal (3/3.5/2.5h segments)", r.mealPenaltyHours, 0); near("A15 rate 1000", r.rate, 1000);
+
+// Control: same overnight shift, break BEFORE midnight — was always correct
+// and must not move.
+r = D(R, [sh("18:00", "02:00", [nb("21:00", "21:30")])]);
+eq("A16 pre-midnight break paid 7.5", r.paidHours, 7.5); eq("A16 no meal", r.mealPenaltyHours, 0);
+near("A16 rate 1000", r.rate, 1000);
+
+// A paid break after midnight keeps the crew on the clock for the whole shift.
+r = D(R, [sh("18:00", "02:00", [nb("00:30", "01:00", "paid")])]);
+eq("A17 paid post-midnight break paid 8", r.paidHours, 8); eq("A17 counted as paid break", r.paidBreakHours, 0.5);
+eq("A17 unpaid break 0", r.unpaidBreakHours, 0);
+
+// A break outside the span is bad data. It used to be spliced in anyway and
+// billed 15 hours against a 8h day; it is now ignored.
+r = D(R, [sh("09:00", "17:00", [nb("21:00", "21:30")])]);
+eq("A18 out-of-span break ignored, paid 8", r.paidHours, 8); eq("A18 no phantom break", r.unpaidBreakHours, 0);
+near("A18 rate 950 (same as no break)", r.rate, 950);
+
+// The auto meal-break generator writes wall-clock times, so its own output has
+// to survive the round trip. An overnight 12h call must price identically to
+// the equivalent daytime 12h call — it returned $2950 vs $1000 before.
+const fixRound = (start, end) => {
+  const add = FIX([{ id: "s", time: start, endTime: end, breaks: [], positionId: "p1" }]);
+  return D(R, [sh(start, end, add.map((a) => nb(a.startTime, a.endTime, a.type)))]);
+};
+const night = fixRound("18:00", "06:00"), noon = fixRound("08:00", "20:00");
+eq("A19 mealFix overnight 12h -> 10h paid", night.paidHours, 10);
+eq("A19 mealFix overnight no residual meal penalty", night.mealPenaltyHours, 0);
+eq("A20 mealFix overnight matches the daytime twin (paid)", night.paidHours, noon.paidHours);
+eq("A20 mealFix overnight matches the daytime twin (rate)", night.rate, noon.rate);
+
+// ── A21-A23. Engine and meal-break generator must partition a day alike ──────
+// LTP_mealFixBreaks tested its gap against the LAST pushed piece's end while
+// LTP_calcLaborDay tracks a running max. A short block nested inside a longer
+// one therefore split the span in the generator but not in the engine: the
+// generator saw two sub-5h spans, emitted nothing, and the engine still charged
+// meal penalty. The producer clicks "fix meal breaks" and nothing happens.
+const fixApply = (blocks) => {
+  const shifts = blocks.map((b, i) => ({ id: "s" + i, time: b[0], endTime: b[1], breaks: [], positionId: "p1" }));
+  const add = FIX(shifts);
+  // calcLaborDay pools every block's breaks across the merged span, so hanging
+  // the generated breaks off the first item is equivalent to placing them.
+  const items = blocks.map((b, i) => sh(b[0], b[1], i === 0 ? add.map((a) => nb(a.startTime, a.endTime, a.type)) : []));
+  return { add: add, r: D(R, items) };
+};
+
+// The nested-block case: 08:00-13:00 with 09:00-10:00 inside it, then
+// 12:00-16:00 overlapping the tail. The engine sees one 08:00-16:00 span (8h).
+const nested = [["08:00", "13:00"], ["09:00", "10:00"], ["12:00", "16:00"]];
+r = D(R, nested.map((b) => sh(b[0], b[1])));
+eq("A21 engine merges nested blocks into one 8h span", r.paidHours, 8);
+eq("A21 engine charges 3h meal penalty on it", r.mealPenaltyHours, 3);
+let fx = fixApply(nested);
+ok("A21 generator emits a break for that span", fx.add.length > 0, "emitted " + fx.add.length);
+eq("A21 penalty is neutralised after the fix", fx.r.mealPenaltyHours, 0);
+eq("A21 paid 7 (8h worked - 1h unpaid break)", fx.r.paidHours, 7);
+eq("A21 unpaid break 1", fx.r.unpaidBreakHours, 1);
+
+// A plain gap must still split — the fix must not merge across real gaps.
+r = D(R, [sh("08:00", "12:00"), sh("15:00", "19:00")]);
+eq("A22 real gap still splits (4h + 4h)", r.paidHours, 8);
+eq("A22 no penalty across a gap", r.mealPenaltyHours, 0);
+
+// The generator's contract, stated directly: whatever it emits must leave the
+// engine with zero meal penalty. Spot-checked across shapes that exercise
+// single, contiguous, nested and overnight days.
+[
+  [["09:00", "20:00"]],
+  [["09:00", "14:00"], ["14:00", "19:00"]],
+  [["08:00", "18:00"], ["09:00", "10:00"], ["17:00", "21:00"]],
+  [["18:00", "06:00"]],
+  [["22:00", "04:00"], ["23:00", "23:30"]],
+].forEach(function(blocks, i) {
+  const out = fixApply(blocks);
+  eq("A23." + (i + 1) + " mealFix leaves zero penalty (" + blocks.map((b) => b[0] + "-" + b[1]).join(" + ") + ")",
+     out.r.mealPenaltyHours, 0);
+});
+
+// ── A24-A26. Overlapping and overhanging breaks ──────────────────────────────
+// LTP_calcDayLabor hands each person the crew-wide breaks CONCATENATED with
+// their own, so two breaks covering the same window is a normal shape, not bad
+// data. Each break used to contribute its FULL length: unpaid overlap inflated
+// the reported break total, and PAID overlap fed regularHours and billed time
+// nobody worked. A 4.5h day with one paid break duplicated reported 5.5 paid
+// hours and crossed the 5h tier boundary — a half day billed as a full one.
+r = D(R, [sh("09:00", "13:30", [nb("10:00", "11:00", "paid"), nb("10:00", "11:00", "paid")])]);
+eq("A24 duplicate paid break does not invent hours", r.paidHours, 4.5);
+eq("A24 paid break counted once", r.paidBreakHours, 1);
+near("A24 still a half day", r.rate, 500);
+eq("A24 tier unchanged", r.tier, "Half day (4.5h)");
+
+// Partial overlap: 17:00-17:45 and 17:30-18:45 cover 17:00-18:45 = 1.75h.
+r = D(R, [sh("16:00", "19:45", [nb("17:00", "17:45"), nb("17:30", "18:45")])]);
+eq("A25 overlapping unpaid breaks count their union", r.unpaidBreakHours, 1.75);
+eq("A25 paid hours unaffected", r.paidHours, 2);
+ok("A25 paid+break reconciles with the 3.75h shift",
+   Math.abs(r.paidHours + r.unpaidBreakHours - 3.75) < 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// A break running past the end of the shift only counts the part inside it.
+r = D(R, [sh("02:00", "03:30", [nb("03:00", "04:00")])]);
+eq("A26 break overhanging the shift end is clipped", r.unpaidBreakHours, 0.5);
+ok("A26 paid+break reconciles with the 1.5h shift",
+   Math.abs(r.paidHours + r.unpaidBreakHours - 1.5) < 1e-9,
+   "got " + (r.paidHours + r.unpaidBreakHours));
+
+// ── A27. Malformed input must not invent money ───────────────────────────────
+// project.schedule is a free-form JSON column and backend/validators.py checks
+// only top-level fields, so these values can arrive from an API write, not just
+// the time picker. The old parser was parseInt-based: "12" produced a zero-hour
+// day that still billed a half-day rate, and "-1:00" turned a 17:00 finish into
+// an 18-hour day at $2450.
+[
+  ["no colon", "12", "17:00"],
+  ["non-numeric", "abc", "def"],
+  ["hour out of range", "25:00", "26:00"],
+  ["minute out of range", "09:90", "17:00"],
+  ["negative hour", "-1:00", "17:00"],
+  ["24:30 is not a time", "09:00", "24:30"],
+].forEach(function(c) {
+  const bad = D(R, [sh(c[1], c[2])]);
+  eq("A27 " + c[0] + " bills nothing", bad.rate, 0);
+  eq("A27 " + c[0] + " has no paid hours", bad.paidHours, 0);
+});
+
+// A malformed or null BREAK is dropped; the surrounding valid shift still bills.
+[
+  ["null entry", null],
+  ["null times", { startTime: null, endTime: "13:00", type: "unpaid" }],
+  ["unparseable", { startTime: "12", endTime: "13:00", type: "unpaid" }],
+].forEach(function(c) {
+  let out;
+  ok("A27 break " + c[0] + " does not throw", (function() {
+    try { out = D(R, [sh("09:00", "17:00", [c[1]])]); return true; } catch (e) { return false; }
+  })());
+  if (out) {
+    eq("A27 break " + c[0] + " ignored, shift still 8h", out.paidHours, 8);
+    eq("A27 break " + c[0] + " contributes no break time", out.unpaidBreakHours, 0);
+  }
+});
+
+// "24:00" is a real end-of-day value the schedule uses (A5/A7/B4 depend on it);
+// the strict parser must keep accepting it while rejecting "24:30".
+r = D(R, [sh("18:00", "24:00")]);
+eq("A27 18:00-24:00 is a valid 6h block", r.paidHours, 6);
+
+// ── A28. The supported envelope, stated as tests ─────────────────────────────
+// Operating constraint confirmed by the owner: a shift never exceeds 24 hours
+// in total, but shifts routinely run past midnight. These pin that envelope so
+// the boundary documented on LTP_calcLaborDay is executable rather than prose.
+r = D(R, [sh("22:00", "04:00", [nb("01:00", "01:30")])]);
+eq("A28 overnight 6h call, break after midnight", r.paidHours, 5.5);
+eq("A28 no meal penalty on 3h/2.5h segments", r.mealPenaltyHours, 0);
+
+r = D(R, [sh("18:00", "08:00", [nb("00:00", "01:00")])]);
+eq("A28 14h overnight call", r.paidHours, 13);
+eq("A28 unpaid hour deducted across midnight", r.unpaidBreakHours, 1);
+
+r = D(R, [sh("06:00", "06:00")]);
+eq("A28 maximal 24h shift", r.paidHours, 24);
+
+// One date carrying a day call AND a separate night call that crosses midnight.
+r = D(R, [sh("09:00", "17:00", [nb("12:00", "12:30")]), sh("22:00", "02:00", [nb("00:00", "00:30")])]);
+eq("A28 day call + night call on one date", r.paidHours, 11);
+eq("A28 both breaks deducted", r.unpaidBreakHours, 1);
+eq("A28 gap between them resets the meal clock", r.mealPenaltyHours, 0);
+
+// Contiguous blocks running through midnight merge into one span.
+r = D(R, [sh("16:00", "22:00"), sh("22:00", "03:00", [nb("01:00", "01:30")])]);
+eq("A28 contiguous through midnight merges", r.paidHours, 10.5);
+ok("A28 merged run earns meal penalty", r.mealPenaltyHours > 0, "got " + r.mealPenaltyHours);
+
+// mealFixBreaks must not generate against unparseable shifts either.
+eq("A27 mealFix emits nothing for a malformed shift",
+   FIX([{ id: "x", time: "-1:00", endTime: "17:00", breaks: [], positionId: "p1" }]).length, 0);
 
 // ── B. Per-person units: LTP_calcDayLabor ────────────────────────────────────
 let d;

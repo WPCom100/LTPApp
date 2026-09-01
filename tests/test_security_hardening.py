@@ -90,7 +90,6 @@ from backend.rate_limit import _match_rule
     ("/api/view/sometoken/pdf", "/api/view"),
     ("/pdf/sometoken", "/pdf"),
     ("/api/email/send", "/api/email/send"),
-    ("/api/sync", "/api/sync"),
 ])
 def test_rate_limited_routes_match(path, expected_key):
     rule = _match_rule(path)
@@ -273,3 +272,303 @@ def test_email_html_adds_noopener_to_target_blank():
 def test_email_html_leaves_non_blank_anchor_alone():
     out = email_html('<a href="https://x.com">x</a>')
     assert "rel=" not in out
+
+
+# ── JSON container-shape validation ────────────────────────────────────────
+# Every JSON column in models.py is declared `default=list` or `default=dict`
+# and every reader assumes that shape, but nothing enforced it. `PUT
+# /api/projects/{id}` with `{"schedule": true}` returned 200 and stored the
+# bool, after which backend/payouts.py::derive_payout_drafts raised
+# `TypeError: 'bool' object is not iterable` for EVERY project — one member's
+# write took the payouts page down for the whole workspace until the row was
+# repaired by hand. backend/validators.py now derives a container-type rule per
+# JSON column from the column's own declared default.
+
+def _rules():
+    from backend import validators
+    return validators._build_rules()
+
+
+def _check_field(model_cls, field, value):
+    """Run just this field's validator. Returns None on pass, the reason on
+    failure — mirrors what validate() converts into a 400."""
+    from backend import validators
+    rule = _rules()[model_cls][field]
+    try:
+        rule(value)
+        return None
+    except ValueError as e:
+        return str(e)
+
+
+def test_json_shape_rules_are_derived_for_every_container_column():
+    """Derived from the models, so a new JSON column is covered automatically
+    and this can never drift the way a hand-maintained list would."""
+    from sqlalchemy import JSON
+    from backend import models, validators
+    rules = _rules()
+    missing = []
+    for model_cls in rules:
+        for col in model_cls.__table__.columns:
+            if not isinstance(col.type, JSON):
+                continue
+            d = col.default
+            if d is None or not getattr(d, "is_callable", False):
+                continue
+            if not isinstance(d.arg(None), (list, dict)):
+                continue
+            if col.name not in rules[model_cls]:
+                missing.append(f"{model_cls.__name__}.{col.name}")
+    assert not missing, f"JSON columns with no shape rule: {missing}"
+
+
+def test_list_column_rejects_every_non_list_scalar():
+    from backend import models
+    for bad in ("hello", 42, True, 3.5, {"a": 1}):
+        reason = _check_field(models.Project, "schedule", bad)
+        assert reason is not None, f"schedule accepted {bad!r}"
+        assert "must be a JSON list" in reason
+
+
+def test_dict_column_rejects_a_list():
+    from backend import models
+    assert _check_field(models.Project, "budget", []) is not None
+    assert _check_field(models.Project, "budget", {"lighting": 1}) is None
+
+
+def test_container_columns_accept_their_declared_shape_and_null():
+    from backend import models
+    assert _check_field(models.Project, "schedule", []) is None
+    assert _check_field(models.Project, "schedule", [{"date": "2026-07-10"}]) is None
+    # null clears the field to the column default — must stay allowed
+    assert _check_field(models.Project, "schedule", None) is None
+    assert _check_field(models.Project, "budget", None) is None
+
+
+def test_shape_check_does_not_reach_into_nested_contents():
+    """Deliberately shallow: the readers guard per-element (payouts.py skips a
+    non-dict entry), so tightening further would risk rejecting legacy rows."""
+    from backend import models
+    junk = [{"date": "x", "time": 123, "positions": "nope"}, "not-a-dict", None]
+    assert _check_field(models.Project, "schedule", junk) is None
+
+
+def test_snake_case_spelling_is_also_covered():
+    """_dict_to_row accepts camelCase and snake_case alike, so registering only
+    one spelling would leave the other as a bypass."""
+    from backend import models
+    rules = _rules()[models.Project]
+    assert "contactIds" in rules and "contact_ids" in rules
+    assert _check_field(models.Project, "contact_ids", "nope") is not None
+    assert _check_field(models.Project, "contactIds", "nope") is not None
+
+
+def test_derived_rules_do_not_clobber_hand_written_ones():
+    from backend import models
+    # `name`/`status` are hand-written; they must still be the real validators.
+    assert _check_field(models.Project, "status", "not-a-status") is not None
+    assert _check_field(models.Project, "status", "upcoming") is None
+
+
+# ── M1 (completion): the public payload is an ALLOW-list ───────────────────
+# The original M1 pass left three hand-maintained pop() lists behind. Between
+# them they named "internalNotes" and "internal_notes" — neither of which
+# quote_dict/invoice_dict ever produce. The real column is `notes`, annotated in
+# models.py as "internal free-form text; never rendered client-side", so it was
+# never stripped and shipped to every share-link holder. qbTaxSignature and the
+# per-line-item `notes`/`taxable` leaked the same way. Both scrubs are now
+# allow-lists (_shared._PUBLIC_ENTITY_KEYS / _PUBLIC_ITEM_KEYS) so a newly added
+# column is absent from the public payload until someone deliberately adds it.
+
+from datetime import datetime as _dt
+
+from backend import models as _m
+
+
+def _quote_with_internals():
+    q = _m.Quote(
+        id=7, client_type="company", company_id=3, client_contact_id=9,
+        project_id=11, project_ids=[11, 12], status="sent",
+        sent_date="2026-07-01", expiry_date="2026-08-01",
+        custom_start_date="", custom_end_date="", custom_name="Gala",
+        global_discount={}, terms="", activity=[],
+        notes="INTERNAL: margin is thin, do not discount",
+        share_token="SECRET-TOKEN-abc123",
+        qb_tax_total=12.5, qb_tax_signature="internal-fingerprint-xyz",
+        sections=[{"id": "s1", "label": "Audio", "projectId": 11, "items": [
+            {"id": "i1", "type": "service", "name": "A1 Engineer", "qty": 2,
+             "unitPrice": 1000, "adjustedPrice": None,
+             "cost": 600, "deliveredQty": 2, "invoicedQty": 0,
+             "notes": "INTERNAL: he owes us a favour", "taxable": True,
+             "rateType": "day", "serviceId": 42, "productVariantId": "v9"},
+            {"id": "n1", "type": "note", "text": "Load-in via the west dock.", "name": ""},
+        ]}],
+    )
+    q.created_at = _dt(2026, 7, 1)
+    return q
+
+
+def _payload():
+    return _sanitized_payload(
+        "quote", _quote_with_internals(), {}, {}, {},
+        {"companyName": "LTP", "defaultPaymentTerms": 45}, ["Gala"],
+    )
+
+
+def test_document_notes_never_reach_the_public_payload():
+    """The leak M1 was written to close. `notes` is the actual column name; the
+    old strip list named internalNotes/internal_notes, which never existed."""
+    entity = _payload()["entity"]
+    assert "notes" not in entity
+    assert "INTERNAL: margin is thin" not in repr(_payload())
+
+
+def test_qb_tax_signature_is_internal():
+    assert "qbTaxSignature" not in _payload()["entity"]
+
+
+def test_line_items_are_allow_listed_not_drop_listed():
+    item = _payload()["entity"]["sections"][0]["items"][0]
+    assert set(item) <= {"id", "type", "name", "text", "qty", "unitPrice",
+                         "adjustedPrice", "rentalLabel"}
+    for internal in ("cost", "deliveredQty", "invoicedQty", "notes", "taxable",
+                     "rateType", "serviceId", "productVariantId"):
+        assert internal not in item, f"line item leaked {internal}"
+
+
+def test_note_line_text_survives_the_scrub():
+    """modules/client-view.js renders a note row as `n.text || n.name`. An
+    allow-list that forgot `text` would silently blank every note on the
+    customer-facing page — the exact risk of this conversion."""
+    note = _payload()["entity"]["sections"][0]["items"][1]
+    assert note["text"] == "Load-in via the west dock."
+
+
+def test_everything_the_client_view_reads_still_arrives():
+    """Guards the other direction: over-tightening breaks the customer page."""
+    entity = _payload()["entity"]
+    for needed in ("id", "status", "sections", "globalDiscount", "qbTaxTotal",
+                   "customName", "customStartDate", "customEndDate",
+                   "sentDate", "createdDate", "activity", "terms",
+                   "projectNames"):
+        assert needed in entity, f"public view lost {needed}"
+    # doc_ref is computed from the scrubbed dict — it needs id + a date.
+    assert _payload()["ref"] == "Q-2026-007"
+
+
+def test_default_payment_terms_reaches_the_share_link():
+    """theme.js::LTP_docTerms resolves {{paymentTerms}} as
+    `String(s.defaultPaymentTerms || 30)`, so omitting this made the share link
+    say Net 30 while the PDF printed the real number."""
+    assert _payload()["settings"]["defaultPaymentTerms"] == 45
+
+
+def test_a_new_internal_column_does_not_leak_by_default():
+    """The structural point of the allow-list: an unrecognised key is dropped
+    rather than shipped."""
+    from backend.routes._shared import public_entity
+    out = public_entity({"id": 1, "status": "sent", "someNewInternalColumn": "secret"})
+    assert out == {"id": 1, "status": "sent"}
+
+
+# ── Operational fail-safes + retirement of POST /api/sync ──────────────────
+
+def test_env_int_rejects_garbage_and_out_of_range():
+    """A bare int() on an env var raises at IMPORT time, which crash-loops the
+    container before the app object exists — no traceback route, no health
+    surface, just restarts. backend/rate_limit.py did that with
+    LTP_TRUST_PROXY_HOPS; env_int is what main.py already used instead."""
+    import os as _os
+    from backend.env import env_int
+
+    key = "LTP_TEST_ENV_INT_PROBE"
+    try:
+        _os.environ[key] = "2h"          # the typo that used to be fatal
+        assert env_int(key, 7) == 7
+        _os.environ[key] = ""
+        assert env_int(key, 7) == 7
+        _os.environ[key] = "12"
+        assert env_int(key, 7) == 12
+        # A poller interval of 0 parses fine and turns the loop into a hot spin
+        # on the single event loop this app runs on.
+        _os.environ[key] = "0"
+        assert env_int(key, 3600, minimum=60) == 3600
+        assert env_int(key, 7) == 0      # no floor asked for, no floor applied
+        _os.environ.pop(key)
+        assert env_int(key, 7) == 7
+    finally:
+        _os.environ.pop(key, None)
+
+
+def test_trust_proxy_hops_is_parsed_defensively():
+    """The specific import-time crash this replaced.
+
+    Asserted at the source rather than by reloading the module: rate_limit is
+    imported at app construction and backend/main.py binds RateLimitMiddleware
+    from it, so importlib.reload() swaps the module out from under a live app
+    and resets the shared _RateLimitState mid-suite. Not worth that risk to
+    re-prove what test_env_int_rejects_garbage_and_out_of_range already covers.
+    """
+    import inspect
+    from backend import rate_limit as _rl
+
+    src = inspect.getsource(_rl)
+    assert 'env_int("LTP_TRUST_PROXY_HOPS"' in src, "must parse defensively"
+    assert 'int(os.environ.get("LTP_TRUST_PROXY_HOPS"' not in src, \
+        "a bare int() here raises at import and crash-loops the container"
+    assert _rl._TRUST_PROXY_HOPS >= 0
+
+
+def test_production_is_detected_from_the_same_signals_main_uses():
+    import os as _os
+    from backend.env import looks_like_production
+
+    keys = ("LTP_FORCE_HTTPS", "LTP_OAUTH_REDIRECT_URI")
+    prev = {k: _os.environ.get(k) for k in keys}
+    try:
+        for k in keys:
+            _os.environ.pop(k, None)
+        assert looks_like_production() is False
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
+        assert looks_like_production() is False
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "https://app.example.com/auth/callback"
+        assert looks_like_production() is True
+        _os.environ["LTP_OAUTH_REDIRECT_URI"] = "http://localhost:8000/auth/callback"
+        _os.environ["LTP_FORCE_HTTPS"] = "1"
+        assert looks_like_production() is True
+    finally:
+        for k, v in prev.items():
+            if v is None:
+                _os.environ.pop(k, None)
+            else:
+                _os.environ[k] = v
+
+
+def test_webpush_sends_carry_a_timeout():
+    """pywebpush defaults to timeout=None — block forever. The endpoint URL is
+    client-supplied (routes/push.py takes it as a bare str) and _deliver runs
+    inside the caller's transaction, so a dead host held a worker thread AND a
+    DB session open."""
+    import inspect
+    from backend import webpush as _wp
+
+    src = inspect.getsource(_wp._send_one)
+    assert "timeout=" in src, "pywebpush call must pass an explicit timeout"
+    assert isinstance(_wp._PUSH_TIMEOUT_SECONDS, (int, float))
+    assert 0 < _wp._PUSH_TIMEOUT_SECONDS <= 60
+
+
+def test_bulk_sync_endpoint_is_gone():
+    """POST /api/sync wiped twelve entity tables from a request body and had no
+    caller: the localStorage migration it existed for was finished, the app has
+    been pure API-backed since, and it cascade-deleted client_rates without
+    restoring them (that entity was never in its model map). Retired rather
+    than left as a live wipe-everything endpoint."""
+    from backend.routes import api as _api
+    from backend.rate_limit import _match_rule
+
+    assert not hasattr(_api, "bulk_sync")
+    routes = [getattr(r, "path", "") for r in _api.router.routes]
+    assert "/sync" not in routes and "/api/sync" not in routes, routes
+    # Its rate-limit rule went with it; the path is now simply unmatched.
+    assert _match_rule("/api/sync") is None

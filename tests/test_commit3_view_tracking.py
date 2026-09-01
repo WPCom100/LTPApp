@@ -49,6 +49,7 @@ def _check(label: str, cond: bool, detail: str = "") -> None:
     status = "PASS" if cond else "FAIL"
     suffix = f"  ({detail})" if detail else ""
     print(f"  [{status}] {label}{suffix}")
+    assert cond, f"{label} {detail}"
 
 
 # Fake request scaffolding for the gate tests — we mock just enough of
@@ -445,7 +446,17 @@ async def test_get_optional_user_valid_session():
     print("test_get_optional_user_valid_session")
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from backend.database import Base
-    from backend.auth_deps import get_optional_user, SESSION_COOKIE_NAME
+    # sessions.id stores the SHA-256 of the raw cookie token, never the token
+    # itself (SECURITY_REVIEW.md L1), so a fixture row must be keyed by
+    # hash_session_token(...) or the lookup in _load_session_user can never
+    # match it. Seeding the raw token here made "valid session" fail and made
+    # "expired session → None" pass for the wrong reason — the row was simply
+    # never found, so the expiry branch was never exercised.
+    from backend.auth_deps import (
+        get_optional_user,
+        hash_session_token,
+        SESSION_COOKIE_NAME,
+    )
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     Session = async_sessionmaker(engine, expire_on_commit=False)
@@ -457,7 +468,7 @@ async def test_get_optional_user_valid_session():
         db.add(u)
         await db.flush()
         sess = models.Session(
-            id="sesstok-123",
+            id=hash_session_token("sesstok-123"),
             user_id=u.id,
             expires_at=_now() + timedelta(days=7),
         )
@@ -471,7 +482,7 @@ async def test_get_optional_user_valid_session():
 
         # Expired session
         sess2 = models.Session(
-            id="expired-123",
+            id=hash_session_token("expired-123"),
             user_id=u.id,
             expires_at=_now() - timedelta(days=1),
         )

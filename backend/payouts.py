@@ -3,7 +3,7 @@
 This module is the SERVER's authoritative view of "what we owe each crew member"
 for a date range. It deliberately does NOT re-run the labor rate engine — the
 payable figure for a signed-off day is a FROZEN snapshot the frontend stamped at
-sign-off time (theme.js::LTP_signOffDay writes the same ``work.pay`` object onto
+sign-off time (components/domain-crew.js::LTP_signOffDay writes the same ``work.pay`` object onto
 every confirmed position of a (crew, date), and LTP_setPayAdjustments writes the
 same ``adj`` list). So we re-read those snapshots straight out of the opaque
 ``Project.schedule`` JSON and rebuild the payout, guaranteeing the QuickBooks
@@ -14,15 +14,16 @@ Two responsibilities:
 
   1. Pay periods — fixed-length (default 14-day) windows tiling the calendar from
      a configured anchor date. Pure whole-day arithmetic (no wall-clock/DST term),
-     mirroring theme.js::LTP_payPeriod* EXACTLY. tests/fixtures/payout_periods.json
+     mirroring components/domain-payouts.js::LTP_payPeriod* EXACTLY. tests/fixtures/payout_periods.json
      locks the JS and Python implementations together.
 
   2. derive_payout_drafts — the snapshot re-derivation, mirroring
-     theme.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
+     components/domain-payouts.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
      two-step js_round2 rounding, per-unit expense-account grouping).
 
 Money is float dollars rounded to the cent, matching the rest of the app.
 """
+import json
 import math
 from datetime import date, timedelta
 
@@ -42,7 +43,7 @@ def js_round2(x):
 # ── Pay periods (bi-weekly payroll cycles) ──────────────────────────────────
 
 def _parse_iso(iso):
-    """Strict YYYY-MM-DD -> date, or None (mirrors theme.js::_ppEpochDays, which
+    """Strict YYYY-MM-DD -> date, or None (mirrors components/domain-payouts.js::_ppEpochDays, which
     rejects malformed and overflow-normalized dates like '2026-02-31')."""
     if not isinstance(iso, str) or len(iso) != 10 or iso[4] != "-" or iso[7] != "-":
         return None
@@ -59,7 +60,7 @@ def _parse_iso(iso):
 
 
 def _pp_len(length_days):
-    """Guard/default the period length to bi-weekly (matches theme.js::_ppLen)."""
+    """Guard/default the period length to bi-weekly (matches components/domain-payouts.js::_ppLen)."""
     try:
         n = int(length_days)
     except (TypeError, ValueError):
@@ -116,7 +117,7 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July",
 
 
 def _ordinal_date(iso):
-    """'2026-07-06' -> 'July 6th, 2026' (mirrors theme.js::LTP_formatDate)."""
+    """'2026-07-06' -> 'July 6th, 2026' (mirrors components/domain-util.js::LTP_formatDate)."""
     d = _parse_iso(iso)
     if d is None:
         return iso or ""
@@ -144,7 +145,7 @@ def pay_period_number_in_year(anchor_iso, length_days, index):
     label. `number` is the 1-based ordinal of this period within its START date's
     calendar year (period #1 = the first period that STARTS that year; resets each
     January; ~26/yr). Drives the QuickBooks bill number PAY-{year2}-{number}, e.g.
-    PAY-26-14. Mirrors theme.js::LTP_payPeriodNumberInYear."""
+    PAY-26-14. Mirrors components/domain-payouts.js::LTP_payPeriodNumberInYear."""
     pp = pay_period_for_index(anchor_iso, length_days, index)
     if pp is None:
         return None
@@ -162,7 +163,7 @@ def pay_period_number_in_year(anchor_iso, length_days, index):
 
 # ── Payout re-derivation from frozen schedule snapshots ─────────────────────
 #
-# Mirrors theme.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each
+# Mirrors components/domain-payouts.js::LTP_payoutRows' PAYABLE path (not the rate engine). For each
 # (crew, date, project) the sign-off invariant guarantees one representative
 # work.pay and one adj list across the group, so we take the FIRST match — never
 # sum per position. Two-step js_round2 rounding matches the frontend to the cent.
@@ -299,6 +300,119 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
         })
     drafts.sort(key=lambda g: g["name"])
     return drafts
+
+
+# ── Paid-day integrity ──────────────────────────────────────────────────────
+#
+# Once a crew member's day has been billed to QuickBooks AND that bill is paid,
+# the money is out the door. Editing the schedule underneath it does not claw
+# anything back — it just makes the app disagree with the accounts.
+#
+# The Schedule Builder and Payouts tab both warn before such an edit, but that
+# check reads a `paidDays` map fetched once when the editor opened. Two windows,
+# or a bill paid while an editor sat open, and the warning simply does not fire.
+# The client check is a courtesy; THIS is the enforcement.
+
+
+def _ser_breaks(breaks) -> str:
+    """Order-independent serialization of a break list."""
+    parts = []
+    for b in (breaks or []):
+        if not isinstance(b, dict):
+            continue
+        parts.append("%s:%s:%s" % (b.get("startTime") or "", b.get("endTime") or "", b.get("type") or ""))
+    return "|".join(sorted(parts))
+
+
+def paid_day_signature(schedule) -> dict:
+    """`"{crewId}|{date}"` → a fingerprint of everything that decides what that
+    crew member is owed for that day.
+
+    Mirrors modules/schedule-builder.js::_paidSig — shift times, the crew-wide
+    breaks AND the position's own breaks, and each of that crew's positions
+    (service, role, status) — because any of those changing means the frozen
+    `work.pay` snapshot we already billed no longer describes the day worked.
+
+    Deliberately STRICTER than the client in one respect: it also covers `work`
+    and `adj` themselves. Those are the billed money, and crew_integrity's
+    pay-snapshot guard only restrains non-admins — so an admin re-pricing a day
+    that is already paid must trip this too. Being stricter than the client is
+    safe (the worst case is a prompt the client did not predict); being looser
+    would be a hole.
+
+    KEEP IN STEP with _paidSig. A field one side fingerprints and the other does
+    not is a paid day that changes without anyone being asked.
+    """
+    m: dict = {}
+    for shift in (schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        d = shift.get("date")
+        if not d:
+            continue
+        shift_breaks = _ser_breaks(shift.get("breaks"))
+        for pos in (shift.get("positions") or []):
+            if not isinstance(pos, dict):
+                continue
+            cid = pos.get("crewId")
+            if cid is None:
+                continue
+            m.setdefault("%s|%s" % (cid, d), []).append(json.dumps([
+                shift.get("time"), shift.get("endTime"),
+                pos.get("serviceId"), pos.get("role"), pos.get("status"),
+                shift_breaks, _ser_breaks(pos.get("breaks")),
+                pos.get("work"), pos.get("adj"),
+            ], sort_keys=True, default=str))
+    # Sorted, so reordering positions within a day is not a "change".
+    return {k: "\u0000".join(sorted(v)) for k, v in m.items()}
+
+
+async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule) -> list:
+    """Days on `project_id` that are PAID in QuickBooks and whose payout inputs
+    this write would change.
+
+    Compare against the FINAL incoming schedule — after crew_integrity's status
+    floor and pay-snapshot guards have had their say — or a change those guards
+    already reverted would be reported as a conflict that does not exist.
+
+    Empty list = nothing paid is affected, which is the overwhelmingly common
+    case and costs one indexed query.
+    """
+    from sqlalchemy import select
+    from backend import models
+
+    rows = (await db.execute(
+        select(models.PayoutBillLine, models.PayoutBill)
+        .join(models.PayoutBill, models.PayoutBillLine.payout_bill_id == models.PayoutBill.id)
+        .where(models.PayoutBillLine.project_id == project_id,
+               models.PayoutBill.qb_paid_at.isnot(None))
+    )).all()
+    if not rows:
+        return []
+
+    before = paid_day_signature(stored_schedule)
+    after = paid_day_signature(incoming_schedule)
+
+    hits = []
+    for line, bill in rows:
+        key = "%s|%s" % (line.contact_id, line.date)
+        if before.get(key) == after.get(key):
+            continue
+        hits.append({"contactId": line.contact_id, "date": line.date,
+                     "docNumber": bill.doc_number, "amount": line.amount, "name": ""})
+    if not hits:
+        return []
+
+    # Names, so the refusal can say WHO rather than a bare contact id.
+    ids = {h["contactId"] for h in hits if h["contactId"] is not None}
+    if ids:
+        people = (await db.execute(
+            select(models.Contact).where(models.Contact.id.in_(ids)))).scalars().all()
+        by_id = {c.id: ((c.first_name or "") + " " + (c.last_name or "")).strip() for c in people}
+        for h in hits:
+            h["name"] = by_id.get(h["contactId"]) or "A crew member"
+    hits.sort(key=lambda h: (h["date"], h["name"]))
+    return hits
 
 
 async def load_projects_and_crew(db):

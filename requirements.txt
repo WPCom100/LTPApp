@@ -1,9 +1,32 @@
-fastapi[standard]==0.115.12
+# 0.136.3 is the FIRST FastAPI release whose requirement is a bare
+# `starlette>=0.46.0`. Every version from 0.115 through 0.135 carries an upper
+# bound (<0.47 on the 0.115 line, later <0.49/<0.50/<0.51/<1.0), which put the
+# starlette pin below out of reach. Bumped for that reason alone — see below.
+fastapi[standard]==0.136.3
+# Starlette is FastAPI's ASGI layer, but backend/main.py:9 imports it DIRECTLY
+# (SessionMiddleware, which carries Authlib's OAuth state/nonce), so its version
+# is our concern and not an implementation detail of the pin above. Declared so
+# a FastAPI bump can't silently move it.
+#
+# 1.0.1 clears CVE-2026-48710 (BadHost handling). The app was never exploitable
+# through it — every path-based security decision reads the raw ASGI
+# scope["path"] (rate_limit.py:194, main.py:442), csrf.py reads raw scope
+# headers, and the one request.url use (routes/auth.py:60) reads the scheme only
+# and fails toward Secure — so this closes the hole rather than a live bug.
+starlette==1.0.1
 uvicorn[standard]==0.34.2
 sqlalchemy[asyncio]==2.0.40
 asyncpg==0.30.0
 pydantic==2.11.3
 aiosqlite==0.21.0
+# HTTP client. Imported DIRECTLY by backend/gmail.py, backend/quickbooks.py,
+# backend/routes/auth.py and backend/routes/scan.py, but until now it was only
+# present transitively, via the fastapi[standard] extra. A direct import on an
+# undeclared dependency breaks the day the extra stops pulling it: every Gmail
+# send, QuickBooks call, OAuth avatar fetch and receipt scan would ImportError
+# at boot. Pinned to the version already resolved, so this adds a declaration,
+# not a version change.
+httpx==0.28.1
 # Schema migrations — replaces the prior LTP_RESET_DB nuclear option. See
 # alembic/env.py and the "Migrations" section of README.md for the workflow.
 alembic==1.13.2

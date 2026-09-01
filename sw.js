@@ -66,6 +66,78 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
+// ── A NOTE ON THE NUMBERS BELOW ─────────────────────────────────────────────
+// dev and master both continued this log from v57 without knowing about each
+// other, so v58 through v65 mean two different things depending on which branch
+// a device took its shell from. Both sets shipped, so neither can be renumbered
+// away; they are kept side by side, labelled, and the counter resumes above the
+// highest string either branch ever used (dev's v71).
+//
+// This is finding #93 in docs/reviews/ltpapp-review-2026-08-28.md — the CI guard
+// checks that a cached-file change bumps CACHE_VERSION, but it cannot see two
+// branches picking the same next number. It has now happened twice.
+//
+// ── From dev (live sync, the codebase audit, masthead, public-view takeover) ─
+// v58: index.html gained a script tag (components/live-sync.js, the cross-window
+// change feed — it must load before data-state.js). The shell is precached, so
+// without this bump an installed PWA would keep serving the old index.html and
+// silently run without live sync. live-sync.js itself needs no precache entry:
+// the runtime /components/ rule below covers it.
+// v59: theme.js gained LTP_useRemoteEdits and fixed LTP_useUnsavedGuard's
+// __LTP_UNSAVED mirror (it was cleared by the very transition it records, so the
+// "You have unsaved changes" prompt never fired). theme.js is precached, so
+// without a bump every installed device keeps the broken guard for one more
+// launch. The three editors that consume the hook (schedule/quote/invoice) are
+// runtime-cached under /modules/ and need no precache entry.
+// v60: the paid-day guard moved server-side. components/data-state.js can now
+// attach a one-shot override header to a write, and both editors that touch paid
+// days (modules/schedule-builder.js, modules/labor.js) prompt from the SERVER's
+// refusal when their own paid-day map is stale. All three are runtime-cached, so
+// without a bump a device keeps the old client — which would hit the new 409 with
+// no way to answer it.
+// v61: theme.js gained LTP_useRecordWatch and data-state.js publishes the
+// LTP_DATA_LIVE mirror it reads; a dozen editors across modules/ now call it.
+// theme.js is precached, so without a bump a device keeps a theme.js with no
+// such hook while its runtime-cached modules try to call one.
+// v62: data-state.js — mergeRemote no longer resurrects a row deleted in another
+// window. Runtime-cached, so without a bump a device keeps the version that
+// POSTs the deleted row back.
+// v63: the audit fixes. theme.js (LTP_useRecordWatch latches its id),
+// data-state.js (If-Match no longer defeated, retry on a failed refetch),
+// live-sync.js (stale-socket errors, late-seed wake) and five modules all
+// changed; theme.js is precached and the rest are runtime-cached.
+// v64: the audit branch. theme.js — (a) breaks taken after midnight are lifted
+// into their span's frame, so an 18:00-02:00 call with a 00:30 break no longer
+// prices as 25 paid hours; (b) LTP_mealFixBreaks partitions a day into spans the
+// same way LTP_calcLaborDay does; (c) breaks are clipped to the cursor and the
+// span end; (d) times parse strictly, so a malformed value bills nothing instead
+// of inventing an 18-hour day. theme.js is also now 113 lines: the domain layer
+// moved to eight precached components/domain-*.js files (see SAME_ORIGIN_PRECACHE
+// below), so a device on an older shell would load a theme.js whose exports have
+// moved. components/data-state.js no longer answers a POST id-collision by
+// blind-PUTting over the record that already holds the id. modules/invoices.js
+// re-baselines the discard snapshot when a payment is recorded. index.html and
+// components/sanitize.js changed with the DOMPurify 3.4.14 bump. All precached or
+// runtime-cached; this is money math, and a stale shell bills the wrong amount.
+// v69: the sidebar brand block wears the masthead lockup instead of the LTP
+// chip + company name, and its header is pinned to the same height as the
+// topbar so the two bottom rules meet as one line (app.js). The lockup PNG
+// joins the precache below — it is shell chrome now, on screen everywhere, and
+// runtime caching alone would show the chip fallback on a cold offline launch.
+// v70: both public share views replace the whole page when their document
+// changes underneath the reader — a client on a re-priced quote, a crew member
+// on a retimed call — instead of leaving the superseded figures on screen under
+// a banner. modules/client-view.js and modules/crew-view.js render it,
+// components/domain-util.js polls for it (LTP_useDocFreshness). Precached, and
+// a stale shell here means a client reading a price that is no longer offered.
+// v71: a deleted quote, invoice or crew request now takes the public page over
+// too — the 404 its version poll gets was previously indistinguishable from a
+// network blip and silently ignored, so a client sat reading a document that no
+// longer existed. The poll also drops from 60s to 10s: a minute of a superseded
+// price still on screen reads as the check not working.
+// components/domain-util.js, modules/client-view.js, modules/crew-view.js.
+//
+// ── From master (the crew announcement email and its standalone page) ───────
 // v58: crew-announcement screenshots under assets/crew-email/. No script tag and
 // no shell file moved — but /assets/ is runtime-cached, so a device holding the
 // v57 cache would serve its own (empty) view of the new tree for one more launch.
@@ -110,7 +182,11 @@
 // person's name, the company line carries its orange on the span WRAPPING the
 // <strong>, so the page rule won. Page typography is now blocked from reaching
 // inside .sig at all, rather than patching the one colour.
-var CACHE_VERSION = 'ltp-shell-v65';
+//
+// v72: the two lines above merged. Nothing changed here beyond this log and the
+// version string, but a device holding either branch's shell has only half of
+// the merged app, so both populations need a new generation.
+var CACHE_VERSION = 'ltp-shell-v72';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -122,8 +198,22 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/viewport-height.js',
   '/router.js',
   '/theme.js',
+  // The domain layer split out of theme.js. Precached for the same reason
+  // theme.js is: it is boot-chain code, and a cold offline launch that has to
+  // fetch it has already failed. index.html loads these in the theme slot.
+  '/components/domain-util.js',
+  '/components/domain-labor.js',
+  '/components/domain-rates.js',
+  '/components/domain-crew.js',
+  '/components/domain-payouts.js',
+  '/components/domain-email.js',
+  '/components/domain-docs.js',
+  '/components/domain-qbo.js',
   '/app.js',
   '/mount.js',
+  // The brand masthead — the sidebar header and the sign-in screen both wear
+  // it, so it is part of the shell rather than page content.
+  '/assets/logos/luminary-masthead.png',
   // Icons referenced by the manifest / head.
   '/assets/icons/icon-192.png',
   '/assets/icons/icon-512.png',
@@ -132,10 +222,18 @@ var SAME_ORIGIN_PRECACHE = [
 
 // Cross-origin, version-pinned libraries (CORS-enabled on cdnjs). Best-effort:
 // a CDN hiccup at install time must not fail the whole install.
+//
+// These URLs MUST match index.html's <script src> tags exactly. They are
+// version-pinned in two files with nothing linking them, so a bump to one is
+// silently a no-op in the other: the worker warms a URL the page never asks
+// for, and the URL the page DOES ask for is left to runtime cache — which
+// means it is simply missing on a cold offline launch. tests/
+// test_dependency_pins.py::test_service_worker_cdn_precache_matches_index_html
+// compares the two lists so the pair cannot drift again.
 var CDN_PRECACHE = [
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.7/purify.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.4.14/purify.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/signature_pad/5.0.4/signature_pad.umd.min.js',
 ];
 

@@ -16,6 +16,12 @@
 //      new worker (postMessage SKIP_WAITING) and reloads once.
 //   4. window.LTP_SHELL_VERSION — the CACHE_VERSION of the worker currently
 //      controlling the page, published for the app footer to show.
+//   5. React to the live-sync feed's report of which shell the SERVER is
+//      serving (the `ltp-app-version` event from components/live-sync.js). A
+//      tab that is already open cannot otherwise find out a deploy happened —
+//      the browser re-checks a worker on navigation and roughly once a day, so
+//      the banner only appeared once you had reloaded. You had to refresh to
+//      learn that you needed to refresh.
 (function() {
   "use strict";
 
@@ -57,6 +63,10 @@
     };
     try { ctrl.postMessage({ type: "GET_VERSION" }, [ch.port2]); } catch (e) { /* older worker */ }
   }
+
+  // The registration, kept so the version listener below can call update() on
+  // the SAME object the updatefound listener is attached to.
+  var registration = null;
 
   var refreshing = false;
   // When the active worker changes (after the new one skips waiting), reload
@@ -140,6 +150,40 @@
     document.body.appendChild(bar);
   }
 
+  // ── A deploy, noticed without reloading first ─────────────────────────────
+  //
+  // live-sync reports the version the server is serving; LTP_SHELL_VERSION is
+  // the version actually running here. Different ⇒ there is a new shell.
+  //
+  // Deliberately NOT "show the banner". Refreshing only helps once a new worker
+  // is installed and waiting — the current one serves the shell from its own
+  // cache, so a plain reload would hand back the same old files and the banner
+  // would return for ever. So this asks the browser to fetch the new worker and
+  // lets the updatefound path above prompt once it is genuinely ready.
+  var servedVersion = null;
+
+  function reconsiderShell() {
+    if (!servedVersion || !window.LTP_SHELL_VERSION) return;   // nothing to compare
+    if (servedVersion === window.LTP_SHELL_VERSION) return;    // already current
+    if (!registration) return;
+    // Already installed and waiting from an earlier check — prompt now.
+    if (registration.waiting && navigator.serviceWorker.controller) {
+      showUpdateBanner(registration.waiting);
+      return;
+    }
+    try { registration.update(); } catch (e) { /* transient; the next frame retries */ }
+  }
+
+  // Both halves of the comparison arrive asynchronously and in either order —
+  // the worker answers GET_VERSION on its own schedule, and the feed reports
+  // when it connects — so each re-runs the check rather than assuming the other
+  // has already landed.
+  window.addEventListener("ltp-app-version", function(e) {
+    servedVersion = (e && e.detail && e.detail.version) || servedVersion;
+    reconsiderShell();
+  });
+  window.addEventListener("ltp-shell-version", reconsiderShell);
+
   window.addEventListener("load", function() {
     readShellVersion();
     // A worker that took control mid-load (first visit, or after activate()
@@ -147,6 +191,7 @@
     navigator.serviceWorker.ready.then(readShellVersion).catch(function() {});
 
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).then(function(reg) {
+      registration = reg;
       // Case 1: a worker is already waiting (update installed on a prior visit).
       if (reg.waiting && navigator.serviceWorker.controller) {
         showUpdateBanner(reg.waiting);
@@ -163,6 +208,10 @@
           }
         });
       });
+      // The feed may already have reported a version before this resolved.
+      var lv = window.LTP_LIVE;
+      if (lv && lv.appVersion) servedVersion = lv.appVersion() || servedVersion;
+      reconsiderShell();
     }).catch(function() {
       // Registration failing (e.g. non-secure LAN dev over http) is non-fatal —
       // the app runs normally without offline support.

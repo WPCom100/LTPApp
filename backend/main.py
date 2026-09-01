@@ -6,13 +6,15 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 
-from backend import models, qbo_bill_poll, qbo_receipts
+from backend import livesync, models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
 from backend.routes.api import router as api_router
 from backend.routes.api import public_router as users_public_router
+from backend.routes.api import stream_router as livesync_stream_router
 from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
@@ -23,21 +25,7 @@ from backend.routes.push import push_router
 from backend.routes.scan import scan_router
 from backend.rate_limit import RateLimitMiddleware
 from backend.csrf import CsrfOriginMiddleware
-
-
-def _env_int(name: str, default: int) -> int:
-    """Read an integer env var, falling back to `default` (with a warning) on a
-    missing/blank/non-numeric value. A bare int(os.environ[...]) at import time
-    turns a typo like `2h` into a ValueError that crash-loops the container on
-    every boot — before the app object even exists — so parse defensively."""
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return int(raw.strip())
-    except ValueError:
-        print(f"[LTP] config: {name}={raw!r} is not an integer; using default {default}", flush=True)
-        return default
+from backend.env import env_flag, env_int
 
 
 # ── Session sweeper ────────────────────────────────────────────────────────
@@ -45,7 +33,7 @@ def _env_int(name: str, default: int) -> int:
 # the table grows unbounded. This background task wakes hourly, deletes any
 # row past expires_at, and logs the count if non-zero. Hourly is plenty for
 # any realistic scale; tune via LTP_SESSION_SWEEP_INTERVAL_SECONDS.
-SESSION_SWEEP_INTERVAL = _env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600)
+SESSION_SWEEP_INTERVAL = env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600, minimum=60)
 
 
 async def _sweep_expired_sessions_once() -> int:
@@ -88,7 +76,7 @@ async def _session_sweeper_loop():
 # Sender = the admin who connected QuickBooks; if their Gmail is unavailable the
 # receipt is cached and retried next cycle. See backend/qbo_receipts.py. Tune
 # the cadence via LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS (default 2 hours).
-QBO_RECEIPT_POLL_INTERVAL = _env_int("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", 2 * 3600)
+QBO_RECEIPT_POLL_INTERVAL = env_int("LTP_QBO_RECEIPT_POLL_INTERVAL_SECONDS", 2 * 3600, minimum=60)
 
 
 async def _qbo_receipt_poll_loop():
@@ -119,7 +107,7 @@ async def _qbo_receipt_poll_loop():
 # paid, a bill's days are protected from re-pricing and it stops being polled.
 # See backend/qbo_bill_poll.py. Cadence: LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS
 # (default 2 hours).
-QBO_PAYOUT_POLL_INTERVAL = _env_int("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", 2 * 3600)
+QBO_PAYOUT_POLL_INTERVAL = env_int("LTP_QBO_PAYOUT_POLL_INTERVAL_SECONDS", 2 * 3600, minimum=60)
 
 # Start the payout poller slightly after the receipt poller so their (per-cycle)
 # token-refresh windows don't align — the refresh itself is serialized + race-safe
@@ -166,14 +154,25 @@ async def lifespan(app: FastAPI):
     sweeper = asyncio.create_task(_session_sweeper_loop(), name="ltp_session_sweeper")
     receipt_poller = asyncio.create_task(_qbo_receipt_poll_loop(), name="ltp_qbo_receipt_poller")
     bill_poller = asyncio.create_task(_qbo_payout_poll_loop(), name="ltp_qbo_payout_poller")
+    # Live-sync safety sweep. Request-scoped writes publish themselves from
+    # get_db; this catches the writers that bypass it (the QuickBooks sync
+    # engine and both pollers above open their own sessions). ONE task for the
+    # whole process, so its cost doesn't scale with connected windows.
+    livesync_sweeper = asyncio.create_task(
+        livesync.sweeper(async_session), name="ltp_livesync_sweeper")
     try:
         yield
     finally:
+        # Release every open SSE stream FIRST. uvicorn's graceful drain waits for
+        # in-flight responses, and a stream only ends on client disconnect or its
+        # own 30-minute deadline — so one open tab could hold the whole shutdown
+        # until Railway SIGKILLed us, and this cleanup would never run at all.
+        livesync.begin_shutdown()
         # Graceful shutdown: cancel, then await so each task actually finishes
         # its current iteration (asyncio.Task.cancel() alone just sets a flag).
-        for task in (sweeper, receipt_poller, bill_poller):
+        for task in (sweeper, receipt_poller, bill_poller, livesync_sweeper):
             task.cancel()
-        for task in (sweeper, receipt_poller, bill_poller):
+        for task in (sweeper, receipt_poller, bill_poller, livesync_sweeper):
             try:
                 await task
             except (asyncio.CancelledError, Exception):
@@ -196,7 +195,7 @@ app = FastAPI(title="LTP Business Suite", version="2.0.0", lifespan=lifespan)
 # 10 MB is intentionally generous for the app's data model (quotes/invoices
 # with hundreds of line items, settings with embedded logos). Tune via
 # LTP_MAX_PAYLOAD_BYTES env var if needed; we log the value at startup.
-MAX_PAYLOAD_BYTES = _env_int("LTP_MAX_PAYLOAD_BYTES", 10 * 1024 * 1024)
+MAX_PAYLOAD_BYTES = env_int("LTP_MAX_PAYLOAD_BYTES", 10 * 1024 * 1024, minimum=1024)
 
 
 class PayloadSizeLimitMiddleware:
@@ -298,7 +297,7 @@ class PayloadSizeLimitMiddleware:
 # explicit LTP_FORCE_HTTPS switch (set this in production), OR an https://
 # redirect URI. Per-request transport (X-Forwarded-Proto) is additionally
 # honored for the app-session cookie in routes/auth.py.
-_FORCE_HTTPS = os.environ.get("LTP_FORCE_HTTPS", "").strip().lower() in ("1", "true", "yes", "on")
+_FORCE_HTTPS = env_flag("LTP_FORCE_HTTPS")
 _IS_HTTPS = _FORCE_HTTPS or os.environ.get("LTP_OAUTH_REDIRECT_URI", "").startswith("https://")
 # img-src: tightened from a bare `https:` wildcard (an easy XSS data-exfil
 # channel — encode stolen data into an image URL to an attacker host) to a host
@@ -472,6 +471,15 @@ app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=MAX_PAYLOAD_BYTES)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(CsrfOriginMiddleware)
 app.add_middleware(SecurityHeadersMiddleware, headers=_SECURITY_HEADERS)
+# Response compression, outermost so it also covers the static frontend. This
+# API's payloads are arrays of objects that repeat every key on every row —
+# close to the best case for gzip, and by far the cheapest single win available
+# on hydration bandwidth, which live sync makes the app pay more often.
+#
+# Safe with SSE: Starlette excludes text/event-stream from compression by
+# default (starlette.middleware.gzip.DEFAULT_EXCLUDED_CONTENT_TYPES), so
+# /api/stream frames are neither buffered nor re-encoded.
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 
 # ── Starlette SessionMiddleware ─────────────────────────────────────────────
@@ -590,6 +598,9 @@ app.include_router(api_router)
 # must be able to load it. Distinct GET path from the session-gated /api/users
 # routes, so registration order is not load-bearing here. See backend/routes/api.py.
 app.include_router(users_public_router)
+# Live-sync SSE feed. Separate router because it authenticates by hand rather
+# than through the api router's Depends(require_session) — see the route.
+app.include_router(livesync_stream_router)
 # PDF: api_pdf_router holds the session-gated POST endpoints (under /api/);
 # public_pdf_router holds the tokenized GET endpoint (under /pdf/) which
 # intentionally bypasses session auth — the token is the credential.
@@ -709,6 +720,34 @@ def _dev_icon_path(icon_name: str):
     except ValueError:
         return None
     return cand if os.path.isfile(cand) else None
+
+
+# ── Health check ─────────────────────────────────────────────────────────────
+# Deliberately dependency-free: no database, no session, no external call. It
+# answers one question — "did this process finish booting and is it serving?" —
+# which is exactly the question that had no answer before.
+#
+# init_db() runs Alembic inside the lifespan, BEFORE the app starts serving, so
+# a failed or hung migration means this endpoint never responds at all. That is
+# the signal: with railway.json's healthcheckPath pointed here, the platform
+# fails the deploy and keeps the previous container serving, instead of
+# retiring a working one for a crash-looping replacement (restartPolicyMaxRetries
+# is 10) with nothing in the UI to say why.
+#
+# It deliberately does NOT probe the database. A health check that fails on a
+# transient DB blip would have the platform restart a process that is fine and
+# would recover on its own — turning a brief outage into a longer one. Liveness
+# here, not readiness.
+#
+# Registered before the catch-all below, or the SPA fallback would swallow it
+# and return index.html with a 200 — which would "pass" the health check for
+# entirely the wrong reason.
+@app.get("/healthz")
+async def healthz():
+    return JSONResponse(
+        {"status": "ok", "app": app.title, "version": app.version},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ── PWA endpoints ────────────────────────────────────────────────────────────

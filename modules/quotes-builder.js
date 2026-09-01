@@ -23,6 +23,10 @@
   var fmt = window.LTP_formatDate;
   var genId = window.LTP_genId;
   var todayISO = window.LTP_todayISO;
+  // Pure section/line-item transforms, shared with modules/invoices.js.
+  // See components/domain-docs.js — the policy around each edit (who may edit,
+  // what gets confirmed, what marks the document dirty) stays here.
+  var S = window.LTP_SECTIONS;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (violet — distinct from EQ/PR/SV)
 
   // QuickBooks tax change-signature: a compact fingerprint of everything that
@@ -1050,191 +1054,9 @@
   //   CHANGE DIFF — computes what changed between two quote snapshots
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function computeChanges(before, after, projects, companies) {
-    if (!before || !after) return null;
-    var changes = [];
-    projects = projects || [];
-    companies = companies || [];
-
-    // Helper: resolve effective dates for a quote snapshot
-    function effectiveDates(q) {
-      if (q.projectId) {
-        var p = projects.find(function(pr) { return pr.id === q.projectId; });
-        return p ? { start: p.startDate, end: p.endDate } : { start: "", end: "" };
-      }
-      return { start: q.customStartDate || "", end: q.customEndDate || "" };
-    }
-
-    // Totals
-    var tBefore = window.LTP_QUOTE_TOTALS(before);
-    var tAfter  = window.LTP_QUOTE_TOTALS(after);
-    if (Math.round(tBefore.total * 100) !== Math.round(tAfter.total * 100)) {
-      changes.push({ cat: "Quote Total", detail: "$" + window.LTP_money(tBefore.total) + " → $" + window.LTP_money(tAfter.total) });
-    }
-
-    // Status
-    if (before.status !== after.status) {
-      changes.push({ cat: "Status", detail: (before.status || "draft") + " \u2192 " + (after.status || "draft") });
-    }
-
-    // Client type
-    if (before.clientType !== after.clientType) {
-      changes.push({ cat: "Client Type", detail: (before.clientType || "company") + " \u2192 " + (after.clientType || "company") });
-    }
-
-    // Company
-    if (before.companyId !== after.companyId) {
-      var cB = window.LTP_diffEntityName(companies, before.companyId);
-      var cA = window.LTP_diffEntityName(companies, after.companyId);
-      changes.push({ cat: "Company", detail: cB + " \u2192 " + cA });
-    }
-
-    // Custom name
-    if (before.customName !== after.customName) {
-      changes.push({ cat: "Quote Name", detail: (before.customName || "None") + " \u2192 " + (after.customName || "None") });
-    }
-
-    // Global discount
-    var gdB = before.globalDiscount || {}, gdA = after.globalDiscount || {};
-    if (gdB.type !== gdA.type || gdB.value !== gdA.value) {
-      var gdBLabel = gdB.type === "none" || !gdB.type ? "None" : gdB.type === "percent" ? gdB.value + "%" : gdB.type === "target" ? "Target $" + gdB.value : "$" + gdB.value;
-      var gdALabel = gdA.type === "none" || !gdA.type ? "None" : gdA.type === "percent" ? gdA.value + "%" : gdA.type === "target" ? "Target $" + gdA.value : "$" + gdA.value;
-      changes.push({ cat: "Global Discount", detail: gdBLabel + " \u2192 " + gdALabel });
-    }
-
-    // Notes
-    if ((before.notes || "") !== (after.notes || "")) {
-      changes.push({ cat: "Notes", detail: "Updated" });
-    }
-    // Terms are CLIENT-facing, unlike notes, so the log says which way it moved
-    // rather than just "updated" — reverting to the default is a real decision.
-    if ((before.terms || "") !== (after.terms || "")) {
-      changes.push({ cat: "Terms", detail:
-        !(after.terms || "").trim() ? "Reset to the default terms"
-        : !(before.terms || "").trim() ? "Customized for this quote"
-        : "Edited" });
-    }
-
-    // Project / dates — compare effective dates (project dates when linked, custom when not)
-    if (before.projectId !== after.projectId) {
-      var bProj = before.projectId ? projects.find(function(p) { return p.id === before.projectId; }) : null;
-      var aProj = after.projectId ? projects.find(function(p) { return p.id === after.projectId; }) : null;
-      var bName = bProj ? bProj.name : (before.projectId ? "Project #" + before.projectId : "No project");
-      var aName = aProj ? aProj.name : (after.projectId ? "Project #" + after.projectId : "Custom dates");
-      changes.push({ cat: "Project", detail: bName + " → " + aName });
-    }
-    var bDates = effectiveDates(before);
-    var aDates = effectiveDates(after);
-    if (bDates.start !== aDates.start || bDates.end !== aDates.end) {
-      var bRange = bDates.start ? (fmt(bDates.start) + " — " + fmt(bDates.end)) : "No dates";
-      var aRange = aDates.start ? (fmt(aDates.start) + " — " + fmt(aDates.end)) : "No dates";
-      changes.push({ cat: "Quote Dates", detail: bRange + " → " + aRange });
-    }
-    // Worth logging on its own: moving the expiry changes what the client was
-    // promised, and on a sent quote that's a term the two sides have to agree on.
-    if ((before.expiryDate || "") !== (after.expiryDate || "")) {
-      var bExp = before.expiryDate ? fmt(before.expiryDate) : "Default validity";
-      var aExp = after.expiryDate ? fmt(after.expiryDate) : "Default validity";
-      changes.push({ cat: "Expires", detail: bExp + " → " + aExp });
-    }
-
-    // Section-level changes
-    var bSecMap = {}; (before.sections || []).forEach(function(s) { bSecMap[s.id] = s; });
-    var aSecMap = {}; (after.sections || []).forEach(function(s) { aSecMap[s.id] = s; });
-
-    // Added sections
-    (after.sections || []).forEach(function(s) {
-      if (!bSecMap[s.id]) changes.push({ cat: "Section Added", detail: "\"" + s.label + "\"" });
-    });
-    // Removed sections
-    (before.sections || []).forEach(function(s) {
-      if (!aSecMap[s.id]) changes.push({ cat: "Section Removed", detail: "\"" + s.label + "\"" });
-    });
-
-    // Per-section diffs
-    (after.sections || []).forEach(function(aSec) {
-      var bSec = bSecMap[aSec.id];
-      if (!bSec) return;
-
-      // Label change
-      if (bSec.label !== aSec.label) changes.push({ cat: "Section Renamed", detail: "\"" + bSec.label + "\" → \"" + aSec.label + "\"" });
-
-      // Custom dates change
-      if (bSec.customDates !== aSec.customDates || bSec.startDate !== aSec.startDate || bSec.endDate !== aSec.endDate) {
-        if (aSec.customDates) {
-          var secRange = aSec.startDate && aSec.endDate ? fmt(aSec.startDate) + " \u2192 " + fmt(aSec.endDate) : "Not set";
-          var prevRange = bSec.customDates && bSec.startDate && bSec.endDate ? fmt(bSec.startDate) + " \u2192 " + fmt(bSec.endDate) : "Quote dates";
-          changes.push({ cat: aSec.label + " Rental Period", detail: prevRange + " \u2192 " + secRange });
-        } else if (bSec.customDates) {
-          changes.push({ cat: aSec.label + " Rental Period", detail: "Reset to quote dates" });
-        }
-      }
-
-      // Section subtotal
-      var stB = 0, stA = 0;
-      (bSec.items || []).forEach(function(i) { if (i.type !== "note") stB += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
-      (aSec.items || []).forEach(function(i) { if (i.type !== "note") stA += ((i.adjustedPrice != null ? i.adjustedPrice : i.unitPrice) || 0) * (i.qty || 0); });
-      if (Math.round(stB * 100) !== Math.round(stA * 100)) {
-        changes.push({ cat: aSec.label + " Subtotal", detail: "$" + window.LTP_money(stB) + " → $" + window.LTP_money(stA) });
-      }
-
-      // Item-level diffs
-      var bItemMap = {}; (bSec.items || []).forEach(function(i) { bItemMap[i.id] = i; });
-      var aItemMap = {}; (aSec.items || []).forEach(function(i) { aItemMap[i.id] = i; });
-
-      (aSec.items || []).forEach(function(i) {
-        // Notes are editable in place, so an edited note has to show up here —
-        // otherwise a changed note reads as a silent edit on a sent quote.
-        if (i.type === "note") {
-          if (!bItemMap[i.id]) {
-            changes.push({ cat: aSec.label + " — Note Added", detail: window.LTP_noteSummary(i.text) });
-          } else if ((bItemMap[i.id].text || "") !== (i.text || "")) {
-            changes.push({ cat: aSec.label + " — Note Edited", detail: window.LTP_noteSummary(bItemMap[i.id].text) + " → " + window.LTP_noteSummary(i.text) });
-          }
-          return;
-        }
-        if (!bItemMap[i.id]) {
-          changes.push({ cat: aSec.label + " — Item Added", detail: i.name + " (×" + i.qty + ")" });
-        } else if (bItemMap[i.id]) {
-          var bi = bItemMap[i.id];
-          // Pricing-variant switch → one explicit from → to entry carrying both
-          // labels AND both prices. Without this, only the plain Price entry
-          // fired — and it prints the NEW name on both sides, so what the line
-          // changed FROM was invisible. The Price entry is suppressed for a
-          // variant switch since this entry already carries the prices.
-          var variantChanged = i.type === "product" &&
-            ((bi.productVariantId || null) !== (i.productVariantId || null) || bi.name !== i.name);
-          if (variantChanged) {
-            changes.push({ cat: aSec.label + " — Variant", detail: bi.name + " ($" + bi.unitPrice + ") → " + i.name + " ($" + i.unitPrice + ")" });
-          }
-          if (bi.qty !== i.qty) changes.push({ cat: aSec.label + " — Qty", detail: i.name + ": " + bi.qty + " → " + i.qty });
-          if (!variantChanged && bi.unitPrice !== i.unitPrice) changes.push({ cat: aSec.label + " — Price", detail: i.name + ": $" + bi.unitPrice + " → $" + i.unitPrice });
-          if ((bi.adjustedPrice || null) !== (i.adjustedPrice || null)) {
-            var adjB = bi.adjustedPrice != null ? "$" + bi.adjustedPrice : "$" + bi.unitPrice + " (base)";
-            var adjA = i.adjustedPrice != null ? "$" + i.adjustedPrice : "$" + i.unitPrice + " (base)";
-            changes.push({ cat: aSec.label + " — Adj. Price", detail: i.name + ": " + adjB + " \u2192 " + adjA });
-          }
-          var dB = Number(bi.deliveredQty) || 0, dA = Number(i.deliveredQty) || 0;
-          if (dB !== dA) changes.push({ cat: aSec.label + " — Delivered", detail: i.name + ": " + dB + " \u2192 " + dA + " of " + (i.qty || 0) });
-          var iB = Number(bi.invoicedQty) || 0, iA = Number(i.invoicedQty) || 0;
-          if (iB !== iA) changes.push({ cat: aSec.label + " — Invoiced", detail: i.name + ": " + iB + " \u2192 " + iA + " of " + (i.qty || 0) });
-        }
-      });
-      (bSec.items || []).forEach(function(i) {
-        if (aItemMap[i.id]) return;
-        if (i.type === "note") {
-          changes.push({ cat: aSec.label + " — Note Removed", detail: window.LTP_noteSummary(i.text) });
-        } else {
-          changes.push({ cat: aSec.label + " — Item Removed", detail: i.name });
-        }
-      });
-    });
-
-    return changes.length > 0 ? changes : null;
-  }
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, companies, contacts, projects, setProjects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, companies, contacts, projects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
@@ -1297,6 +1119,25 @@
       setIsDirty(false);
     }, [quoteId, isNew]);
 
+    // Someone else saved this quote while we have it open. Adopt it if we have
+    // nothing unsaved, otherwise keep our edits and say so once — see
+    // theme.js::LTP_useRemoteEdits. A brand-new quote has no stored row yet, so
+    // the hook no-ops on the falsy record.
+    window.LTP_useRemoteEdits(
+      isNew ? null : quotes.find(function(x) { return x.id === quoteId; }),
+      cloneDraft, isDirty,
+      function(fresh) {
+        setDraftRaw(fresh);
+        cleanRef.current = fresh;
+        // Adopting is not an in-session date change, so it must not re-price
+        // equipment off today's inventory rates — same reasoning as the quote
+        // switch above.
+        skipDateRecalcRef.current = true;
+      },
+      { title: "This quote changed elsewhere",
+        message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
+      String(quoteId) + ":" + String(isNew), "quotes");
+
     var [pickerForSection, setPickerForSection] = useState(null);
     var [dlg, setDlg] = useState(null);
     var [justSaved, setJustSaved] = useState(false);
@@ -1324,64 +1165,19 @@
     // sees the new "PDF generated" entry without a full refetch.
     function generatePdf() {
       if (draft.id == null || generatingPdf) return;
-      // iOS standalone blocks programmatic downloads and post-fetch window.open;
-      // open a blank tab synchronously (in the click gesture) on mobile and
-      // redirect it to the PDF once ready. Desktop keeps the direct download.
-      var pdfWin = isMobile ? window.open("", "_blank") : null;
       setGeneratingPdf(true);
-      fetch("/api/quotes/" + draft.id + "/pdf", { method: "POST", credentials: "include" })
-        .then(function(r) {
-          if (!r.ok) {
-            return r.text().then(function(body) {
-              throw new Error("PDF generation failed: " + r.status + " " + body.slice(0, 200));
-            });
-          }
-          return r.json();
-        })
-        .then(function(resp) {
-          if (pdfWin) {
-            pdfWin.location = resp.downloadUrl;
-          } else {
-            // Trigger download. <a download> on a same-origin URL just works.
-            var a = document.createElement("a");
-            a.href = resp.downloadUrl;
-            a.download = resp.filename || ("Q-" + draft.id + ".pdf");
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-          }
-          // Mirror the server's activity entry into local state so the
-          // activity feed updates immediately. The server is the source of
-          // truth; this is just an optimistic display so the user sees the
-          // entry before the next save sync.
-          var actEntry = {
-            id: "pdf-" + Date.now(),
-            date: todayISO(),
-            time: new Date().toTimeString().substring(0, 5),
-            type: "pdf_generated",
-            user: (window.LTP_CURRENT_USER || "User"),
-            userId: window.LTP_CURRENT_USER_ID || null,
-            message: "PDF generated",
-            pdfToken: resp.token,
-            pdfFilename: resp.filename,
-          };
+      // The fetch, the iOS tab workaround, the download trigger and the error
+      // reporting are shared with the invoice builder — components/doc-pdf.js.
+      // Only what to do with the resulting activity entry is ours.
+      window.LTP_generateDocPdf({ kind: "quote", id: draft.id, isMobile: isMobile })
+        .then(function(actEntry) {
           var updated = Object.assign({}, draft, { activity: (draft.activity || []).concat([actEntry]) });
           setDraftRaw(updated);
           cleanRef.current = updated;
-          // Also update the quotes list state so the activity persists if
-          // the user navigates away and back.
+          // Also update the list state so the activity survives navigating away.
           setQuotes(function(prev) { return prev.map(function(q) { return q.id === draft.id ? updated : q; }); });
         })
         .catch(function(err) {
-          if (pdfWin) { try { pdfWin.close(); } catch (e) {} }
-          // The fetch wrapper in data-state.js handles 401 by redirecting;
-          // here we just surface via the existing toast system.
-          if (window.LTP_API_ERRORS) {
-            window.LTP_API_ERRORS.push({ at: new Date().toISOString(), label: "POST quotes/" + draft.id + "/pdf", error: String(err) });
-          }
-          try {
-            window.dispatchEvent(new CustomEvent("ltp-api-error", { detail: { label: "PDF generation", error: String(err), at: new Date().toISOString() } }));
-          } catch (e) {}
           showAlert("PDF Error", "Could not generate the PDF. " + (err && err.message || err));
         })
         .finally(function() { setGeneratingPdf(false); });
@@ -1429,7 +1225,7 @@
 
     function updateSection(secId, patch) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) { return s.id === secId ? Object.assign({}, s, patch) : s; }) });
+        return Object.assign({}, d, { sections: S.patchSection(d.sections, secId, patch) });
       });
     }
     function addSection() {
@@ -1447,7 +1243,7 @@
         confirmLabel: "Delete",
         onConfirm: function() {
           setDraft(function(d) {
-            return Object.assign({}, d, { sections: d.sections.filter(function(s) { return s.id !== secId; }) });
+            return Object.assign({}, d, { sections: S.removeSection(d.sections, secId) });
           });
           setDlg(null);
         },
@@ -1455,9 +1251,7 @@
     }
     function addItemToSection(secId, item) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          return s.id === secId ? Object.assign({}, s, { items: s.items.concat([item]) }) : s;
-        }) });
+        return Object.assign({}, d, { sections: S.addItem(d.sections, secId, item) });
       });
     }
     function updateItem(secId, itemId, patch) {
@@ -1465,34 +1259,19 @@
       var isOperational = Object.keys(patch).every(function(k) { return k === "deliveredQty" || k === "invoicedQty"; });
       var setter = isOperational ? setDraftSilent : setDraft;
       setter(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.map(function(i) { return i.id === itemId ? Object.assign({}, i, patch) : i; }) });
-        }) });
+        return Object.assign({}, d, { sections: S.patchItem(d.sections, secId, itemId, patch) });
       });
     }
     function deleteItem(secId, itemId) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          return Object.assign({}, s, { items: s.items.filter(function(i) { return i.id !== itemId; }) });
-        }) });
+        return Object.assign({}, d, { sections: S.removeItem(d.sections, secId, itemId) });
       });
     }
     // Single-step reorder within a section (dir = -1 up, +1 down). Drives the
     // mobile ▲▼ buttons and the ↑/↓ keys on a focused desktop grab handle.
     function moveItem(secId, itemId, dir) {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.map(function(s) {
-          if (s.id !== secId) return s;
-          var items = s.items.slice();
-          var idx = items.findIndex(function(i) { return i.id === itemId; });
-          var to = idx + dir;
-          if (idx === -1 || to < 0 || to >= items.length) return s;
-          var moved = items.splice(idx, 1)[0];
-          items.splice(to, 0, moved);
-          return Object.assign({}, s, { items: items });
-        }) });
+        return Object.assign({}, d, { sections: S.nudgeItem(d.sections, secId, itemId, dir) });
       });
     }
 
@@ -1502,35 +1281,9 @@
     // `m` is { kind, id, fromZone, toZone, targetId, after }; a null targetId
     // means "append to toZone" (released over a section's empty space).
     function sortMove(m) {
-      if (m.kind === "section") {
-        setDraft(function(d) {
-          var secs = d.sections.slice();
-          var from = secs.findIndex(function(s) { return s.id === m.id; });
-          if (from === -1) return d;
-          var moved = secs.splice(from, 1)[0];
-          var to = m.targetId == null ? secs.length : secs.findIndex(function(s) { return s.id === m.targetId; });
-          if (to === -1) to = secs.length;
-          else if (m.after) to += 1;
-          secs.splice(to, 0, moved);
-          return Object.assign({}, d, { sections: secs });
-        });
-        return;
-      }
       setDraft(function(d) {
-        var secs = d.sections.map(function(s) { return Object.assign({}, s, { items: s.items.slice() }); });
-        var from = secs.find(function(s) { return s.id === m.fromZone; });
-        var dest = secs.find(function(s) { return s.id === m.toZone; });
-        if (!from || !dest) return d;
-        var idx = from.items.findIndex(function(i) { return i.id === m.id; });
-        if (idx === -1) return d;
-        var moved = from.items.splice(idx, 1)[0];
-        // Look the target up AFTER the removal so the index is already correct
-        // for a same-section move.
-        var to = m.targetId == null ? dest.items.length : dest.items.findIndex(function(i) { return i.id === m.targetId; });
-        if (to === -1) to = dest.items.length;
-        else if (m.after) to += 1;
-        dest.items.splice(to, 0, moved);
-        return Object.assign({}, d, { sections: secs });
+        var secs = window.LTP_applySortMove(d.sections, m);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -1549,13 +1302,8 @@
     // focused grab handle.
     function moveSection(sectionId, dir) {
       setDraft(function(d) {
-        var secs = d.sections.slice();
-        var idx = secs.findIndex(function(s) { return s.id === sectionId; });
-        if (idx === -1) return d;
-        var target = idx + dir;
-        if (target < 0 || target >= secs.length) return d;
-        var tmp = secs[idx]; secs[idx] = secs[target]; secs[target] = tmp;
-        return Object.assign({}, d, { sections: secs });
+        var secs = S.nudgeSection(d.sections, sectionId, dir);
+        return secs === d.sections ? d : Object.assign({}, d, { sections: secs });
       });
     }
 
@@ -1619,7 +1367,7 @@
         return;
       }
       // Compute changes vs last saved state for the activity log
-      var changes = computeChanges(cleanRef.current, draft, projects, companies);
+      var changes = window.LTP_quoteChanges(cleanRef.current, draft, projects, companies);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Quote saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
@@ -1842,18 +1590,9 @@
             window.LTP_toast(isResend ? "Quote Resent" : "Quote Sent", { message: "Quote " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
           }
-          if (resp.status === 409 && resp.body && resp.body.detail && resp.body.detail.reason === "reconnect") {
-            showAlert("Reconnect Google", "Your Google connection no longer has Gmail send permission. Sign out and back in to reconnect.");
-            return;
-          }
-          var msg = "Send failed (HTTP " + resp.status + ").";
-          if (resp.body && resp.body.detail) {
-            var d = resp.body.detail;
-            if (typeof d === "string") msg = d;
-            else if (d.error) msg = d.error;
-            else if (d.reason) msg = d.reason;
-          }
-          showAlert("Send Failed", msg);
+          // Deciding WHAT to say is shared — components/domain-docs.js.
+          var failure = window.LTP_sendFailure(resp);
+          showAlert(failure.title, failure.message);
         })
         .catch(function(e) {
           setSending(false);
@@ -1919,6 +1658,19 @@
         type: "status", message: "Quote accepted by client", user: (window.LTP_CURRENT_USER || "User"),
         changes: [{ cat: "Status", detail: "sent \u2192 accepted" }] };
       var updated = Object.assign({}, draft, { status: "accepted", activity: (draft.activity || []).concat([actEntry]) });
+      setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+      setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
+    }
+
+    // Reopen a declined quote. Written inline TWICE in the render tree — once
+    // in the mobile header, once in the desktop one — which is how a state
+    // mutation drifts: fix one copy and the other keeps the old behaviour. It
+    // belongs here with the other status transitions.
+    function reopenQuote() {
+      var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+        type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"),
+        changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
+      var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
       setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
       setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
     }
@@ -1996,72 +1748,10 @@
 
     function sendToInvoice() {
       if (!hasUninvoiced) return;
-
-      // Collect delivered-but-uninvoiced items
-      var invSections = [];
-      var updatedQuoteSections = draft.sections.map(function(sec) {
-        var invItems = [];
-        var updatedItems = sec.items.map(function(it) {
-          if (it.type === "note") return it;
-          var d = Number(it.deliveredQty) || 0;
-          var inv = Number(it.invoicedQty) || 0;
-          // Round the subtraction to 5 dp: with decimal quantities allowed, a
-          // bare d − inv can carry float noise (e.g. 5.1 − 2.2 = 2.8999999999),
-          // which would otherwise flow onto the invoice line, its display, and
-          // the QuickBooks Qty. 5 dp matches QuickBooks' quantity precision.
-          var toInvoice = Math.round((d - inv) * 1e5) / 1e5;
-          if (toInvoice <= 0) return it;
-          // linkedQty caps how much of this invoice line counts against the
-          // source quote's invoicedQty. Starts equal to qty; only ever shrinks
-          // (when invoice qty is reduced below it). Extra qty added directly
-          // on the invoice sits above linkedQty and is treated as a direct
-          // bill, NOT additional draw against the quote.
-          //
-          // sourceQuoteId names WHICH quote the line draws against. An invoice
-          // can now gather lines from several of a client's quotes (the target
-          // picker below offers any of their draft invoices, not just ones on
-          // this project), so the invoice's own `quoteId` is no longer a safe
-          // stand-in — modules/invoices.js keys every invoicedQty rollback on
-          // this field, falling back to `quoteId` only for legacy lines.
-          invItems.push(Object.assign({}, it, { id: genId("item"), qty: toInvoice, deliveredQty: toInvoice, invoicedQty: 0,
-                                                sourceItemId: it.id, sourceQuoteId: draft.id, linkedQty: toInvoice }));
-          return Object.assign({}, it, { invoicedQty: d });
-        });
-        if (invItems.length > 0) {
-          // projectId rides along so a section's job attribution survives the
-          // quote → invoice hop; without it a multi-project quote's sections
-          // would arrive on the invoice with no idea which job they billed.
-          invSections.push({ id: genId("sec"), label: sec.label, projectId: sec.projectId != null ? sec.projectId : null,
-                             customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems });
-        }
-        return Object.assign({}, sec, { items: updatedItems });
-      });
-
-      if (invSections.length === 0) return;
-
-      // Convert discount
-      var quoteGd = draft.globalDiscount || { type: "none", value: 0 };
-      var invoiceDiscount = { type: "none", value: 0 };
-      var discountNote = "";
-      if (quoteGd.type === "percent") {
-        invoiceDiscount = { type: "percent", value: quoteGd.value };
-      } else if (quoteGd.type === "amount" || quoteGd.type === "target") {
-        var quoteTotals = window.LTP_QUOTE_TOTALS(draft);
-        var adjustedTotal = quoteTotals.adjusted;
-        if (adjustedTotal > 0) {
-          var effectiveAmount = quoteGd.type === "amount" ? quoteGd.value : (adjustedTotal - quoteGd.value);
-          var pct = Math.round((effectiveAmount / adjustedTotal) * 10000) / 100;
-          if (pct > 0) {
-            invoiceDiscount = { type: "percent", value: pct };
-            discountNote = quoteGd.type === "amount"
-              ? "Discount converted: $" + quoteGd.value + " amount \u2192 " + pct + "%"
-              : "Discount converted: $" + quoteGd.value + " target \u2192 " + pct + "%";
-          }
-        }
-      }
-
-      // Show the invoice target picker
-      setInvPickerData({ invSections: invSections, updatedQuoteSections: updatedQuoteSections, invoiceDiscount: invoiceDiscount, discountNote: discountNote });
+      // The billing math lives in components/domain-docs.js so it can be tested.
+      var data = window.LTP_quoteToInvoiceDraft(draft, genId);
+      if (!data) return;
+      setInvPickerData(data);
     }
 
     function executeSendToInvoice(targetInvoiceId) {
@@ -2274,17 +1964,9 @@
     });
 
     // Section subtotals + margins (per-section display only)
-    function sectionTotals(sec) {
-      var sub = 0, cst = 0;
-      sec.items.forEach(function(it) {
-        if (it.type === "note") return;
-        var qty = Number(it.qty) || 0;
-        var eff = it.adjustedPrice != null ? (Number(it.adjustedPrice) || 0) : (Number(it.unitPrice) || 0);
-        sub += eff * qty;
-        cst += (Number(it.cost) || 0) * qty;
-      });
-      return { subtotal: sub, margin: sub - cst };
-    }
+    // Shared with modules/invoices.js — see components/domain-docs.js. Returns
+    // { subtotal, cost, margin }; this builder reads subtotal and margin.
+    var sectionTotals = window.LTP_sectionTotals;
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
@@ -2309,12 +1991,7 @@
             isDirty && h(window.Btn, { small: true, onClick: save }, "Save"),
             draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 14px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Send"),
             draft.status === "sent" && h("button", { onClick: acceptQuote, style: { background: B.info, border: "none", borderRadius: "6px", padding: "8px 12px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "\u2713 Accept"),
-            draft.status === "declined" && h("button", { onClick: function() {
-                var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5), type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"), changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
-                var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
-                setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
-                setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-              }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
+            draft.status === "declined" && h("button", { onClick: reopenQuote, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
             hasUninvoiced && h("button", { onClick: sendToInvoice, style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "8px 12px", whiteSpace: "nowrap" } }, "\u2192 Invoice"),
             h(window.LTPOverflowMenu, { align: "left", items: [
               draft.id != null && { label: generatingPdf ? "Generating\u2026" : "Generate PDF", onClick: generatePdf, disabled: generatingPdf },
@@ -2365,14 +2042,7 @@
           (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: openQuoteSendModal,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Resend"),
           // Declined: Reopen
-          draft.status === "declined" && h("button", { onClick: function() {
-            var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-              type: "status", message: "Quote reopened from declined", user: (window.LTP_CURRENT_USER || "User"),
-              changes: [{ cat: "Status", detail: "declined \u2192 draft" }] };
-            var updated = Object.assign({}, draft, { status: "draft", activity: (draft.activity || []).concat([actEntry]) });
-            setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
-            setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-          }, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Reopen as Draft"),
+          draft.status === "declined" && h("button", { onClick: reopenQuote, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Reopen as Draft"),
           // Converted: badge
           draft.status === "converted" && h("div", { style: { fontSize: "10px", color: B.success, padding: "4px 10px", border: "1px solid " + B.success, borderRadius: "6px", fontWeight: 600 } }, "CONVERTED"),
           // Mark All Delivered — only when accepted and items are undelivered
@@ -2805,20 +2475,10 @@
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Activity detail popup
-      viewActivity && h(window.LTPModal, { title: viewActivity.message, onClose: function() { setViewActivity(null); } },
-        h("div", { style: { marginBottom: 10, fontSize: "11px", color: B.textMut } },
-          (viewActivity.user || "") + " \u00b7 " + (viewActivity.date ? window.LTP_formatDate(viewActivity.date) : "") + (viewActivity.time ? " " + window.LTP_formatTime(viewActivity.time) : "")
-        ),
-        h("div", { style: { display: "flex", flexDirection: "column", gap: 0 } },
-          (viewActivity.changes || []).map(function(ch, i) {
-            return h("div", { key: i, style: { display: "flex", gap: 10, padding: "7px 0", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { width: 140, flexShrink: 0, fontSize: "11px", fontWeight: 600, color: B.accent } }, ch.cat),
-              h("div", { style: { flex: 1, fontSize: "11px", color: B.textSec } }, ch.detail)
-            );
-          })
-        ),
-        (viewActivity.changes || []).length === 0 && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: 16, textAlign: "center" } }, "No detailed changes recorded.")
-      ),
+      // Shared with the sibling builder — components/doc-activity-detail.js.
+      viewActivity && h(window.LTPActivityDetail, {
+        entry: viewActivity, onClose: function() { setViewActivity(null); },
+      }),
 
       // Invoice target picker
       invPickerData && h(window.LTPModal, { title: "Send to Invoice", onClose: function() { setInvPickerData(null); } },
@@ -2826,20 +2486,9 @@
           "Add these items to one of this client\u2019s draft invoices \u2014 they arrive as new sections, leaving what\u2019s already there untouched \u2014 or create a new invoice."),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
           (function() {
-            // Every DRAFT invoice for this client, whichever project it started
-            // on \u2014 the project restriction that used to be here is what stopped
-            // one invoice from covering several jobs. Draft-only is not a
-            // preference: invoices lock as soon as they're sent
-            // (modules/invoices.js), so a sent invoice can't take new lines.
-            // Contact-billed and company-billed invoices never mix, since the
-            // billing party has to match for the totals to mean anything.
-            var clientInvDrafts = (invoices || []).filter(function(inv) {
-              if (!inv || inv.status !== "draft") return false;
-              if ((inv.clientType || "company") !== (draft.clientType || "company")) return false;
-              return (draft.clientType === "contact")
-                ? (inv.clientContactId != null && inv.clientContactId === draft.clientContactId)
-                : (inv.companyId != null && inv.companyId === draft.companyId);
-            }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
+            // The eligibility rule (draft-only, same billing party, any
+            // project) lives in components/domain-docs.js so it can be tested.
+            var clientInvDrafts = window.LTP_eligibleInvoiceTargets(invoices, draft);
             return clientInvDrafts.length > 0
               ? clientInvDrafts.map(function(inv) {
                   var ref = window.LTP_INVOICE_REF(inv);
@@ -2887,47 +2536,13 @@
             )
           ),
           // Right: Email preview
-          h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Email Preview"),
-              // From: read-only \u2014 the recipient sees the signed-in LTP user's
-              // Google identity. Surfacing this here removes the "who's it
-              // actually from?" surprise some users get with multi-account apps.
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 5 } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "From:"),
-                h("span", { style: { fontSize: "11px", color: B.text } },
-                  (window.LTP_SENDER_NAME || "") + (window.LTP_SENDER_EMAIL ? " <" + window.LTP_SENDER_EMAIL + ">" : ""))),
-              h("div", { style: { marginBottom: 8 } },
-                h(window.RecipientEditor, { value: sendRecipients, onChange: onRecipientsChange, contacts: contacts })),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                h("input", { value: sendSubject, onChange: function(e) { setSendSubject(e.target.value); },
-                  style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 8px", color: B.text, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", outline: "none" } }))),
-            // Reconnect banner \u2014 surfaced inside the modal so the user sees
-            // it AT the moment they're trying to send rather than at app load.
-            !window.LTP_GMAIL_CONNECTED && h("div", { style: { padding: "8px 14px", background: B.warn + "11", borderBottom: "1px solid " + B.warn + "44", fontSize: "11px", color: B.warn } },
-              "Gmail isn't connected for your account. Sign out and back in with Google to grant the gmail.send permission."),
-            // WYSIWYG body editor — replaces the prior split-pane.
-            // User sees the rendered email and edits text inline; the
-            // signature block is rendered + locked (contenteditable="false"
-            // applied inside EmailBodyEditor), {{viewUrl}} lives in href
-            // attributes invisibly. HTML editing happens in the template
-            // editor in Settings, not at send time.
-            //
-            // sendMessage state still carries placeholders intact —
-            // EmailBodyEditor extracts the editable HTML and reverses
-            // the signature substitution on every input, so what we
-            // POST to /api/email/send still has {{signature}} for the
-            // backend to render per-user.
-            h(window.EmailBodyEditor, {
-              value: sendMessage,
-              signatureTemplate: ((settings || {}).emailSignatureTemplate || (window.LTP_DATA_SETTINGS || {}).emailSignatureTemplate),
-              headerKind: "quote",
-              headerVars: sendHeaderVars,
-              onChange: setSendMessage,
-              minHeight: 240,
-            })
-          )
+          // Shared with the other send modals — components/doc-email-pane.js.
+          h(window.LTPEmailComposePane, {
+            recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
+            subject: sendSubject, onSubjectChange: setSendSubject,
+            body: sendMessage, onBodyChange: setSendMessage,
+            headerKind: "quote", headerVars: sendHeaderVars, settings: settings,
+          })
         ),
         h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
           h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),

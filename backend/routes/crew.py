@@ -30,6 +30,8 @@ Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
 """
 from datetime import datetime, timezone
 from html import escape
+import hashlib
+import json
 import os
 import re
 import secrets
@@ -39,7 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import crew_integrity, gmail, models, view_tracking, webpush
+from backend import crew_integrity, gmail, livesync, models, view_tracking, webpush
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_compose import (
@@ -555,11 +557,20 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
 
 # ── PUBLIC: GET /api/crew/{token} ───────────────────────────────────────────
 
-@crew_public_router.get("/{token}")
-async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
-    """Sanitized crew-facing payload. Exposes only this crew member's shifts on
-    this request + branding — no cost, no internal notes, no other crew, and
-    never the token itself (the holder already has it in their URL)."""
+async def _crew_payload(db: AsyncSession, token: str) -> dict:
+    """Build the crew-facing payload, healing the request on the way.
+
+    Shared verbatim by GET /{token} and GET /{token}/version so the two can
+    never disagree about what the page says — a version computed from a
+    different shape than the one rendered would banner for ever.
+
+    The reconcile stays IN here, deliberately, even though it can write. It is
+    the same "heal staleness on read" the GET has always done, it is idempotent
+    (a no-op the moment the request is terminal), and leaving it out of the
+    version path would be worse than a write: the poll would hash the unhealed
+    request while the page held the healed one, so they would differ on the very
+    first tick and stay differing — a permanent false alarm.
+    """
     req = await _find_request_by_token(db, token)
     if req is None:
         raise HTTPException(status_code=404, detail="not found")
@@ -571,6 +582,7 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
     # sweep haven't run yet. A no-op once the request is already terminal.
     if crew_integrity.reconcile_one(req, project):
         await db.flush()
+        livesync.mark_dirty(db, "crew-requests")
     contact = None
     if req.contact_id is not None:
         r = await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))
@@ -597,6 +609,38 @@ async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
         "shifts": shifts,
         "settings": public_settings(settings),
     }
+
+
+def _crew_version(payload: dict) -> str:
+    """Opaque hash of exactly what this crew member can see. See view.py's
+    _public_version — same reasoning, same shape."""
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha1(blob.encode("utf-8")).hexdigest()[:16]
+
+
+@crew_public_router.get("/{token}")
+async def get_crew_request(token: str, db: AsyncSession = Depends(get_db)):
+    """Sanitized crew-facing payload. Exposes only this crew member's shifts on
+    this request + branding — no cost, no internal notes, no other crew, and
+    never the token itself (the holder already has it in their URL)."""
+    payload = await _crew_payload(db, token)
+    # The version of what we are handing over, so the page has its baseline
+    # with no second round trip. Added AFTER hashing, so /{token}/version
+    # hashes the same bytes.
+    payload["_v"] = _crew_version(payload)
+    return payload
+
+
+@crew_public_router.get("/{token}/version")
+async def get_crew_request_version(token: str, db: AsyncSession = Depends(get_db)):
+    """Has this crew request changed, and is a newer app shell deployed?
+
+    A crew member can leave the link open while the shift is moved, retimed or
+    withdrawn under them, and the page has no session for live sync to reach.
+    This is what lets it notice.
+    """
+    payload = await _crew_payload(db, token)
+    return {"doc": _crew_version(payload), "app": livesync.app_version()}
 
 
 # ── PUBLIC: POST /api/crew/{token}/accept | /decline ────────────────────────
@@ -654,6 +698,12 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
     req.respondent_ip = ip or None
     req.respondent_ua = (ua or "")[:300] or None
     await db.flush()
+    # A crew member answering is the canonical "changed behind the producer's
+    # back" write: it moves position statuses on the PROJECT row as well as the
+    # request. Publishing both is what lets the producer's already-open Labor
+    # tab resolve the project, show the shift name, and render Confirm — the
+    # three things that needed a hard refresh before live sync.
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     # Push-notify the producer who sent this request. Crew accept/decline had no
     # in-app channel before — the producer only found out by re-opening Labor —
@@ -704,7 +754,12 @@ async def list_crew_requests(projectId: int | None = None, db: AsyncSession = De
     # auto-withdraws the fully-orphaned ones (including ones orphaned before this
     # engine existed, so opening the tab cleans up the existing backlog). The
     # frontend already hides withdrawn requests, so they simply drop out.
-    await crew_integrity.reconcile_all(db)
+    # ONLY publish when the heal actually changed something. Marking this GET
+    # dirty unconditionally would be a refetch loop: an unchanged collection that
+    # is explicitly marked still gets its stamp bumped (see livesync.refresh),
+    # so every list would tell every window to list again, forever.
+    if await crew_integrity.reconcile_all(db):
+        livesync.mark_dirty(db, "crew-requests", "projects")
     q = select(models.CrewRequest).order_by(models.CrewRequest.id)
     if projectId is not None:
         q = q.where(models.CrewRequest.project_id == projectId)
@@ -811,6 +866,7 @@ async def send_crew_request(
                       require_from=_SENDABLE_FROM)
     await db.flush()
     await db.refresh(req)
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
     if silent:
@@ -868,6 +924,7 @@ async def withdraw_crew_request(
     req.status = "withdrawn"
     await db.flush()
     await db.refresh(req)
+    livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
     if bool((body or {}).get("notify")):
