@@ -658,6 +658,13 @@ _ALLOWED_TREES = {
     # refuses to execute HTML as a script. `.wasm` is here for the ZXing-C++
     # barcode decoder binary (served as application/wasm below).
     "assets/vendor/": (".js", ".wasm"),
+    # The crew announcement page (assets/crew-email/announcement.html) plus the
+    # small script that drives its sender toolbar. The script is a FILE rather
+    # than an inline block because script-src is 'self' with no 'unsafe-inline'
+    # (see _CSP above) — inline would be refused and the toolbar would render
+    # dead. Scoped to this one subtree, like assets/vendor/ above, so the broad
+    # assets/ tree still serves neither .html nor .js.
+    "assets/crew-email/": (".html", ".js"),
 }
 
 

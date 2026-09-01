@@ -66,6 +66,18 @@
 // v57: editable terms & conditions on quotes and invoices. index.html gained a
 // script tag (components/doc-terms.js), so the precached shell must be refetched;
 // the component itself is picked up by the runtime /components/ rule below.
+// ── A NOTE ON THE NUMBERS BELOW ─────────────────────────────────────────────
+// dev and master both continued this log from v57 without knowing about each
+// other, so v58 through v65 mean two different things depending on which branch
+// a device took its shell from. Both sets shipped, so neither can be renumbered
+// away; they are kept side by side, labelled, and the counter resumes above the
+// highest string either branch ever used (dev's v71).
+//
+// This is finding #93 in docs/reviews/ltpapp-review-2026-08-28.md — the CI guard
+// checks that a cached-file change bumps CACHE_VERSION, but it cannot see two
+// branches picking the same next number. It has now happened twice.
+//
+// ── From dev (live sync, the codebase audit, masthead, public-view takeover) ─
 // v58: index.html gained a script tag (components/live-sync.js, the cross-window
 // change feed — it must load before data-state.js). The shell is precached, so
 // without this bump an installed PWA would keep serving the old index.html and
@@ -124,7 +136,57 @@
 // longer existed. The poll also drops from 60s to 10s: a minute of a superseded
 // price still on screen reads as the check not working.
 // components/domain-util.js, modules/client-view.js, modules/crew-view.js.
-var CACHE_VERSION = 'ltp-shell-v71';
+//
+// ── From master (the crew announcement email and its standalone page) ───────
+// v58: crew-announcement screenshots under assets/crew-email/. No script tag and
+// no shell file moved — but /assets/ is runtime-cached, so a device holding the
+// v57 cache would serve its own (empty) view of the new tree for one more launch.
+// The images are linked from an email that renders outside the app entirely, so
+// they have to be right the first time a crew member opens it.
+// v59: the standalone crew announcement page (assets/crew-email/announcement.html)
+// and the allow-list entry that serves it. Runtime-cached like everything under
+// /assets/, and it is the page crew are sent when their mail client fails them —
+// so a device answering it from a v58 cache would hand back the SPA shell that
+// URL used to resolve to. Nothing precached moved; the bump is for that entry.
+// v60: the crew announcement page is rebuilt through email_compose.email_shell
+// (grey canvas, 580px card, masthead, footer) instead of a hand-rolled wrapper.
+// The old one rendered with no padding: its markup carries an inline padding:0
+// for mail clients, and inline beats any stylesheet selector, so the page's own
+// <style> rule never applied. Bumped so no device answers that URL from a v59
+// cache holding the broken copy.
+// v61: the announcement page is rebuilt from the shared crew-briefing template
+// so it matches the published artifact — the branded layout with numbered steps
+// and proper list formatting, in place of the plain email-shell copy it used to
+// serve. Its sender toolbar moved into assets/crew-email/briefing.js: script-src
+// is 'self' with no 'unsafe-inline', so the inline block it used to carry was
+// refused and the buttons rendered dead. Both files are runtime-cached, so a
+// device on a v60 cache would pair the new page with no script at all.
+// v62: the announcement page's sender toolbar was painted for everyone. The
+// `hidden` attribute only carries a UA-stylesheet display:none, which .tools's
+// display:flex overrides, so the page needs its own [hidden] reset — the
+// artifact host injects one, the standalone page had nothing. Bumped so no
+// device answers that URL from a v61 cache showing the toolbar to crew.
+// v63: crew announcement copy edit — sections rewritten to stand on their own,
+// "pencilled" corrected to the "penciled in" the app actually renders, and two
+// content fixes from the owner: a request is ALWAYS sent even for work agreed
+// by phone, and accepting is the first step in getting paid. Page + script both
+// moved, so a v62 cache would serve the old wording.
+// v64: the crew announcement takes the owner's own email signature, his revised
+// copy throughout, and (email only) a "view this in your browser" link pointing
+// at the page. The signature is built for a white mail-client ground — its links
+// are #233038 — so on the page it sits on its own white card rather than having
+// its colours overridden, and scrolls inside itself on narrow screens. Page and
+// script both moved.
+// v65: the signature's company name rendered white-on-white. The page's own
+// `.letter strong{color:var(--ink-strong)}` was repainting it: unlike the
+// person's name, the company line carries its orange on the span WRAPPING the
+// <strong>, so the page rule won. Page typography is now blocked from reaching
+// inside .sig at all, rather than patching the one colour.
+//
+// v72: the two lines above merged. Nothing changed here beyond this log and the
+// version string, but a device holding either branch's shell has only half of
+// the merged app, so both populations need a new generation.
+var CACHE_VERSION = 'ltp-shell-v72';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
