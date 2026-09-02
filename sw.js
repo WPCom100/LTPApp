@@ -186,7 +186,14 @@
 // v72: the two lines above merged. Nothing changed here beyond this log and the
 // version string, but a device holding either branch's shell has only half of
 // the merged app, so both populations need a new generation.
-var CACHE_VERSION = 'ltp-shell-v72';
+// v73: sending a crew request no longer draws "PUT projects/N HTTP 409" and a
+// "Changed in another window" toast from the sender's own window. The Labor
+// tab's mirror of the send is installed as server state (data-state.js gained
+// adoptRow) instead of an edit the debounced project PUT pushed back under the
+// pre-send If-Match token; the direct-book pay stamp rides the same path. Both
+// files are runtime-cached, so a device pairing the new labor.js with the old
+// data-state.js would silently fall back to the old flip.
+var CACHE_VERSION = 'ltp-shell-v73';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

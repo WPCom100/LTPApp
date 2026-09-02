@@ -49,6 +49,7 @@ from backend.email_compose import (
     _paragraphs_to_html, _render_signature, email_shell,
 )
 from backend.routes._shared import load_settings, public_settings
+from backend.routes.api import _row_to_dict
 from backend.sanitize import email_html
 
 
@@ -869,6 +870,13 @@ async def send_crew_request(
     livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
+    # The project row as it now stands, `_rev` included. The sending window
+    # mirrors this status move locally the moment it clicks Send; handing it
+    # the real row lets it install that (components/data-state.js::adoptRow)
+    # instead of PUTting its own mirror back under the pre-send If-Match token
+    # — which the server refused as a stale write, so the producer was told
+    # the project "changed in another window" for a change they had just made.
+    out["project"] = _row_to_dict(project)
     if silent:
         # Nothing was sent, by design — report it explicitly so the UI can say
         # so rather than leaving the producer wondering whether mail failed.
@@ -927,6 +935,10 @@ async def withdraw_crew_request(
     livesync.mark_dirty(db, "crew-requests", "projects")
 
     out = _request_dict(req)
+    if project is not None:
+        # Same reason as send: the window adopts the reopened row rather than
+        # writing its own copy of the reopening back with a stale token.
+        out["project"] = _row_to_dict(project)
     if bool((body or {}).get("notify")):
         contact = (await db.execute(select(models.Contact).where(models.Contact.id == req.contact_id))).scalar_one_or_none()
         services = (await db.execute(select(models.Service))).scalars().all()

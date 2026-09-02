@@ -637,7 +637,9 @@ Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`
 `PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
 row the API returns includes one). If the row changed since you read it, the PUT
 is refused with `409` and the response body carries the current row so the client
-can adopt it. Omitting the header keeps last-write-wins. See *Live sync* below.
+can adopt it — unless the write would change nothing, which passes as the no-op
+it is (a stale token with nothing to write is not a conflict). Omitting the
+header keeps last-write-wins. See *Live sync* below.
 
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
@@ -675,6 +677,17 @@ open window could learn about it, so the Crew Requests tab would show the shift
 name as the literal string "Project" and hide the Confirm button, and the stale
 window would revert the acceptance on its next save. `If-Match` closes that last
 hole; live sync makes it rare in the first place.
+
+**Server-side moves the window itself asked for.** Sending or withdrawing a crew
+request also moves position statuses on the project row, and the Labor tab
+shows that move at once. It must not push it back: a copy of the move written
+under the pre-send token is a stale write in name only, and refusing it told the
+producer the project had "changed in another window" for a change they had just
+made. So the tab installs the move as *server* state (`LTP_STATE.adoptRow`,
+which moves the sync baseline with the row and queues no PUT), and the
+send/withdraw responses carry the moved project row with its `_rev` so the
+window adopts the real thing — and a direct book's pay stamp, written right
+after, goes out under a token the server accepts.
 
 A stream is recycled every 30 minutes (`LTP_LIVESYNC_MAX_STREAM_SECONDS`).
 Auth is checked when a connection opens and never again, so without a cap a
