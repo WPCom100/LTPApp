@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend import crypto, livesync, models, payouts, qbo_payouts, qbo_sync, quickbooks, webpush
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
+from backend.routes.api import _row_to_dict
 
 
 qbo_router = APIRouter(prefix="/api/qbo", tags=["quickbooks"])
@@ -357,6 +358,13 @@ async def push_invoice_route(
         # the invoice row. Publishing it is what lets other windows pick up the
         # new sync state instead of waiting on the 30s sweep.
         livesync.mark_dirty(db, "invoices")
+        # The stamped row, `_rev` included, for the pushing window to adopt:
+        # the activity entry moved the revision, and the window's next write
+        # (marking the invoice sent) must carry this token, not the one from
+        # before the push. Same reason /api/email/send returns its row.
+        await db.flush()
+        await db.refresh(invoice)
+        push_result["invoice"] = _row_to_dict(invoice)
         return push_result
     except quickbooks.QboNotConnected:
         return JSONResponse(status_code=409, content={"reason": "not_connected",

@@ -145,6 +145,28 @@ def test_a_stale_client_put_no_longer_erases_the_send_record():
     after_send = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
     _check("server stamped email_sent", "email_sent" in _types(after_send), str(_types(after_send)))
 
+    # The window's own "mark it sent" write goes through the persisted-state
+    # hook, which sends If-Match. Under the PRE-send token it is a stale write
+    # — refused — and the hook then adopts the server's copy: email out,
+    # invoice still a draft. That is the report.
+    row = r.json().get("row")
+    _check("send hands back the stamped row", isinstance(row, dict) and "_rev" in row, str(r.json())[:200])
+    _check("with the same _rev a GET now returns", row and row["_rev"] == after_send["_rev"])
+    pre_send_edit = dict(created, status="sent", sentDate="2026-08-19")
+    refused = client.put(f"/api/invoices/{created['id']}", json=pre_send_edit,
+                         headers={"If-Match": created["_rev"]}, cookies=_cookies())
+    _check("marking it sent on the pre-send copy is refused as stale", refused.status_code == 409,
+           f"{refused.status_code}: {refused.text[:120]}")
+    # Built on the returned row, under its token, the same edit lands — with the
+    # server's entry still on it.
+    on_row = {k: v for k, v in row.items() if k != "_rev"}
+    on_row.update(status="sent", sentDate="2026-08-19")
+    landed = client.put(f"/api/invoices/{created['id']}", json=on_row,
+                        headers={"If-Match": row["_rev"]}, cookies=_cookies())
+    _check("marking it sent on the returned row lands", landed.status_code == 200, landed.text[:200])
+    _check("as sent", landed.json().get("status") == "sent")
+    _check("keeping the send record", "email_sent" in _types(landed.json()), str(_types(landed.json())))
+
     # `created` is the copy the frontend has been holding since before the send —
     # exactly what persistAndPushQbo and the debounced save re-send.
     stale = dict(created, status="sent", sentDate="2026-08-19")

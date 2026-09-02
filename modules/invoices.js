@@ -1104,7 +1104,14 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
-            var updated = Object.assign({}, baseDraft, {
+            // The send stamped an email_sent entry on the row. Adopt the row it
+            // handed back and mark it sent ON THAT COPY, so this edit carries
+            // the entry and goes out under the post-send token. Built on
+            // baseDraft, it went out under the pre-send token, was refused as
+            // a stale write, and the invoice stayed a draft while the email and
+            // the QuickBooks invoice both existed.
+            var sentBase = window.LTP_adoptServerRow("invoices", resp.body && resp.body.row) || baseDraft;
+            var updated = Object.assign({}, sentBase, {
               status: isResend ? baseDraft.status : "sent",
               sentDate: isResend ? baseDraft.sentDate : today,
               sendRecipients: sendRecipients,  // remember who this went to
@@ -1278,7 +1285,13 @@
       var taxable = invoiceObj.clientType === "contact" ? !!party : !!(party && party.taxable);
       var sig = qbSignature(invoiceObj, party, proj, taxable);
       return fetch("/api/invoices/" + invoiceObj.id, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(invoiceObj) })
-        .then(function(r) { if (!r.ok) throw new Error("save failed (" + r.status + ")"); })
+        .then(function(r) {
+          if (!r.ok) throw new Error("save failed (" + r.status + ")");
+          // This PUT bypasses the persisted-state hook, so the hook's If-Match
+          // token for the row is stale from here on unless it learns the new
+          // revision — adopt the row the server wrote back.
+          return r.json().then(function(row) { window.LTP_adoptServerRow("invoices", row); }, function() { /* no body — the live refresh will catch up */ });
+        })
         .then(function() {
           return fetch("/api/qbo/invoices/" + invoiceObj.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ signature: sig }) });
         })
@@ -1295,7 +1308,12 @@
             }
           }
           if (outcome.ok) {
-            var withQb = window.LTP_applyQboPush(invoiceObj, resp.body, sig);
+            // The push stamped a qbo_synced entry on the row (moving its
+            // revision). Adopt the returned row and build on it, so the
+            // window's copy carries that entry and its next write — marking
+            // the invoice sent — goes out under the token the server holds.
+            var pushedRow = window.LTP_adoptServerRow("invoices", resp.body && resp.body.invoice);
+            var withQb = window.LTP_applyQboPush(pushedRow || invoiceObj, resp.body, sig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
             setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
             if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;

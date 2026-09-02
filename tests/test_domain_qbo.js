@@ -175,6 +175,22 @@ const asyncChecks = Promise.resolve()
   .then(() => READ(fakeResp(504, "<html>" + "x".repeat(500) + "</html>")))
   .then((r) => ok("R7 a long HTML page is truncated", r.body.error.length < 200, String(r.body.error.length)));
 
+// ── Adopting a row a route handed back ──────────────────────────────────────
+{
+  const ADOPT = window.LTP_adoptServerRow;
+  ok("S0 LTP_adoptServerRow is exported", typeof ADOPT === "function");
+  const seen = [];
+  window.LTP_STATE = { adoptRow: (key, row) => { seen.push([key, row._rev]); return true; } };
+  const out = ADOPT("invoices", { id: 5, status: "draft", activity: [{ type: "email_sent" }], _rev: "r9" });
+  eq("S1 the row is installed into the hook that owns the collection", seen, [["invoices", "r9"]]);
+  eq("S2 and a copy without _rev comes back to build the edit on",
+     out, { id: 5, status: "draft", activity: [{ type: "email_sent" }] });
+  eq("S3 no row (an older server) yields null so callers fall back", ADOPT("invoices", undefined), null);
+  eq("S4 a row without an id is refused", ADOPT("invoices", { status: "sent" }), null);
+  delete window.LTP_STATE;
+  ok("S5 without the state layer it still returns the copy", ADOPT("quotes", { id: 1, _rev: "x" }).id === 1);
+}
+
 asyncChecks.then(() => {
   console.log("domain-qbo suite — PASS: " + pass + "   FAIL: " + fail);
   if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
