@@ -193,7 +193,11 @@
 // pre-send If-Match token; the direct-book pay stamp rides the same path. Both
 // files are runtime-cached, so a device pairing the new labor.js with the old
 // data-state.js would silently fall back to the old flip.
-var CACHE_VERSION = 'ltp-shell-v73';
+// v74: a QuickBooks push that fails outside the route's own error mapping is
+// answered as JSON and recorded on the invoice; the invoice-send and quote-tax
+// callers read non-JSON answers without throwing and report failures into the
+// API error list. domain-qbo.js, data-state.js, invoices.js, quotes-builder.js.
+var CACHE_VERSION = 'ltp-shell-v74';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -983,6 +983,12 @@
       var fn = window.LTP_DATA_ADOPT && window.LTP_DATA_ADOPT[key];
       return fn ? fn(row) : false;
     },
+    // For the hand-rolled fetches that do not go through syncEntity (the
+    // QuickBooks push before an invoice send, the quote tax calculation):
+    // record a failure into the same ring buffer + toast pipeline, so it shows
+    // wherever the app lists API errors instead of only in a modal the user
+    // has already dismissed.
+    reportError: recordError,
     // Exported for tests (tests/test_live_sync.js).
     _mergeRemote: mergeRemote,
     _splitRevs: splitRevs,

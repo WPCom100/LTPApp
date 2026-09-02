@@ -25,6 +25,7 @@ Security notes:
     failure activity stamp commits with the request transaction.
 """
 import os
+import traceback
 import re
 from datetime import date as _date, datetime, timedelta, timezone
 
@@ -315,6 +316,22 @@ class PushRequest(BaseModel):
     signature: str | None = None
 
 
+def _unexpected_failure(where: str, e: Exception) -> JSONResponse:
+    """A failure nothing above mapped — a bug, a database error, a library
+    exception no wrapper caught. Log the traceback (that is what ops needs) and
+    answer as JSON. FastAPI's default is a plain-text "Internal Server Error",
+    which every caller of these routes `r.json()`s and then reports as
+    "Unexpected token 'I', \"Internal S\"... is not valid JSON" — the actual
+    reason reached nobody, and it was not recorded anywhere the app shows."""
+    print(f"[LTP] qbo: unexpected failure in {where}: {type(e).__name__}: {e}", flush=True)
+    traceback.print_exc()
+    return JSONResponse(status_code=500, content={
+        "reason": "server_error",
+        "error": f"Unexpected server error ({type(e).__name__}: {str(e)[:200]}). "
+                 "The server log has the details.",
+    })
+
+
 @qbo_router.post("/invoices/{invoice_id}/push")
 async def push_invoice_route(
     invoice_id: int,
@@ -360,6 +377,21 @@ async def push_invoice_route(
                         "QuickBooks sync failed",
                         [{"cat": "Error", "detail": e.safe_message[:300]}])
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+    except Exception as e:  # noqa: BLE001 — the whole point: nothing escapes as plain text
+        resp = _unexpected_failure(f"push invoice {invoice_id}", e)
+        # Record it on the invoice like any other failed sync, so the row says
+        # why it is not in QuickBooks. Best-effort: the session may be the
+        # thing that broke.
+        try:
+            invoice.qb_sync_status = "error"
+            invoice.qb_last_error = f"{type(e).__name__}: {str(e)[:250]}"
+            qbo_sync._stamp(invoice, admin, "qbo_sync_failed",
+                            "QuickBooks sync failed",
+                            [{"cat": "Error", "detail": invoice.qb_last_error[:300]}])
+            livesync.mark_dirty(db, "invoices")
+        except Exception as stamp_err:  # noqa: BLE001
+            print(f"[LTP] qbo: could not record the failure on invoice {invoice_id}: {stamp_err}", flush=True)
+        return resp
 
 
 class UnwindSendRequest(BaseModel):
@@ -932,3 +964,5 @@ async def estimate_quote_tax_route(
         return JSONResponse(status_code=400, content={"reason": "not_syncable", "error": str(e)})
     except quickbooks.QboApiError as e:
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
+    except Exception as e:  # noqa: BLE001 — same reasoning as push_invoice_route
+        return _unexpected_failure(f"estimate tax for quote {quote_id}", e)
