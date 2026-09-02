@@ -142,6 +142,57 @@
     });
   }
 
+  // Install a server-shaped project row as SERVER state — see
+  // components/data-state.js::adoptRow: the row lands without queueing a PUT,
+  // its `_rev` becomes the If-Match token for the next real edit, and unsynced
+  // local edits to it survive as a refresh would keep them. Returns false when
+  // the state layer predates adoptRow (a device still on an older cached
+  // shell), so callers fall back to a plain local flip.
+  function adoptProject(row) {
+    var S = window.LTP_STATE;
+    return !!(row && S && typeof S.adoptRow === "function" && S.adoptRow("projects", row));
+  }
+
+  // A copy of `proj` with the positions in `posIds` moved fromStatus → toStatus
+  // — what the server's _update_positions does on a send — and nothing else.
+  function withPositionsMoved(proj, posIds, fromStatus, toStatus) {
+    var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
+    return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
+      return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
+        return (idSet[pos.id] && pos.status === fromStatus) ? Object.assign({}, pos, { status: toStatus }) : pos;
+      }) });
+    }) });
+  }
+
+  // Mirror a status move the server is making — one (crew, project) group per
+  // entry, as POST /api/crew-requests/send takes them — as server state, so the
+  // grouped view updates at once and NOTHING is queued for the debounced
+  // project PUT. Also the undo: on a refused send the same call moves the
+  // group back.
+  //
+  // This used to be an ordinary local flip, which queued a PUT of the whole
+  // project carrying the pre-send If-Match token behind the send itself.
+  // Whenever the send committed first the server refused that PUT as a stale
+  // write, this window adopted a row identical to its own, and the producer
+  // saw "PUT projects/23 HTTP 409" and "Changed in another window" — for a
+  // change they had just made, with the emails already on their way.
+  function mirrorGroups(setProjects, projects, groupList, fromStatus, toStatus) {
+    var byProject = {};
+    (groupList || []).forEach(function(g) {
+      var slot = byProject[g.projectId] || (byProject[g.projectId] = { id: g.projectId, ids: [] });
+      slot.ids = slot.ids.concat(g.positionIds || []);
+    });
+    Object.keys(byProject).forEach(function(k) {
+      var slot = byProject[k];
+      // The live mirror, not the render-time prop: this may run from a
+      // response handler well after the render that closed over `projects`.
+      var live = (window.LTP_DATA_LIVE && window.LTP_DATA_LIVE.projects) || projects || [];
+      var proj = live.find(function(p) { return p && p.id === slot.id; });
+      if (proj && adoptProject(withPositionsMoved(proj, slot.ids, fromStatus, toStatus))) return;
+      flipPositionsLocal(setProjects, slot.id, slot.ids, fromStatus, toStatus);
+    });
+  }
+
   // Move a crew member's positions to `confirmed` in one project, lock their pay
   // for the days that changed, and stamp a schedule-activity entry.
   //
@@ -1088,17 +1139,15 @@
       var groupList = selectedGroups();
       if (groupList.length === 0) { setShowSendPanel(false); return; }
 
-      // A send flips open \u2192 requested optimistically (the server does the same),
-      // so the grouped view updates without a project refetch. A direct book
-      // does NOT: it confirms and LOCKS PAY, so it waits for the server to
-      // accept before writing that locally \u2014 a rejected book must not leave a
-      // pay-stamped confirmation behind for the debounced project PUT to
-      // persist.
-      if (!silent) {
-        var allIds = [];
-        groupList.forEach(function(g) { allIds = allIds.concat(g.positionIds); });
-        flipPositionsLocal(setProjects, null, allIds, "open", "requested");
-      }
+      // A send flips open \u2192 requested on the server, inside the transaction
+      // that creates the request. Mirror it here at once so the grouped view
+      // updates without waiting on the email round trip \u2014 as server state
+      // (mirrorGroups), never as an edit for the debounced project PUT to push
+      // back under a stale token. A direct book does NOT mirror ahead: it
+      // confirms and LOCKS PAY, so it waits for the server to accept before
+      // writing that locally \u2014 a rejected book must not leave a pay-stamped
+      // confirmation behind for the debounced project PUT to persist.
+      if (!silent) mirrorGroups(setProjects, projects, groupList, "open", "requested");
 
       setShowSendPanel(false);
       Promise.all(groupList.map(function(g) {
@@ -1115,6 +1164,13 @@
         results.forEach(function(res) {
           if (res.ok) {
             sent++;
+            // The response carries the project row the server just moved, with
+            // its _rev. Installing it makes this window's copy AND its If-Match
+            // token the server's, so the direct book's pay stamp below goes out
+            // under a token the server accepts — it used to go out under the
+            // pre-book one, get refused as a stale write, and be thrown away
+            // when the window adopted the server's unstamped row over it.
+            adoptProject(res.body && res.body.project);
             // Mirror the server's confirm locally now that it stuck — pay
             // stamp and activity entry included (confirmPositionsLocal).
             if (silent) confirmPositionsLocal(setProjects, {
@@ -1126,6 +1182,9 @@
             });
             if (res.body && res.body.emailStatus && res.body.emailStatus.needsReconnect) reconnect = true;
           } else {
+            // Nothing moved on the server for this group: take the mirror back,
+            // or the view keeps showing "requested" slots no request exists for.
+            if (!silent) mirrorGroups(setProjects, projects, [res.group], "requested", "open");
             var detail = (res.body && res.body.detail) || (res.body && res.body.error) || "send failed";
             if (typeof detail === "object") detail = detail.reason || detail.message || "send failed";
             errors.push(crewLabel(res.group.contactId) + ": " + detail);
@@ -2613,7 +2672,12 @@
           // Snapshot the shifts BEFORE flipping (it reads the live positions),
           // then reopen them AND clear the crew so the slot returns to empty.
           var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [];
-          flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open", true);
+          // The server reopened and unassigned these slots in the same write.
+          // Take its row (with its _rev) rather than replaying the move as an
+          // edit the debounced PUT would push back under a stale token.
+          if (!adoptProject(res.body && res.body.project)) {
+            flipPositionsLocal(setProjects, req.projectId, req.positionIds, "requested", "open", true);
+          }
           window.LTP_outbox.add({ crewId: req.contactId, crewName: crewLabel(req.contactId), projectId: req.projectId, projectName: projLabel(req.projectId),
             template: "crewWithdrawn", shifts: snapshotShifts });
           window.LTP_toast("Request withdrawn", { message: crewLabel(req.contactId) + " queued in the notify tray.", variant: "success" });

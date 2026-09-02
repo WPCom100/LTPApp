@@ -178,7 +178,29 @@ def _paid_day_override(request: Request) -> bool:
     return raw in ("1", "true", "yes")
 
 
-def _require_fresh(request: Request, row, path: str, item_id) -> None:
+def _same_content(current: dict, mapped: dict | None) -> bool:
+    """Would applying `mapped` (snake_case, already filtered by _dict_to_row)
+    leave the row's client-writable content exactly as it is?
+
+    Compared over the same field set `_row_rev` hashes, after jsonable_encoder
+    on BOTH sides so a stored datetime and the ISO string the client echoes
+    back for it compare equal (Python `==` already treats 1 and 1.0 alike).
+    Anything the encoder cannot reconcile simply compares unequal, which falls
+    through to the ordinary conflict — never past it."""
+    if not mapped:
+        return False
+    proposed = {k: v for k, v in current.items() if k != "_rev"}
+    for snake, val in mapped.items():
+        proposed[_snake_to_camel(snake)] = val
+
+    def hashable(d):
+        return {k: v for k, v in d.items()
+                if k != "_rev" and _camel_to_snake(k) not in _READONLY_COLS}
+
+    return jsonable_encoder(hashable(current)) == jsonable_encoder(hashable(proposed))
+
+
+def _require_fresh(request: Request, row, path: str, item_id, mapped: dict | None = None) -> None:
     """Reject a PUT whose If-Match no longer matches the stored row.
 
     This is the guard that stops a window which loaded before a crew member
@@ -191,6 +213,18 @@ def _require_fresh(request: Request, row, path: str, item_id) -> None:
     (modules/settings.js, modules/invoices.js) working untouched and lets the
     guard roll out without a flag day.
 
+    A stale token with NOTHING to write is not a conflict. The Labor tab mirrors
+    server-side position moves locally (a crew-request send flips open →
+    requested in the browser at the same moment POST /api/crew-requests/send
+    flips it in the database), and its debounced project PUT then arrives
+    carrying the pre-send token and the post-send content. Refusing that write
+    adopted a row identical to the one the window already had and raised a
+    "Changed in another window" toast for a change this very window made. A
+    guard should only fire on a conflict it can actually resolve, and there is
+    nothing to resolve when the write would change no byte — so `mapped` (the
+    incoming write, as _dict_to_row shaped it) is compared against the stored
+    row first and an identical write passes as the no-op it is.
+
     On conflict the CURRENT server row rides along in the 409 body, so the
     client can adopt it without a second round trip."""
     want = (request.headers.get("if-match") or "").strip()
@@ -198,6 +232,10 @@ def _require_fresh(request: Request, row, path: str, item_id) -> None:
         return
     current = _row_to_dict(row)
     if want.strip('"') == current["_rev"]:
+        return
+    if _same_content(current, mapped):
+        print(f"[LTP] if-match: {path} {item_id} written with a stale token but "
+              f"identical content — accepted as a no-op", flush=True)
         return
     raise HTTPException(
         status_code=409,
@@ -389,9 +427,11 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         # Optimistic concurrency — BEFORE any mutation, so a rejected write
-        # leaves the row untouched.
-        _require_fresh(request, row, path, item_id)
+        # leaves the row untouched. The mapped write goes along so a stale
+        # token carrying identical content can be recognised as the no-op it
+        # is (_dict_to_row is a pure reshape; nothing has been applied yet).
         mapped = _dict_to_row(data, model_cls)
+        _require_fresh(request, row, path, item_id, mapped)
         await _validate_fks(mapped, model_cls, db)
         # Stale-write guard (Project only): the frontend PUTs its whole
         # in-memory row and never refetches projects after page load, so a

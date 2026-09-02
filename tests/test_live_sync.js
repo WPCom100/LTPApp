@@ -270,6 +270,21 @@ eq("M13 null inputs are tolerated", M(null, null, null), []);
   eq("M14 id-less server rows pass through", M([], [], server), server);
 }
 
+{
+  // Edited here to exactly what the server now holds — the Labor tab mirrors
+  // a crew-request send locally while the server makes the same move. That is
+  // convergence, not a kept local edit: keeping it pinned the OLD revision to
+  // a row that then re-sent identical content and drew a 409 for a "change in
+  // another window" this window had made itself.
+  const base   = [{ id: 1, status: "open" }];
+  const local  = [{ id: 1, status: "requested" }];
+  const server = [{ id: 1, status: "requested" }];
+  const kept = [];
+  eq("M15 a local edit the server already holds converges on the server's row",
+     M(base, local, server, [], kept), server);
+  eq("M16 and is not reported as kept, so the caller adopts the server's revision", kept, []);
+}
+
 // ── revsRef must not advance for rows the merge kept locally ────────────────
 //
 // This is the bug that made If-Match unable to fire for exactly the rows it was
