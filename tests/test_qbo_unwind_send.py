@@ -257,6 +257,50 @@ def test_a_quickbooks_failure_leaves_the_link_intact():
         _check(f"{label} → tax NOT cleared", link["qb_tax_total"] == 82.50, repr(link["qb_tax_total"]))
 
 
+def test_an_unmapped_failure_on_push_is_json_and_recorded():
+    """The report: "Sales Tax Unavailable … Network or server error: Unexpected
+    token 'I', \"Internal S\"... is not valid JSON" on sending an invoice, with
+    nothing in the app's error list.
+
+    An exception the push route did not map (here a plain RuntimeError, in
+    production an httpx transport error) escaped as FastAPI's plain-text 500.
+    The route must answer JSON the client can read, and record the failure on
+    the invoice like any other failed sync."""
+    client = _setup()
+    inv = client.post("/api/invoices", json={
+        "clientType": "company", "status": "draft", "customName": "Boom",
+        "sections": [{"id": "s1", "label": "L",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies=_cookies()).json()
+
+    async def _explode(db, invoice, user=None, **kw):
+        raise RuntimeError("something nobody mapped")
+
+    original = qbo_route.qbo_sync.push_invoice
+    qbo_route.qbo_sync.push_invoice = _explode
+    try:
+        r = client.post(f"/api/qbo/invoices/{inv['id']}/push", json={"signature": "sig"}, cookies=_cookies())
+    finally:
+        qbo_route.qbo_sync.push_invoice = original
+    _check("answers 500", r.status_code == 500, r.text[:160])
+    body = r.json()   # would raise on the old plain-text body
+    _check("as JSON with reason=server_error", body.get("reason") == "server_error", r.text[:160])
+    _check("naming the exception", "RuntimeError" in (body.get("error") or ""), body.get("error"))
+
+    from backend.database import async_session
+
+    async def read():
+        async with async_session() as db:
+            row = await db.get(models.Invoice, inv["id"])
+            return row.qb_sync_status, row.qb_last_error, list(row.activity or [])
+
+    status, last_error, activity = asyncio.run(read())
+    _check("invoice marked as a failed sync", status == "error", repr(status))
+    _check("with the reason on the row", "RuntimeError" in (last_error or ""), repr(last_error))
+    _check("and a qbo_sync_failed activity entry",
+           any(a.get("type") == "qbo_sync_failed" for a in activity), repr(activity)[:200])
+
+
 def test_unwind_is_admin_only():
     # It deletes from the customer's books; same bar as push and delete.
     client = _setup()

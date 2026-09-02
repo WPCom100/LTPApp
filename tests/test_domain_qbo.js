@@ -149,6 +149,34 @@ ok("Q42 every outcome carries a title, message and variant",
 ok("Q43 no money formatter still yields a message",
    typeof OUT({ status: 200, body: { qbTaxTotal: 5 } }).message === "string");
 
-console.log("domain-qbo suite — PASS: " + pass + "   FAIL: " + fail);
-if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
-console.log("All " + pass + " assertions passed.");
+// ── Reading a route's answer without assuming JSON ──────────────────────────
+// The push before an invoice send did `r.json()` on whatever came back. A route
+// that failed outside its own error mapping answered FastAPI's plain-text
+// "Internal Server Error", and the producer was shown the parser's complaint
+// ("Unexpected token 'I' ... is not valid JSON") instead of a status.
+const READ = window.LTP_readJsonResponse;
+ok("R0 LTP_readJsonResponse is exported", typeof READ === "function");
+function fakeResp(status, text) { return { status: status, text: () => Promise.resolve(text) }; }
+
+const asyncChecks = Promise.resolve()
+  .then(() => READ(fakeResp(200, '{"action":"created","qbTaxTotal":8.25}')))
+  .then((r) => eq("R1 a JSON body parses as before", r, { status: 200, body: { action: "created", qbTaxTotal: 8.25 } }))
+  .then(() => READ(fakeResp(500, "Internal Server Error")))
+  .then((r) => {
+    eq("R2 a plain-text 500 keeps its status", r.status, 500);
+    ok("R3 and reads as an HTTP error, not a parser complaint",
+       /^HTTP 500 — Internal Server Error$/.test(r.body.error), r.body.error);
+    eq("R4 flagged as non-JSON so consumers can tell", r.body.reason, "non_json");
+    ok("R5 and the outcome mapper turns it into a failure that names the status",
+       OUT(r).ok === false && /HTTP 500/.test(OUT(r).message), OUT(r).message);
+  })
+  .then(() => READ(fakeResp(502, "")))
+  .then((r) => ok("R6 an empty body is tolerated", r.body && typeof r.body === "object", JSON.stringify(r.body)))
+  .then(() => READ(fakeResp(504, "<html>" + "x".repeat(500) + "</html>")))
+  .then((r) => ok("R7 a long HTML page is truncated", r.body.error.length < 200, String(r.body.error.length)));
+
+asyncChecks.then(() => {
+  console.log("domain-qbo suite — PASS: " + pass + "   FAIL: " + fail);
+  if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
+  console.log("All " + pass + " assertions passed.");
+}, (e) => { console.error(e); process.exit(1); });

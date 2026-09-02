@@ -1329,7 +1329,7 @@
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ signature: qbTaxSig }),
       })
-        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(r) { return window.LTP_readJsonResponse(r); })
         .then(function(resp) {
           setCalcTax(false);
           if (resp.status === 200) {
@@ -1347,10 +1347,23 @@
             return updated;
           }
           var err = (resp.body && resp.body.error) || "Could not calculate sales tax.";
+          // Same ring buffer + toast pipeline as a failed sync, so it is on
+          // record after this toast is dismissed.
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/quotes/" + draft.id + "/estimate-tax",
+              { status: resp.status, body: JSON.stringify(resp.body || {}).slice(0, 300) });
+          }
           window.LTP_toast("Tax calculation failed", { message: err, variant: "error" });
           return null;
         })
-        .catch(function() { setCalcTax(false); window.LTP_toast("Tax calculation failed", { message: "Network error.", variant: "error" }); return null; });
+        .catch(function(e) {
+          setCalcTax(false);
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/quotes/" + draft.id + "/estimate-tax", { error: String(e && e.message || e) });
+          }
+          window.LTP_toast("Tax calculation failed", { message: "Network error: " + String(e && e.message || e), variant: "error" });
+          return null;
+        });
     }
 
     function save() {

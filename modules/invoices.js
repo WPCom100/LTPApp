@@ -1282,9 +1282,18 @@
         .then(function() {
           return fetch("/api/qbo/invoices/" + invoiceObj.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ signature: sig }) });
         })
-        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(r) { return window.LTP_readJsonResponse(r); })
         .then(function(resp) {
           var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (!outcome.ok) {
+            // Into the ring buffer + error toasts, the same place a failed
+            // sync lands — a failure that only ever showed in a modal was
+            // gone the moment it was dismissed, with no record anywhere.
+            if (window.LTP_STATE && window.LTP_STATE.reportError) {
+              window.LTP_STATE.reportError("POST qbo/invoices/" + invoiceObj.id + "/push",
+                { status: resp.status, body: JSON.stringify(resp.body || {}).slice(0, 300) });
+            }
+          }
           if (outcome.ok) {
             var withQb = window.LTP_applyQboPush(invoiceObj, resp.body, sig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
@@ -1320,6 +1329,9 @@
           return { ok: false, reason: outcome.reason, error: d.error || ("HTTP " + resp.status) };
         })
         .catch(function(e) {
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/invoices/" + invoiceObj.id + "/push", { error: String(e.message || e) });
+          }
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" });
           return { ok: false, reason: "network", error: "Network or server error: " + String(e.message || e) };
         });

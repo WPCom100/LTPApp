@@ -80,6 +80,24 @@ window.LTP_applyQboPush = function(invoice, body, sentSignature) {
 // "updated" means the QuickBooks invoice existed before this push — a resend,
 // or an earlier export — and deleting it would destroy a record the customer
 // may already hold.
+// Read a QuickBooks-route response as {status, body} WITHOUT assuming the body
+// is JSON. A route that fails outside its own error mapping answers with
+// FastAPI's plain-text "Internal Server Error"; `r.json()` on that threw
+// "Unexpected token 'I', \"Internal S\"... is not valid JSON", which is what the
+// producer was shown instead of a status. A non-JSON body becomes
+// {error: "HTTP <status> — <text>"} so every consumer's `body.error` reads.
+window.LTP_readJsonResponse = function(r) {
+  return r.text().then(function(text) {
+    var body;
+    try {
+      body = text ? JSON.parse(text) : {};
+    } catch (e) {
+      body = { reason: "non_json", error: "HTTP " + r.status + " \u2014 " + (String(text || "").trim() || "empty response").slice(0, 160) };
+    }
+    return { status: r.status, body: body };
+  });
+};
+
 window.LTP_qboPushOutcome = function(resp, money) {
   var fmt = money || function(n) { return String(n); };
   var status = resp && resp.status;
