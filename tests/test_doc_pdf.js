@@ -148,6 +148,32 @@ const RESP = { downloadUrl: "/pdf/abc123", filename: "Quote-Q-2026-001.pdf", tok
   eq("P32 it carries the server's filename", entry.pdfFilename, "Quote-Q-2026-001.pdf");
   ok("P33 it has a message", typeof entry.message === "string" && entry.message.length > 0);
   ok("P34 it has an id", typeof entry.id === "string" && entry.id.indexOf("pdf-") === 0, entry.id);
+
+  // ── A server that stamps the entry itself and hands the row back ────────
+  // The caller records the SERVER's entry and the row is installed as server
+  // state, so the window's copy matches and its next save carries the row's
+  // token. A minted entry with its own id never matched the server's and the
+  // next save was refused as a stale write.
+  const serverEntry = { id: "pdf-srv1", type: "pdf_generated", user: "Dana", message: "PDF generated", pdfToken: "tok9" };
+  const serverRow = { id: 12, status: "draft", activity: [serverEntry], _rev: "r-after-pdf" };
+  const adopted = [];
+  resetHost({
+    fetch: function () { return Promise.resolve(okResponse(Object.assign({}, RESP, { activityEntry: serverEntry, row: serverRow }))); },
+    LTP_adoptServerRow: function (key, row) { adopted.push([key, row._rev]); return Object.assign({}, row); },
+  });
+  const fromServer = await window.LTP_generateDocPdf({ kind: "quote", id: 12, isMobile: false });
+  eq("P35 the server's own entry is what the caller records", fromServer, serverEntry);
+  eq("P36 the returned row is installed as server state for the collection", adopted, [["quotes", "r-after-pdf"]]);
+  resetHost({
+    fetch: function () { return Promise.resolve(okResponse(Object.assign({}, RESP, { activityEntry: serverEntry, row: Object.assign({}, serverRow, { id: 7 }) }))); },
+    LTP_adoptServerRow: function (key) { adopted.push(key); return {}; },
+  });
+  await window.LTP_generateDocPdf({ kind: "invoice", id: 7, isMobile: false });
+  eq("P37 an invoice installs into the invoices collection", adopted[adopted.length - 1], "invoices");
+  // Without the state layer the helper still resolves (the row is simply not installed).
+  resetHost({ fetch: function () { return Promise.resolve(okResponse(Object.assign({}, RESP, { activityEntry: serverEntry, row: serverRow }))); } });
+  const noLayer = await window.LTP_generateDocPdf({ kind: "quote", id: 12, isMobile: false });
+  eq("P38 without LTP_adoptServerRow the server entry is still recorded", noLayer.id, "pdf-srv1");
   ok("P35 it has an HH:MM time", /^\d{2}:\d{2}$/.test(entry.time), entry.time);
 
   // A missing LTP_API_ERRORS ring must not turn a PDF failure into a crash.

@@ -200,6 +200,36 @@ def _same_content(current: dict, mapped: dict | None) -> bool:
     return jsonable_encoder(hashable(current)) == jsonable_encoder(hashable(proposed))
 
 
+def _stale_only_by_server_activity(current: dict, mapped: dict | None, token: str) -> bool:
+    """Is the caller's token stale ONLY because the server appended activity
+    entries since the caller read the row?
+
+    Every send, PDF download, QuickBooks push and share-link open stamps an
+    entry onto `activity` server-side, and each stamp moves the row's `_rev`.
+    A window that then saves a real edit (built on the copy it read before the
+    stamp) carries the pre-stamp token and would be refused — and the refusal
+    threw its edit away — even though the update path already unions activity
+    (_merge_activity), so nothing at all would be lost by accepting it.
+
+    Nothing in the app removes an activity entry, so the entries the caller
+    sends are a superset of what it read. Rebuild what it read: the stored row
+    with `activity` cut down to the entries the caller knows. If THAT hashes
+    to the caller's token, the only thing that changed underneath it was an
+    appended entry, and the write is judged fresh. Any other divergence — a
+    status the crew or the client moved, a field another window edited — still
+    fails the comparison and is refused as before."""
+    if not mapped or not isinstance(mapped.get("activity"), list):
+        return False
+    known = {e.get("id") for e in mapped["activity"] if isinstance(e, dict) and e.get("id")}
+    stored = [e for e in (current.get("activity") or []) if isinstance(e, dict)]
+    as_read = [e for e in stored if e.get("id") in known]
+    if len(as_read) == len(stored):
+        return False   # nothing was appended server-side; the token is stale for another reason
+    candidate = {k: v for k, v in current.items() if k != "_rev"}
+    candidate["activity"] = as_read
+    return _row_rev(candidate) == token
+
+
 def _require_fresh(request: Request, row, path: str, item_id, mapped: dict | None = None) -> None:
     """Reject a PUT whose If-Match no longer matches the stored row.
 
@@ -236,6 +266,10 @@ def _require_fresh(request: Request, row, path: str, item_id, mapped: dict | Non
     if _same_content(current, mapped):
         print(f"[LTP] if-match: {path} {item_id} written with a stale token but "
               f"identical content — accepted as a no-op", flush=True)
+        return
+    if _stale_only_by_server_activity(current, mapped, want.strip('"')):
+        print(f"[LTP] if-match: {path} {item_id} written with a token stale only by "
+              f"server-appended activity — accepted; the entries are merged back", flush=True)
         return
     raise HTTPException(
         status_code=409,

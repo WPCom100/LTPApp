@@ -290,6 +290,11 @@ async def test_transport_error_becomes_typed_error():
     _check("message says QuickBooks could not be reached",
            raised is not None and "could not be reached" in raised.safe_message
            and "ConnectTimeout" in raised.safe_message, getattr(raised, "safe_message", None))
+    _check("and names the call that hung",
+           raised is not None and "during POST invoice" in raised.safe_message, getattr(raised, "safe_message", None))
+    _check("and how long it waited",
+           raised is not None and " after " in raised.safe_message and "s (" in raised.safe_message,
+           getattr(raised, "safe_message", None))
 
 
 async def test_transport_error_recovers_on_retry():
@@ -340,6 +345,7 @@ async def test_refresh_transport_error_keeps_connection():
     except QboApiError as e:
         raised = e
     _check("raised the typed unreachable error", isinstance(raised, quickbooks.QboUnreachable))
+    _check("naming the token refresh", raised is not None and "token refresh" in raised.safe_message)
     _check("connection row was not dropped", db.delete.await_count == 0)
 
 

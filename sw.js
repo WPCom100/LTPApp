@@ -197,7 +197,15 @@
 // answered as JSON and recorded on the invoice; the invoice-send and quote-tax
 // callers read non-JSON answers without throwing and report failures into the
 // API error list. domain-qbo.js, data-state.js, invoices.js, quotes-builder.js.
-var CACHE_VERSION = 'ltp-shell-v74';
+// v75: sending a quote or invoice no longer leaves it a draft behind a
+// "Changed in another window" toast. Send and push hand back the stamped row;
+// the builders adopt it and mark it sent on that copy, under the token the
+// server holds. domain-qbo.js, invoices.js, quotes-builder.js.
+// v76: the rest of the "Changed in another window" family. The PDF download
+// records the server's own stamp on the row it hands back; the manual
+// QuickBooks update and the failed-send unwind build on the returned row.
+// doc-pdf.js, invoices.js.
+var CACHE_VERSION = 'ltp-shell-v76';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -1583,7 +1583,10 @@
           if (resp.status === 200) {
             var today = todayISO();
             var sentOn = isResend ? baseDraft.sentDate : today;
-            var updated = Object.assign({}, baseDraft, {
+            // Adopt the stamped row the send handed back and mark it sent on
+            // THAT copy — see the invoice builder's sendInvoiceEmail for why.
+            var sentBase = window.LTP_adoptServerRow("quotes", resp.body && resp.body.row) || baseDraft;
+            var updated = Object.assign({}, sentBase, {
               status: isResend ? baseDraft.status : "sent",
               sentDate: sentOn,
               // Freeze the shelf life at send time. Until now this was implicit

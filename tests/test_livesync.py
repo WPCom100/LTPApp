@@ -359,6 +359,29 @@ def test_labor_mirror_of_a_send_is_not_a_conflict():
     assert r.status_code == 409, "a stale window's revert must still be refused"
 
 
+def test_a_share_link_open_publishes_the_stamp():
+    """A customer opening the share link stamps `client_viewed` onto the quote
+    — a server-side write to a synced row — but published nothing, so every
+    producer window kept its pre-open token until the sweep."""
+    client, tok = _setup()
+    quote = client.post("/api/quotes", json={
+        "id": 7901, "clientType": "company", "status": "sent",
+        "sections": [{"id": "s1", "label": "L",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies={"ltp_session": tok})
+    assert quote.status_code == 200, quote.text
+    token = quote.json()["shareToken"]   # server-minted; the column is server-owned
+    before = _stamps(client, tok)
+    r = client.get(f"/api/view/{token}",
+                   headers={"User-Agent": "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Safari/537.36"})
+    assert r.status_code == 200, r.text[:200]
+    stamped = client.get("/api/quotes/7901", cookies={"ltp_session": tok}).json()
+    types = [a.get("type") for a in (stamped.get("activity") or [])]
+    assert "client_viewed" in types, f"the open should have been stamped, got {types}"
+    after = _stamps(client, tok)
+    assert after["quotes"] != before["quotes"], "the open moved the row; the quotes stamp must move with it"
+
+
 # ── The original report, end to end ─────────────────────────────────────────
 
 def test_stale_put_after_crew_accept_is_rejected():

@@ -193,6 +193,10 @@ def test_unwind_deletes_in_quickbooks_and_unlinks_the_row():
                         json={"qbInvoiceId": "QB-777"}, cookies=_cookies())
     _check("unwind returns 200", r.status_code == 200, r.text[:200])
     _check("reports it unwound", r.json().get("unwound") is True, r.text[:200])
+    unwound_row = r.json().get("invoice")
+    live_rev = client.get(f"/api/invoices/{inv_id}", cookies=_cookies()).json()["_rev"]
+    _check("hands back the cleared, stamped row with the _rev a GET now returns",
+           isinstance(unwound_row, dict) and unwound_row.get("_rev") == live_rev, str(unwound_row)[:120])
     _check("QuickBooks delete was called once for that id", stub.calls == ["QB-777"], str(stub.calls))
 
     link = _qb_link_fields(client, inv_id)
@@ -299,6 +303,44 @@ def test_an_unmapped_failure_on_push_is_json_and_recorded():
     _check("with the reason on the row", "RuntimeError" in (last_error or ""), repr(last_error))
     _check("and a qbo_sync_failed activity entry",
            any(a.get("type") == "qbo_sync_failed" for a in activity), repr(activity)[:200])
+
+
+def test_a_successful_push_hands_back_the_stamped_row():
+    """The push stamps a qbo_synced entry on the invoice, moving its _rev. The
+    window marks the invoice sent right after; that write must carry the new
+    token, so the response returns the row exactly as a GET now would."""
+    client = _setup()
+    inv = client.post("/api/invoices", json={
+        "clientType": "company", "status": "draft", "customName": "Pushed",
+        "sections": [{"id": "s1", "label": "L",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies=_cookies()).json()
+
+    async def _fake_push(db, invoice, user=None, **kw):
+        invoice.qb_invoice_id = "QB-NEW"
+        invoice.qb_sync_status = "synced"
+        qbo_route.qbo_sync._stamp(invoice, user, "qbo_synced", "Synced to QuickBooks", [])
+        return {"ok": True, "action": "created", "qbInvoiceId": "QB-NEW"}
+
+    original = qbo_route.qbo_sync.push_invoice
+    qbo_route.qbo_sync.push_invoice = _fake_push
+    try:
+        r = client.post(f"/api/qbo/invoices/{inv['id']}/push", json={"signature": "sig"}, cookies=_cookies())
+    finally:
+        qbo_route.qbo_sync.push_invoice = original
+    _check("push succeeded", r.status_code == 200, r.text[:200])
+    row = r.json().get("invoice")
+    live = client.get(f"/api/invoices/{inv['id']}", cookies=_cookies()).json()
+    _check("response carries the invoice row", isinstance(row, dict) and row.get("id") == inv["id"], str(r.json())[:200])
+    _check("with the _rev a GET now returns", row and row.get("_rev") == live["_rev"], f"{row and row.get('_rev')} vs {live['_rev']}")
+    _check("and the stamp on it", row and any(a.get("type") == "qbo_synced" for a in (row.get("activity") or [])))
+    # A real edit under the pre-push token is tolerated — the token is stale
+    # only by the push's own stamp — and the stamp survives the merge.
+    edited = client.put(f"/api/invoices/{inv['id']}", json=dict(inv, status="sent"),
+                        headers={"If-Match": inv["_rev"]}, cookies=_cookies())
+    _check("an edit under the pre-push token lands", edited.status_code == 200, edited.text[:160])
+    _check("keeping the qbo_synced stamp",
+           any(a.get("type") == "qbo_synced" for a in (edited.json().get("activity") or [])))
 
 
 def test_unwind_is_admin_only():

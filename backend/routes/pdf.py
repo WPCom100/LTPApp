@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import livesync, models
 from backend.activity import append_activity
+from backend.routes.api import _row_to_dict
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.pdf_generator import doc_ref, generate_pdf
@@ -116,10 +117,19 @@ async def _generate_and_archive(
         created_by_user_id=user.id,
     )
     db.add(archive)
-    _append_pdf_activity_entry(entity_row, user, token, filename)
+    entry = _append_pdf_activity_entry(entity_row, user, token, filename)
     _publish_pdf_activity(db, kind)
     await db.flush()
-    return {"token": token, "downloadUrl": f"/pdf/{token}", "filename": filename}
+    await db.refresh(entity_row)
+    return {
+        "token": token, "downloadUrl": f"/pdf/{token}", "filename": filename,
+        # The stamp as written, and the row it now sits on (with its `_rev`), so
+        # the window records THIS entry rather than inventing a second one —
+        # its own copy then matches the server's, and its next save goes out
+        # under the token the server holds (components/doc-pdf.js).
+        "activityEntry": entry,
+        "row": _row_to_dict(entity_row),
+    }
 
 
 # ── POST /api/quotes/{id}/pdf ──────────────────────────────────────────────

@@ -98,6 +98,23 @@ window.LTP_readJsonResponse = function(r) {
   });
 };
 
+// Install a row a route just handed back (with its `_rev`) as SERVER state —
+// components/data-state.js::adoptRow — and return a copy without `_rev` to
+// build the window's own follow-up edit on. Send and push both stamp activity
+// on the row, which moves its revision; an edit built on the pre-send copy and
+// written under the pre-send token was refused as a stale write, and the
+// window adopted the server's copy over it: the email had gone out, the
+// QuickBooks invoice existed, and the document stayed a draft.
+// Returns null when the response carried no row (an older server).
+window.LTP_adoptServerRow = function(key, row) {
+  if (!row || typeof row !== "object" || row.id == null) return null;
+  var S = window.LTP_STATE;
+  if (S && typeof S.adoptRow === "function") S.adoptRow(key, row);
+  var copy = Object.assign({}, row);
+  delete copy._rev;
+  return copy;
+};
+
 window.LTP_qboPushOutcome = function(resp, money) {
   var fmt = money || function(n) { return String(n); };
   var status = resp && resp.status;
