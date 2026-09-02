@@ -1770,6 +1770,15 @@
     var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
     if (activeCrew.length === 0) activeCrew = crew.slice(0, 6);
 
+    // Shift times for a position: "8:00 AM \u2013 5:00 PM". A shift with only a
+    // call time shows just that; one with neither shows nothing (the row/cell
+    // simply omits the line) rather than a dangling dash.
+    function shiftTimes(pos) {
+      var a = ft(pos.callTime), b = ft(pos.endTime);
+      if (a && b) return a + " \u2013 " + b;
+      return a || b || "";
+    }
+
     // \u2500\u2500 Mobile: day-first agenda \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
     // The crew\u00d77 matrix (140px + repeat(7,1fr)) is illegible on a phone. On
     // mobile, pivot to a day-list: one section per day of the week listing who's
@@ -1801,7 +1810,8 @@
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
-                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : ""))),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
+                      shiftTimes(r.pos) && h("div", { style: { fontSize: "12px", color: B.textSec, marginTop: 2, fontVariantNumeric: "tabular-nums" } }, shiftTimes(r.pos))),
                     h(window.Badge, { status: r.pos.status }),
                     h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
                     h(window.LTPMailBtn, { email: r.crew.email, name: cname }));
@@ -1835,6 +1845,7 @@
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
                   return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px solid " + sc.color } },
                     h("div", { style: { fontWeight: 600 } }, s.roleCode),
+                    shiftTimes(s) && h("div", { style: { color: B.textSec, fontSize: "8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } }, shiftTimes(s)),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
                 }));
             }));
