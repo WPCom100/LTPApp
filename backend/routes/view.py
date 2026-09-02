@@ -343,6 +343,13 @@ async def _record_open(
             else:
                 _bump_recipient_pdf(recipient, now)
         await db.flush()
+        # The stamp moved the synced row's revision. Publish it, or every
+        # producer window keeps the pre-open token until the 30s sweep — and a
+        # save inside that gap was refused as a stale write and thrown away,
+        # blamed on "another window". (The If-Match guard now also tolerates a
+        # token stale only by appended activity; this makes the window fresh
+        # rather than relying on that.)
+        livesync.mark_dirty(db, "quotes" if kind == "quote" else "invoices")
         # A stamped entry means: not a bot, not an internal preview, and past
         # the ~24h debounce — exactly when a "client opened your doc" push is
         # worth sending. Only for opens (not PDF downloads). Best-effort; the

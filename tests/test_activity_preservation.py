@@ -146,19 +146,23 @@ def test_a_stale_client_put_no_longer_erases_the_send_record():
     _check("server stamped email_sent", "email_sent" in _types(after_send), str(_types(after_send)))
 
     # The window's own "mark it sent" write goes through the persisted-state
-    # hook, which sends If-Match. Under the PRE-send token it is a stale write
-    # — refused — and the hook then adopts the server's copy: email out,
-    # invoice still a draft. That is the report.
+    # hook, which sends If-Match. Under the PRE-send token it used to be
+    # refused as a stale write, and the hook then adopted the server's copy:
+    # email out, invoice still a draft. That was the report. Two things now
+    # stop it: the send hands back the stamped row for the window to build
+    # on, and the guard recognises a token stale ONLY by the server's own
+    # appended entry (see test_a_token_stale_only_by_a_server_stamp…).
     row = r.json().get("row")
     _check("send hands back the stamped row", isinstance(row, dict) and "_rev" in row, str(r.json())[:200])
     _check("with the same _rev a GET now returns", row and row["_rev"] == after_send["_rev"])
     pre_send_edit = dict(created, status="sent", sentDate="2026-08-19")
-    refused = client.put(f"/api/invoices/{created['id']}", json=pre_send_edit,
-                         headers={"If-Match": created["_rev"]}, cookies=_cookies())
-    _check("marking it sent on the pre-send copy is refused as stale", refused.status_code == 409,
-           f"{refused.status_code}: {refused.text[:120]}")
-    # Built on the returned row, under its token, the same edit lands — with the
-    # server's entry still on it.
+    tolerated = client.put(f"/api/invoices/{created['id']}", json=pre_send_edit,
+                           headers={"If-Match": created["_rev"]}, cookies=_cookies())
+    _check("marking it sent on the pre-send copy is tolerated (stale only by the stamp)",
+           tolerated.status_code == 200, f"{tolerated.status_code}: {tolerated.text[:120]}")
+    _check("and keeps the send record", "email_sent" in _types(tolerated.json()), str(_types(tolerated.json())))
+    # Built on the returned row, under its token, the same edit lands too.
+    row = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
     on_row = {k: v for k, v in row.items() if k != "_rev"}
     on_row.update(status="sent", sentDate="2026-08-19")
     landed = client.put(f"/api/invoices/{created['id']}", json=on_row,
@@ -176,6 +180,88 @@ def test_a_stale_client_put_no_longer_erases_the_send_record():
     final = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
     _check("email_sent survived the stale PUT", "email_sent" in _types(final), str(_types(final)))
     _check("the edit still applied", final.get("status") == "sent", str(final.get("status")))
+
+
+def test_a_token_stale_only_by_a_server_stamp_still_lands_a_real_edit():
+    """Every send, PDF download, QuickBooks push and share-link open appends
+    an activity entry server-side, moving the row's _rev. A window that then
+    saves a REAL edit built on its pre-stamp copy carries the pre-stamp token.
+    The update path unions activity anyway, so nothing is lost by accepting
+    that write — refusing it threw the producer's edit away and blamed
+    "another window". Any other divergence is still refused."""
+    client, _ = _setup()
+    from backend import gmail
+    from backend.routes import email as email_route
+
+    created = client.post("/api/invoices", json={
+        "clientType": "company", "status": "draft", "notes": "before",
+        "sections": [{"id": "s1", "label": "Labor",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies=_cookies()).json()
+
+    real_pdf, real_send = email_route.generate_pdf, gmail.send
+    email_route.generate_pdf = lambda buf, *a, **k: buf.write(b"%PDF-1.4 test\n")
+
+    async def _fake_send(*a, **k):
+        return {"id": "fake-msg-id"}
+
+    gmail.send = _fake_send
+    try:
+        r = client.post("/api/email/send", json={
+            "entityType": "invoice", "entityId": created["id"],
+            "to": "client@example.com", "subject": "Your invoice",
+            "bodyHtml": "<p>Attached.</p>", "attachPdf": True,
+        }, cookies=_cookies())
+    finally:
+        email_route.generate_pdf, gmail.send = real_pdf, real_send
+    _check("send succeeded", r.status_code == 200, r.text[:200])
+
+    # The window's real edit, built on the pre-send copy, under the pre-send token.
+    edit = {k: v for k, v in created.items() if k != "_rev"}
+    edit["notes"] = "after — typed while the send was in flight"
+    put = client.put(f"/api/invoices/{created['id']}", json=edit,
+                     headers={"If-Match": created["_rev"]}, cookies=_cookies())
+    _check("accepted: the token is stale only by the server's stamp", put.status_code == 200,
+           f"{put.status_code}: {put.text[:160]}")
+    final = put.json()
+    _check("the edit landed", final.get("notes", "").startswith("after"), final.get("notes"))
+    _check("and the server's send record survived", "email_sent" in _types(final), str(_types(final)))
+
+    # Control: the same stale token with the row ALSO changed elsewhere is
+    # still a conflict — another window renamed it in between.
+    client.put(f"/api/invoices/{created['id']}", json=dict(final, customName="Renamed elsewhere"),
+               cookies=_cookies())
+    edit["notes"] = "a second stale edit"
+    put2 = client.put(f"/api/invoices/{created['id']}", json=edit,
+                      headers={"If-Match": created["_rev"]}, cookies=_cookies())
+    _check("a genuine both-sides change is still refused", put2.status_code == 409, f"{put2.status_code}")
+
+
+def test_pdf_generation_hands_back_its_stamp_and_the_row():
+    """The window used to mint its own pdf_generated entry (its own id) next to
+    the server's, so its copy could never match the server's row. The route
+    now returns the entry it wrote and the row, `_rev` included."""
+    client, _ = _setup()
+    from backend.routes import pdf as pdf_route
+
+    created = client.post("/api/invoices", json={"clientType": "company", "status": "draft"},
+                          cookies=_cookies()).json()
+    real_pdf = pdf_route.generate_pdf
+    pdf_route.generate_pdf = lambda buf, *a, **k: buf.write(b"%PDF-1.4 test\n")
+    try:
+        r = client.post(f"/api/invoices/{created['id']}/pdf", cookies=_cookies())
+    finally:
+        pdf_route.generate_pdf = real_pdf
+    _check("pdf generated", r.status_code == 200, r.text[:200])
+    body = r.json()
+    entry, row = body.get("activityEntry"), body.get("row")
+    _check("carries the stamped entry", isinstance(entry, dict) and entry.get("type") == "pdf_generated", str(entry)[:120])
+    _check("with the archive token on it", entry and entry.get("pdfToken") == body.get("token"))
+    live = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
+    _check("and the row with the _rev a GET now returns", row and row.get("_rev") == live["_rev"],
+           f"{row and row.get('_rev')} vs {live['_rev']}")
+    _check("that row already holds the entry",
+           row and any(a.get("id") == entry["id"] for a in (row.get("activity") or [])))
 
 
 def test_client_authored_entries_still_persist():

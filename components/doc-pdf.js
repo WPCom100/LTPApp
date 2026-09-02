@@ -64,6 +64,17 @@
           a.click();
           document.body.removeChild(a);
         }
+        // The server stamps the entry itself and hands it back with the row it
+        // now sits on. Install that row as server state (its `_rev` becomes the
+        // token for the next save) and record the SERVER's entry, so the local
+        // copy matches. A locally-minted entry with its own id never matched:
+        // the next save was refused as a stale write and the window adopted the
+        // server's copy with a "Changed in another window" warning. The minted
+        // entry remains the fallback for a server that predates this.
+        if (resp.row && window.LTP_adoptServerRow) {
+          window.LTP_adoptServerRow(kind === "invoice" ? "invoices" : "quotes", resp.row);
+        }
+        if (resp.activityEntry && typeof resp.activityEntry === "object") return resp.activityEntry;
         return {
           id: "pdf-" + Date.now(),
           date: window.LTP_todayISO(),

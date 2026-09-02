@@ -1173,8 +1173,11 @@
         .then(function(resp) {
           if (resp.status === 200 && resp.body && resp.body.unwound) {
             // Mirror the cleared link locally so the UI stops claiming a sync
-            // that no longer exists.
-            var cleared = Object.assign({}, invoiceObj, {
+            // that no longer exists — on the stamped row the server handed back
+            // (adopted as server state) when it did, so this mirror is not
+            // written back under a token the unwind's own stamp made stale.
+            var unwoundRow = window.LTP_adoptServerRow("invoices", resp.body.invoice);
+            var cleared = Object.assign({}, unwoundRow || invoiceObj, {
               qbInvoiceId: null, qbSyncToken: null, qbSyncStatus: null, qbSyncedAt: null,
               qbSyncedSignature: null, qbLastError: null, qbTaxTotal: null, qbTotalAmt: null,
             });
@@ -1255,7 +1258,10 @@
           // What the response means, and what to say about it — domain-qbo.js.
           var outcome = window.LTP_qboPushOutcome(resp, money2);
           if (outcome.ok) {
-            var updated = window.LTP_applyQboPush(draft, resp.body, qbSig);
+            // Build on the stamped row the push handed back (adopted as server
+            // state), not on `draft` — see persistAndPushQbo.
+            var pushedRow = window.LTP_adoptServerRow("invoices", resp.body && resp.body.invoice);
+            var updated = window.LTP_applyQboPush(pushedRow || draft, resp.body, qbSig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
           }

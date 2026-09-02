@@ -477,7 +477,10 @@ async def unwind_send_route(
     qbo_sync._stamp(invoice, admin, "qbo_unwound",
                     "QuickBooks export undone — the email failed, so the invoice was removed",
                     [{"cat": "QB Invoice Id", "detail": deleted_id}])
-    return {"ok": True, "unwound": True, "qbInvoiceId": deleted_id}
+    await db.flush()
+    await db.refresh(invoice)
+    # The cleared, stamped row for the window to adopt (same reason as push).
+    return {"ok": True, "unwound": True, "qbInvoiceId": deleted_id, "invoice": _row_to_dict(invoice)}
 
 
 @qbo_router.post("/invoices/{invoice_id}/delete")
