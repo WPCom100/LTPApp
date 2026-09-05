@@ -61,12 +61,10 @@
     var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
     var trig = { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 };
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: isMobile ? 10 : 12, marginBottom: 12 } },
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 8 : 0 } },
-        h("div", { style: { minWidth: 0, flex: "1 1 320px" } },
-          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em" } }, "Flat-rate positions"),
-          h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2, lineHeight: 1.4 } },
-            "Hired for the whole project at a fixed fee, no call times \u2014 they get the schedule outline and set their own hours. "
-            + "The fee is stated on their request. " + payLine)),
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 8 : 0 } },
+        // Title only — the when-is-it-paid explanation sits behind a hover so the
+        // panel stays as lean as the day editor below it.
+        h("div", { title: payLine, style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "help" } }, "Flat-rate positions"),
         h("button", { onClick: add,
           style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
           "+ Flat-rate position")),
@@ -175,7 +173,7 @@
         }),
         scheduleNotes: p.scheduleNotes || "",
         scheduleActivity: (p.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
-        // Flat-rate engagements (no schedule day). Shallow-cloned like
+        // Flat-rate positions (no schedule day). Shallow-cloned like
         // positions; their pay/work/adj snapshots are only ever replaced.
         fixedPositions: (p.fixedPositions || []).map(function(x) { return Object.assign({}, x); }),
       };
@@ -263,7 +261,7 @@
     // all of them must be in the signature or the paid-day guard misses the edit.
     function _paidSig(schedule, fixed) {
       var m = {};
-      // Flat-rate engagements fingerprint under the project's END date:
+      // Flat-rate positions fingerprint under the project's END date:
       // service, role, status, fee and the full-margin flag all reprice the
       // fee. Mirrors the "flat" branch of backend/payouts.py::paid_day_signature.
       var flatDate = window.LTP_fixedPayDate(project);
@@ -360,7 +358,7 @@
         totalCost += dayLabor.costTotal;
       });
       var days = Object.keys(dateMap).length;
-      // Flat-rate engagements: typed bill/fee, no rate engine — added on top of
+      // Flat-rate positions: typed bill/fee, no rate engine — added on top of
       // the day labor so the summary previews the whole project's margin.
       var flat = window.LTP_fixedPositionsTotals(draft.fixedPositions);
       totalRate += flat.rateTotal;
@@ -408,7 +406,7 @@
         });
       });
       bs.forEach(function(s) { if (!as.find(function(a) { return a.id === s.id; })) changes.push({ cat: "Day Removed", detail: (s.title || "?") + (s.date ? " (" + fmt(s.date) + ")" : "") }); });
-      // Flat-rate engagements — same shape of entries, keyed on the role.
+      // Flat-rate positions — same shape of entries, keyed on the role.
       var bf = before.fixedPositions || [], af = after.fixedPositions || [];
       var bfMap = {}; bf.forEach(function(p) { bfMap[p.id] = p; });
       var money = window.LTP_money;
@@ -506,7 +504,7 @@
     function handleFixedChange(list) {
       setDraft(function(d) { return Object.assign({}, d, { fixedPositions: list }); });
     }
-    // Removing an engagement someone already holds confirms first — the
+    // Removing a flat-rate position someone already holds confirms first — the
     // removal notice itself is parked on save (LTP_diffRemovedFixed).
     function removeFixed(pos) {
       var drop = function() {
@@ -515,7 +513,7 @@
       if (pos.crewId && ACTIVE_POS[pos.status]) {
         var cm = contacts.find(function(c) { return c.id === pos.crewId; });
         setDlg({ title: "Remove flat-rate position", variant: "danger", confirmLabel: "Remove",
-          message: (cm ? cm.firstName + " " + cm.lastName : "This crew member") + " is " + pos.status + " for this engagement. Removing it releases them \u2014 a notice is queued to the notify tray when you save.",
+          message: (cm ? cm.firstName + " " + cm.lastName : "This crew member") + " is " + pos.status + " for this position. Removing it releases them \u2014 a notice is queued to the notify tray when you save.",
           onConfirm: function() { drop(); setDlg(null); } });
         return;
       }

@@ -48,12 +48,12 @@
 //   grouping  "one" → a single "Labor" section; anything else → one section per
 //             department
 //   fmtDate   date formatter for each line's "which days" note (LTP_formatDate)
-//   fixedPositions  the project's flat-rate engagements (optional) — each with
+//   fixedPositions  the project's flat-rate positions (optional) — each with
 //             a rate-card role and a bill amount > 0 becomes ONE "flat" line:
 //             qty 1 at the bill amount, cost = the fee ($0 full-margin)
 //
 // Returns [] when the schedule bills nothing — no dated+timed day carries a
-// position with a serviceId and no flat engagement bills the client. Callers
+// position with a serviceId and no flat-rate position bills the client. Callers
 // treat that as "nothing to send".
 window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId, fixedPositions) {
   var gen = genId || window.LTP_genId;
@@ -148,7 +148,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     } });
   });
 
-  // Flat-rate engagements: one line each, after the hourly lines. The note
+  // Flat-rate positions: one line each, after the hourly lines. The note
   // spans the project's scheduled dates (no times — the hire sets their own).
   var svcById = {}; (svcs || []).forEach(function(sv) { svcById[sv.id] = sv; });
   var dated = (schedule || []).map(function(s) { return s && s.date; }).filter(Boolean).sort();
@@ -167,7 +167,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       rateType: "flat",
       qty: 1, unitPrice: bill, adjustedPrice: null,
       cost: p.fullMargin ? 0 : Math.round((Number(p.fee) || 0) * 100) / 100,
-      notes: "Flat-rate engagement" + (span ? " · " + span : ""),
+      notes: "Flat-rate position" + (span ? " · " + span : ""),
       deliveredQty: 0, invoicedQty: 0
     } });
   });
@@ -737,7 +737,7 @@ window.LTP_detectCrewConflicts = function(projects) {
 //     period, and the fee is paid on that period's pay day;
 //   • "Mark complete" (LTP_completeFixedPosition) replaces the day sign-off.
 
-// The pay-side figure for a flat engagement as it stands NOW — the typed fee,
+// The pay-side figure for a flat-rate position as it stands NOW — the typed fee,
 // or $0 for a full-margin one — in the same shape LTP_crewDayPay returns, so
 // the Payouts tab, the confirm-time lock and the completion freeze all read one
 // object. The single unit carries the service so the QuickBooks export can
@@ -754,7 +754,7 @@ window.LTP_fixedPositionPay = function(pos, amount) {
 };
 
 // Stamp the fee agreed at hire as `pay` onto ONE person's confirmed flat
-// engagements — the flat-rate mirror of LTP_stampPay. `ids` restricts which
+// flat-rate positions — the flat-rate mirror of LTP_stampPay. `ids` restricts which
 // positions are (re)locked; omit it to lock every confirmed one. Returns a new
 // list; untouched entries are passed through.
 window.LTP_stampFixedPay = function(fixedPositions, crewId, lockedAt, ids) {
@@ -766,10 +766,10 @@ window.LTP_stampFixedPay = function(fixedPositions, crewId, lockedAt, ids) {
   });
 };
 
-// "Mark complete": the engagement is done, freeze the FINAL figure as work.pay
+// "Mark complete": the position is done, freeze the FINAL figure as work.pay
 // — the flat-rate mirror of LTP_signOffDay. Pass `amount` when the final fee
 // differs from the one agreed (scope grew, a day was dropped); omit it to
-// complete at the fee as it stands. Only a confirmed engagement can complete.
+// complete at the fee as it stands. Only a confirmed flat-rate position can complete.
 window.LTP_completeFixedPosition = function(fixedPositions, posId, amount, signedAt, signedBy) {
   return (fixedPositions || []).map(function(p) {
     if (!p || p.id !== posId || p.status !== "confirmed") return p;
@@ -778,7 +778,7 @@ window.LTP_completeFixedPosition = function(fixedPositions, posId, amount, signe
   });
 };
 
-// Undo "Mark complete": strip `work` so the engagement returns to pending.
+// Undo "Mark complete": strip `work` so the position returns to pending.
 window.LTP_uncompleteFixedPosition = function(fixedPositions, posId) {
   return (fixedPositions || []).map(function(p) {
     if (!p || p.id !== posId || !p.work) return p;
@@ -786,7 +786,7 @@ window.LTP_uncompleteFixedPosition = function(fixedPositions, posId) {
   });
 };
 
-// Pay adjustments on a flat engagement — same list shape and rules as
+// Pay adjustments on a flat-rate position — same list shape and rules as
 // LTP_setPayAdjustments (zero/invalid amounts dropped, empty list clears).
 window.LTP_setFixedAdjustments = function(fixedPositions, posId, adjustments) {
   var clean = (adjustments || []).filter(function(a) { return a && typeof a.amount === "number" && !isNaN(a.amount) && a.amount !== 0; });
@@ -803,7 +803,7 @@ window.LTP_getFixedAdjustments = function(fixedPositions, posId) {
   return (hit && hit.adj && hit.adj.length) ? hit.adj : [];
 };
 
-// Notify-tray snapshot of a flat engagement — the shape _crew_shifts_html
+// Notify-tray snapshot of a flat-rate position — the shape _crew_shifts_html
 // renders (flagged `flat`, no date/time, no fee: a removal notice doesn't
 // restate the offer). Mirrors shiftSnap for shift positions.
 window.LTP_fixedSnapshots = function(fixedPositions, positionIds, services) {
@@ -822,7 +822,7 @@ window.LTP_fixedSnapshots = function(fixedPositions, positionIds, services) {
   return out;
 };
 
-// Flat-rate mirror of LTP_diffRemovedCrew: engagements that LOST their crew
+// Flat-rate mirror of LTP_diffRemovedCrew: flat-rate positions that LOST their crew
 // member between two fixedPositions lists (deleted, unassigned, reassigned),
 // bucketed per person + notice type for the notify tray.
 window.LTP_diffRemovedFixed = function(before, after, contacts, services) {
@@ -845,9 +845,9 @@ window.LTP_diffRemovedFixed = function(before, after, contacts, services) {
   return Object.keys(groups).map(function(k) { return groups[k]; });
 };
 
-// Bill / cost / margin across a project's flat engagements — what the Schedule
-// Builder adds to its day-labor totals. A full-margin engagement bills but
-// costs nothing; an engagement without a rate-card role still counts (it just
+// Bill / cost / margin across a project's flat-rate positions — what the Schedule
+// Builder adds to its day-labor totals. A full-margin flat-rate position bills but
+// costs nothing; a flat-rate position without a rate-card role still counts (it just
 // can't be sent to a quote until it has one).
 window.LTP_fixedPositionsTotals = function(fixedPositions) {
   var rate = 0, cost = 0, n = 0, filled = 0;

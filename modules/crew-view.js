@@ -138,23 +138,23 @@
     return "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
-  // "3 shifts" / "1 flat-rate engagement" / "3 shifts + 1 flat-rate engagement"
+  // "3 shifts" / "1 flat-rate position" / "3 shifts + 1 flat-rate position"
   // — matches the request email's count line (backend/routes/crew.py::_ask_label).
   function askLabel(list) {
     var nShift = 0, nFlat = 0;
     (list || []).forEach(function(x) { if (x && x.flat) nFlat++; else nShift++; });
     var parts = [];
     if (nShift || !nFlat) parts.push(nShift + " call" + (nShift === 1 ? "" : "s"));
-    if (nFlat) parts.push(nFlat + " flat-rate engagement" + (nFlat === 1 ? "" : "s"));
+    if (nFlat) parts.push(nFlat + " flat-rate position" + (nFlat === 1 ? "" : "s"));
     return parts.join(" + ");
   }
 
-  // ── A flat-rate engagement line ────────────────────────────────────────────
+  // ── A flat-rate position line ────────────────────────────────────────────
   // A designer or stage manager hired for the WHOLE project at a fixed fee, no
   // call times: the line states the role, the fee (it IS the offer), the
   // project's date range, and the schedule OUTLINE — each scheduled day and
   // what it is, no times — so they can plan their own hours around it.
-  function renderEngagement(s, i, isLast, compact) {
+  function renderFlatPosition(s, i, isLast, compact) {
     var rangeParts = [fmtDate(s.projectStart), fmtDate(s.projectEnd)].filter(function(x) { return x; });
     var range = rangeParts.length === 2 && rangeParts[0] !== rangeParts[1] ? rangeParts[0] + " – " + rangeParts[1] : (rangeParts[0] || "");
     var outline = (s.projectDates || []).filter(function(d) { return d && d.date; });
@@ -168,7 +168,7 @@
       h("div", { style: { width: 36, flexShrink: 0, paddingTop: 1, fontSize: "14px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
-          h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT } }, "Flat-rate engagement" + (range ? "  ·  " + range : "")),
+          h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT } }, "Flat-rate position" + (range ? "  ·  " + range : "")),
           s.fee != null && h("div", { style: { flexShrink: 0, whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 600, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtMoney(s.fee))),
         h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: 6 } }, (s.roleLabel || "Crew")),
         s.department && h("div", { style: { marginTop: 6 } },
@@ -187,7 +187,7 @@
 
   // ── A single ruled "call line" ─────────────────────────────────────────────
   function renderShift(s, i, isLast, compact) {
-    if (s && s.flat) return renderEngagement(s, i, isLast, compact);
+    if (s && s.flat) return renderFlatPosition(s, i, isLast, compact);
     var dateLine = fmtDate(s.date);
     var start = fmtTime(s.startTime);
     var end = fmtTime(s.endTime);
@@ -244,13 +244,13 @@
     var acronym = s.role || s.roleLabel || "Crew";
     var title = "LTP - " + acronym + " - " + (projectName || "Project");
     if (s.flat) {
-      // A flat engagement has no call: one all-day event spanning the project's
+      // A flat-rate position has no call: one all-day event spanning the project's
       // dates, with the schedule outline in the description.
       var lines = (s.projectDates || []).filter(function(d) { return d && d.date; }).map(function(d) {
         return fmtDateShort(d.date) + (d.endDate ? " – " + fmtDateShort(d.endDate) : "") + (d.title ? " · " + d.title : "");
       });
       var flatNote = (s.note && String(s.note).trim()) ? String(s.note).trim() : "";
-      var body = ["Flat-rate engagement" + (s.fee != null ? " · " + fmtMoney(s.fee) : "")].concat(lines).join("\n");
+      var body = ["Flat-rate position" + (s.fee != null ? " · " + fmtMoney(s.fee) : "")].concat(lines).join("\n");
       return window.LTP_gcalUrl({
         title: title, date: s.projectStart, endDate: s.projectEnd || s.projectStart, allDay: true,
         location: location || "", details: flatNote ? body + "\n\n" + flatNote : body,
@@ -517,12 +517,12 @@
 
     var flatOnly = shifts.length > 0 && shifts.every(function(s) { return s.flat; });
     var hasFlat = shifts.some(function(s) { return s.flat; });
-    var what = flatOnly ? "this engagement" : (hasFlat ? "this project" : "these calls");
+    var what = flatOnly ? "this position" : (hasFlat ? "this project" : "these calls");
     var intent = withdrawn ? null
       : status === "accepted"
         ? (isConfirmed ? "You're confirmed for the following." : "You've accepted " + what + " — a producer will confirm you shortly.")
       : status === "declined" ? "Here is what was on this request."
-      : (flatOnly ? "You've been requested for the following engagement — a flat fee for the whole project, hours your own."
+      : (flatOnly ? "You've been requested for the following flat-rate position — a flat fee for the whole project, hours your own."
                   : "You've been requested for the following.");
 
     // ── Accept / Decline submit (inline reveal → POST → reload) ───────────────
@@ -576,7 +576,7 @@
           type: "button", className: "ltp-accept-btn",
           disabled: submitting, onClick: function() { openMode("accept"); },
           style: { flex: stacked ? "0 0 auto" : "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (respondMode === "decline") ? 0.45 : 1 },
-        }, flatOnly ? "Accept This Engagement" : (hasFlat ? "Accept" : "Accept These Calls")),
+        }, flatOnly ? "Accept This Position" : (hasFlat ? "Accept" : "Accept These Calls")),
         h("button", {
           type: "button", className: "ltp-decline-btn",
           disabled: submitting, onClick: function() { openMode("decline"); },
@@ -646,7 +646,7 @@
       }
       shiftSection = h("div", { style: { marginTop: 36 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: ORANGE } },
-          (flatOnly ? "Engagement — " : "Shifts — ") + askLabel(shifts)),
+          (flatOnly ? "Positions — " : "Shifts — ") + askLabel(shifts)),
         // Panel fill + 10px side padding, pulled out 10px each side with negative
         // margins so the rows keep their exact width (the table doesn't shrink) —
         // the slightly-lighter background just bleeds 10px past the content edges.

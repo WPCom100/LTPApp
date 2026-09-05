@@ -21,7 +21,7 @@ Two responsibilities:
      components/domain-payouts.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
      two-step js_round2 rounding, per-unit expense-account grouping).
 
-Flat-rate engagements (Project.fixed_positions — a designer or stage manager
+Flat-rate positions (Project.fixed_positions — a designer or stage manager
 hired for the whole job at a fixed fee, no shift times) ride the same rails:
 "Mark complete" on the Payouts tab freezes ``work.pay`` on the position exactly
 like a day sign-off, and the fee is billed on the PROJECT'S END DATE — so it
@@ -197,7 +197,7 @@ def _rollup_state(states):
 
 
 def fixed_pay_date(project_end_date):
-    """The date a flat-rate engagement is billed on: the project's end date,
+    """The date a flat-rate position is billed on: the project's end date,
     or None when the project has none (not payable anywhere until it does).
     The payroll period containing that date is where the fee lands, and the
     period's pay day is when it is paid — the same Friday as every other payout
@@ -210,7 +210,7 @@ def fixed_pay_date(project_end_date):
 
 
 def _flat_units(fp, work_pay):
-    """Bill units for a completed flat engagement. The frozen snapshot carries
+    """Bill units for a completed flat-rate position. The frozen snapshot carries
     its own units (mirroring a day's ``work.pay.units``); a legacy/hand-edited
     snapshot without them falls back to one unit for the whole total against the
     position's service, so the fee still lands on that role's expense account."""
@@ -223,17 +223,17 @@ def _flat_units(fp, work_pay):
             continue
         amt = js_round2(_num(u.get("total")))
         if amt == 0:
-            continue  # full-margin engagement carries no line
+            continue  # full-margin flat-rate position carries no line
         out.append({"service_id": u.get("serviceId"), "amount": amt,
                     "paid_hours": 0.0, "ot_hours": 0.0})
     return out
 
 
 def _merge_flat_into_day(day, flat):
-    """Fold a flat engagement into a same-(crew, project, date) entry so the
+    """Fold a flat-rate position into a same-(crew, project, date) entry so the
     period keeps ONE entry per ledger key. Money adds; units and adjustments
     concatenate; the tier reads ``mixed`` once a shift day and a flat fee share
-    the line (two flat engagements on one project stay ``flat``)."""
+    the line (two flat-rate positions on one project stay ``flat``)."""
     day["payable"] = js_round2(day["payable"] + flat["payable"])
     day["adj_total"] = js_round2(day["adj_total"] + flat["adj_total"])
     day["units"] = list(day["units"]) + list(flat["units"])
@@ -250,7 +250,7 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
     ``projects``: list of {"id", "name", "schedule": [...], "fixed_positions":
     [...], "end_date"} (schedule is the raw frontend camelCase JSON — positions
     carry crewId/status/work/adj; fixed_positions are the flat-rate
-    engagements, see backend/models.py::Project).
+    flat-rate positions, see backend/models.py::Project).
     ``contacts_by_id``: {crew_id: {"first_name","last_name",...}} — crew only.
 
     Returns a name-sorted list of drafts::
@@ -260,7 +260,7 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                  units: [{service_id, amount}], flat?: True}],   # SIGNED days (payable may be <=0)
          pending: [{project_id, project_name, date, flat?: True}]}  # confirmed but unsigned
 
-    A flat engagement is a "day" dated on the project's END date
+    A flat-rate position is a "day" dated on the project's END date
     (``fixed_pay_date``) — the payroll period that date falls into is where it
     is paid: ``tier == "flat"`` on its own, ``mixed`` when merged into a shift
     day on the same date. It is pending until "Mark complete" freezes
@@ -351,7 +351,7 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     "units": units_out, "adjustments": adjustments,
                 })
 
-        # Flat-rate engagements: one entry per confirmed position, dated on the
+        # Flat-rate positions: one entry per confirmed position, dated on the
         # project's end date. Processed AFTER the project's shift days so a
         # same-date shift entry already exists to merge into. Both spellings are
         # read so the JS↔Python parity fixture can feed raw camelCase project JSON.
@@ -450,7 +450,7 @@ def paid_day_signature(schedule, fixed_positions=None, end_date=None) -> dict:
     (service, role, status) — because any of those changing means the frozen
     `work.pay` snapshot we already billed no longer describes the day worked.
 
-    Flat-rate engagements (``fixed_positions``) fingerprint under the project's
+    Flat-rate positions (``fixed_positions``) fingerprint under the project's
     END date (``fixed_pay_date``, which is why ``end_date`` comes along): the
     fee, the full-margin flag, service, status — and, server side, the frozen
     snapshot. Moving the project's end date moves the key itself, which reads

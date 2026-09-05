@@ -37,9 +37,9 @@ function shift(id, date, time, endTime, positions) {
   return { id: id, date: date, time: time, endTime: endTime, breaks: [], positions: positions };
 }
 
-// Flat-rate engagements (project.fixedPositions) — see backend/models.py. A
+// Flat-rate positions (project.fixedPositions) — see backend/models.py. A
 // flat fee is billed on the PROJECT'S END DATE (the payroll period it falls
-// into pays it), so each project's endDate is what places its engagements.
+// into pays it), so each project's endDate is what places its flat-rate positions.
 function flat(id, crewId, fee, extra) {
   return Object.assign({ id: id, serviceId: 3, role: "LD", crewId: crewId, status: "confirmed",
     fee: fee, bill: fee * 1.3, fullMargin: false, note: "" }, extra || {});
@@ -64,11 +64,11 @@ p10.schedule = window.LTP_signOffDay(p10.schedule, 5, "2026-07-09", {}, services
 p10.schedule = window.LTP_setPayAdjustments(p10.schedule, 5, "2026-07-09",
   [{ id: "adj1", amount: 50, label: "Parking" }, { id: "adj2", amount: -20, label: "Advance" }]);
 // 07-10 stays confirmed but unsigned (pending).
-// Flat engagements: lock the fee at "confirm", then complete the ones that are done.
+// Flat-rate positions: lock the fee at "confirm", then complete the ones that are done.
 [7, 6].forEach(function(cid) { p10.fixedPositions = window.LTP_stampFixedPay(p10.fixedPositions, cid, "2026-07-01T09:00:00Z"); });
 p10.fixedPositions = window.LTP_completeFixedPosition(p10.fixedPositions, "f3", null, "2026-07-08T20:00:00Z", "tester");
 
-// Project 11 — Warehouse (ends 07-15: Dana's two engagements bill there)
+// Project 11 — Warehouse (ends 07-15: Dana's two flat-rate positions bill there)
 let p11 = { id: 11, name: "Warehouse", endDate: "2026-07-15", fixedPositions: [
   flat("f1", 8, 1500),                                     // completed + adjustment -> 1550 on 07-15
   flat("f5", 8, 400, { fullMargin: true }),                // completed, full margin -> $0, same ledger key as f1
@@ -91,7 +91,7 @@ const range = { start: "2026-07-06", end: "2026-07-19" };
 const pr = window.LTP_payoutRows(projects, contacts, services, range.start, range.end);
 
 // Flatten expected: one entry per (crewId, projectName, date) with payable
-// (null = pending). A flat engagement paid on the same date as a signed shift
+// (null = pending). A flat-rate position paid on the same date as a signed shift
 // day is a SECOND JS row under that key; the server merges the two into one
 // ledger entry, so the expected payable is the SUM (pending stays pending only
 // while nothing under the key is payable).

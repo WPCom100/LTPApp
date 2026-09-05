@@ -160,7 +160,7 @@ class Project(Base):
     # a negotiated flat fee with no contracted shift times (a lighting designer,
     # a stage manager …). They make their own hours against the project's dates,
     # so they deliberately do NOT live on a schedule row: every schedule consumer
-    # keys money and crew asks on a dated, timed shift, and a flat engagement
+    # keys money and crew asks on a dated, timed shift, and a flat-rate position
     # has neither. They share the position id namespace with
     # schedule[].positions[] (crew_requests.position_ids may reference either),
     # the same open → requested → accepted/declined → confirmed lifecycle, and
@@ -174,7 +174,7 @@ class Project(Base):
     #              crew request email/page — it IS the offer being accepted
     #   bill       what the client is charged (rate side); margin = bill − fee
     #   fullMargin bill the client, $0 cost (the owner filling the role)
-    #   note       crew-facing scope line (what the engagement covers)
+    #   note       crew-facing scope line (what the position covers)
     #   (timing)   no per-position pay date, deliberately: the fee lands in the
     #              payroll period the project's end_date falls into and is paid
     #              on that period's pay day with every other payout

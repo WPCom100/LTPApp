@@ -556,7 +556,7 @@
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
         h("option", { value: "ot" }, "OT"),
-        // A flat-rate engagement line (from the schedule's flat-rate positions)
+        // A flat-rate position line (from the schedule's flat-rate positions)
         // keeps its typed price; the option exists so the select reads "Flat"
         // rather than falling back to the first option.
         svcRateType === "flat" && h("option", { value: "flat" }, "Flat")

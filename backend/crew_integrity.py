@@ -54,10 +54,10 @@ assigned and the request still reads pending/accepted. The producer then sees
     deliberate change — every deliberate downgrade in the UI (Release /
     Withdraw / Cancel / Reassign) clears or changes the assignee.
 
-Flat-rate engagements (``Project.fixed_positions`` — no date, no times, a flat
+Flat-rate positions (``Project.fixed_positions`` — no date, no times, a flat
 fee for the whole job) share the position id namespace and status ladder, so
 every walk in this module covers them as well; a request may reference any mix
-of shift positions and flat engagements.
+of shift positions and flat-rate positions.
 
 Position ids are stable (``theme.js`` ``genId`` = ``pos-<ts>-<counter>``; saves,
 edits, and reordering all preserve them), so trimming only ever fires on a
@@ -95,7 +95,7 @@ _STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confir
 
 
 def _fixed_positions(project) -> list:
-    """The project's flat-rate engagements (Project.fixed_positions), as a list
+    """The project's flat-rate positions (Project.fixed_positions), as a list
     of position dicts. They live outside the schedule — no date, no times — but
     share the position id namespace and status ladder, so every walk over
     ``schedule[].positions[]`` in this module walks these too."""
@@ -133,7 +133,7 @@ def _assigned_position_ids(project, contact_id) -> set:
             pid = pos.get("id")
             if pid is not None and pos.get("crewId") == contact_id:
                 present.add(pid)
-    # A flat-rate engagement has no date by design — it is live for as long as
+    # A flat-rate position has no date by design — it is live for as long as
     # it exists and is still this crew member's.
     for pos in _fixed_positions(project):
         pid = pos.get("id")
@@ -385,7 +385,7 @@ def enforce_status_floor_fixed(stored_fixed, incoming_fixed) -> int:
 
 def enforce_pay_snapshot_fixed(stored_fixed, incoming_fixed) -> int:
     """``enforce_pay_snapshot`` for the flat-rate list: a non-admin write may not
-    create or change a flat engagement's frozen ``work``/``adj`` (its fee is
+    create or change a flat-rate position's frozen ``work``/``adj`` (its fee is
     billed to a vendor bill exactly like a signed day). Mutates
     ``incoming_fixed`` in place; returns the number restored/stripped."""
     return enforce_pay_snapshot([{"positions": stored_fixed or []}],

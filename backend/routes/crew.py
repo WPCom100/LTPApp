@@ -15,11 +15,11 @@ Two routers, mirroring the split that already exists for quotes/invoices
 
 The accept/decline flow drives the POSITION status machine that the Labor
 module already understands (components/status-enums.js). Positions live in
-Project.schedule[].positions[] (JSON) — and, for flat-rate engagements (a
+Project.schedule[].positions[] (JSON) — and, for flat-rate positions (a
 designer or stage manager hired for the whole job at a fixed fee, no shift
 times), in Project.fixed_positions[]; we mutate their `status` in place and
 flag_modified the column. See backend/models.py CrewRequest for the full
-state machine. A request may cover any mix of the two; a flat engagement is
+state machine. A request may cover any mix of the two; a flat-rate position is
 sent as "the project" — its dates outline, no times — and, unlike an hourly
 shift, STATES ITS FEE on the email and the landing page: the fee is the offer
 being accepted, so hiding it would make the acceptance meaningless.
@@ -133,7 +133,7 @@ def _update_positions(project, position_ids, *, to_status, require_from=None, cl
 
 
 def _fixed_list(project) -> list:
-    """The project's flat-rate engagements as position dicts (see
+    """The project's flat-rate positions as position dicts (see
     backend/models.py::Project.fixed_positions). Empty for a missing project."""
     if project is None:
         return []
@@ -141,7 +141,7 @@ def _fixed_list(project) -> list:
 
 
 def _project_date_outline(project) -> list:
-    """The crew-facing OUTLINE of a project's dates for a flat-rate engagement:
+    """The crew-facing OUTLINE of a project's dates for a flat-rate position:
     every dated schedule day as {date, title} — no times, no crew, no positions.
     A flat hire makes their own hours against these, so the outline is what the
     request describes instead of a call/wrap. De-duplicated per (date, title)
@@ -171,8 +171,8 @@ def _project_date_outline(project) -> list:
 
 
 def _ask_label(shifts) -> str:
-    """'3 shifts' / '1 flat-rate engagement' / '3 shifts + 1 flat-rate
-    engagement' — the count line the request email header, the producer push
+    """'3 shifts' / '1 flat-rate position' / '3 shifts + 1 flat-rate
+    flat-rate position' — the count line the request email header, the producer push
     and the crew page all agree on."""
     n_shift = sum(1 for s in (shifts or []) if not s.get("flat"))
     n_flat = sum(1 for s in (shifts or []) if s.get("flat"))
@@ -180,7 +180,7 @@ def _ask_label(shifts) -> str:
     if n_shift or not n_flat:
         parts.append(str(n_shift) + " shift" + ("" if n_shift == 1 else "s"))
     if n_flat:
-        parts.append(str(n_flat) + " flat-rate engagement" + ("" if n_flat == 1 else "s"))
+        parts.append(str(n_flat) + " flat-rate position" + ("" if n_flat == 1 else "s"))
     return " + ".join(parts)
 
 
@@ -209,7 +209,7 @@ def _crew_shifts(project, position_ids, services_by_id) -> list:
         role_code = pos.get("role") or ""
         return role_code, role_code, ""
 
-    # Flat-rate engagements first: they are the headline of a mixed request,
+    # Flat-rate positions first: they are the headline of a mixed request,
     # and carry the project's date outline in place of a call/wrap. The fee is
     # included ON PURPOSE (it is the offer) — the only cost figure any crew-facing
     # payload carries; hourly shifts still expose no money at all.
@@ -295,7 +295,7 @@ def _coerce_shifts(raw) -> list:
             "prevDate": str(s.get("prevDate") or "")[:40],
             "prevStartTime": str(s.get("prevStartTime") or "")[:20],
             "prevEndTime": str(s.get("prevEndTime") or "")[:20],
-            # A flat-rate engagement's removal notice renders as an engagement
+            # A flat-rate position's removal notice renders as a flat-rate position
             # card (no date/time line). Flag only — no fee, no dates: a
             # cancellation doesn't restate the offer.
             "flat": s.get("flat") is True,
@@ -427,14 +427,14 @@ def _date_range_label(start, end) -> str:
 
 
 def _flat_card_html(s: dict, accent: str) -> str:
-    """One accent-edged card for a flat-rate engagement: role, the flat fee,
+    """One accent-edged card for a flat-rate position: role, the flat fee,
     the project's date range, then the date OUTLINE (each scheduled day + what
     it is — no times, the hire sets their own), and the producer's scope note.
     Only ever rendered for entries _crew_shifts flagged ``flat``; a removal
-    snapshot (no fee, no dates) collapses to role + 'Flat-rate engagement'."""
+    snapshot (no fee, no dates) collapses to role + 'Flat-rate position'."""
     fee = s.get("fee")
-    fee_line = ("Flat-rate engagement&nbsp;&nbsp;·&nbsp;&nbsp;<strong style=\"color:#233038\">"
-                + escape(_money(fee)) + "</strong>") if fee is not None else "Flat-rate engagement"
+    fee_line = ("Flat-rate position&nbsp;&nbsp;·&nbsp;&nbsp;<strong style=\"color:#233038\">"
+                + escape(_money(fee)) + "</strong>") if fee is not None else "Flat-rate position"
     line_fee = '<div style="font-size:12px;color:#7a838c;margin-top:3px">' + fee_line + '</div>'
     rng = _date_range_label(s.get("projectStart"), s.get("projectEnd"))
     line_rng = ('<div style="font-size:12px;color:#7a838c;margin-top:3px">Project dates:&nbsp;'
@@ -497,7 +497,7 @@ def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, sit
     One button — both responses live on the same page, so two links here would
     be redundant. ``shifts`` is the crew-facing list (or a bare count, for
     callers that only know how many) — the count line says shifts and/or
-    flat-rate engagements."""
+    flat-rate positions."""
     url = escape(view_url)
     if isinstance(shifts, int):
         n = str(shifts) + " shift" + ("" if shifts == 1 else "s")
@@ -654,7 +654,7 @@ _EMPTY_LABEL_LINE = re.compile(r"^[ \t]*[^\n:{}]{1,40}:[ \t]*$", re.MULTILINE)
 
 def _drop_empty_label_lines(text: str) -> str:
     """Remove template lines that resolved to a bare 'Label:' with nothing after
-    it (a flat-rate engagement has no call or wrap time). Only whole lines of
+    it (a flat-rate position has no call or wrap time). Only whole lines of
     that exact shape go; prose with a colon mid-sentence is untouched."""
     return _EMPTY_LABEL_LINE.sub("", text or "")
 
@@ -683,7 +683,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # venue names the place, the address gets the crew there.
         site_address = await _resolve_site_address(db, project)
         location = " — ".join(x for x in [((project.venue if project else "") or "").strip(), site_address] if x)
-        # A flat-rate engagement has no call/wrap: {{date}} becomes the project's
+        # A flat-rate position has no call/wrap: {{date}} becomes the project's
         # date range and the two time vars resolve empty — and any template line
         # left as a bare "Call:" / "Wrap:" label is dropped below, so the shipped
         # confirmation body still reads cleanly for a flat hire.
@@ -1043,7 +1043,7 @@ async def send_crew_request(
                 continue
             if pos.get("status") in _SENDABLE_FROM:
                 sendable.append(pos.get("id"))
-    # Flat-rate engagements need no date — the ask IS the whole project.
+    # Flat-rate positions need no date — the ask IS the whole project.
     for pos in _fixed_list(project):
         if pos.get("crewId") != contact_id:
             continue

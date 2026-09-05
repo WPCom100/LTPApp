@@ -1,4 +1,4 @@
-"""project fixed_positions (flat-rate engagements)
+"""project fixed_positions (flat-rate positions)
 
 Revision ID: a6b7c8d9e0f1
 Revises: f5a6b7c8d9e0
@@ -8,7 +8,7 @@ A production hires some people for the whole job at a flat fee — a lighting
 designer, a stage manager — with no contracted shift times: we hand them the
 schedule and they make their own hours. Nothing in the schedule shape could
 hold that: a position only bills, pays, or can be requested when it sits on a
-dated, timed shift row, and a flat engagement has neither.
+dated, timed shift row, and a flat-rate position has neither.
 
 `projects.fixed_positions` is the project-level list those positions live in
 (see backend/models.py::Project for the item shape). Same position-id namespace
