@@ -390,40 +390,50 @@
             var overquoted = totalCommitted > av.total;
             var avColor = av.available > 0 ? B.success : B.danger;
             var curQty = getEqQty(eq.id);
+            // Phone stepper: 32px square buttons (the 22px pair is a fingertip
+            // problem) — merged in only on a phone so the desktop tree is untouched.
+            var stepMobile = isMobile ? { borderRadius: "8px", width: 32, height: 32, fontSize: "16px", fontFamily: "inherit" } : null;
             return h("div", { key: eq.id,
-              style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 },
+              // Phone: the name takes its own line; availability · stepper ·
+              // price · Add share the next — the one-line desktop row squeezed
+              // the name down to "Mo…".
+              style: Object.assign({ background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }, isMobile ? { borderRadius: "8px", flexWrap: "wrap" } : null),
               onMouseOver: function(e) { if (!inSection) e.currentTarget.style.borderColor = B.accent + "66"; },
               onMouseOut:  function(e) { if (!inSection) e.currentTarget.style.borderColor = B.border; } },
               // Name + category
-              h("div", { style: { flex: 1, minWidth: 0 } },
-                h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, eq.name),
-                h("div", { style: { fontSize: "10px", color: B.textMut } }, eq.category + (eq.subcategory ? " \u00b7 " + eq.subcategory : ""))
+              h("div", { style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 } },
+                h("div", { style: { fontSize: isMobile ? "13px" : "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, eq.name),
+                h("div", { style: { fontSize: "10px", color: B.textMut } }, eq.category + (eq.subcategory ? " · " + eq.subcategory : ""),
+                  // Phone: availability rides the meta line so the next line is
+                  // just stepper · price · Add.
+                  isMobile && h("span", { style: { fontWeight: 600, color: avColor } }, " · " + av.available + " / " + av.total + " avail"),
+                  isMobile && quoted > 0 && h("span", { style: { fontWeight: 600, color: overquoted ? B.danger : B.warn } }, " · " + quoted + " quoted"))
               ),
               // Availability + quoted
-              h("div", { style: { textAlign: "right", minWidth: 65 } },
+              !isMobile && h("div", { style: { textAlign: "right", minWidth: 65 } },
                 h("div", { style: { fontSize: "10px", fontWeight: 600, color: avColor } }, av.available + " / " + av.total + " avail"),
                 quoted > 0 && h("div", { style: { fontSize: "9px", fontWeight: 600, color: overquoted ? B.danger : B.warn } },
                   quoted + " quoted")
               ),
               // Qty input
               h("div", { style: { display: "flex", alignItems: "center", gap: 2 } },
-                h("button", { onClick: function(e) { e.stopPropagation(); setEqQty(eq.id, curQty - 1); },
-                  style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, cursor: "pointer", width: 22, height: 22, fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\u2212"),
-                h("input", { type: "number", value: curQty, min: 1,
+                h("button", { onClick: function(e) { e.stopPropagation(); setEqQty(eq.id, curQty - 1); }, "aria-label": "Fewer",
+                  style: Object.assign({ background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, cursor: "pointer", width: 22, height: 22, fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }, stepMobile) }, "−"),
+                h("input", { type: "number", value: curQty, min: 1, inputMode: "numeric", "aria-label": "Quantity",
                   onChange: function(e) { setEqQty(eq.id, e.target.value); },
                   onClick: function(e) { e.stopPropagation(); },
-                  style: { width: 36, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "2px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" } }),
-                h("button", { onClick: function(e) { e.stopPropagation(); setEqQty(eq.id, curQty + 1); },
-                  style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, cursor: "pointer", width: 22, height: 22, fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "+")
+                  style: Object.assign({ width: 36, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "2px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", textAlign: "center" }, isMobile ? { width: 46, height: 32, boxSizing: "border-box", borderRadius: "8px" } : null) }),
+                h("button", { onClick: function(e) { e.stopPropagation(); setEqQty(eq.id, curQty + 1); }, "aria-label": "More",
+                  style: Object.assign({ background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, cursor: "pointer", width: 22, height: 22, fontSize: "13px", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }, stepMobile) }, "+")
               ),
               // Price
-              h("div", { style: { textAlign: "right", minWidth: 65 } },
+              h("div", { style: Object.assign({ textAlign: "right", minWidth: 65 }, isMobile ? { flex: 1 } : null) },
                 h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + rp.totalPrice),
                 rp.breakdown.length > 1 && h("div", { style: { fontSize: "9px", color: B.textMut } }, rp.label)
               ),
               // Add button
               h("button", { onClick: function(e) { e.stopPropagation(); addEquipment(eq); },
-                style: { background: B.accent, border: "none", borderRadius: "4px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" } }, "Add")
+                style: Object.assign({ background: B.accent, border: "none", borderRadius: "4px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "5px 10px", whiteSpace: "nowrap" }, isMobile ? { borderRadius: "8px", fontSize: "12px", padding: "0 14px", height: 32, fontFamily: "inherit" } : null) }, "Add")
             );
           })
         )
@@ -618,7 +628,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
+    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var isAccepted = quoteStatus === "accepted";
@@ -650,7 +660,7 @@
     // snapshotted price — re-pricing on the client's behalf would silently
     // rewrite a sent quote — so a mismatch is surfaced with a one-click apply.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate) return null;
+      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -678,71 +688,77 @@
     var qty = Number(item.qty) || 0;
     var uninvoiced = delivQty - invQty;
 
-    // ── Mobile: stacked card. The desktop row packs ~9 fixed-width cells into a
-    // horizontal flex that overflows a phone (qty/delivered/adj/total run off
-    // screen). Name on top, full-width rate/variant selects, a labelled field
-    // grid with the right iOS keyboards, and a unit/tax/total footer. Touch
-    // reorder is ▲▼ buttons (HTML5 drag doesn't fire on iOS). Desktop unchanged.
+    // ── Phone: a compact card in the schedule builder's density (the phone
+    // kit in ui.js). Header: badge · name (+ notes / contract-rate line) · ▲▼
+    // · ×. One 36px control row: [rate or variant select] [QTY] [ADJ $] — the
+    // label sits INSIDE each field's box, so nothing stacks label-over-input
+    // (that stack made every line ~330px tall). A delivered / invoiced cell
+    // joins the row on accepted quotes and wraps if it must. Footer: unit ·
+    // tax · total. Touch reorder is ▲▼ (HTML5 drag doesn't fire on iOS).
+    // Desktop row is unchanged below.
     if (isMobile) {
-      var qfld = { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" };
-      var qlbl = { fontSize: "10px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 };
-      var qsel = Object.assign({}, qfld, { marginTop: 8, appearance: "auto" });
-      return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } }, sortable.itemProps(sectionId, item.id)),
-        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
-          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "3px", flexShrink: 0, marginTop: 3 } }, typeBadge),
-          h("div", { style: { flex: 1, minWidth: 0 } },
-            h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
-            item.type === "equipment" && h("div", { style: { fontSize: "12px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
-            item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
-            clientRateNote(false),
-            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
-          !isLocked && onMove && reorderControl(),
-          !isLocked && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap", style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 40, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
-        // Rate-type (services) / variant (products) selects — full width.
-        item.type === "service" && !isLocked && svcData && h("select", { value: svcRateType, onChange: function(e) {
+      var CTL = window.LTP_CTL;
+      var selStyle = { flex: "1 1 30%", minWidth: 0, height: CTL, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 8px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", appearance: "auto", boxSizing: "border-box" };
+      var ro = function(text, color) { return h("span", { style: { flex: 1, minWidth: 0, fontSize: "15px", fontWeight: 600, color: color || B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, text); };
+      var num = function(props) { return h("input", Object.assign({ type: "number", style: window.LTP_INLINE_INPUT }, props)); };
+      var rateSel = item.type === "service" && !isLocked && svcData && h("select", { value: svcRateType, "aria-label": "Rate type", onChange: function(e) {
           var rt = e.target.value; var maps = window.LTP_serviceRateMaps(svcData);
           onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
-        }, style: qsel },
-          h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
-          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
-        item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
-          value: lineVariantId, onChange: function(e) {
+        }, style: selStyle },
+        h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
+        h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"));
+      var variantSel = item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
+          value: lineVariantId, "aria-label": "Pricing variant", onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
             onUpdate(sectionId, item.id, { productVariantId: v ? v.id : null, name: window.LTP_productVariantName(prodData, v), unitPrice: v ? v.unitPrice : (prodData.unitPrice || 0), cost: v ? v.cost : (prodData.cost || 0), adjustedPrice: null });
-          }, style: qsel },
-          h("option", { value: "" }, "Base price"),
-          prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
-          lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)")),
-        // Qty / (delivered when accepted) / adjusted price.
-        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 } },
-          h("div", null, h("div", { style: qlbl }, qtyLabel),
-            isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, item.qty)
-                     : h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0, onChange: function(e) { onUpdate(sectionId, item.id, { qty: Number(e.target.value) || 0 }); }, style: qfld })),
-          // Fees edit the PRICE directly (unitPrice) — it varies per project and
-          // is never a discount, so no adjustedPrice / strike-through. Every
-          // other type keeps the catalog unit price + an adjustedPrice override.
-          isFee
-            ? h("div", null, h("div", { style: qlbl }, "price ($)"),
-                isLocked ? h("div", { style: { fontSize: "15px", color: B.text, padding: "6px 0" } }, "$" + unitP)
-                         : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00", onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); }, style: qfld }))
-            : (isLocked && item.adjustedPrice == null)
-            // Locked and never adjusted — the field would be a label over an
-            // em-dash, so drop it entirely (desktop row does the same).
-            ? null
-            : h("div", null, h("div", { style: qlbl }, "adj price"),
-                isLocked ? h("div", { style: { fontSize: "15px", color: adjusted ? B.accent : B.textMut, padding: "6px 0" } }, item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—")
-                         : h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, qfld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) })),
-          isAccepted && h("div", null, h("div", { style: Object.assign({}, qlbl, { color: delivQty >= qty && qty > 0 ? B.success : B.textMut }) }, "delivered"),
-            h("input", { type: "number", inputMode: "numeric", value: delivQty, min: 0, max: qty, onChange: function(e) { var v = Math.min(qty, Math.max(0, Number(e.target.value) || 0)); onUpdate(sectionId, item.id, { deliveredQty: v }); }, style: Object.assign({}, qfld, { borderColor: delivQty >= qty && qty > 0 ? B.success : B.border }) })),
-          isAccepted && invQty > 0 && h("div", null, h("div", { style: qlbl }, "invoiced"),
-            h("div", { style: { fontSize: "15px", color: invQty >= qty ? B.success : B.info, fontWeight: 600, padding: "6px 0" } }, invQty + "/" + qty))),
+          }, style: selStyle },
+        h("option", { value: "" }, "Base price"),
+        prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
+        lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)"));
+      var qtyField = window.LTP_inlineField(qtyLabel,
+        isLocked ? ro(item.qty) : num({ inputMode: "numeric", value: item.qty, min: 0, onChange: function(e) { onUpdate(sectionId, item.id, { qty: Number(e.target.value) || 0 }); } }),
+        { flex: "1 1 26%" });
+      // Fees edit the PRICE directly (unitPrice) — it varies per project and
+      // is never a discount, so no adjustedPrice / strike-through. Every
+      // other type keeps the catalog unit price + an adjustedPrice override.
+      var priceField = isFee
+        ? window.LTP_inlineField("price $",
+            isLocked ? ro("$" + unitP) : num({ inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00", onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); } }),
+            { flex: "1 1 34%" })
+        : (isLocked && item.adjustedPrice == null)
+        // Locked and never adjusted — the field would be a label over an
+        // em-dash, so drop it entirely (desktop row does the same).
+        ? null
+        : window.LTP_inlineField("adj $",
+            isLocked ? ro(item.adjustedPrice != null ? "$" + (Number(item.adjustedPrice) || 0) : "—", adjusted ? B.accent : B.textMut)
+                     : num({ inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, window.LTP_INLINE_INPUT, { color: adjusted ? B.accent : B.text }) }),
+            { flex: "1 1 34%", borderColor: adjusted ? B.accent : B.border });
+      var delivField = isAccepted && window.LTP_inlineField("deliv",
+        num({ inputMode: "numeric", value: delivQty, min: 0, max: qty, onChange: function(e) { var v = Math.min(qty, Math.max(0, Number(e.target.value) || 0)); onUpdate(sectionId, item.id, { deliveredQty: v }); } }),
+        { flex: "1 1 24%", borderColor: delivQty >= qty && qty > 0 ? B.success : B.border });
+      var invField = isAccepted && invQty > 0 && h("div", { style: { flexShrink: 0, fontSize: "12px", fontWeight: 700, color: invQty >= qty ? B.success : B.info, whiteSpace: "nowrap" } }, invQty + "/" + qty + " invoiced");
+      return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: "8px 10px", marginBottom: 4 } }, sortable.itemProps(sectionId, item.id)),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "5px", flexShrink: 0 } }, typeBadge),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, lineHeight: 1.25 } }, item.name),
+            item.type === "equipment" && h("div", { style: { fontSize: "11px", color: B.textMut } }, item.rentalLabel || rateLabel(item.rateType) + " rate"),
+            item.notes && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            clientRateNote(true),
+            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
+          !isLocked && onMove && reorderControl(),
+          !isLocked && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
+            style: { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" } }, "×")),
+        h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } },
+          rateSel, variantSel, qtyField, priceField, delivField, invField),
         // Unit · tax · total footer.
-        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, paddingTop: 8, borderTop: "1px solid " + B.border } },
-          h("div", { style: { fontSize: "12px", color: B.textMut } }, "unit ", h("span", { style: { textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)),
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 6, paddingTop: 6, borderTop: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "11px", color: B.textMut } }, "unit ", h("span", { style: { textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)),
           h("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
-            !isLocked && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "12px", color: B.textMut, cursor: "pointer", minHeight: 44 } },
-              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 20, height: 20 }, onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }), "tax"),
-            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lineTotal)))));
+            !isLocked && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "11px", color: B.textMut, cursor: "pointer", minHeight: 32 } },
+              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 18, height: 18 }, onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }), "tax"),
+            h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lineTotal)))));
     }
 
     return h("div", Object.assign({
@@ -766,7 +782,11 @@
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
-        h("option", { value: "ot" }, "OT")
+        h("option", { value: "ot" }, "OT"),
+        // A flat-rate position line (from the schedule's flat-rate positions)
+        // keeps its typed price; the option exists so the select reads "Flat"
+        // rather than falling back to the first option.
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
       ),
       // Read-only rate-type label when locked, OR when the source service was
       // deleted (no svcData to recompute prices from — see Option B).
@@ -2003,13 +2023,12 @@
         ? h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
             justSaved && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 8px", borderRadius: "6px" } }, "\u2713"),
             draft.status === "converted" && h("div", { style: { fontSize: "9px", color: B.success, padding: "4px 8px", border: "1px solid " + B.success, borderRadius: "6px", fontWeight: 600 } }, "CONV"),
-            isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
             isDirty && h(window.Btn, { small: true, onClick: save }, "Save"),
             draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 14px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Send"),
             draft.status === "sent" && h("button", { onClick: acceptQuote, style: { background: B.info, border: "none", borderRadius: "6px", padding: "8px 12px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "\u2713 Accept"),
             draft.status === "declined" && h("button", { onClick: reopenQuote, style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "8px 12px", color: B.accent, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Reopen"),
             hasUninvoiced && h("button", { onClick: sendToInvoice, style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "8px 12px", whiteSpace: "nowrap" } }, "\u2192 Invoice"),
-            h(window.LTPOverflowMenu, { align: "left", items: [
+            h(window.LTPOverflowMenu, { items: [
               draft.id != null && { label: generatingPdf ? "Generating\u2026" : "Generate PDF", onClick: generatePdf, disabled: generatingPdf },
               (draft.id != null && draft.shareToken) && { label: "Preview", href: "#/view/quote/" + draft.shareToken + "?preview=1" },
               (draft.id != null && draft.shareToken) && { label: "Share", onClick: shareQuote },
@@ -2017,7 +2036,9 @@
               (draft.status === "sent" || draft.status === "accepted") && { label: "Recall to Draft", onClick: recallQuoteToDraft },
               (draft.status === "sent" || draft.status === "accepted") && { label: "Resend", onClick: openQuoteSendModal },
               hasUndelivered && { label: "\u2713 Mark All Delivered", onClick: markAllDelivered },
-              draft.id != null && { label: "Delete Quote", onClick: deleteQuote, variant: "danger" }
+              draft.id != null && { label: "Delete Quote", onClick: deleteQuote, variant: "danger" },
+              // Discard lives here (not beside Save) so a dirty header keeps room for the ref.
+              isDirty && { label: "Discard changes", onClick: discard, variant: "danger" }
             ] }))
         : h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),

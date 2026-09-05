@@ -1,5 +1,5 @@
 // Projects Module — top-level view (formerly nested under CRM)
-window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route }) {
+window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route, settings }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var isMobile = window.LTP_useIsMobile();
@@ -70,7 +70,10 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId,
         // Send to Invoice bills a schedule straight to the client, bypassing
         // the quote's delivered/invoiced ledger — see sendToDoc there.
-        invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId
+        invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId,
+        // Pay-period config, so the flat-rate panel can say which payroll
+        // period (and pay day) a fee lands on.
+        settings: settings
       });
     }
   }

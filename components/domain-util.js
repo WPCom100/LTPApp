@@ -66,6 +66,32 @@ window.LTP_formatTime = function(timeStr) {
   return hr12 + ":" + min + " " + ampm;
 };
 
+// Phone-width date: "Thu, Sep 10" — LTP_formatDate's "September 10th, 2026"
+// is most of a phone row on its own. The year is added only when it isn't the
+// current year (opts.year forces it; opts.weekday === false drops the day
+// name). Built from the ISO parts, never Date.parse, so a bare "2026-09-10"
+// stays the calendar day it names in every timezone.
+window.LTP_formatDateShort = function(dateStr, opts) {
+  if (!dateStr) return "";
+  var parts = String(dateStr).split("-");
+  if (parts.length !== 3) return dateStr;
+  var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  if (isNaN(d.getTime())) return dateStr;
+  var o = opts || {};
+  var f = { month: "short", day: "numeric" };
+  if (o.weekday !== false) f.weekday = "short";
+  if (o.year === true || (o.year !== false && d.getFullYear() !== (o.now || new Date()).getFullYear())) f.year = "numeric";
+  return d.toLocaleDateString("en-US", f);
+};
+// "Sep 10 – Sep 13" (one date when they match or only one is set), for the
+// project line in phone headers.
+window.LTP_formatDateRangeShort = function(startStr, endStr, opts) {
+  var o = Object.assign({ weekday: false }, opts || {});
+  var a = window.LTP_formatDateShort(startStr, o), b = window.LTP_formatDateShort(endStr, o);
+  if (!a || !b || a === b) return a || b;
+  return a + " \u2013 " + b;
+};
+
 // ── Shared Utilities ─────────────────────────────────────────────────────────
 var _idCounter = 0;
 window.LTP_genId = function(prefix) { _idCounter++; return (prefix || "x") + "-" + Date.now() + "-" + _idCounter; };
@@ -513,16 +539,27 @@ window.LTP_settingsAddress = function(s) {
 // and projects views and the public crew call sheet. When {endTime} is given it
 // sets the wrap (rolling to the next day for an overnight shift whose wrap is
 // earlier than the call); otherwise the event runs one hour (same minutes, hour
-// clamped to 23). {location} adds a place; attendees is an array of emails;
-// details is optional. Times are floating (no timezone) so they render as the
-// posted wall-clock wherever the crew member opens the link.
+// clamped to 23). {allDay: true, endDate} instead makes an all-day event
+// spanning date → endDate inclusive (a flat-rate position has no call time).
+// {location} adds a place; attendees is an array of emails; details is
+// optional. Times are floating (no timezone) so they render as the posted
+// wall-clock wherever the crew member opens the link.
 window.LTP_gcalUrl = function(opts) {
   opts = opts || {};
   var time = opts.time || "00:00";
   var d = (opts.date || "").replace(/-/g, "");
   var startStamp = d + "T" + time.replace(":", "") + "00";
   var endStamp;
-  if (opts.endTime) {
+  if (opts.allDay) {
+    // An all-day span (a flat-rate position covering the project's dates):
+    // Google's all-day form is date-only stamps with an EXCLUSIVE end, so the
+    // last day advances by one. No endDate → a single all-day event.
+    var lastISO = opts.endDate && opts.endDate >= (opts.date || "") ? opts.endDate : opts.date;
+    var ld = new Date((lastISO || opts.date || "") + "T00:00:00");
+    ld.setDate(ld.getDate() + 1);
+    startStamp = d;
+    endStamp = "" + ld.getFullYear() + String(ld.getMonth() + 1).padStart(2, "0") + String(ld.getDate()).padStart(2, "0");
+  } else if (opts.endTime) {
     // A wrap earlier than the call means the shift runs past midnight, so the
     // end date advances one calendar day.
     var endD = d;

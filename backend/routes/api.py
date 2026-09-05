@@ -415,8 +415,12 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # Payroll integrity: a non-admin can't introduce a frozen pay snapshot on a
         # brand-new project either — strip any `work`/`adj` off incoming positions
         # (stored side is empty on create). See the update path for the rationale.
-        if model_cls is models.Project and user.role != "admin" and isinstance(mapped.get("schedule"), list):
-            stripped = crew_integrity.enforce_pay_snapshot([], mapped["schedule"])
+        if model_cls is models.Project and user.role != "admin":
+            stripped = 0
+            if isinstance(mapped.get("schedule"), list):
+                stripped += crew_integrity.enforce_pay_snapshot([], mapped["schedule"])
+            if isinstance(mapped.get("fixed_positions"), list):
+                stripped += crew_integrity.enforce_pay_snapshot_fixed([], mapped["fixed_positions"])
             if stripped:
                 print(f"[LTP] payout-integrity: project create by non-admin user "
                       f"id={user.id} ({user.email}) carried {stripped} pay-snapshot "
@@ -491,6 +495,19 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        # The same two guards over the flat-rate positions (Project.fixed_positions):
+        # same id namespace, same status ladder, same frozen work/adj snapshot.
+        if model_cls is models.Project and isinstance(mapped.get("fixed_positions"), list):
+            floored = crew_integrity.enforce_status_floor_fixed(row.fixed_positions, mapped["fixed_positions"])
+            if floored:
+                print(f"[LTP] crew-integrity: project {item_id} save carried "
+                      f"{floored} stale flat-position status downgrade(s) — restored", flush=True)
+            if user.role != "admin":
+                reverted = crew_integrity.enforce_pay_snapshot_fixed(row.fixed_positions, mapped["fixed_positions"])
+                if reverted:
+                    print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
+                          f"user id={user.id} ({user.email}) carried {reverted} flat-position "
+                          f"pay-snapshot change(s) — reverted", flush=True)
         # Paid-day integrity. Runs LAST among the schedule guards, on the FINAL
         # incoming schedule, so a change the floor/pay-snapshot guards already
         # reverted is not reported as a conflict that no longer exists.
@@ -501,8 +518,20 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # `paidDays` map fetched when the editor opened — stale the moment a bill
         # is paid, or a second window saves. That check is a courtesy; this is
         # the enforcement, and it is what makes the client's staleness harmless.
-        if model_cls is models.Project and isinstance(mapped.get("schedule"), list):
-            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, mapped["schedule"])
+        if model_cls is models.Project and (isinstance(mapped.get("schedule"), list)
+                                            or isinstance(mapped.get("fixed_positions"), list)
+                                            or "end_date" in mapped):
+            # A field this write doesn't carry keeps its stored value on both
+            # sides, so only what is actually being changed can register.
+            paid_hits = await payouts.paid_day_conflicts(
+                db, item_id, row.schedule,
+                mapped["schedule"] if isinstance(mapped.get("schedule"), list) else row.schedule,
+                stored_fixed=row.fixed_positions,
+                incoming_fixed=(mapped["fixed_positions"] if isinstance(mapped.get("fixed_positions"), list)
+                                else row.fixed_positions),
+                stored_end=row.end_date,
+                incoming_end=mapped.get("end_date", row.end_date),
+            )
             if paid_hits:
                 if not _paid_day_override(request):
                     raise HTTPException(
@@ -573,7 +602,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # schedule: every paid day on the project disappears, so every one of
         # them is a conflict.
         if model_cls is models.Project:
-            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [])
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [],
+                                                         stored_fixed=row.fixed_positions, incoming_fixed=[],
+                                                         stored_end=row.end_date, incoming_end=row.end_date)
             if paid_hits and not _paid_day_override(request):
                 raise HTTPException(
                     status_code=409,

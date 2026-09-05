@@ -331,6 +331,120 @@ All three FKs CASCADE, so an override can't outlive its client or its service.
 The engine reads only `minHours` / `minCostHours` off the resolved service; the
 rate/cost columns are ordinary rate-card values by the time they reach it.
 
+## Flat-rate positions (fixed-cost hires)
+
+Some people are hired for the **whole production at a flat fee** and never get
+contracted call times — a lighting designer, a stage manager. We hand them the
+schedule and they make their own hours. These are **flat-rate positions**: they
+live on the project (`projects.fixed_positions`), not on a schedule day, and
+they ride the same crew-request and payroll rails as a shift.
+
+### Where they are
+
+- **Schedule Builder → Flat-rate positions** (the panel above the day list).
+  Each row is a rate-card **role** (required — it routes the fee to that role's
+  QuickBooks expense account and names the quote line), the **crew** member
+  (role-matched picker, same as a shift), the **fee** (what we pay), the
+  **bill** (what the client is charged), a full-margin toggle, and a
+  crew-facing **scope note**. Margin is bill − fee; the Schedule Summary folds
+  the flat totals into Total Rate / Total Cost / Margin. The panel also says
+  which payroll period and pay day the fee lands on (see the rules below).
+- **Labor → Assignments** lists them under a *Flat-rate — whole project* group
+  with a `Flat $…` chip. Send Request / Book Without Emailing, Confirm, Release
+  and Cancel all work as for a shift. A confirm **locks the fee** the way a
+  shift locks its computed pay.
+- **Labor → Payouts** shows each confirmed flat-rate position as a row dated on the
+  **project's end date**, so it sits in the payroll period that date falls into
+  and is paid on that period's pay day (the following Friday, per the pay-period
+  settings) together with every other payout in the period. It is an estimate
+  until you **Mark complete** (`✓ Complete`, or `Complete…` to enter a different
+  final amount); that freezes the figure exactly like a day sign-off, and the
+  QuickBooks vendor-bill export posts it in that period. Adjustments, undo,
+  lock/re-lock and the paid-day guard apply as they do to days.
+- **Send to Quote / Invoice** adds one **Flat** service line per billed
+  flat-rate position (qty 1 at the bill amount, cost = the fee). A flat-rate position billed at
+  $0 (absorbed in a package price) produces no line.
+
+### What the crew member sees
+
+The request email and the crew page describe the **flat-rate position, not calls**: the
+role, the **flat fee** (stated on purpose — it is the offer being accepted),
+the project's date range, and a **schedule outline** listing each scheduled day
+and what it is, with no times. Hourly shifts on the same request still show no
+pay. A confirmed flat-rate position's *Add to Calendar* button creates one all-day
+event spanning the project dates.
+
+### Rules worth knowing
+
+- A flat-rate position is payable only after **Mark complete**; a confirmed-but-
+  incomplete one is reported as pending (and excluded from the export).
+- There is deliberately **no per-position pay date**: the project's end date
+  decides the payroll period. With **no project end date** the fee cannot land
+  in any period — the builder flags the row until one is set.
+- A flat fee paid on the same date as a signed shift day for the same person
+  and project is **merged into one bill line** in QuickBooks (the ledger is one
+  line per person-project-date); the Payouts tab still shows them as two rows.
+- Changing the fee, role, status or full-margin flag on a flat-rate position that is
+  already **paid** in QuickBooks trips the same paid-day guard as a shift edit
+  (409 `paid_day_conflict` unless overridden).
+- **Labor → Weekly Schedule** shows a flat-rate position on every day of the
+  project's date range (the project's own dates, else the span of its
+  scheduled days), marked with a dashed edge and "Flat rate · whole project"
+  in place of call times. The Calendar grid, which places rows on a single
+  date, does not show them.
+
+## Phone layouts
+
+### Schedule builder on a phone
+
+At `(max-width: 600px)` (`window.LTP_useIsMobile`) the builder switches to a
+layout designed around 16px inputs — index.html forces that size on every
+field so iOS never zooms on focus, so the phone layout is built for it rather
+than shrunk from the desktop ledger. Desktop is untouched.
+
+- **Header** — one row: `←`, the project name over "Schedule · dates · client",
+  **Save** (only while there are unsaved edits) and a `⋯` menu holding Send to
+  Quote, Send to Invoice, Print and Discard.
+- **Summary strip** — Days / Filled / Rate / Margin as four tiles at the top of
+  the column, in place of the side panel's Schedule Summary (which would sit
+  below the whole editor on a phone). Notes and Activity still stack under the
+  editor as cards.
+- **Date and time pickers** — a formatted chip ("Thu, Sep 10", "8:00 AM |
+  6:00 PM") with the real `LTPDateField` / `LTPTimeField` stretched over it at
+  opacity 0 (`chip` + `NATIVE` in `components/schedule-editor.js`). Tapping
+  opens the native wheel picker; the deferred-commit rules the fields carry are
+  unchanged because the same components render. On a narrow desktop window,
+  where a tap doesn't open a picker by itself, the chip calls `showPicker()`.
+- **Rows** — role and crew share one line, with a slim footer (status · MGN ·
+  breaks … rate / cost · ⇩ · ×). Flat-rate positions read role · crew / FEE $ ·
+  BILL $ · MGN / note / status … bill · margin · ×.
+
+Short dates come from `window.LTP_formatDateShort` / `LTP_formatDateRangeShort`
+(`components/domain-util.js`), which build from the ISO parts so a bare
+`YYYY-MM-DD` stays the calendar day it names in every timezone.
+
+### The phone kit (`components/ui.js`)
+
+The builder's pieces are shared so every phone screen uses the same 36px
+controls (`window.LTP_CTL`):
+
+- `LTP_pickerChip(opts, field)` / `LTP_pickerSeg(a, b)` — a formatted chip with
+  the real date/time field (styled `LTP_NATIVE`) stretched over it; `prefix`
+  adds a small label ("FROM · Mon, Sep 7").
+- `LTP_inlineField(label, input, opts)` — "FEE $ [1500]" in one box, the input
+  styled `LTP_INLINE_INPUT`.
+- `LTPStatStrip({ items })` — N tiles in one bordered row, the phone stand-in
+  for a row of `StatCard`s.
+
+Where they are used, besides the schedule builder: the quote and invoice
+builders (line items read badge · name · ▲▼ · ×, then [rate] [QTY] [ADJ $] on
+one row; the add-item picker puts the name on its own line; Discard sits in the
+⋯ menu), Labor → Assignments (stat strip, chip strip, project · Manual Shift
+row), Labor → Payouts (one-row period navigator, From/To chips, stat strip),
+Labor → Crew Roster (search row + chip strip) and Weekly Schedule (short week
+label). Desktop rendering is untouched everywhere — the phone styles are merged
+in only under `LTP_useIsMobile()`.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that

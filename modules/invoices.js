@@ -431,7 +431,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
+    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
@@ -453,7 +453,7 @@
     // negotiated. The line keeps its snapshotted price — an invoice must not
     // silently re-price itself — so a mismatch offers a one-click apply instead.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate) return null;
+      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -475,65 +475,67 @@
     var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lt = eff * (Number(item.qty) || 0);
 
-    // ── Mobile: stacked card (the desktop row packs ~9 fixed-width cells into
-    // one horizontal flex that overflows a phone). Name on top, then full-width
-    // rate/variant selects, a Qty|Adj grid with the right iOS keyboards, and a
-    // unit/tax/total footer. Desktop row is unchanged below.
+    // ── Phone: a compact card in the schedule builder's density (the phone
+    // kit in ui.js) — the same card the quote builder renders. Header: badge ·
+    // name (+ notes / contract-rate line) · ▲▼ · ×. One 36px control row while
+    // the invoice is a draft: [rate or variant select] [QTY] [ADJ $], the
+    // label INSIDE each field's box so nothing stacks label-over-input (that
+    // stack made every line ~330px tall). Footer: qty · unit · tax · total.
+    // Desktop row is unchanged below.
     if (isMobile) {
-      var fld = { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" };
-      var lbl = { fontSize: "10px", color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 };
-      var selStyle = Object.assign({}, fld, { marginTop: 8, appearance: "auto" });
-      return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "8px", padding: "10px 12px", marginBottom: 2 } }, sortable.itemProps(sectionId, item.id)),
-        h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8 } },
-          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "3px", flexShrink: 0, marginTop: 3 } }, typeBadge),
-          h("div", { style: { flex: 1, minWidth: 0 } },
-            h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, item.name),
-            item.notes && h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic" } }, item.notes),
-            clientRateNote(false),
-            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
-          isDraft && reorderControl(),
-          isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
-            style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "22px", minWidth: 44, minHeight: 44, flexShrink: 0, lineHeight: 1 } }, "×")),
-        // Rate-type (services) / variant (products) selects — full width on mobile.
-        item.type === "service" && isDraft && svcData && h("select", { value: svcRateType, onChange: function(e) {
+      var CTL = window.LTP_CTL;
+      var selStyle = { flex: "1 1 30%", minWidth: 0, height: CTL, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 8px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", appearance: "auto", boxSizing: "border-box" };
+      var num = function(props) { return h("input", Object.assign({ type: "number", style: window.LTP_INLINE_INPUT }, props)); };
+      var rateSel = item.type === "service" && isDraft && svcData && h("select", { value: svcRateType, "aria-label": "Rate type", onChange: function(e) {
           var rt = e.target.value; var maps = window.LTP_serviceRateMaps(svcData);
           onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
         }, style: selStyle },
-          h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
-          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
-        item.type === "product" && isDraft && prodData && prodVariants.length > 0 && h("select", {
-          value: lineVariantId, onChange: function(e) {
+        h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
+        h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"));
+      var variantSel = item.type === "product" && isDraft && prodData && prodVariants.length > 0 && h("select", {
+          value: lineVariantId, "aria-label": "Pricing variant", onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
             onUpdate(sectionId, item.id, { productVariantId: v ? v.id : null, name: window.LTP_productVariantName(prodData, v), unitPrice: v ? v.unitPrice : (prodData.unitPrice || 0), cost: v ? v.cost : (prodData.cost || 0), adjustedPrice: null });
           }, style: selStyle },
-          h("option", { value: "" }, "Base price"),
-          prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
-          lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)")),
-        // Qty + Adjusted price (draft) with the right iOS keyboards.
-        isDraft && h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 10 } },
-          h("div", null, h("div", { style: lbl }, qtyLabel),
-            h("input", { type: "number", inputMode: "numeric", value: item.qty, min: 0,
-              onChange: function(e) { onUpdate(sectionId, item.id, { qty: Math.max(0, Number(e.target.value) || 0) }); }, style: fld })),
-          // Fees edit the PRICE directly (unitPrice) — it varies per project and
-          // is never a discount, so no adjustedPrice / strike-through.
-          isFee
-            ? h("div", null, h("div", { style: lbl }, "price ($)"),
-                h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00",
-                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); }, style: fld }))
-            : h("div", null, h("div", { style: lbl }, "adj price"),
-                h("input", { type: "number", inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP,
-                  onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); },
-                  style: Object.assign({}, fld, { borderColor: adjusted ? B.accent : B.border, color: adjusted ? B.accent : B.text }) }))),
+        h("option", { value: "" }, "Base price"),
+        prodVariants.map(function(v) { return h("option", { key: v.id, value: v.id }, v.label); }),
+        lineVariantMissing && h("option", { value: lineVariantId }, "(removed variant)"));
+      var qtyField = isDraft && window.LTP_inlineField(qtyLabel,
+        num({ inputMode: "numeric", value: item.qty, min: 0, onChange: function(e) { onUpdate(sectionId, item.id, { qty: Math.max(0, Number(e.target.value) || 0) }); } }),
+        { flex: "1 1 26%" });
+      // Fees edit the PRICE directly (unitPrice) — it varies per project and
+      // is never a discount, so no adjustedPrice / strike-through.
+      var priceField = isDraft && (isFee
+        ? window.LTP_inlineField("price $",
+            num({ inputMode: "decimal", step: "0.01", value: item.unitPrice != null ? item.unitPrice : "", placeholder: "0.00", onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { unitPrice: v === "" ? 0 : Number(v) }); } }),
+            { flex: "1 1 34%" })
+        : window.LTP_inlineField("adj $",
+            num({ inputMode: "decimal", step: "0.01", value: item.adjustedPrice != null ? item.adjustedPrice : "", placeholder: "$" + unitP, onChange: function(e) { var v = e.target.value; onUpdate(sectionId, item.id, { adjustedPrice: v === "" ? null : Number(v) }); }, style: Object.assign({}, window.LTP_INLINE_INPUT, { color: adjusted ? B.accent : B.text }) }),
+            { flex: "1 1 34%", borderColor: adjusted ? B.accent : B.border }));
+      return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: "8px 10px", marginBottom: 4 } }, sortable.itemProps(sectionId, item.id)),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+          h("span", { style: { fontSize: "9px", fontWeight: 700, color: typeBadgeColor, background: typeBadgeColor + "22", border: "1px solid " + typeBadgeColor + "44", padding: "3px 6px", borderRadius: "5px", flexShrink: 0 } }, typeBadge),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, lineHeight: 1.25 } }, item.name),
+            item.notes && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+            clientRateNote(true),
+            sourceMissing && h("div", { style: { fontSize: "11px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked")),
+          isDraft && reorderControl(),
+          isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
+            style: { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" } }, "×")),
+        isDraft && h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } },
+          rateSel, variantSel, qtyField, priceField),
         // Unit · tax · total footer.
-        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 10, paddingTop: 8, borderTop: "1px solid " + B.border } },
-          h("div", { style: { fontSize: "12px", color: B.textMut } },
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 6, paddingTop: 6, borderTop: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "11px", color: B.textMut } },
             (isDraft ? "" : (item.qty + " " + qtyLabel + " · ")) + "unit ",
             h("span", { style: { textDecoration: adjusted ? "line-through" : "none" } }, "$" + unitP)),
           h("div", { style: { display: "flex", alignItems: "center", gap: 12 } },
-            isDraft && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "12px", color: B.textMut, cursor: "pointer", minHeight: 44 } },
-              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 20, height: 20 },
+            isDraft && customerTaxable && h("label", { title: "Taxable in QuickBooks", style: { display: "flex", alignItems: "center", gap: 5, fontSize: "11px", color: B.textMut, cursor: "pointer", minHeight: 32 } },
+              h("input", { type: "checkbox", checked: typeof item.taxable === "boolean" ? item.taxable : true, style: { width: 18, height: 18 },
                 onChange: function(e) { onUpdate(sectionId, item.id, { taxable: e.target.checked }); } }), "tax"),
-            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lt)))));
+            h("div", { style: { fontSize: "15px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(lt)))));
     }
 
     return h("div", Object.assign({ style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", display: "flex", alignItems: "center", gap: 10 } }, sortable.itemProps(sectionId, item.id)),
@@ -554,7 +556,11 @@
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
-        h("option", { value: "ot" }, "OT")
+        h("option", { value: "ot" }, "OT"),
+        // A flat-rate position line (from the schedule's flat-rate positions)
+        // keeps its typed price; the option exists so the select reads "Flat"
+        // rather than falling back to the first option.
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
       ),
       // Pricing-variant selector (products with variants only) — mirrors the
       // quote builder. Switching re-snapshots name/price/cost from the variant.
@@ -1865,18 +1871,19 @@
         ? h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
             justSaved && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 8px", borderRadius: "6px" } }, "\u2713"),
             window.LTP_isOverdue(draft) && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 7px", borderRadius: "6px" } }, "OD"),
-            isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
             isDirty && !isLocked && h(window.Btn, { small: true, onClick: save }, "Save"),
             isDraft && draft.id != null && h("button", { onClick: openSendModal, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 14px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Send"),
             draft.status === "paid" && h("button", { onClick: function() { openReceiptModal(); }, style: { background: B.success, border: "none", borderRadius: "6px", padding: "8px 12px", color: B.btnInk, fontSize: "12px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Receipt"),
             !isDraft && draft.status !== "paid" && draft.id != null && h("button", { onClick: openSendModal, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 12px", color: B.textSec, fontSize: "12px", fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" } }, "Resend"),
-            h(window.LTPOverflowMenu, { align: "left", items: [
+            h(window.LTPOverflowMenu, { items: [
               draft.id != null && { label: generatingPdf ? "Generating\u2026" : "Generate PDF", onClick: generatePdf, disabled: generatingPdf },
               (draft.id != null && draft.shareToken) && { label: "Preview", href: "#/view/invoice/" + draft.shareToken + "?preview=1" },
               (draft.id != null && draft.shareToken) && { label: "Share", onClick: shareInvoice },
               !isDraft && { label: "Recall to Draft", onClick: recallToDraft },
               draft.status === "paid" && { label: "Resend", onClick: openSendModal },
-              draft.id != null && { label: "Delete Invoice", onClick: deleteInvoice, variant: "danger" }
+              draft.id != null && { label: "Delete Invoice", onClick: deleteInvoice, variant: "danger" },
+              // Discard lives here (not beside Save) so a dirty header keeps room for the ref.
+              isDirty && { label: "Discard changes", onClick: discard, variant: "danger" }
             ] }))
         : h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),

@@ -249,6 +249,85 @@
   window.LTPDateField = deferredTemporalField("date");
   window.LTPTimeField = deferredTemporalField("time");
 
+  // ── Phone density kit ──────────────────────────────────────────────────────
+  // On a phone every input renders at 16px whether we like it or not
+  // (index.html forces it so iOS never zooms on focus), so the phone layouts
+  // are designed around that size instead of against it: 36px controls, one
+  // labelled box per field, native pickers behind formatted chips. Shared by
+  // the schedule builder, the quote/invoice builders and the Labor tabs so
+  // every phone screen uses the same pieces.
+  window.LTP_CTL = 36;
+
+  // Native date/time pickers behind a chip. A raw <input type="date"> on iOS
+  // is a wide, oddly tall control reading "09/10/2026". The caller renders the
+  // real field (LTPDateField / LTPTimeField or a raw input) styled with
+  // LTP_NATIVE and hands it here: it is stretched over a formatted chip at
+  // opacity 0, so the chip is what you see ("Thu, Sep 10", "8:00 AM") and the
+  // field is what you tap — the tap opens the native wheel picker exactly as
+  // before, and whatever buffering/commit rules the field carries are
+  // untouched. opts: { label, prefix?, empty?, warn?, small?, bare?, divider?,
+  // style? } — `bare` chips sit inside LTP_pickerSeg, which draws the box.
+  window.LTP_NATIVE = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", opacity: 0, margin: 0, padding: 0, border: 0,
+                        fontSize: "16px", background: "transparent", color: "transparent", cursor: "pointer", zIndex: 1 };
+  // A phone opens the picker on the tap itself. A narrow DESKTOP window (mouse,
+  // no touch) only focuses the invisible input, and the calendar glyph that
+  // would open the popup is hidden with it — so ask for the picker outright
+  // there (showPicker needs a user gesture; a click is one).
+  var pointerOpensPicker = (function() { try { return window.matchMedia("(hover: none)").matches; } catch (e) { return true; } })();
+  function openPicker(e) {
+    if (pointerOpensPicker) return;
+    var el = e.currentTarget.querySelector("input");
+    if (el && typeof el.showPicker === "function") { try { el.showPicker(); } catch (err) { /* unsupported type or not a gesture */ } }
+  }
+  window.LTP_pickerChip = function(opts, field) {
+    var tone = opts.warn ? B.warn : opts.empty ? B.textMut : B.text;
+    var style = { position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, height: opts.small ? 30 : window.LTP_CTL,
+                  padding: opts.small ? "0 8px" : "0 10px", fontSize: opts.small ? "12px" : "13px", fontWeight: 600, color: tone,
+                  whiteSpace: "nowrap", boxSizing: "border-box", overflow: "hidden", minWidth: 0 };
+    if (!opts.bare) Object.assign(style, { borderRadius: "8px", background: B.bg, border: "1px solid " + (opts.warn ? B.warn : B.border) });
+    if (opts.divider) style.borderLeft = "1px solid " + B.border;
+    return h("div", { style: Object.assign(style, opts.style), onClick: openPicker },
+      opts.prefix ? h("span", { "aria-hidden": "true", style: { fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: B.textMut, flexShrink: 0 } }, opts.prefix) : null,
+      h("span", { "aria-hidden": "true", style: { overflow: "hidden", textOverflow: "ellipsis" } }, opts.label),
+      field);
+  };
+  // Two bare chips in one bordered pill: [ 8:00 AM | 6:00 PM ].
+  window.LTP_pickerSeg = function(a, b, small) {
+    return h("div", { style: { display: "inline-flex", alignItems: "stretch", border: "1px solid " + B.border, borderRadius: "8px", background: B.bg,
+                               overflow: "hidden", flexShrink: 0, height: small ? 30 : window.LTP_CTL, boxSizing: "border-box" } }, a, b);
+  };
+
+  // Labelled inline field — "FEE $ [1500]" in one 36px box — so a label never
+  // sits on its own line above a phone-width input. `input` is the caller's
+  // <input> styled with LTP_INLINE_INPUT (or a read-only element).
+  // opts: { flex, title, borderColor, style }
+  window.LTP_INLINE_INPUT = { flex: 1, minWidth: 0, width: "100%", background: "transparent", border: "none", outline: "none", color: B.text, fontSize: "16px", fontFamily: "inherit", padding: 0 };
+  window.LTP_inlineField = function(label, input, opts) {
+    opts = opts || {};
+    return h("label", { title: opts.title,
+      style: Object.assign({ flex: opts.flex || 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0, height: window.LTP_CTL, padding: "0 10px",
+                             background: B.bg, border: "1px solid " + (opts.borderColor || B.border), borderRadius: "8px", boxSizing: "border-box" }, opts.style) },
+      h("span", { style: { fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: B.textMut, whiteSpace: "nowrap", flexShrink: 0 } }, label),
+      input);
+  };
+
+  // Compact stat strip — the phone stand-in for a row of StatCards (which
+  // stack into a screenful of 180px tiles): N tiles in one bordered row, the
+  // value over a small uppercase label. items: [{ label, value, color?, sub?,
+  // title? }]; falsy entries are skipped so callers can inline conditionals.
+  window.LTPStatStrip = function({ items, style: sx }) {
+    var list = (items || []).filter(Boolean);
+    if (!list.length) return null;
+    var dense = list.length > 4;
+    return h("div", { style: Object.assign({ display: "grid", gridTemplateColumns: "repeat(" + list.length + ", minmax(0, 1fr))", background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", overflow: "hidden" }, sx) },
+      list.map(function(it, i) {
+        return h("div", { key: i, title: it.title, style: { padding: "8px 4px", textAlign: "center", borderLeft: i ? "1px solid " + B.border : "none", minWidth: 0 } },
+          h("div", { style: { fontSize: dense ? "14px" : "15px", fontWeight: 700, color: it.color || B.text, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, it.value),
+          h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: dense ? "0.04em" : "0.1em", marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, it.label),
+          it.sub ? h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, it.sub) : null);
+      }));
+  };
+
   // ── Note line item row (quotes + invoices) ────────────────────────────────
   // A note is the one line item whose whole payload is free text, authored in
   // a <textarea>. Its blank lines, indentation and runs of spaces are content,

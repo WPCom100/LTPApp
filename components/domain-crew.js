@@ -48,10 +48,14 @@
 //   grouping  "one" → a single "Labor" section; anything else → one section per
 //             department
 //   fmtDate   date formatter for each line's "which days" note (LTP_formatDate)
+//   fixedPositions  the project's flat-rate positions (optional) — each with
+//             a rate-card role and a bill amount > 0 becomes ONE "flat" line:
+//             qty 1 at the bill amount, cost = the fee ($0 full-margin)
 //
 // Returns [] when the schedule bills nothing — no dated+timed day carries a
-// position with a serviceId. Callers treat that as "nothing to send".
-window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId) {
+// position with a serviceId and no flat-rate position bills the client. Callers
+// treat that as "nothing to send".
+window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId, fixedPositions) {
   var gen = genId || window.LTP_genId;
   var fmt = fmtDate || function(d) { return d; };
 
@@ -141,6 +145,30 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       qty: li.rateHours, unitPrice: li.otRate, adjustedPrice: null,
       cost: li.rateHours > 0 ? Math.round((li.costAccum / li.rateHours) * 100) / 100 : 0,
       notes: "Overtime hours: " + dayList(li.dates), deliveredQty: 0, invoicedQty: 0
+    } });
+  });
+
+  // Flat-rate positions: one line each, after the hourly lines. The note
+  // spans the project's scheduled dates (no times — the hire sets their own).
+  var svcById = {}; (svcs || []).forEach(function(sv) { svcById[sv.id] = sv; });
+  var dated = (schedule || []).map(function(s) { return s && s.date; }).filter(Boolean).sort();
+  // A multi-day row (endDate after date) extends the span to its last day.
+  var lastDay = (schedule || []).reduce(function(m, s) { var e = s && s.endDate; return (e && e > m) ? e : m; }, dated.length ? dated[dated.length - 1] : "");
+  var span = dated.length ? (dated[0] === lastDay ? fmt(dated[0]) : fmt(dated[0]) + " – " + fmt(lastDay)) : "";
+  (fixedPositions || []).forEach(function(p) {
+    if (!p || !p.serviceId) return;
+    var svc = svcById[p.serviceId];
+    if (!svc) return;
+    var bill = Math.round((Number(p.bill) || 0) * 100) / 100;
+    if (bill <= 0) return;   // absorbed in a package price — nothing to bill separately
+    laborItems.push({ dept: svc.department || "Other", item: {
+      id: gen("item"), type: "service", serviceId: svc.id,
+      name: svc.role + " — " + svc.description,
+      rateType: "flat",
+      qty: 1, unitPrice: bill, adjustedPrice: null,
+      cost: p.fullMargin ? 0 : Math.round((Number(p.fee) || 0) * 100) / 100,
+      notes: "Flat-rate position" + (span ? " · " + span : ""),
+      deliveredQty: 0, invoicedQty: 0
     } });
   });
 
@@ -692,4 +720,144 @@ window.LTP_detectCrewConflicts = function(projects) {
     }
   });
   return conflicts;
+};
+
+// ── Flat-rate ("fixed cost") positions ───────────────────────────────────────
+//
+// A lighting designer or stage manager hired for the WHOLE project at a flat
+// fee, with no contracted shift times — they get the schedule and make their
+// own hours. These live in project.fixedPositions, not on a schedule row (see
+// backend/models.py::Project.fixed_positions for the item shape). They share
+// the position id namespace, the open → requested → accepted/declined →
+// confirmed ladder, and the frozen pay / work / adj snapshot shape with shift
+// positions, so the crew-request and payout pipelines carry both. What differs:
+//   • no rate engine — `fee` (what we pay) and `bill` (what the client pays)
+//     are typed, margin = bill − fee, `fullMargin` zeroes the cost;
+//   • no date — the project's END date (LTP_fixedPayDate) picks the pay
+//     period, and the fee is paid on that period's pay day;
+//   • "Mark complete" (LTP_completeFixedPosition) replaces the day sign-off.
+
+// The pay-side figure for a flat-rate position as it stands NOW — the typed fee,
+// or $0 for a full-margin one — in the same shape LTP_crewDayPay returns, so
+// the Payouts tab, the confirm-time lock and the completion freeze all read one
+// object. The single unit carries the service so the QuickBooks export can
+// route the fee to that role's expense account (backend/qbo_payouts.py).
+window.LTP_fixedPositionPay = function(pos, amount) {
+  var base = (amount != null && !isNaN(Number(amount))) ? Number(amount) : (pos ? Number(pos.fee) : 0);
+  var total = (pos && pos.fullMargin) ? 0 : Math.round((base || 0) * 100) / 100;
+  return {
+    total: total, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "flat",
+    units: [{ serviceId: pos ? pos.serviceId : null, tier: "flat", paidHours: 0, otHours: 0,
+              dayCost: total, otCost: 0, minApplied: false, minHoursApplied: false,
+              fullMargin: !!(pos && pos.fullMargin), total: total }],
+  };
+};
+
+// Stamp the fee agreed at hire as `pay` onto ONE person's confirmed flat
+// flat-rate positions — the flat-rate mirror of LTP_stampPay. `ids` restricts which
+// positions are (re)locked; omit it to lock every confirmed one. Returns a new
+// list; untouched entries are passed through.
+window.LTP_stampFixedPay = function(fixedPositions, crewId, lockedAt, ids) {
+  var only = null;
+  if (ids) { only = {}; ids.forEach(function(i) { only[i] = true; }); }
+  return (fixedPositions || []).map(function(p) {
+    if (!p || p.crewId !== crewId || p.status !== "confirmed" || (only && !only[p.id])) return p;
+    return Object.assign({}, p, { pay: Object.assign({ lockedAt: lockedAt }, window.LTP_fixedPositionPay(p)) });
+  });
+};
+
+// "Mark complete": the position is done, freeze the FINAL figure as work.pay
+// — the flat-rate mirror of LTP_signOffDay. Pass `amount` when the final fee
+// differs from the one agreed (scope grew, a day was dropped); omit it to
+// complete at the fee as it stands. Only a confirmed flat-rate position can complete.
+window.LTP_completeFixedPosition = function(fixedPositions, posId, amount, signedAt, signedBy) {
+  return (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId || p.status !== "confirmed") return p;
+    return Object.assign({}, p, { work: { state: "completed", pay: window.LTP_fixedPositionPay(p, amount),
+                                          signedAt: signedAt, signedBy: signedBy } });
+  });
+};
+
+// Undo "Mark complete": strip `work` so the position returns to pending.
+window.LTP_uncompleteFixedPosition = function(fixedPositions, posId) {
+  return (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId || !p.work) return p;
+    var copy = Object.assign({}, p); delete copy.work; return copy;
+  });
+};
+
+// Pay adjustments on a flat-rate position — same list shape and rules as
+// LTP_setPayAdjustments (zero/invalid amounts dropped, empty list clears).
+window.LTP_setFixedAdjustments = function(fixedPositions, posId, adjustments) {
+  var clean = (adjustments || []).filter(function(a) { return a && typeof a.amount === "number" && !isNaN(a.amount) && a.amount !== 0; });
+  return (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId) return p;
+    var copy = Object.assign({}, p);
+    if (clean.length) copy.adj = clean; else delete copy.adj;
+    return copy;
+  });
+};
+
+window.LTP_getFixedAdjustments = function(fixedPositions, posId) {
+  var hit = (fixedPositions || []).find(function(p) { return p && p.id === posId; });
+  return (hit && hit.adj && hit.adj.length) ? hit.adj : [];
+};
+
+// Notify-tray snapshot of a flat-rate position — the shape _crew_shifts_html
+// renders (flagged `flat`, no date/time, no fee: a removal notice doesn't
+// restate the offer). Mirrors shiftSnap for shift positions.
+window.LTP_fixedSnapshots = function(fixedPositions, positionIds, services) {
+  var ids = {}; (positionIds || []).forEach(function(id) { ids[id] = true; });
+  var svcById = {}; (services || []).forEach(function(sv) { svcById[sv.id] = sv; });
+  var out = [];
+  (fixedPositions || []).forEach(function(p) {
+    if (!p || !ids[p.id]) return;
+    var svc = svcById[p.serviceId];
+    var roleLabel = svc
+      ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")).replace(/^\s*—\s*|\s*—\s*$/g, "").trim()
+      : (p.role || "");
+    out.push({ positionId: p.id, roleLabel: roleLabel || "Crew", department: svc ? (svc.department || "") : "",
+               status: p.status, shiftTitle: "", date: "", startTime: "", endTime: "", flat: true });
+  });
+  return out;
+};
+
+// Flat-rate mirror of LTP_diffRemovedCrew: flat-rate positions that LOST their crew
+// member between two fixedPositions lists (deleted, unassigned, reassigned),
+// bucketed per person + notice type for the notify tray.
+window.LTP_diffRemovedFixed = function(before, after, contacts, services) {
+  var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+  var afterById = {};
+  (after || []).forEach(function(p) { if (p) afterById[p.id] = p.crewId || null; });
+  var groups = {};
+  (before || []).forEach(function(p) {
+    if (!p || !p.crewId || !ACTIVE[p.status]) return;
+    var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
+    if (stillThere && afterById[p.id] === p.crewId) return;
+    var template = window.LTP_removalTemplate(p.status);
+    var k = p.crewId + ":" + template;
+    if (!groups[k]) {
+      var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
+      groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: template, shifts: [] };
+    }
+    groups[k].shifts = groups[k].shifts.concat(window.LTP_fixedSnapshots([p], [p.id], services));
+  });
+  return Object.keys(groups).map(function(k) { return groups[k]; });
+};
+
+// Bill / cost / margin across a project's flat-rate positions — what the Schedule
+// Builder adds to its day-labor totals. A full-margin flat-rate position bills but
+// costs nothing; a flat-rate position without a rate-card role still counts (it just
+// can't be sent to a quote until it has one).
+window.LTP_fixedPositionsTotals = function(fixedPositions) {
+  var rate = 0, cost = 0, n = 0, filled = 0;
+  (fixedPositions || []).forEach(function(p) {
+    if (!p) return;
+    n++;
+    if (p.status === "confirmed") filled++;
+    rate += Number(p.bill) || 0;
+    cost += p.fullMargin ? 0 : (Number(p.fee) || 0);
+  });
+  return { rateTotal: Math.round(rate * 100) / 100, costTotal: Math.round(cost * 100) / 100,
+           margin: Math.round((rate - cost) * 100) / 100, count: n, filled: filled };
 };

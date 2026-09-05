@@ -20,7 +20,159 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId }) {
+  // ── Flat-rate positions panel ─────────────────────────────────────────────
+  // People hired for the WHOLE project at a fixed fee with no call times — a
+  // lighting designer, a stage manager. They live in project.fixedPositions,
+  // not on a schedule day (see backend/models.py::Project.fixed_positions and
+  // the helpers in components/domain-crew.js): the fee (what we pay) and the
+  // bill (what the client pays) are typed per position, margin is the
+  // difference, and the fee lands in the payroll period the PROJECT'S END DATE
+  // falls into — paid on that period's pay day with everything else, no
+  // per-position pay date. Status is read-only here, exactly like a shift
+  // position: requests, confirms and releases happen in Labor.
+  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+  var ACTIVE_POS = { requested: 1, accepted: 1, confirmed: 1 };
+
+  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, settings, isMobile }) {
+    var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
+    var money = window.LTP_money;
+    var rows = list || [];
+    function update(id, patch) {
+      onChange(rows.map(function(p) { return p.id === id ? Object.assign({}, p, patch) : p; }));
+    }
+    function add() {
+      onChange(rows.concat([{ id: genId("fpos"), serviceId: null, role: "", crewId: null, status: "open",
+                              fee: 0, bill: 0, fullMargin: false, note: "" }]));
+    }
+    // When the fee is paid: the payroll period the project's end date falls
+    // into, on that period's pay day (Settings → pay period anchor / length /
+    // pay-day offset). Spelled out here so the producer never has to work it out.
+    var endISO = window.LTP_fixedPayDate(project);
+    var ppCfg = settings || {};
+    var pp = (endISO && ppCfg.payPeriodAnchor) ? window.LTP_payPeriodBounds(ppCfg.payPeriodAnchor, ppCfg.payPeriodLengthDays || 14, endISO) : null;
+    var payDay = pp ? window.LTP_payPeriodPayDay(pp.end, ppCfg.payPeriodPayDayOffsetDays || 0) : null;
+    var payLine = !endISO
+      ? "Set the project's end date \u2014 the fee is paid with the payroll period that date falls into."
+      : pp
+        ? "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into \u2014 pay day " + fmt(payDay) + ", alongside every other payout in that period."
+        : "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into. Set the pay-period start date in Settings to see the pay day.";
+    // Density: desktop is the dense one-line ledger row; a phone (16px inputs,
+    // forced by index.html) lays each position out as a small card — role ·
+    // crew / fee · bill · MGN / note / status … margin · × — in the same
+    // 36px controls and chips the day editor uses (components/schedule-editor.js).
+    var M = isMobile, CTL = window.LTP_CTL;
+    var inp = M
+      ? window.LTP_INLINE_INPUT
+      : { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
+    var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+    // Phone: the label lives INSIDE the field's box ("FEE $ 1500") so the pair
+    // reads as one control and nothing wraps under it (window.LTP_inlineField).
+    function moneyField(label, title, input) {
+      return M ? window.LTP_inlineField(label, input, { title: title }) : h("label", { style: lbl, title: title }, label, input);
+    }
+    var trig = M ? { borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: CTL } : { borderRadius: "3px", padding: "3px 5px", fontSize: "10px", minHeight: 0 };
+    var warnChip = { color: B.warn, fontSize: M ? "10px" : "9px", fontWeight: 700, whiteSpace: "nowrap" };
+    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: M ? "10px" : "6px", padding: M ? 10 : 12, marginBottom: M ? 10 : 12 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 8 : 0 } },
+        // Title only — the when-is-it-paid explanation sits behind a hover so the
+        // panel stays as lean as the day editor below it.
+        h("div", { title: payLine, style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "help" } }, "Flat-rate positions"),
+        h("button", { onClick: add,
+          style: M ? { background: "transparent", border: "1px dashed " + B.accent + "55", color: B.accent, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: "0 10px", height: 30, borderRadius: "8px", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "inherit" }
+                   : { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
+          "+ Flat-rate position")),
+      rows.map(function(p) {
+        var svc = p.serviceId ? svcs.find(function(sv) { return sv.id === p.serviceId; }) : null;
+        var pc = POS_COLORS[p.status] || B.textMut;
+        var fee = Number(p.fee) || 0, bill = Number(p.bill) || 0;
+        var margin = Math.round((bill - (p.fullMargin ? 0 : fee)) * 100) / 100;
+        var co = window.LTP_crewSelectOptions({
+          crew: crew, role: svc ? svc.role : "", selectedId: p.crewId,
+          allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
+        });
+        // ── Row controls, built once and laid out per width ──
+        // Role — a rate-card service, required: it routes the fee to that
+        // role's QuickBooks expense account and names the quote line.
+        var roleSel = h(window.LTPSearchSelect, {
+          value: p.serviceId || "",
+          onChange: function(v) {
+            var sid = (v === "" || v == null) ? null : Number(v);
+            var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
+            update(p.id, { serviceId: sid, role: sv ? sv.role : "" });
+          },
+          options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
+            return { value: sv.id, label: sv.role, sublabel: sv.description };
+          })),
+          searchPlaceholder: "Search roles\u2026",
+          style: { flex: M ? "1 1 40%" : "1 1 110px", minWidth: 0 },
+          triggerStyle: trig, panelMinWidth: 250,
+        });
+        // Crew — role-matched first, like every crew picker. Clearing or
+        // changing the person reopens the slot (a request belongs to whoever
+        // was asked).
+        var crewSel = h(window.LTPSearchSelect, {
+          value: p.crewId || "",
+          onChange: function(v) {
+            var cid = (v === "" || v == null) ? null : Number(v);
+            if (cid) update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" });
+            else update(p.id, { crewId: null, status: "open" });
+          },
+          options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+          searchPlaceholder: "Search crew\u2026",
+          style: { flex: M ? "1 1 52%" : "1 1 130px", minWidth: 0 },
+          triggerStyle: trig, panelMinWidth: 260,
+        });
+        var feeField = moneyField("Fee $", "What we pay this person for the whole project.",
+          h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: fee === 0 ? "" : p.fee, placeholder: "0",
+            onChange: function(e) { update(p.id, { fee: e.target.value === "" ? 0 : Number(e.target.value) }); },
+            style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
+        var billField = moneyField("Bill $", "What the client is charged for this position (0 = absorbed in the package price, no quote line).",
+          h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: bill === 0 ? "" : p.bill, placeholder: "0",
+            onChange: function(e) { update(p.id, { bill: e.target.value === "" ? 0 : Number(e.target.value) }); },
+            style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
+        // Full-margin toggle — bills the client, zeroes the cost (the owner filling the role).
+        var mgnBtn = h("button", { onClick: function() { update(p.id, { fullMargin: !p.fullMargin }); },
+          title: p.fullMargin ? "Full margin: company cost is $0 for this position (bill still charged). Click to cost it at the fee." : "Mark full margin \u2014 zero the company cost (bill still charged), e.g. the owner filling the role.",
+          style: M ? { flexShrink: 0, height: CTL, padding: "0 10px", borderRadius: "8px", fontSize: "10px", fontWeight: 700, lineHeight: 1, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), color: p.fullMargin ? B.success : B.textMut, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }
+                   : { flexShrink: 0, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: p.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+          p.fullMargin ? "\u2713 MGN" : "MGN");
+        var noteInput = h("input", { type: "text", value: p.note || "", placeholder: "Scope note for the crew (optional)", maxLength: 500,
+          onChange: function(e) { update(p.id, { note: e.target.value }); },
+          style: M ? { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", height: CTL, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", width: "100%", minWidth: 0, boxSizing: "border-box" }
+                   : Object.assign({}, inp, { flex: "1 1 150px" }) });
+        // Status — read-only here, managed in Labor (same as shift positions).
+        var statusChip = h("span", { style: M
+            ? { flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "6px", padding: "0 8px", height: 28, display: "inline-flex", alignItems: "center", lineHeight: 1 }
+            : { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, p.status);
+        var moneyBox = M
+          ? h("div", { style: { flexShrink: 0, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" } },
+              h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + money(bill)),
+              p.fullMargin
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.success } }, "margin")
+                : h("span", { style: { fontSize: "11px", color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin)))
+          : h("div", { style: { flexShrink: 0, width: 96, textAlign: "right", fontSize: "9px" } },
+              h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + money(bill)),
+              p.fullMargin
+                ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
+                : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin)));
+        var roleWarn = !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.", style: warnChip }, "\u26a0 role needed");
+        var endWarn = !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).", style: warnChip }, "\u26a0 no project end date");
+        var delBtn = h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
+          style: M ? { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" }
+                   : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "\u00d7");
+        var line = { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" };
+        return M
+          ? h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: 8, marginBottom: 8 } },
+              h("div", { style: line }, roleSel, crewSel),
+              h("div", { style: Object.assign({ marginTop: 6 }, line) }, feeField, billField, mgnBtn),
+              h("div", { style: { marginTop: 6 } }, noteInput),
+              h("div", { style: Object.assign({ marginTop: 6 }, line) }, statusChip, roleWarn, endWarn, moneyBox, delBtn))
+          : h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
+              roleSel, crewSel, feeField, billField, mgnBtn, noteInput, statusChip, moneyBox, roleWarn, endWarn, delBtn);
+      }));
+  }
+
+  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
     var isMobile = window.LTP_useIsMobile();
     var company = companies.find(function(c) { return c.id === project.companyId; });
 
@@ -52,6 +204,9 @@
         }),
         scheduleNotes: p.scheduleNotes || "",
         scheduleActivity: (p.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
+        // Flat-rate positions (no schedule day). Shallow-cloned like
+        // positions; their pay/work/adj snapshots are only ever replaced.
+        fixedPositions: (p.fixedPositions || []).map(function(x) { return Object.assign({}, x); }),
       };
     }
     var initial = useMemo(function() { return initialFrom(project); }, [project.id]);
@@ -103,7 +258,9 @@
     var [paidWarn, setPaidWarn] = useState(null);   // [{crewId, date, ds}] while confirming
     var paidSeq = React.useRef(0);
     useEffect(function() {
-      var dates = (project.schedule || []).map(function(s) { return s.date; }).filter(Boolean).sort();
+      var dates = (project.schedule || []).map(function(s) { return s.date; })
+        .concat((project.fixedPositions || []).length ? [window.LTP_fixedPayDate(project)] : [])
+        .filter(Boolean).sort();
       if (!dates.length) { setPaidDays({}); return; }
       var seq = ++paidSeq.current;   // ignore a slower earlier project's late response
       fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -133,8 +290,19 @@
     // crew-wide breaks AND the position's individual breaks, and the crew's
     // positions (role/service/status). A change to any of these reprices pay, so
     // all of them must be in the signature or the paid-day guard misses the edit.
-    function _paidSig(schedule) {
+    function _paidSig(schedule, fixed) {
       var m = {};
+      // Flat-rate positions fingerprint under the project's END date:
+      // service, role, status, fee and the full-margin flag all reprice the
+      // fee. Mirrors the "flat" branch of backend/payouts.py::paid_day_signature.
+      var flatDate = window.LTP_fixedPayDate(project);
+      (fixed || []).forEach(function(p) {
+        if (!p || p.crewId == null) return;
+        var d = flatDate;
+        if (!d) return;
+        var key = p.crewId + "|" + d;
+        (m[key] = m[key] || []).push(["flat", p.serviceId, p.role, p.status, Number(p.fee) || 0, !!p.fullMargin].join(","));
+      });
       (schedule || []).forEach(function(s) {
         if (!s.date) return;
         (s.positions || []).forEach(function(p) {
@@ -149,7 +317,8 @@
     }
     function changedPaidDays() {
       if (!Object.keys(paidDays).length) return [];
-      var before = _paidSig(cleanRef.current.schedule), after = _paidSig(draft.schedule);
+      var before = _paidSig(cleanRef.current.schedule, cleanRef.current.fixedPositions);
+      var after = _paidSig(draft.schedule, draft.fixedPositions);
       var out = [];
       Object.keys(paidDays).forEach(function(cd) {
         if ((before[cd] || []).join(";") !== (after[cd] || []).join(";")) {
@@ -220,8 +389,16 @@
         totalCost += dayLabor.costTotal;
       });
       var days = Object.keys(dateMap).length;
-      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost) };
-    }, [draft.schedule, contacts]);
+      // Flat-rate positions: typed bill/fee, no rate engine — added on top of
+      // the day labor so the summary previews the whole project's margin.
+      var flat = window.LTP_fixedPositionsTotals(draft.fixedPositions);
+      totalRate += flat.rateTotal;
+      totalCost += flat.costTotal;
+      totalPos += flat.count;
+      filledPos += flat.filled;
+      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost),
+               flatCount: flat.count, flatFilled: flat.filled, flatRate: Math.round(flat.rateTotal), flatCost: Math.round(flat.costTotal) };
+    }, [draft.schedule, draft.fixedPositions, contacts]);
 
     // ── Compute changes for activity ─────────────────────────────────────────
     function computeSchedChanges(before, after) {
@@ -260,6 +437,25 @@
         });
       });
       bs.forEach(function(s) { if (!as.find(function(a) { return a.id === s.id; })) changes.push({ cat: "Day Removed", detail: (s.title || "?") + (s.date ? " (" + fmt(s.date) + ")" : "") }); });
+      // Flat-rate positions — same shape of entries, keyed on the role.
+      var bf = before.fixedPositions || [], af = after.fixedPositions || [];
+      var bfMap = {}; bf.forEach(function(p) { bfMap[p.id] = p; });
+      var money = window.LTP_money;
+      function roleName(p) { var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null; return sv ? sv.role : (p.role || "?"); }
+      function crewName(id) { var c = id ? contacts.find(function(x) { return x.id === id; }) : null; return c ? c.firstName + " " + c.lastName : "Unassigned"; }
+      af.forEach(function(p) {
+        var label = "Flat-rate " + roleName(p);
+        var bp = bfMap[p.id];
+        if (!bp) { changes.push({ cat: "Flat-rate Position Added", detail: roleName(p) + (Number(p.fee) ? " \u00b7 fee $" + money(p.fee) : "") }); return; }
+        if (bp.serviceId !== p.serviceId) changes.push({ cat: label + " \u2014 Role Changed", detail: roleName(bp) + " \u2192 " + roleName(p) });
+        if (bp.crewId !== p.crewId) changes.push({ cat: label, detail: crewName(bp.crewId) + " \u2192 " + crewName(p.crewId) });
+        if (bp.status !== p.status) changes.push({ cat: label + " Status", detail: bp.status + " \u2192 " + p.status });
+        if ((Number(bp.fee) || 0) !== (Number(p.fee) || 0)) changes.push({ cat: label + " Fee", detail: "$" + money(bp.fee) + " \u2192 $" + money(p.fee) });
+        if ((Number(bp.bill) || 0) !== (Number(p.bill) || 0)) changes.push({ cat: label + " Bill", detail: "$" + money(bp.bill) + " \u2192 $" + money(p.bill) });
+        if (!!bp.fullMargin !== !!p.fullMargin) changes.push({ cat: label + " Cost", detail: p.fullMargin ? "Full margin ($0 cost)" : "Costed at the fee" });
+        if ((bp.note || "") !== (p.note || "")) changes.push({ cat: label + " Note", detail: "Updated" });
+      });
+      bf.forEach(function(p) { if (!af.find(function(a) { return a.id === p.id; })) changes.push({ cat: "Flat-rate Position Removed", detail: roleName(p) }); });
       if ((before.scheduleNotes || "") !== (after.scheduleNotes || "")) changes.push({ cat: "Notes", detail: "Updated" });
       return changes.length > 0 ? changes : null;
     }
@@ -283,7 +479,8 @@
         // (removed/reassigned) and crew whose still-held shift was MOVED. Both
         // park into the notify tray, grouped per person, for the producer to
         // send or decline. Snapshot here (the draft is about to persist).
-        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, svcs);
+        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, svcs)
+          .concat(window.LTP_diffRemovedFixed(cleanRef.current.fixedPositions, draft.fixedPositions, contacts, svcs));
         var changed = window.LTP_diffChangedShifts(cleanRef.current.schedule, draft.schedule, contacts, svcs);
         removed.concat(changed).forEach(function(g) {
           window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: project.id, projectName: project.name || "", template: g.template, shifts: g.shifts });
@@ -307,14 +504,19 @@
       // Keep any row with real content (title/date/crew/breaks), not just
       // titled rows — unlabeled-but-real days were being dropped on save.
       var cleanSchedule = draft.schedule.filter(window.LTP_scheduleRowHasContent);
+      // A flat-rate row survives once anything was entered into it; a pristine
+      // "+ Flat-rate position" row that was never touched is dropped.
+      var cleanFixed = (draft.fixedPositions || []).filter(function(p) {
+        return p && (p.serviceId || p.crewId != null || (Number(p.fee) || 0) > 0 || (Number(p.bill) || 0) > 0 || (p.note || "").trim());
+      });
 
       setProjects(function(prev) {
         return prev.map(function(p) {
-          return p.id === project.id ? Object.assign({}, p, { schedule: cleanSchedule, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity }) : p;
+          return p.id === project.id ? Object.assign({}, p, { schedule: cleanSchedule, fixedPositions: cleanFixed, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity }) : p;
         });
       });
 
-      var saved = { schedule: cleanSchedule, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity };
+      var saved = { schedule: cleanSchedule, fixedPositions: cleanFixed, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity };
       setDraftRaw(saved);
       cleanRef.current = saved;
       setIsDirty(false);
@@ -330,6 +532,24 @@
     function handleScheduleChange(newSchedule) {
       setDraft(function(d) { return Object.assign({}, d, { schedule: newSchedule }); });
     }
+    function handleFixedChange(list) {
+      setDraft(function(d) { return Object.assign({}, d, { fixedPositions: list }); });
+    }
+    // Removing a flat-rate position someone already holds confirms first — the
+    // removal notice itself is parked on save (LTP_diffRemovedFixed).
+    function removeFixed(pos) {
+      var drop = function() {
+        setDraft(function(d) { return Object.assign({}, d, { fixedPositions: (d.fixedPositions || []).filter(function(p) { return p.id !== pos.id; }) }); });
+      };
+      if (pos.crewId && ACTIVE_POS[pos.status]) {
+        var cm = contacts.find(function(c) { return c.id === pos.crewId; });
+        setDlg({ title: "Remove flat-rate position", variant: "danger", confirmLabel: "Remove",
+          message: (cm ? cm.firstName + " " + cm.lastName : "This crew member") + " is " + pos.status + " for this position. Removing it releases them \u2014 a notice is queued to the notify tray when you save.",
+          onConfirm: function() { drop(); setDlg(null); } });
+        return;
+      }
+      drop();
+    }
 
     function printSchedule() {
       var sorted = draft.schedule.slice().sort(function(a, b) { return (a.date + a.time) > (b.date + b.time) ? 1 : -1; });
@@ -342,7 +562,13 @@
         return "<tr><td>" + escAttr(s.title) + "</td><td>" + fmt(s.date) + "</td><td>" + ft(s.time) + " \u2192 " + ft(s.endTime) + "</td><td>" + (dur || "\u2014") + "</td><td>" + posText + "</td></tr>";
       }).join("");
       var w = window.open("", "_blank");
-      w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table><div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
+      var flatRows = (draft.fixedPositions || []).map(function(p) {
+        var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null;
+        var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
+        return "<tr><td>" + escAttr(sv ? sv.role + " \u2014 " + sv.description : (p.role || "?")) + "</td><td>" + (cm ? escAttr(cm.firstName + " " + cm.lastName) : "(open)") + "</td><td>" + escAttr(p.status) + "</td><td>" + escAttr(p.note || "") + "</td></tr>";
+      }).join("");
+      var flatHtml = flatRows ? "<h2 style='margin:22px 0 8px'>Flat-rate positions \u2014 whole project, no call times</h2><table><thead><tr><th>Role</th><th>Crew</th><th>Status</th><th>Scope</th></tr></thead><tbody>" + flatRows + "</tbody></table>" : "";
+      w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table>" + flatHtml + "<div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
       w.document.close(); w.print();
     }
 
@@ -382,12 +608,13 @@
 
     function openSend(kind) {
       var noun = KIND[kind].noun;
-      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a " + noun + "."); return; }
+      var hasFlat = (draft.fixedPositions || []).some(function(p) { return p && p.serviceId && (Number(p.bill) || 0) > 0; });
+      if (draft.schedule.length === 0 && !hasFlat) { showAlert("No Schedule", "Add schedule days before creating a " + noun + "."); return; }
       // Lines are priced off `draft`, not the persisted project — sending an
       // unsaved schedule would bill times the project doesn't have.
       if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a " + noun + "."); return; }
-      var hasPositions = draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
-      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days before creating a " + noun + "."); return; }
+      var hasPositions = hasFlat || draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
+      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days (or a billed flat-rate position) before creating a " + noun + "."); return; }
       setSendDlg({ kind: kind, step: "grouping" });
     }
 
@@ -398,7 +625,7 @@
     function chooseGrouping(grouping) {
       var kind = sendDlg.kind;
       var sections = window.LTP_scheduleLaborSections(
-        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId);
+        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId, draft.fixedPositions);
       if (sections.length === 0) {
         setSendDlg(null);
         // Positions exist (openSend checked) but nothing priced — every day is
@@ -514,37 +741,84 @@
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
+    // Phone header: one row — ← · project name over "Schedule · client · dates"
+    // · Save (only while dirty) · ⋯. Send to Quote / Invoice, Print and Discard
+    // live in the ⋯ menu; five wrapping buttons were pushing the schedule
+    // itself below the fold. Desktop keeps its full action bar.
+    var savedChip = justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: isMobile ? "0 10px" : "5px 10px", height: isMobile ? 34 : undefined, display: "inline-flex", alignItems: "center", borderRadius: isMobile ? "8px" : "6px", whiteSpace: "nowrap" } }, "\u2713 Saved");
+    var header = isMobile
+      ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, background: B.surface, borderBottom: "1px solid " + B.border, padding: "calc(8px + env(safe-area-inset-top)) 10px 8px", flexShrink: 0, zIndex: 5 } },
+          h("button", { onClick: function() { nav("projects/" + project.id); }, "aria-label": "Back to project", className: "ltp-tap",
+            style: { flexShrink: 0, width: 36, height: 36, borderRadius: "8px", background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontSize: "18px", lineHeight: 1, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\u2190"),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "-0.01em" } }, project.name),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+              // Dates before the client: while Save is showing the line
+              // truncates, and the dates are the half a producer needs.
+              ["Schedule", window.LTP_formatDateRangeShort(project.startDate, project.endDate) || null, company ? company.name : null].filter(Boolean).join(" \u00b7 "))),
+          h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
+            !isDirty && savedChip,
+            isDirty && h(window.Btn, { small: true, onClick: save, style: { height: 34, padding: "0 14px", fontSize: "12px" } }, "Save"),
+            h(window.LTPOverflowMenu, { items: [
+              { label: "Send to Quote", onClick: function() { openSend("quote"); } },
+              { label: "Send to Invoice", onClick: function() { openSend("invoice"); } },
+              { label: "Print schedule", onClick: printSchedule },
+              isDirty && { label: "Discard changes", variant: "danger", onClick: discard },
+            ] })))
+      : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
+            h("button", { onClick: function() { nav("projects/" + project.id); },
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
+            h("div", null,
+              h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
+              h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
+                (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" } },
+            savedChip,
+            h("button", { onClick: function() { openSend("quote"); },
+              style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
+            // Bills the schedule straight to the client, skipping the quote's
+            // delivered/invoiced ledger entirely \u2014 these are direct-bill lines.
+            h("button", { onClick: function() { openSend("invoice"); },
+              style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Invoice"),
+            h("button", { onClick: printSchedule,
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
+            isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
+            isDirty && h(window.Btn, { small: true, onClick: save }, "Save Schedule")));
+
+    // Phone summary strip — the side panel's Schedule Summary as four tiles at
+    // the top of the column (the side panel itself stacks under the editor on
+    // a phone, where a producer never scrolled down to find it).
+    var allFilled = stats.filledPos === stats.totalPos && stats.totalPos > 0;
+    var summaryStrip = isMobile && h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+      { label: "Days", value: stats.days },
+      { label: "Filled", value: stats.filledPos + "/" + stats.totalPos, color: allFilled ? B.success : null },
+      { label: "Rate", value: "$" + stats.totalRate.toLocaleString(), color: B.accent, title: "Cost $" + stats.totalCost.toLocaleString() },
+      { label: "Margin", value: "$" + stats.margin.toLocaleString(), color: stats.margin >= 0 ? B.success : B.danger, title: "Cost $" + stats.totalCost.toLocaleString() },
+    ] });
+
+    // Side sections: bordered blocks in the desktop column; rounded cards
+    // between the editor and the bottom of the page on a phone.
+    var sideCard = isMobile
+      ? { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: 12 }
+      : { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 };
+    var sideH4 = { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" };
+
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header. In the full-screen builder the app topbar is hidden, so
-      // on mobile this header takes the status-bar safe-area inset and its
-      // actions wrap instead of overflowing off-screen.
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 10 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
-          h("button", { onClick: function() { nav("projects/" + project.id); },
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
-          h("div", null,
-            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
-            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-              (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
-          justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
-          h("button", { onClick: function() { openSend("quote"); },
-            style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
-          // Bills the schedule straight to the client, skipping the quote's
-          // delivered/invoiced ledger entirely \u2014 these are direct-bill lines.
-          h("button", { onClick: function() { openSend("invoice"); },
-            style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Invoice"),
-          h("button", { onClick: printSchedule,
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
-          isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
-          isDirty && h(window.Btn, { small: true, onClick: save }, "Save Schedule"))
-      ),
+      // on mobile this header takes the status-bar safe-area inset.
+      header,
 
       // Body: main + side panel on desktop; single scrolling column on mobile
       // so the editor gets full width and the summary/notes/activity stack below.
-      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
+      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 8 : 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10, paddingBottom: isMobile ? "calc(16px + env(safe-area-inset-bottom))" : 0 } },
         // Main content (scrollable)
-        h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0 } },
+        // Phone: hug the content (flex 1 would stretch an empty schedule and
+        // push Notes / Activity to the bottom of the screen).
+        h("div", { style: { flex: isMobile ? "0 0 auto" : 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0, padding: isMobile ? "0 6px" : 0 } },
+          summaryStrip,
+          h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
+            contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {
@@ -565,9 +839,20 @@
         ),
 
         // Side panel
-        h("div", { style: { width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: isMobile ? "visible" : "auto" } },
-          // SUMMARY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+        h("div", { style: { width: isMobile ? "auto" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: isMobile ? 8 : 4, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "0 6px" : 0 } },
+          // SUMMARY — on a phone it is the strip at the top of the column
+          // instead; only the client-rates note keeps a section down here.
+          isMobile && clientRateRoles.length > 0 && h("div", { style: sideCard },
+            h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.info, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 5 } },
+              (company ? company.name : "Client") + " rates"),
+            clientRateRoles.map(function(s) {
+              var maps = window.LTP_serviceRateMaps(s);
+              return h("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", gap: 6, fontSize: "11px", padding: "2px 0" } },
+                h("span", { style: { color: B.textSec, fontWeight: 600 } }, s.role,
+                  s.minHours > 0 && h("span", { style: { color: B.info, fontWeight: 700 } }, " \u00b7 " + s.minHours + "h min")),
+                h("span", { style: { color: B.textMut } }, "$" + Math.round(maps.priceMap.day) + "/day"));
+            })),
+          !isMobile && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Schedule Summary"),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Schedule Days"),
@@ -575,6 +860,10 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Positions"),
               h("span", { style: { fontSize: "12px", fontWeight: 600, color: stats.filledPos === stats.totalPos && stats.totalPos > 0 ? B.success : B.text } }, stats.filledPos + " / " + stats.totalPos + " filled")),
+            stats.flatCount > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
+              h("span", { style: { fontSize: "11px", color: B.textSec } }, "Flat-rate"),
+              h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text }, title: "Bill $" + stats.flatRate.toLocaleString() + " · cost $" + stats.flatCost.toLocaleString() + " (included in the totals below)" },
+                stats.flatFilled + " / " + stats.flatCount + " confirmed \u00b7 $" + stats.flatRate.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Total Rate"),
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + stats.totalRate.toLocaleString())),
@@ -621,8 +910,8 @@
             var seen = {};
             projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
             if (projectConflicts.length === 0) return null;
-            return h("div", { style: { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
+            return h("div", { style: isMobile ? Object.assign({}, sideCard, { background: B.danger + "11", borderColor: B.danger + "44" }) : { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
+              h("h4", { style: Object.assign({}, sideH4, { color: B.danger }) }, "Scheduling Conflicts"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
                   return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + B.danger + "33" } },
@@ -635,17 +924,17 @@
           }(),
 
           // NOTES
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
+          h("div", { style: sideCard },
+            h("h4", { style: sideH4 }, "Internal Notes"),
             h("textarea", { value: draft.scheduleNotes || "",
               onChange: function(e) { setDraft(function(d) { return Object.assign({}, d, { scheduleNotes: e.target.value }); }); },
               placeholder: "Schedule notes, crew preferences, special requirements\u2026",
-              style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
+              style: { width: "100%", boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: isMobile ? "8px" : "6px", padding: isMobile ? "8px 10px" : "8px", color: B.text, fontSize: isMobile ? "16px" : "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
           ),
 
           // ACTIVITY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: Object.assign({}, sideCard, { flex: 1, display: "flex", flexDirection: "column", minHeight: 120 }) },
+            h("h4", { style: sideH4 }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.scheduleActivity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success };

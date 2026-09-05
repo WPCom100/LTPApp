@@ -12,6 +12,18 @@
 
   var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info } };
 
+  // "3 shifts" / "1 flat-rate position" / "3 shifts + 1 flat-rate position"
+  // — the count line for a request, matching the server's email header
+  // (backend/routes/crew.py::_ask_label). `list` is aggregatePositions rows.
+  function askLabel(list) {
+    var nShift = 0, nFlat = 0;
+    (list || []).forEach(function(p) { if (p && p.flat) nFlat++; else nShift++; });
+    var parts = [];
+    if (nShift || !nFlat) parts.push(nShift + " shift" + (nShift === 1 ? "" : "s"));
+    if (nFlat) parts.push(nFlat + " flat-rate position" + (nFlat === 1 ? "" : "s"));
+    return parts.join(" + ");
+  }
+
   // ── Aggregate positions from all project schedules ─────────────────────
   // THE rate card for ONE project — the catalog with that project's client's
   // negotiated overrides folded in (theme.js::LTP_servicesForClient). Every pay
@@ -78,6 +90,40 @@
           });
         });
       });
+
+      // Flat-rate positions (proj.fixedPositions): hired for the whole
+      // project at a fixed fee, no date and no call times. They get their own
+      // rows — `flat: true`, schedItemId null — so they can be assigned,
+      // requested, confirmed and paid through the same flows as a shift. The
+      // dateless bucket on the Assignments tab is theirs alone (a dateless
+      // SHIFT row is skipped above). The Calendar grid, which matches rows on
+      // a date, never places them; the Weekly Schedule spreads each one across
+      // the project's date range (projectStart/projectEnd — the project's own
+      // dates, else the span of its scheduled days).
+      var datedDays = Object.keys(dateGroups).filter(function(k) { return k !== "_unscheduled"; }).sort();
+      var projectStart = proj.startDate || (datedDays.length ? datedDays[0] : "");
+      var projectEnd = proj.endDate || (datedDays.length ? datedDays[datedDays.length - 1] : "");
+      if (projectEnd && projectStart && projectEnd < projectStart) projectEnd = projectStart;
+      (proj.fixedPositions || []).forEach(function(p) {
+        if (!p) return;
+        var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
+        var cm = p.crewId ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
+        all.push({
+          projectId: proj.id, projectName: proj.name, companyId: proj.companyId,
+          schedItemId: null, schedTitle: "Flat-rate position",
+          date: "", callTime: "", endTime: "", dayCall: null, dayWrap: null,
+          posId: p.id, role: p.role, serviceId: p.serviceId,
+          slot: 1, dayRoleCount: 0,
+          crewId: p.crewId, status: p.status, note: p.note || "",
+          svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
+          roleCode: svc ? svc.role : "Crew",
+          dept: svc ? svc.department : "",
+          crewName: cm ? cm.firstName + " " + cm.lastName : null,
+          flat: true, fee: Number(p.fee) || 0, bill: Number(p.bill) || 0, fullMargin: !!p.fullMargin,
+          payDate: window.LTP_fixedPayDate(proj),   // project end — the payroll period it falls into pays the fee
+          projectStart: projectStart, projectEnd: projectEnd,
+        });
+      });
     });
     all.sort(function(a, b) { return (a.date + " " + (a.callTime || "")) > (b.date + " " + (b.callTime || "")) ? 1 : -1; });
     return all;
@@ -88,6 +134,12 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
+        // A flat-rate position has no schedule item — it lives in fixedPositions.
+        if (schedItemId == null) {
+          return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
+            return pos.id !== posId ? pos : Object.assign({}, pos, patch);
+          }) });
+        }
         return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           if (s.id !== schedItemId) return s;
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
@@ -108,6 +160,11 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
+        if (schedItemId == null) {   // flat-rate position: its own scope note
+          return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
+            return pos.id !== posId ? pos : Object.assign({}, pos, { note: note });
+          }) });
+        }
         return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           if (s.id !== schedItemId) return s;
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
@@ -125,19 +182,23 @@
   // Same-result writes converge with the debounced PUT.
   function flipPositionsLocal(setProjects, projectId, posIds, fromStatus, toStatus, clearCrew) {
     var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
+    function flip(pos) {
+      if (idSet[pos.id] && pos.status === fromStatus) {
+        var patch = { status: toStatus };
+        if (clearCrew) patch.crewId = null;
+        return Object.assign({}, pos, patch);
+      }
+      return pos;
+    }
     setProjects(function(prev) {
       return prev.map(function(proj) {
         if (projectId != null && proj.id !== projectId) return proj;
-        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            if (idSet[pos.id] && pos.status === fromStatus) {
-              var patch = { status: toStatus };
-              if (clearCrew) patch.crewId = null;
-              return Object.assign({}, pos, patch);
-            }
-            return pos;
-          }) });
-        }) });
+        return Object.assign({}, proj, {
+          schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(flip) });
+          }),
+          fixedPositions: (proj.fixedPositions || []).map(flip),
+        });
       });
     });
   }
@@ -157,11 +218,13 @@
   // — what the server's _update_positions does on a send — and nothing else.
   function withPositionsMoved(proj, posIds, fromStatus, toStatus) {
     var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
-    return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-      return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-        return (idSet[pos.id] && pos.status === fromStatus) ? Object.assign({}, pos, { status: toStatus }) : pos;
-      }) });
-    }) });
+    function move(pos) { return (idSet[pos.id] && pos.status === fromStatus) ? Object.assign({}, pos, { status: toStatus }) : pos; }
+    return Object.assign({}, proj, {
+      schedule: (proj.schedule || []).map(function(s) {
+        return Object.assign({}, s, { positions: (s.positions || []).map(move) });
+      }),
+      fixedPositions: (proj.fixedPositions || []).map(move),
+    });
   }
 
   // Mirror a status move the server is making — one (crew, project) group per
@@ -218,6 +281,7 @@
         if (p.id !== o.projectId) return p;
         var changed = 0;
         var confirmDates = {};
+        var confirmedFlat = [];
         var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
             if (ids[ps.id] && from[ps.status] && ps.crewId === o.contactId) {
@@ -227,11 +291,24 @@
             }
             return ps;
           })});
-        })});
+        }), fixedPositions: (p.fixedPositions || []).map(function(ps) {
+          if (ids[ps.id] && from[ps.status] && ps.crewId === o.contactId) {
+            changed++;
+            confirmedFlat.push(ps.id);
+            return Object.assign({}, ps, { status: "confirmed" });
+          }
+          return ps;
+        }) });
         if (changed > 0) {
+          var lockedAt = new Date().toISOString();
           updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
             updated.schedule, o.contactId, svcsFor(o.services, o.clientRates, p), window.LTP_crewMinMap(o.contacts),
-            new Date().toISOString(), Object.keys(confirmDates)) });
+            lockedAt, Object.keys(confirmDates)) });
+          // A flat-rate position locks the fee agreed at hire the same way a day
+          // locks its computed pay (LTP_stampFixedPay).
+          if (confirmedFlat.length) {
+            updated = Object.assign({}, updated, { fixedPositions: window.LTP_stampFixedPay(updated.fixedPositions, o.contactId, lockedAt, confirmedFlat) });
+          }
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: o.message + ": " + o.crewName + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
@@ -270,13 +347,17 @@
       var next = prev.map(function(proj) {
         var map = byProject[proj.id];
         if (!map) return proj;
-        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            var entry = map[pos.id];
-            if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
-            return pos;
-          }) });
-        }) });
+        function apply(pos) {
+          var entry = map[pos.id];
+          if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
+          return pos;
+        }
+        return Object.assign({}, proj, {
+          schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(apply) });
+          }),
+          fixedPositions: (proj.fixedPositions || []).map(apply),
+        });
       });
       return changed ? next : prev;
     });
@@ -444,14 +525,22 @@
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, "Crew Roster (" + crew.length + ")"),
         h(window.Btn, { small: true, onClick: function() { setCustomRole(""); setEditingCrew({ firstName: "", lastName: "", email: "", phone: "", role: "", crewDepartments: [], crewRoles: [], crewNotes: "", crewStatus: "active", minDayCost: 0, isCrew: true, companyIds: [] }); } }, "+ Add Crew")),
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
-        departments.map(function(d) {
+      // Phone: the search box takes its own row and the department chips
+      // scroll in a strip (one flex row ran the search box off-screen).
+      (function() {
+        var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" } : null;
+        var chips = departments.map(function(d) {
           return h("button", { key: d, onClick: function() { setDeptFilter(d); },
-            style: { background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? B.btnInk : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, d);
-        }),
-        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
-          style: { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })
-      ),
+            style: Object.assign({ background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? B.btnInk : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) }, d);
+        });
+        var searchInput = h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
+          style: isMobile ? { width: "100%", boxSizing: "border-box", height: 36, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 12px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" }
+                          : { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } });
+        if (isMobile) return h("div", { style: { marginBottom: 12 } },
+          h("div", { style: { marginBottom: 8 } }, searchInput),
+          h(window.LTPScrollStrip, { isMobile: true, mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips));
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } }, chips, searchInput);
+      })(),
       h(window.LTPList, null,
         filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
         filtered.map(function(c) {
@@ -709,6 +798,18 @@
     // slot isn't a change to a commitment they've been locked into yet).
     function confirmedCrewForNote(pos, applyToDay, noteText) {
       var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      if (pos.flat) {
+        // A flat-rate position's note is its scope line; only its own (confirmed,
+        // emailable) holder is notified, as a flat-rate position card.
+        var fp = proj && (proj.fixedPositions || []).find(function(x) { return x.id === pos.posId; });
+        if (!fp || fp.status !== "confirmed" || !fp.crewId) return [];
+        var fc = (contacts || []).find(function(x) { return x.id === fp.crewId; });
+        if (!fc || !(fc.email || "").trim()) return [];
+        var fsv = fp.serviceId ? (services || []).find(function(s) { return s.id === fp.serviceId; }) : null;
+        return [{ crewId: fp.crewId, crewName: (fc.firstName + " " + fc.lastName).trim(), shifts: [{
+          roleLabel: fsv ? (fsv.role + (fsv.description ? " — " + fsv.description : "")) : (fp.role || "Crew"),
+          shiftTitle: "", date: "", startTime: "", endTime: "", note: noteText, flat: true }] }];
+      }
       var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
       if (!shift) return [];
       var byCrew = {};
@@ -840,7 +941,8 @@
       window.LTP_outbox.add({
         crewId: crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew",
         projectId: projectId, projectName: proj ? proj.name : "", template: template,
-        shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, positionIds, services) : [],
+        shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, positionIds, services)
+                         .concat(window.LTP_fixedSnapshots(proj.fixedPositions, positionIds, services)) : [],
       });
     }
 
@@ -914,7 +1016,9 @@
       // Nothing emails inline.
       var template = window.LTP_removalTemplate(pos.status);
       var affectedIds = scopeIds ? scopeIds.slice() : [];
-      if (!scopeIds) {
+      // A flat-rate position is its own scope — there is no "same date" to sweep.
+      if (!scopeIds && pos.flat) { affectedIds = [pos.posId]; affectIds = {}; affectIds[pos.posId] = true; }
+      if (!scopeIds && !pos.flat) {
         var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
         if (proj) (proj.schedule || []).forEach(function(s) {
           if (s.date !== pos.date) return;
@@ -931,19 +1035,23 @@
         return prev.map(function(p) {
           if (p.id !== pos.projectId) return p;
           var changeCount = 0;
-          var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
-            if (s.date !== pos.date) return s;
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
-              if (hit) {
-                changeCount++;
-                var patch = { status: newStatus };
-                if (clearCrew) patch.crewId = null;
-                return Object.assign({}, ps, patch);
-              }
-              return ps;
-            })});
-          })});
+          function cascade(ps) {
+            var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
+            if (hit) {
+              changeCount++;
+              var patch = { status: newStatus };
+              if (clearCrew) patch.crewId = null;
+              return Object.assign({}, ps, patch);
+            }
+            return ps;
+          }
+          var updated = Object.assign({}, p, {
+            schedule: (p.schedule || []).map(function(s) {
+              if (pos.flat || s.date !== pos.date) return s;
+              return Object.assign({}, s, { positions: (s.positions || []).map(cascade) });
+            }),
+            fixedPositions: pos.flat ? (p.fixedPositions || []).map(cascade) : p.fixedPositions,
+          });
           var actionLabel = pos.status === "confirmed" ? "Position cancelled" : pos.status === "accepted" ? "Crew released" : "Request withdrawn";
           var actEntry = {
             id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
@@ -1026,7 +1134,7 @@
         // flagged, the key has to enforce it directly. Free-text roles (no
         // serviceId) fall back to posId, so each stands alone — matching how the
         // conflict detector already keys them.
-        var ck = pos.crewId + "|" + (pos.serviceId || pos.posId);
+        var ck = pos.crewId + "|" + (pos.flat ? pos.posId : (pos.serviceId || pos.posId));
         if (!crewMap[ck]) {
           crewMap[ck] = { type: "day", pos: pos, items: [], allPosIds: [] };
           dayBookings.push(crewMap[ck]);
@@ -1213,41 +1321,61 @@
     }
 
     return h("div", null,
-      // Stats
-      h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 } },
-        h(window.StatCard, { label: "Total Positions", value: stats.total }),
-        h(window.StatCard, { label: "Open", value: stats.open, accent: stats.open > 0 ? B.warn : B.textMut }),
-        h(window.StatCard, { label: "Requested", value: stats.requested, accent: B.warn }),
-        h(window.StatCard, { label: "Accepted", value: stats.accepted, accent: stats.accepted > 0 ? B.success : B.textMut }),
-        h(window.StatCard, { label: "Confirmed", value: stats.confirmed, accent: B.success }),
-        stats.conflicts > 0 && h(window.StatCard, { label: "Conflicts", value: stats.conflicts, accent: B.danger })
-      ),
-      // Filters + Batch Actions
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
+      // Stats — phone: one compact strip (five stacked 180px cards were a
+      // whole screen); desktop: the StatCard row.
+      isMobile
+        ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+            { label: "Total", value: stats.total },
+            { label: "Open", value: stats.open, color: stats.open > 0 ? B.warn : B.textMut },
+            { label: "Requested", value: stats.requested, color: B.warn },
+            { label: "Accepted", value: stats.accepted, color: stats.accepted > 0 ? B.success : B.textMut },
+            { label: "Confirmed", value: stats.confirmed, color: B.success },
+            stats.conflicts > 0 && { label: "Conflicts", value: stats.conflicts, color: B.danger } ] })
+        : h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 } },
+            h(window.StatCard, { label: "Total Positions", value: stats.total }),
+            h(window.StatCard, { label: "Open", value: stats.open, accent: stats.open > 0 ? B.warn : B.textMut }),
+            h(window.StatCard, { label: "Requested", value: stats.requested, accent: B.warn }),
+            h(window.StatCard, { label: "Accepted", value: stats.accepted, accent: stats.accepted > 0 ? B.success : B.textMut }),
+            h(window.StatCard, { label: "Confirmed", value: stats.confirmed, accent: B.success }),
+            stats.conflicts > 0 && h(window.StatCard, { label: "Conflicts", value: stats.conflicts, accent: B.danger })
+          ),
+      // Filters + Batch Actions. Phone: the status chips scroll in one strip,
+      // then project picker · + Manual Shift (· Send) share a 36px row —
+      // instead of nine controls wrapping over four lines.
+      (function() {
+        var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" } : null;
+        var chips = ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
+            style: Object.assign({ background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
-        }),
+        });
         // Values stay STRINGS: the filter is compared with `Number(projFilter)`
         // and against the literal "all" further up.
-        h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
+        var projSelect = h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
           // sentinel:true — "All Projects" is a real value but not a record, so
           // it shouldn't be held in the list while you search for a project.
           options: [{ value: "all", label: "All Projects", sentinel: true }].concat(
             projOptions.map(function(p) { return { value: String(p.id), label: p.name }; })),
           searchPlaceholder: "Search projects\u2026",
-          style: { width: 190, flexShrink: 0 },
-          triggerStyle: { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
+          style: isMobile ? { flex: "1 1 160px", minWidth: 0 } : { width: 190, flexShrink: 0 },
+          triggerStyle: isMobile ? { background: B.raised, borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: 36 }
+                                 : { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
           panelMinWidth: 240,
-        }),
-        h("div", { style: { flex: 1 } }),
-        h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
-          style: { background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "+ Manual Shift"),
-        pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
-          style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
-      ),
+        });
+        var actMobile = isMobile ? { borderRadius: "8px", padding: "0 12px", height: 36, fontSize: "12px", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 } : null;
+        var manualBtn = h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
+          style: Object.assign({ background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile) }, "+ Manual Shift");
+        var sendBtn = pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
+          style: Object.assign({ background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile, isMobile ? { flex: "1 1 auto" } : null) }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8");
+        if (isMobile) return [
+          h(window.LTPScrollStrip, { key: "chips", isMobile: true, wrapStyle: { marginBottom: 8 },
+            mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips),
+          h("div", { key: "row", style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, manualBtn, sendBtn)
+        ];
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
+          chips, projSelect, h("div", { style: { flex: 1 } }), manualBtn, sendBtn);
+      })(),
       // One-off manual-shift adder (warehouse labor etc. \u2014 see ManualShiftModal).
       showManualShift && h(ManualShiftModal, { services: services, contacts: contacts, onSave: createManualShift, onClose: function() { setShowManualShift(false); } }),
       // Lightweight editor for an existing manual shift (internal project) \u2014
@@ -1279,7 +1407,8 @@
           pg.dates.map(function(g) {
             return h("div", { key: pg.projectId + "|" + (g.date || "_") },
               h("div", { style: { padding: "8px 14px", display: "flex", gap: 10, alignItems: "center", background: B.raised, borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + B.info } },
-                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Unscheduled"),
+                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Flat-rate \u2014 whole project"),
+                !g.date && h("span", { style: { fontSize: "9px", color: B.textMut } }, "no call times \u2014 fee stated on the request"),
                 g.dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, ft(g.dayCall) + " \u2192 " + ft(g.dayWrap)),
                 h("span", { style: { fontSize: "9px", color: B.textMut } }, (g.dayBookings || []).length + " crew")),
               // Crew rows grouped by matching schedule items
@@ -1331,7 +1460,11 @@
                             // people so the right person goes into the right slot.
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
-                            pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
+                            pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept),
+                            // Flat-rate position: the fee (what the request states) and when it is paid.
+                            pos.flat && h("span", { title: "Flat-rate position for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " \u00b7 no project end date \u2014 set one so the fee can be paid") + " \u2014 edit in the Schedule Builder.",
+                              style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginLeft: 6, cursor: "help", whiteSpace: "nowrap" } },
+                              "Flat $" + window.LTP_money(pos.fee))),
                           h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
                             var cid = (v === "" || v == null) ? null : Number(v);
                             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
@@ -1552,7 +1685,7 @@
                         isSelected && h("span", { style: { color: B.btnInk, fontSize: "10px", fontWeight: 700 } }, "\u2713")),
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
-                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
+                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
                       // No email on file — the request can't be sent, but the
                       // person can still be booked directly (that path never
                       // needed an address).
@@ -1578,13 +1711,15 @@
                     "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
                     " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
                     " private page will be sent. They can accept or decline and leave a note."),
-                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Shifts in this request (" + peShifts.length + ")"),
+                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "In this request: " + askLabel(peShifts)),
                   peShifts.length === 0
                     ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
                     : peShifts.map(function(sp, i) {
                         return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
                           h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
-                          h("span", { style: { color: B.textMut } }, "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
+                          h("span", { style: { color: B.textMut } }, sp.flat
+                            ? "  \u00b7  Flat rate $" + window.LTP_money(sp.fee) + "  \u00b7  whole project (date outline, no times)"
+                            : "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
                       }))
               )
             ),
@@ -1756,15 +1891,26 @@
       var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
       weekDates.push(d.toISOString().substring(0, 10));
     }
-    var weekLabel = fmt(weekDates[0]) + " \u2014 " + fmt(weekDates[6]);
+    var weekLabel = isMobile ? window.LTP_formatDateRangeShort(weekDates[0], weekDates[6]) : fmt(weekDates[0]) + " \u2014 " + fmt(weekDates[6]);
 
     // Build schedule: crewId → [{ date, projectName, role, callTime }]
     var scheduleMap = {};
     crew.forEach(function(c) { scheduleMap[c.id] = []; });
+    var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
     allPositions.forEach(function(p) {
-      if (!p.crewId || weekDates.indexOf(p.date) === -1) return;
-      if (p.status !== "accepted" && p.status !== "confirmed" && p.status !== "requested") return;
-      if (scheduleMap[p.crewId]) scheduleMap[p.crewId].push(p);
+      if (!p.crewId || !ACTIVE[p.status] || !scheduleMap[p.crewId]) return;
+      if (p.flat) {
+        // A flat-rate position has no call: it is on for EVERY day of the
+        // project's date range, so it lands in each of those cells this week
+        // (a copy per day, dated so the cell/day lookups below just work).
+        if (!p.projectStart || !p.projectEnd) return;
+        weekDates.forEach(function(ds) {
+          if (ds >= p.projectStart && ds <= p.projectEnd) scheduleMap[p.crewId].push(Object.assign({}, p, { date: ds }));
+        });
+        return;
+      }
+      if (weekDates.indexOf(p.date) === -1) return;
+      scheduleMap[p.crewId].push(p);
     });
 
     var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
@@ -1774,6 +1920,7 @@
     // call time shows just that; one with neither shows nothing (the row/cell
     // simply omits the line) rather than a dangling dash.
     function shiftTimes(pos) {
+      if (pos.flat) return "Flat rate \u00b7 whole project";
       var a = ft(pos.callTime), b = ft(pos.endTime);
       if (a && b) return a + " \u2013 " + b;
       return a || b || "";
@@ -1807,7 +1954,8 @@
               : rows.map(function(r, ri) {
                   var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
                   var cname = r.crew.firstName + " " + r.crew.lastName;
-                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px " + (r.pos.flat ? "dashed" : "solid") + " " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 },
+                      title: r.pos.flat ? "Flat-rate position — on for the whole project (" + fmt(r.pos.projectStart) + " – " + fmt(r.pos.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
                       h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
@@ -1843,7 +1991,8 @@
               return h("div", { key: ds, style: { background: dayShifts.length > 0 ? B.accent + "11" : B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: 3, minHeight: 40 } },
                 dayShifts.map(function(s, si) {
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
-                  return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px solid " + sc.color } },
+                  return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px " + (s.flat ? "dashed" : "solid") + " " + sc.color },
+                      title: s.flat ? "Flat-rate position — on for the whole project (" + fmt(s.projectStart) + " – " + fmt(s.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { fontWeight: 600 } }, s.roleCode),
                     shiftTimes(s) && h("div", { style: { color: B.textSec, fontSize: "8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } }, shiftTimes(s)),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
@@ -2182,7 +2331,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_setFixedAdjustments(p.fixedPositions || [], row.posId, list) })
+            : Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Pay adjustments: " + who + " \u2014 " + what + " \u2192 " +
@@ -2200,6 +2351,7 @@
     // The person's confirmed shifts on a row's day — the entries the adjust
     // modal edits and the no-show path marks.
     function dayShifts(row) {
+      if (row.kind === "flat") return [];   // no shifts behind a flat-rate position
       var proj = projects.find(function(p) { return p.id === row.projectId; });
       var out = [];
       ((proj && proj.schedule) || []).forEach(function(s) {
@@ -2248,6 +2400,37 @@
 
     function markWorked(row) { signOff(row, {}, "worked as scheduled"); }
 
+    // ── Flat-rate positions: "Mark complete" (the flat-rate sign-off) ──────
+    // Freezes the final fee as work.pay (LTP_completeFixedPosition) so the
+    // flat-rate position becomes payable on its pay date. `amount` overrides the fee
+    // when the final figure differs from what was agreed; omitted = the fee as
+    // it stands (a drift chip warns first, like a day's rate change would).
+    var [completeDlg, setCompleteDlg] = useState(null);   // { row, amount }
+    function completeFlat(row, amount) {
+      var now = new Date().toISOString();
+      var user = window.LTP_CURRENT_USER || "User";
+      var amt = (amount != null && amount !== "" && !isNaN(Number(amount))) ? Number(amount) : null;
+      var total = row.fullMargin ? 0 : (amt != null ? amt : (row.current ? row.current.total : 0));
+      var who = crewLabel(row.crewId) + " \u00b7 " + (row.roleLabel || "flat rate") + " \u00b7 " + row.projectName;
+      // When it is paid: the payroll period the project end date falls into,
+      // on that period's pay day — the same day as everything else in it.
+      var pp = payConfigured ? window.LTP_payPeriodBounds(payAnchor, payLen, row.date) : null;
+      var payDay = pp ? window.LTP_payPeriodPayDay(pp.end, payOffset) : null;
+      var when = payDay ? "paid " + fmt(payDay) + " with the pay period of " + fmt(row.date) : "payable with the pay period of " + fmt(row.date);
+      setProjects(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== row.projectId) return p;
+          var updated = Object.assign({}, p, { fixedPositions: window.LTP_completeFixedPosition(p.fixedPositions || [], row.posId, amt, now, user) });
+          var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+            type: "saved", user: user,
+            message: "Flat-rate position completed: " + who + " \u2192 " + fmtMoney(total),
+            changes: [{ cat: "Flat-rate Position Completed", detail: who + " \u2192 " + fmtMoney(total) + " (" + when + ")" }] };
+          return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+        });
+      });
+      window.LTP_toast("Flat-rate position completed", { message: who + " \u2192 " + fmtMoney(total) + ", " + when + ".", variant: "success" });
+    }
+
     function doNoShow(row) {
       setNoShowDlg(null);
       var actuals = {};
@@ -2279,7 +2462,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_unsignDay(p.schedule || [], row.crewId, row.date) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_uncompleteFixedPosition(p.fixedPositions || [], row.posId) })
+            : Object.assign({}, p, { schedule: window.LTP_unsignDay(p.schedule || [], row.crewId, row.date) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Sign-off undone: " + crewLabel(row.crewId) + " · " + fmt(row.date) + " (was " + fmtMoney(row.payable || 0) + ")",
@@ -2300,7 +2485,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, svcsFor(services, clientRates, p), mins, now, [row.date]) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_stampFixedPay(p.fixedPositions || [], row.crewId, now, [row.posId]) })
+            : Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, svcsFor(services, clientRates, p), mins, now, [row.date]) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Pay " + (wasLocked ? "re-locked" : "locked") + ": " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(newTotal),
@@ -2340,6 +2527,7 @@
 
     function tierLabel(src) {
       if (!src) return "—";
+      if (src.tier === "flat") return "Flat rate";
       if (!src.tier && !(src.paidHours > 0)) return "No-show";
       var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : "Mixed";
       var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
@@ -2349,46 +2537,75 @@
       return t + " · " + hrs + (byMin ? " (contract minimum)" : "");
     }
 
+    // Phone: the presets are pill chips in a scrolling strip (merged in only
+    // on a phone so the desktop buttons are untouched).
+    var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap" } : null;
     var presetBtn = function(key, label) {
       var active = preset === key;
       return h("button", { key: key, onClick: function() { pickPreset(key); },
-        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+        style: Object.assign({ background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, chipMobile) }, label);
     };
     // Pay-period presets: "period" (this cycle) / "lastperiod" (previous). Active
     // highlight tracks the navigator index, not a distinct preset value.
     var payPeriodBtn = function(key, label) {
       var active = preset === "period" && curPeriod && (key === "period" ? periodIndex === curPeriod.index : periodIndex === curPeriod.index - 1);
       return h("button", { key: key, onClick: function() { pickPreset(key); },
-        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+        style: Object.assign({ background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, chipMobile) }, label);
     };
     // ◀ [period label · pay day] ▶ — shown only when a cycle is configured and a
-    // pay-period preset is active (not for week/month/custom).
-    var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
-      h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
-      h("div", null,
-        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
-          (function() { var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex); return n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : ""; })()
-          + window.LTP_payPeriodLabel(range.start, range.end)),
-        h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
-      h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
+    // pay-period preset is active (not for week/month/custom). Phone: one row,
+    // the label centred between 36px arrows, dates in the short form (the long
+    // label wrapped to three lines with an arrow stranded on each side).
+    var periodNav = (payConfigured && preset === "period") ? (function() {
+      var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex);
+      var payDay = window.LTP_payPeriodPayDay(range.end, payOffset);
+      var navBtn = function(dir, glyph, label) {
+        return h("button", { onClick: function() { shiftPeriod(dir); }, className: "ltp-tap", "aria-label": label,
+          style: isMobile ? { flexShrink: 0, width: 36, height: 36, display: "inline-flex", alignItems: "center", justifyContent: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", color: B.textMut, cursor: "pointer", fontFamily: "inherit", padding: 0 }
+                          : { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, glyph);
+      };
+      if (isMobile) return h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+        navBtn(-1, "◀", "Previous pay period"),
+        h("div", { style: { flex: 1, minWidth: 0, textAlign: "center" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+            (n ? "Pay Period #" + n.number + " · " : "") + window.LTP_formatDateRangeShort(range.start, range.end)),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day " + window.LTP_formatDateShort(payDay))),
+        navBtn(1, "▶", "Next pay period"));
+      return h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+        navBtn(-1, "◀", "Previous pay period"),
+        h("div", null,
+          h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
+            (n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : "") + window.LTP_payPeriodLabel(range.start, range.end)),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(payDay))),
+        navBtn(1, "▶", "Next pay period"));
+    })() : null;
 
     var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
     var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
+    // Phone: From / To as picker chips (the native date input hidden behind a
+    // formatted chip — the schedule builder's pattern) beside the exports, in
+    // place of two labelled 80px inputs.
+    var dateChip = function(prefix, value, onChange, aria) {
+      return window.LTP_pickerChip({ prefix: prefix, label: window.LTP_formatDateShort(value) || "Date", empty: !value, style: { flex: 1 } },
+        h(window.LTPDateField, { value: value, onChange: onChange, ariaLabel: aria, style: window.LTP_NATIVE }));
+    };
+    var exportBtnStyle = isMobile ? { height: 36, padding: "0 12px", fontSize: "12px", flexShrink: 0 } : undefined;
 
     return h("div", null,
-      // Range controls + export. On mobile the custom From/To inputs drop to
-      // their own row so the presets + export don't crush against them.
+      // Range controls + export. Phone: presets scroll in one chip strip, then
+      // From · To chips share a row with the exports.
       isMobile
-      ? h("div", { style: { marginBottom: 14 } },
-          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+      ? h("div", { style: { marginBottom: 10 } },
+          h(window.LTPScrollStrip, { isMobile: true, wrapStyle: { marginBottom: 8 },
+            mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } },
             payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
-            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
-            h("div", { style: { flex: 1 } }),
-            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
-            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
-          h("div", { style: { display: "flex", gap: 8 } },
-            h("div", { style: { flex: 1 } }, fromInput),
-            h("div", { style: { flex: 1 } }, toInput)))
+            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month")),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 8 } },
+            dateChip("From", range.start, function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, "From date"),
+            dateChip("To", range.end, function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, "To date")),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" } },
+            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); }, style: exportBtnStyle }, "Export to QuickBooks"),
+            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0, style: exportBtnStyle }, "Export CSV")))
       : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
           payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
           presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
@@ -2401,15 +2618,23 @@
       periodNav,
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
-      h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
-        h(window.StatCard, { label: "Period Payout", value: fmtMoney(data.grandTotal), sub: "signed off", accent: B.accent }),
-        h(window.StatCard, { label: "Crew", value: String(data.groups.length) }),
-        data.pendingCount > 0 && h(window.StatCard, { label: "Pending Sign-off", value: String(data.pendingCount), sub: "est. " + fmtMoney(data.pendingTotal), accent: B.warn }),
-        data.unlockedCount > 0 && h(window.StatCard, { label: "Not Locked", value: String(data.unlockedCount), accent: B.warn }),
-        data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
+      // Phone: one compact strip instead of a column of 180px cards.
+      isMobile
+        ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+            { label: "Payout", value: "$" + Math.round(data.grandTotal).toLocaleString(), sub: "signed off", color: B.accent, title: fmtMoney(data.grandTotal) + " signed off" },
+            { label: "Crew", value: String(data.groups.length) },
+            data.pendingCount > 0 && { label: "Pending", value: String(data.pendingCount), sub: "est. $" + Math.round(data.pendingTotal).toLocaleString(), color: B.warn, title: "Pending sign-off · est. " + fmtMoney(data.pendingTotal) },
+            data.unlockedCount > 0 && { label: "Unlocked", value: String(data.unlockedCount), color: B.warn, title: "Not locked" },
+            data.driftCount > 0 && { label: "Changed", value: String(data.driftCount), color: B.danger, title: "Changed since lock" } ] })
+        : h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
+            h(window.StatCard, { label: "Period Payout", value: fmtMoney(data.grandTotal), sub: "signed off", accent: B.accent }),
+            h(window.StatCard, { label: "Crew", value: String(data.groups.length) }),
+            data.pendingCount > 0 && h(window.StatCard, { label: "Pending Sign-off", value: String(data.pendingCount), sub: "est. " + fmtMoney(data.pendingTotal), accent: B.warn }),
+            data.unlockedCount > 0 && h(window.StatCard, { label: "Not Locked", value: String(data.unlockedCount), accent: B.warn }),
+            data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
 
       data.groups.length === 0
-        ? h(window.EmptyState, { text: "No confirmed crew shifts between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
+        ? h(window.EmptyState, { text: "No confirmed crew shifts or flat-rate positions paid between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
         : data.groups.map(function(g) {
             return h("div", { key: g.crewId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
               h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
@@ -2425,17 +2650,22 @@
                   var src = r.signed ? r.signed.pay : (r.locked || r.current);
                   var minApplied = !!(src && (src.units || []).some(function(u) { return u.minApplied; }));
                   var allMargin = !!(src && (src.units || []).length > 0 && (src.units || []).every(function(u) { return u.fullMargin; }));
-                  var canSign = !r.signed && r.date <= todayISO();  // no signing off the future
-                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" } };
+                  var isFlat = r.kind === "flat";
+                  // No signing off the future — except a flat-rate position, which
+                  // completes when the work is done, whenever its pay date falls.
+                  var canSign = !r.signed && (isFlat || r.date <= todayISO());
+                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" }, completed: { c: B.success, t: "✓ complete" } };
                   var sBtn = function(label, onClick, bg, title) {
                     return h("button", { onClick: onClick, title: title,
                       style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
                   };
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: isMobile ? "flex-start" : "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
-                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
+                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date),
+                      isFlat && h("div", { title: "Flat fees are paid with the payroll period the project's end date falls into.", style: { fontSize: "8px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "project end")),
                     h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
-                      h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
+                      h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } },
+                        isFlat ? "Flat rate \u00b7 " + (r.roleLabel || "flat-rate position") + " \u00b7 whole project" : tierLabel(src)),
                       (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
                         r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
@@ -2443,7 +2673,7 @@
                     // Pay amount: pinned to the top row's right on mobile (order 2),
                     // trails the action buttons on desktop.
                     h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", order: isMobile ? 2 : undefined, marginLeft: isMobile ? "auto" : undefined, fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
-                      title: r.signed ? "Final signed-off pay." : "Estimate — becomes payable when the day is signed off." },
+                      title: r.signed ? (isFlat ? "Final fee — marked complete." : "Final signed-off pay.") : (isFlat ? "Fee — becomes payable once the position is marked complete." : "Estimate — becomes payable when the day is signed off.") },
                       (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)),
                     // Chips + sign-off buttons: a wrapped second line on mobile,
                     // inline on desktop (display:contents leaves the row unchanged).
@@ -2465,14 +2695,16 @@
                         ? h(React.Fragment, null,
                             chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
                               "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, "Undo the sign-off — the day returns to pending."))
+                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the position returns to pending." : "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
-                            !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
+                            !r.locked && chip(B.warn, "not locked", isFlat ? "Confirmed without a locked fee — the figure shown is the fee as typed today." : "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
                             (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
                               style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                            canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
-                            canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
-                            canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
+                            isFlat && canSign && sBtn("✓ Complete", function() { guardPaid(r, function() { completeFlat(r, null); }); }, B.success, "Mark the position complete at the fee — it becomes payable on its pay date."),
+                            isFlat && canSign && sBtn("Complete…", function() { guardPaid(r, function() { setCompleteDlg({ row: r, amount: String(r.current ? r.current.total : 0) }); }); }, null, "Mark complete at a different final amount."),
+                            !isFlat && canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
+                            !isFlat && canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
+                            !isFlat && canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
                       sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
@@ -2490,7 +2722,9 @@
         // reconcile. And since every add and delete below writes immediately,
         // what is on screen is always what is stored.
         var adjProj = projects.find(function(x) { return x.id === d.row.projectId; });
-        var list = window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
+        var list = d.row.kind === "flat"
+          ? window.LTP_getFixedAdjustments((adjProj && adjProj.fixedPositions) || [], d.row.posId)
+          : window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
         var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
         var pendingAmt = parseFloat(d.amount);
         var canAdd = !isNaN(pendingAmt) && pendingAmt !== 0;
@@ -2536,6 +2770,22 @@
             // Save button could only imply something was still pending, and a
             // Cancel would falsely promise to undo what is already stored.
             h(window.Btn, { onClick: function() { setAdjPayDlg(null); } }, "Done")));
+      })(),
+
+      // Flat-rate position: mark complete at a final amount (default = the fee).
+      completeDlg && (function() {
+        var d = completeDlg;
+        var amt = parseFloat(d.amount);
+        var ok = !isNaN(amt) && amt >= 0;
+        return h(window.LTPModal, { title: "Mark complete — " + crewLabel(d.row.crewId) + " · " + (d.row.roleLabel || "flat rate"), onClose: function() { setCompleteDlg(null); } },
+          h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+            "Freezes the final fee for " + d.row.projectName + ". It becomes payable on " + fmt(d.row.date) + " and is what the QuickBooks vendor bill posts." +
+            (d.row.fullMargin ? " This position is marked full margin, so it pays $0 regardless of the amount." : "")),
+          h("div", { style: { width: 160, marginBottom: 14 } },
+            h(window.LTPInput, { label: "Final amount ($)", value: d.amount, type: "number", onChange: function(v) { setCompleteDlg(Object.assign({}, d, { amount: v })); } })),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setCompleteDlg(null); } }, "Cancel"),
+            h(window.Btn, { disabled: !ok, onClick: function() { setCompleteDlg(null); completeFlat(d.row, amt); } }, "Mark Complete")));
       })(),
 
       // No-show confirm
@@ -2671,7 +2921,8 @@
           var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
           // Snapshot the shifts BEFORE flipping (it reads the live positions),
           // then reopen them AND clear the crew so the slot returns to empty.
-          var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [];
+          var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services)
+                                        .concat(window.LTP_fixedSnapshots(proj.fixedPositions, req.positionIds, services)) : [];
           // The server reopened and unassigned these slots in the same write.
           // Take its row (with its _rev) rather than replaying the move as an
           // edit the debounced PUT would push back under a stale token.
@@ -2722,6 +2973,9 @@
         (s.positions || []).forEach(function(p) {
           if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date });
         });
+      });
+      if (proj) (proj.fixedPositions || []).forEach(function(p) {
+        if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: "", flat: true, fee: Number(p.fee) || 0 });
       });
       var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
@@ -2835,7 +3089,8 @@
                         ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
                             info.positions.map(function(p, pi) {
                               return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
-                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
+                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel
+                                  + (p.flat ? "  ·  flat rate $" + window.LTP_money(p.fee) + " · whole project" : (p.date ? "  ·  " + fmt(p.date) : "")));
                             }))
                         : !info.known
                           // Distinct from "no positions": we are missing the

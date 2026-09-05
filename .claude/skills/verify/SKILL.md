@@ -44,8 +44,14 @@ camelCase JSON in/out, auth via the cookie. Field values are validated
 
 ## Driving with Playwright
 
-- Chromium: `chromium.launch({ executablePath: '/opt/pw-browsers/chromium' })`
-  (install `playwright` npm package in scratch; browsers are pre-installed).
+- Chromium: `chromium.launch({ executablePath: '/opt/pw-browsers/chromium',
+  headless: false, args: ['--headless=new'] })` — the installed Chromium has
+  dropped the old headless mode that `headless: true` selects, so the launch
+  dies with "Old Headless mode has been removed" without those two options.
+  (Install the `playwright` npm package in scratch; browsers are pre-installed.)
+- After `page.goto`, wait for a real selector on the target screen (e.g.
+  `text=Schedule Summary` for the builder) rather than a fixed sleep — the
+  first render can take a few seconds and the body reads empty until then.
 - index.html pulls React/ReactDOM/DOMPurify/signature_pad from
   cdnjs.cloudflare.com — no direct egress from the browser, so `curl` them to
   disk first (proxy env works for curl) and `page.route()` cdnjs URLs to

@@ -92,10 +92,13 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
     ),
 
     // Main grid: two columns
-    h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 14 } },
+    // minmax(0, 1fr): a bare 1fr column can't shrink below its content's
+    // min width, so one wide row pushed both columns past a phone's edge and
+    // the whole page scrolled sideways.
+    h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "minmax(0, 1fr)" : "minmax(0, 1fr) minmax(0, 1fr)", gap: 14 } },
 
       // LEFT COLUMN
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+      h("div", { style: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
 
         // Upcoming Schedule
         h("div", { style: cardStyle },
@@ -129,11 +132,11 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
             pendingCrew.length > 0 && h("button", { onClick: function() { nav("labor"); }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "2px 8px", color: B.textMut, fontSize: "9px", cursor: "pointer", fontFamily: "inherit" } }, "Labor \u203a")),
           pendingCrew.length === 0 && h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", padding: "8px 0" } }, "No pending crew requests."),
           pendingCrew.slice(0, 6).map(function(pc, i) {
-            return h("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 8px", borderRadius: "4px", background: B.raised, marginBottom: 3 } },
-              h("div", null,
+            return h("div", { key: i, style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: "4px", background: B.raised, marginBottom: 3 } },
+              h("div", { style: { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
                 h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, pc.crewName),
                 h("span", { style: { fontSize: "10px", color: B.textMut, marginLeft: 6 } }, pc.role)),
-              h("div", { style: { textAlign: "right" } },
+              h("div", { style: { textAlign: "right", flexShrink: 0 } },
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, pc.projectName),
                 h("div", { style: { fontSize: "9px", color: B.warn } }, pc.date ? fmt(pc.date) : ""))
             );
@@ -142,7 +145,7 @@ window.DashboardView = function({ companies, projects, quotes, equipment, invoic
       ),
 
       // RIGHT COLUMN
-      h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
+      h("div", { style: { display: "flex", flexDirection: "column", gap: 14, minWidth: 0 } },
 
         // Overdue Invoices
         h("div", { style: Object.assign({}, cardStyle, overdue.length > 0 ? { borderColor: B.danger + "44" } : {}) },

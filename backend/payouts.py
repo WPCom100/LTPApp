@@ -21,6 +21,16 @@ Two responsibilities:
      components/domain-payouts.js::LTP_payoutRows' payable path (first-match dedup per (crew, date),
      two-step js_round2 rounding, per-unit expense-account grouping).
 
+Flat-rate positions (Project.fixed_positions — a designer or stage manager
+hired for the whole job at a fixed fee, no shift times) ride the same rails:
+"Mark complete" on the Payouts tab freezes ``work.pay`` on the position exactly
+like a day sign-off, and the fee is billed on the PROJECT'S END DATE — so it
+lands in the payroll period that date falls into and is paid on that period's
+pay day with every other payout. Because the bill ledger is unique per
+(crew, project, date), a flat fee whose date coincides with a signed shift day
+on the same project MERGES into that day's entry — one ledger line, two
+sources — see ``_merge_flat_into_day``.
+
 Money is float dollars rounded to the cent, matching the rest of the app.
 """
 import json
@@ -186,19 +196,75 @@ def _rollup_state(states):
     return "worked"
 
 
+def fixed_pay_date(project_end_date):
+    """The date a flat-rate position is billed on: the project's end date,
+    or None when the project has none (not payable anywhere until it does).
+    The payroll period containing that date is where the fee lands, and the
+    period's pay day is when it is paid — the same Friday as every other payout
+    in that period. There is deliberately no per-position override. Mirrors
+    components/domain-payouts.js::LTP_fixedPayDate — keep the two in step, the
+    ledger line's date is what this resolves to."""
+    if _parse_iso(project_end_date) is not None:
+        return project_end_date
+    return None
+
+
+def _flat_units(fp, work_pay):
+    """Bill units for a completed flat-rate position. The frozen snapshot carries
+    its own units (mirroring a day's ``work.pay.units``); a legacy/hand-edited
+    snapshot without them falls back to one unit for the whole total against the
+    position's service, so the fee still lands on that role's expense account."""
+    raw = work_pay.get("units")
+    if not isinstance(raw, list) or not raw:
+        raw = [{"serviceId": fp.get("serviceId"), "total": work_pay.get("total")}]
+    out = []
+    for u in raw:
+        if not isinstance(u, dict):
+            continue
+        amt = js_round2(_num(u.get("total")))
+        if amt == 0:
+            continue  # full-margin flat-rate position carries no line
+        out.append({"service_id": u.get("serviceId"), "amount": amt,
+                    "paid_hours": 0.0, "ot_hours": 0.0})
+    return out
+
+
+def _merge_flat_into_day(day, flat):
+    """Fold a flat-rate position into a same-(crew, project, date) entry so the
+    period keeps ONE entry per ledger key. Money adds; units and adjustments
+    concatenate; the tier reads ``mixed`` once a shift day and a flat fee share
+    the line (two flat-rate positions on one project stay ``flat``)."""
+    day["payable"] = js_round2(day["payable"] + flat["payable"])
+    day["adj_total"] = js_round2(day["adj_total"] + flat["adj_total"])
+    day["units"] = list(day["units"]) + list(flat["units"])
+    day["adjustments"] = list(day["adjustments"]) + list(flat["adjustments"])
+    if not (day.get("flat") and day.get("tier") == "flat"):
+        day["tier"] = "mixed"
+    day["flat"] = True
+    return day
+
+
 def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
     """Re-derive per-crew payout drafts from persisted schedule snapshots.
 
-    ``projects``: list of {"id", "name", "schedule": [...]} (schedule is the raw
-    frontend camelCase JSON — positions carry crewId/status/work/adj).
+    ``projects``: list of {"id", "name", "schedule": [...], "fixed_positions":
+    [...], "end_date"} (schedule is the raw frontend camelCase JSON — positions
+    carry crewId/status/work/adj; fixed_positions are the flat-rate
+    flat-rate positions, see backend/models.py::Project).
     ``contacts_by_id``: {crew_id: {"first_name","last_name",...}} — crew only.
 
     Returns a name-sorted list of drafts::
 
         {contact_id, name, contact, total_signed,
          days: [{project_id, project_name, date, tier, state, payable, adj_total,
-                 units: [{service_id, amount}]}],   # SIGNED days (payable may be <=0)
-         pending: [{project_id, project_name, date}]}  # confirmed but unsigned
+                 units: [{service_id, amount}], flat?: True}],   # SIGNED days (payable may be <=0)
+         pending: [{project_id, project_name, date, flat?: True}]}  # confirmed but unsigned
+
+    A flat-rate position is a "day" dated on the project's END date
+    (``fixed_pay_date``) — the payroll period that date falls into is where it
+    is paid: ``tier == "flat"`` on its own, ``mixed`` when merged into a shift
+    day on the same date. It is pending until "Mark complete" freezes
+    ``work.pay``.
 
     The biller (backend/qbo_payouts.py) applies the billable filter (drop $0,
     resolve expense accounts, block a bill whose total <= 0). This function
@@ -285,6 +351,57 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     "units": units_out, "adjustments": adjustments,
                 })
 
+        # Flat-rate positions: one entry per confirmed position, dated on the
+        # project's end date. Processed AFTER the project's shift days so a
+        # same-date shift entry already exists to merge into. Both spellings are
+        # read so the JS↔Python parity fixture can feed raw camelCase project JSON.
+        fixed_list = proj.get("fixed_positions")
+        if fixed_list is None:
+            fixed_list = proj.get("fixedPositions")
+        proj_end = proj.get("end_date")
+        if proj_end is None:
+            proj_end = proj.get("endDate")
+        for fp in (fixed_list or []):
+            if not isinstance(fp, dict):
+                continue
+            cid = fp.get("crewId")
+            if cid is None or fp.get("status") != "confirmed":
+                continue
+            d = fixed_pay_date(proj_end)
+            if not d:
+                continue  # project has no end date — the builder flags the row
+            if start_iso and d < start_iso:
+                continue
+            if end_iso and d > end_iso:
+                continue
+            grp = by_crew.get(cid)
+            if grp is None:
+                grp = by_crew[cid] = {"days": [], "pending": []}
+            work = fp.get("work")
+            work_pay = work.get("pay") if isinstance(work, dict) else None
+            if not work_pay:
+                grp["pending"].append({"project_id": pid, "project_name": pname, "date": d, "flat": True})
+                continue
+            adj = fp.get("adj") or []
+            adj_total = js_round2(sum(_num(a.get("amount")) for a in adj if isinstance(a, dict)))
+            flat = {
+                "project_id": pid, "project_name": pname, "date": d,
+                "tier": "flat", "state": "worked",
+                "payable": js_round2(_num(work_pay.get("total")) + adj_total), "adj_total": adj_total,
+                "paid_hours": 0.0, "ot_hours": 0.0,
+                "units": _flat_units(fp, work_pay),
+                "adjustments": [
+                    {"label": (a.get("label") or "").strip(), "amount": js_round2(_num(a.get("amount")))}
+                    for a in adj if isinstance(a, dict) and int(round(_num(a.get("amount")) * 100)) != 0
+                ],
+                "flat": True,
+            }
+            same = next((x for x in grp["days"] if x["project_id"] == pid and x["date"] == d), None)
+            if same is not None:
+                _merge_flat_into_day(same, flat)
+            else:
+                grp["days"].append(flat)
+
     drafts = []
     for cid, grp in by_crew.items():
         contact = contacts_by_id.get(cid)
@@ -324,7 +441,7 @@ def _ser_breaks(breaks) -> str:
     return "|".join(sorted(parts))
 
 
-def paid_day_signature(schedule) -> dict:
+def paid_day_signature(schedule, fixed_positions=None, end_date=None) -> dict:
     """`"{crewId}|{date}"` → a fingerprint of everything that decides what that
     crew member is owed for that day.
 
@@ -332,6 +449,13 @@ def paid_day_signature(schedule) -> dict:
     breaks AND the position's own breaks, and each of that crew's positions
     (service, role, status) — because any of those changing means the frozen
     `work.pay` snapshot we already billed no longer describes the day worked.
+
+    Flat-rate positions (``fixed_positions``) fingerprint under the project's
+    END date (``fixed_pay_date``, which is why ``end_date`` comes along): the
+    fee, the full-margin flag, service, status — and, server side, the frozen
+    snapshot. Moving the project's end date moves the key itself, which reads
+    as a change on both the old and the new date — correct, since the paid
+    ledger line no longer describes when that fee is paid.
 
     Deliberately STRICTER than the client in one respect: it also covers `work`
     and `adj` themselves. Those are the billed money, and crew_integrity's
@@ -344,6 +468,19 @@ def paid_day_signature(schedule) -> dict:
     not is a paid day that changes without anyone being asked.
     """
     m: dict = {}
+    flat_date = fixed_pay_date(end_date)
+    for fp in (fixed_positions or []):
+        if not isinstance(fp, dict):
+            continue
+        cid = fp.get("crewId")
+        d = flat_date
+        if cid is None or not d:
+            continue
+        m.setdefault("%s|%s" % (cid, d), []).append(json.dumps([
+            "flat", fp.get("serviceId"), fp.get("role"), fp.get("status"),
+            _num(fp.get("fee")), bool(fp.get("fullMargin")),
+            fp.get("work"), fp.get("adj"),
+        ], sort_keys=True, default=str))
     for shift in (schedule or []):
         if not isinstance(shift, dict):
             continue
@@ -367,13 +504,18 @@ def paid_day_signature(schedule) -> dict:
     return {k: "\u0000".join(sorted(v)) for k, v in m.items()}
 
 
-async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule) -> list:
+async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule,
+                             stored_fixed=None, incoming_fixed=None,
+                             stored_end=None, incoming_end=None) -> list:
     """Days on `project_id` that are PAID in QuickBooks and whose payout inputs
     this write would change.
 
     Compare against the FINAL incoming schedule — after crew_integrity's status
     floor and pay-snapshot guards have had their say — or a change those guards
-    already reverted would be reported as a conflict that does not exist.
+    already reverted would be reported as a conflict that does not exist. The
+    flat-rate list and the project end date ride along for the same reason (see
+    ``paid_day_signature``); a caller that isn't writing them passes the stored
+    values for both sides.
 
     Empty list = nothing paid is affected, which is the overwhelmingly common
     case and costs one indexed query.
@@ -390,8 +532,8 @@ async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule)
     if not rows:
         return []
 
-    before = paid_day_signature(stored_schedule)
-    after = paid_day_signature(incoming_schedule)
+    before = paid_day_signature(stored_schedule, stored_fixed, stored_end)
+    after = paid_day_signature(incoming_schedule, incoming_fixed, incoming_end)
 
     hits = []
     for line, bill in rows:
@@ -428,7 +570,9 @@ async def load_projects_and_crew(db):
         select(models.Contact).where(models.Contact.is_crew.is_(True))
     )).scalars().all()
 
-    projects = [{"id": p.id, "name": p.name or "", "schedule": p.schedule or []} for p in proj_rows]
+    projects = [{"id": p.id, "name": p.name or "", "schedule": p.schedule or [],
+                 "fixed_positions": p.fixed_positions or [], "end_date": p.end_date or ""}
+                for p in proj_rows]
     contacts_by_id = {}
     for c in contact_rows:
         contacts_by_id[c.id] = {

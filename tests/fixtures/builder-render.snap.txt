@@ -3773,10 +3773,10 @@
                   <div style=3props>
                     0 / 0 avail
                 <div style=3props>
-                  <button onClick=fn style=13props>
+                  <button aria-label="Fewer" onClick=fn style=13props>
                     −
-                  <input min=1 onChange=fn onClick=fn style=10props type="number" value=1>
-                  <button onClick=fn style=13props>
+                  <input aria-label="Quantity" inputMode="numeric" min=1 onChange=fn onClick=fn style=10props type="number" value=1>
+                  <button aria-label="More" onClick=fn style=13props>
                     +
                 <div style=2props>
                   <div style=3props>

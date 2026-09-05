@@ -309,17 +309,58 @@
     var totalPositions = schedule.reduce(function(n, s) { return n + (s.positions || []).length; }, 0);
     var filledPositions = schedule.reduce(function(n, s) { return n + (s.positions || []).filter(function(p) { return p.status === "confirmed"; }).length; }, 0);
 
+    // ── Density presets ──────────────────────────────────────────────────────
+    // Desktop keeps the dense 10–12px ledger look and renders exactly as it
+    // always has. On a phone every input is 16px whether we like it or not
+    // (index.html forces it so iOS never zooms on focus), so the mobile layout
+    // is designed AROUND that size instead of against it: 36px controls, role
+    // and crew sharing one row, one slim footer row per position, and the
+    // native date/time pickers tucked behind compact formatted chips (`chip`).
+    var M = isMobile;
+    var CTL = window.LTP_CTL;
+    var ft = window.LTP_formatTime, fmtShort = window.LTP_formatDateShort;
+    var mInp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", height: CTL, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", width: "100%", minWidth: 0, boxSizing: "border-box" };
+    var trig = M ? { borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: CTL }
+                 : { borderRadius: "3px", padding: "3px 5px", fontSize: "10px", minHeight: 0 };
+    // Glyph buttons (×, ⇩) on a phone: a square tap target, no border.
+    function glyphBtn(color, fontSize, box) {
+      return { flexShrink: 0, width: box || CTL, height: box || CTL, display: "inline-flex", alignItems: "center", justifyContent: "center",
+               background: "transparent", border: "none", borderRadius: "8px", color: color, cursor: "pointer", fontSize: fontSize, lineHeight: 1, padding: 0, fontFamily: "inherit" };
+    }
+    // Small pill toggles (Cal, MGN, PAID/UNPAID) on a phone.
+    function pill(on, color, height) {
+      return { flexShrink: 0, height: height || 28, padding: "0 9px", borderRadius: "7px", fontSize: "10px", fontWeight: 700, lineHeight: 1,
+               background: on ? color + "22" : "transparent", border: "1px solid " + (on ? color : B.border), color: on ? color : B.textMut,
+               cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" };
+    }
+    // Native pickers behind a chip (window.LTP_pickerChip, ui.js): on a phone
+    // the deferred field is rendered over a formatted chip at opacity 0 — the
+    // chip is what you see ("Thu, Sep 10"), the field is what you tap, and its
+    // buffering/commit rules are untouched. Desktop gets the field itself.
+    var NATIVE = window.LTP_NATIVE;
+    function chip(opts, field) { return M ? window.LTP_pickerChip(opts, field) : field; }
+    var seg = window.LTP_pickerSeg;
+    var dashedBtn = M
+      ? { background: "transparent", border: "1px dashed " + B.accent + "55", color: B.accent, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "0 10px", height: 34, borderRadius: "8px", width: "100%", fontFamily: "inherit" }
+      : null;
+
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
       // Header
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } },
-          "Schedule" + (totalPositions > 0 ? " \u00b7 " + filledPositions + "/" + totalPositions + " confirmed" : "")),
-        h("div", { style: { display: "flex", gap: 6 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: M ? 8 : undefined } },
+        h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em",
+                              minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: M ? "nowrap" : undefined } },
+          "Schedule" + (totalPositions > 0 ? " · " + filledPositions + "/" + totalPositions + " confirmed" : "")),
+        h("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
           schedule.length > 0 && h("button", { onClick: function() { setAssignCrewModal(true); },
-            style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "4px", padding: "3px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, "\u21bb Assign Crew to All Days"),
-          h(window.Btn, { small: true, variant: "ghost", onClick: addItem }, "+ New Schedule Day"))
+            style: M ? { background: "transparent", border: "1px solid " + B.accent, borderRadius: "8px", padding: "0 10px", height: 32, color: B.accent, fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }
+                     : { background: "transparent", border: "1px solid " + B.accent, borderRadius: "4px", padding: "3px 10px", color: B.accent, fontSize: "10px", fontWeight: 600, cursor: "pointer" } },
+            M ? "↻ Assign all" : "↻ Assign Crew to All Days"),
+          h(window.Btn, { small: true, variant: "ghost", onClick: addItem, style: M ? { height: 32, padding: "0 12px" } : undefined }, M ? "+ Day" : "+ New Schedule Day"))
       ),
 
+      // Phone-only empty state — the first "+ Day" is otherwise a lone button.
+      M && schedule.length === 0 && h("div", { style: { border: "1px dashed " + B.border, borderRadius: "10px", padding: "22px 14px", textAlign: "center", fontSize: "12px", color: B.textMut, lineHeight: 1.5 } },
+        "No schedule days yet. Tap ", h("b", { style: { color: B.textSec } }, "+ Day"), " to add the first call."),
 
       // Group schedule items by date for day-level rate calculation
       function() {
@@ -380,63 +421,76 @@
           // rounded 2px-outlined card is gone).
           var dayRuleColor = dayHasMealPenalty ? B.danger + "88" : dayHasOT ? B.warn + "88" : B.border;
 
-          return h("div", { key: group.date, style: { background: B.raised, borderTop: "2px solid " + dayRuleColor, marginBottom: 4, overflow: "hidden" } },
-            // Day header
-            h("div", { style: { background: B.surface, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
-                h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } },
-                  group.date !== "_unscheduled" ? fmt(group.date) : "Unscheduled"),
-                dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, window.LTP_formatTime(dayCall) + " \u2192 " + window.LTP_formatTime(dayWrap)),
-                h("span", { style: { fontSize: "10px", color: B.textMut } }, dayItems.length + " item" + (dayItems.length > 1 ? "s" : "")),
-                dayPosCount > 0 && h("span", { style: { fontSize: "10px", color: dayFilled === dayPosCount ? B.success : B.textMut } }, dayFilled + "/" + dayPosCount + " confirmed")
-              ),
-              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                dayHasOT && h("span", { style: { color: B.btnInk, background: B.warn, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px" } }, "OT WARNING"),
-                dayHasMealPenalty && h("span", { onClick: function() {
-                    // Per-PERSON fix: give a meal break only to the people who
-                    // actually incur a penalty, on their own position — so no one
-                    // else on the shift is docked. Crew-wide item breaks are kept
-                    // as context; individual breaks are recomputed from scratch
-                    // (idempotent on repeat clicks).
-                    var dayIds = {}; dayItems.forEach(function(di) { dayIds[di.item.id] = true; });
-                    var clearedItems = dayItems.map(function(di) {
-                      return Object.assign({}, di.item, { positions: (di.item.positions || []).map(function(p) {
-                        return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
-                      }) });
+          var dayTitle = group.date !== "_unscheduled" ? (M ? fmtShort(group.date) : fmt(group.date)) : "Unscheduled";
+          var dayBadges = [
+            dayHasOT && h("span", { key: "ot", style: { color: B.btnInk, background: B.warn, fontSize: "9px", fontWeight: 700, padding: M ? "3px 7px" : "2px 6px", borderRadius: M ? "5px" : "3px", whiteSpace: "nowrap" } }, "OT WARNING"),
+            dayHasMealPenalty && h("span", { key: "meal", onClick: function() {
+                // Per-PERSON fix: give a meal break only to the people who
+                // actually incur a penalty, on their own position — so no one
+                // else on the shift is docked. Crew-wide item breaks are kept
+                // as context; individual breaks are recomputed from scratch
+                // (idempotent on repeat clicks).
+                var dayIds = {}; dayItems.forEach(function(di) { dayIds[di.item.id] = true; });
+                var clearedItems = dayItems.map(function(di) {
+                  return Object.assign({}, di.item, { positions: (di.item.positions || []).map(function(p) {
+                    return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
+                  }) });
+                });
+                var labor = window.LTP_calcDayLabor(clearedItems, svcs);
+                var breaksByPos = {};
+                labor.units.forEach(function(u) {
+                  if (!(u.mealPenaltyHours > 0)) return;
+                  var unitKey = u.serviceId + "#" + u.slot;
+                  var shifts = [];
+                  clearedItems.forEach(function(it) {
+                    var slots = window.LTP_effectiveSlots(it.positions);
+                    (it.positions || []).forEach(function(p) {
+                      if (!p.serviceId) return;
+                      if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
+                      shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
                     });
-                    var labor = window.LTP_calcDayLabor(clearedItems, svcs);
-                    var breaksByPos = {};
-                    labor.units.forEach(function(u) {
-                      if (!(u.mealPenaltyHours > 0)) return;
-                      var unitKey = u.serviceId + "#" + u.slot;
-                      var shifts = [];
-                      clearedItems.forEach(function(it) {
-                        var slots = window.LTP_effectiveSlots(it.positions);
-                        (it.positions || []).forEach(function(p) {
-                          if (!p.serviceId) return;
-                          if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
-                          shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
-                        });
-                      });
-                      window.LTP_mealFixBreaks(shifts).forEach(function(g) {
-                        (breaksByPos[g.positionId] = breaksByPos[g.positionId] || []).push({ id: g.id, startTime: g.startTime, endTime: g.endTime, type: g.type });
-                      });
-                    });
-                    // Apply: rewrite each of this day's positions' individual breaks.
-                    onChange(schedule.map(function(sc) {
-                      if (!dayIds[sc.id]) return sc;
-                      return Object.assign({}, sc, { positions: (sc.positions || []).map(function(p) {
-                        var nb = breaksByPos[p.id] || [];
-                        if ((p.breaks && p.breaks.length) || nb.length) return Object.assign({}, p, { breaks: nb });
-                        return p;
-                      }) });
-                    }));
-                  },
-                  title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
-                  style: { color: B.btnInk, background: B.danger, fontSize: "9px", fontWeight: 700, padding: "2px 6px", borderRadius: "3px", cursor: "pointer" } },
-                  "MEAL PENALTY: " + dayMealPenaltyHours + "h \u2014 fix")
-              )
-            ),
+                  });
+                  window.LTP_mealFixBreaks(shifts).forEach(function(g) {
+                    (breaksByPos[g.positionId] = breaksByPos[g.positionId] || []).push({ id: g.id, startTime: g.startTime, endTime: g.endTime, type: g.type });
+                  });
+                });
+                // Apply: rewrite each of this day's positions' individual breaks.
+                onChange(schedule.map(function(sc) {
+                  if (!dayIds[sc.id]) return sc;
+                  return Object.assign({}, sc, { positions: (sc.positions || []).map(function(p) {
+                    var nb = breaksByPos[p.id] || [];
+                    if ((p.breaks && p.breaks.length) || nb.length) return Object.assign({}, p, { breaks: nb });
+                    return p;
+                  }) });
+                }));
+              },
+              title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
+              style: { color: B.btnInk, background: B.danger, fontSize: "9px", fontWeight: 700, padding: M ? "3px 7px" : "2px 6px", borderRadius: M ? "5px" : "3px", cursor: "pointer", whiteSpace: "nowrap" } },
+              "MEAL PENALTY: " + dayMealPenaltyHours + "h — fix")
+          ];
+          var dayMeta = [
+            dayCall && h("span", { key: "t", style: { fontSize: M ? "11px" : "10px", color: B.textMut } }, window.LTP_formatTime(dayCall) + " → " + window.LTP_formatTime(dayWrap)),
+            h("span", { key: "n", style: { fontSize: M ? "11px" : "10px", color: B.textMut } }, dayItems.length + " item" + (dayItems.length > 1 ? "s" : "")),
+            dayPosCount > 0 && h("span", { key: "c", style: { fontSize: M ? "11px" : "10px", color: dayFilled === dayPosCount ? B.success : B.textMut } }, dayFilled + "/" + dayPosCount + " confirmed")
+          ];
+
+          return h("div", { key: group.date, style: M
+              ? { background: B.raised, border: "1px solid " + B.border, borderTop: "2px solid " + dayRuleColor, borderRadius: "10px", marginBottom: 10, overflow: "hidden" }
+              : { background: B.raised, borderTop: "2px solid " + dayRuleColor, marginBottom: 4, overflow: "hidden" } },
+            // Day header. Phone: the date on its own line with the badges, the
+            // call→wrap / item / confirmed meta beneath it as one muted line —
+            // instead of four columns squeezing the date into two.
+            M
+              ? h("div", { style: { background: B.surface, padding: "9px 12px", borderBottom: "1px solid " + B.border } },
+                  h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent, letterSpacing: "-0.01em" } }, dayTitle),
+                    h("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, dayBadges)),
+                  h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 2 } }, dayMeta))
+              : h("div", { style: { background: B.surface, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid " + B.border } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                    h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, dayTitle),
+                    dayMeta),
+                  h("div", { style: { display: "flex", gap: 6, alignItems: "center" } }, dayBadges)),
 
             // Items within this day
             h("div", { style: { padding: "8px" } },
@@ -451,85 +505,111 @@
                 var committedCrew = itemPositions.filter(function(p) {
                   return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
                 });
+                var isPast = !!(s.date && s.date < window.LTP_todayISO());
+                var hrs = calcHours(s.time, s.endTime);
 
-                return h("div", { key: s.id, style: { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
-                  // Item header: title + times + delete. On mobile the title
-                  // takes a full row (delete beside it) and the date/time controls
-                  // flex to fit, instead of three fixed 120px inputs wrapping into
-                  // an unreadable stack.
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", marginBottom: 4 } },
-                    h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
-                      style: Object.assign({}, inp, { flex: 1, minWidth: 0 }) }),
-                    isMobile && h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
-                      style: { flexShrink: 0, background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "20px", padding: "0 4px", lineHeight: 1 } }, "×"),
-                    h("div", { style: { display: "flex", gap: isMobile ? 6 : 4, alignItems: "center", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined } },
-                      // LTPDateField, not a raw <input type="date">: rows are
-                      // grouped and sorted by day below, so publishing every
-                      // keystroke would re-key the day card mid-edit (a
-                      // half-typed date reads as "" → the row jumps to
-                      // "Unscheduled" and the input is destroyed under the
-                      // caret). The field buffers typed/arrow edits and
-                      // publishes on blur, Enter, or a calendar pick.
-                      // One updateItem only — it syncs endDate itself. A second
-                      // call here recomputed from the stale `schedule` prop and
-                      // clobbered the date update entirely (freezing half-typed
-                      // dates like "0002-08-14" into the hidden endDate).
-                      h(window.LTPDateField, { value: s.date, onChange: function(v) { updateItem(s.id, "date", v); },
-                        ariaLabel: "Shift date",
-                        style: Object.assign({}, inp, { flex: isMobile ? "1 1 100%" : undefined, width: isMobile ? undefined : 120, minWidth: 0, borderColor: s.date && s.date < window.LTP_todayISO() ? B.warn : undefined }) }),
-                      s.date && s.date < window.LTP_todayISO() && h("span", { style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "PAST"),
-                      // Deferred like the date, and for the same reason twice
-                      // over: the rows inside a day are sorted by start time, so
-                      // publishing a half-typed hour ("01:00" on the way to
-                      // "11:00", or "" while a segment is empty) jumps this row
-                      // past its neighbours mid-word \u2014 the field moves out from
-                      // under the caret and the time can't be typed through.
-                      h(window.LTPTimeField, { value: s.time, onChange: function(v) { updateItem(s.id, "time", v); },
-                        ariaLabel: "Shift start time",
-                        style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
-                      h("span", { style: { color: B.textMut, fontSize: "10px" } }, "\u2192"),
-                      h(window.LTPTimeField, { value: s.endTime, onChange: function(v) { updateItem(s.id, "endTime", v); },
-                        ariaLabel: "Shift end time",
-                        style: Object.assign({}, inp, { flex: isMobile ? 1 : undefined, width: isMobile ? undefined : 120, minWidth: 0 }) }),
-                      h("span", { style: { fontSize: "10px", fontWeight: 600, color: B.textMut, flexShrink: 0 } }, calcHours(s.time, s.endTime) ? calcHours(s.time, s.endTime) + "h" : ""),
-                      h("button", { onClick: function() { updateItem(s.id, "showOnCalendar", !s.showOnCalendar); },
-                        style: { flexShrink: 0, background: s.showOnCalendar ? B.accent + "22" : "transparent", border: "1px solid " + (s.showOnCalendar ? B.accent : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 6px", color: s.showOnCalendar ? B.accent : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
-                        s.showOnCalendar ? "\u2713 Cal" : "Cal"),
-                      !isMobile && h("button", { onClick: function() { removeItem(s.id); }, style: { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "\u00d7")
-                    )
-                  ),
+                // ── Item header controls, built once and laid out per width ──
+                var titleInput = h("input", { type: "text", value: s.title, onChange: function(e) { updateItem(s.id, "title", e.target.value); }, placeholder: "e.g. Load-In",
+                  style: M ? Object.assign({}, mInp, { flex: 1, fontWeight: 600 }) : Object.assign({}, inp, { flex: 1, minWidth: 0 }) });
+                // LTPDateField, not a raw <input type="date">: rows are
+                // grouped and sorted by day below, so publishing every
+                // keystroke would re-key the day card mid-edit (a
+                // half-typed date reads as "" → the row jumps to
+                // "Unscheduled" and the input is destroyed under the
+                // caret). The field buffers typed/arrow edits and
+                // publishes on blur, Enter, or a calendar pick.
+                // One updateItem only — it syncs endDate itself. A second
+                // call here recomputed from the stale `schedule` prop and
+                // clobbered the date update entirely (freezing half-typed
+                // dates like "0002-08-14" into the hidden endDate).
+                var dateField = chip({ label: s.date ? fmtShort(s.date) : "Date", empty: !s.date, warn: isPast, style: { flex: "1 1 auto" } },
+                  h(window.LTPDateField, { value: s.date, onChange: function(v) { updateItem(s.id, "date", v); },
+                    ariaLabel: "Shift date",
+                    style: M ? NATIVE : Object.assign({}, inp, { width: 120, minWidth: 0, borderColor: isPast ? B.warn : undefined }) }));
+                var pastTag = isPast && h("span", { style: { fontSize: M ? "9px" : "8px", color: B.warn, fontWeight: 700, letterSpacing: "0.04em" } }, "PAST");
+                // Deferred like the date, and for the same reason twice
+                // over: the rows inside a day are sorted by start time, so
+                // publishing a half-typed hour ("01:00" on the way to
+                // "11:00", or "" while a segment is empty) jumps this row
+                // past its neighbours mid-word — the field moves out from
+                // under the caret and the time can't be typed through.
+                var startField = chip({ label: s.time ? ft(s.time) : "Start", empty: !s.time, bare: true },
+                  h(window.LTPTimeField, { value: s.time, onChange: function(v) { updateItem(s.id, "time", v); },
+                    ariaLabel: "Shift start time",
+                    style: M ? NATIVE : Object.assign({}, inp, { width: 120, minWidth: 0 }) }));
+                var endField = chip({ label: s.endTime ? ft(s.endTime) : "End", empty: !s.endTime, bare: true, divider: true },
+                  h(window.LTPTimeField, { value: s.endTime, onChange: function(v) { updateItem(s.id, "endTime", v); },
+                    ariaLabel: "Shift end time",
+                    style: M ? NATIVE : Object.assign({}, inp, { width: 120, minWidth: 0 }) }));
+                var hoursLabel = h("span", { style: { fontSize: M ? "11px" : "10px", fontWeight: 600, color: B.textMut, flexShrink: 0 } }, hrs ? hrs + "h" : "");
+                var calBtn = h("button", { onClick: function() { updateItem(s.id, "showOnCalendar", !s.showOnCalendar); },
+                  title: s.showOnCalendar ? "Shown on the calendar" : "Hidden from the calendar",
+                  style: M ? pill(s.showOnCalendar, B.accent, 30)
+                           : { flexShrink: 0, background: s.showOnCalendar ? B.accent + "22" : "transparent", border: "1px solid " + (s.showOnCalendar ? B.accent : B.border), borderRadius: "3px", padding: "2px 6px", color: s.showOnCalendar ? B.accent : B.textMut, fontSize: "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+                  s.showOnCalendar ? "✓ Cal" : "Cal");
+                var delItemBtn = h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
+                  style: M ? glyphBtn(B.danger, "22px") : { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "×");
+
+                return h("div", { key: s.id, style: M
+                    ? { background: B.bg, borderRadius: "10px", border: "1px solid " + B.border, padding: "10px", marginBottom: 8 }
+                    : { background: B.bg, borderRadius: "6px", border: "1px solid " + B.border, padding: "8px 10px", marginBottom: 6 } },
+                  // Item header. Phone: the title with its delete on one row,
+                  // then date · [start | end] · hours · Cal as chips on the next.
+                  // Desktop: the single line it has always been.
+                  M
+                    ? [
+                        h("div", { key: "t", style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6 } }, titleInput, delItemBtn),
+                        h("div", { key: "w", style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 } },
+                          dateField, pastTag, seg(startField, endField), hoursLabel, calBtn)
+                      ]
+                    : h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap", marginBottom: 4 } },
+                        titleInput,
+                        h("div", { style: { display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" } },
+                          dateField, pastTag, startField,
+                          h("span", { style: { color: B.textMut, fontSize: "10px" } }, "→"),
+                          endField, hoursLabel, calBtn, delItemBtn)),
                   // Heads-up when this shift has crew already committed — editing
                   // its date/times will queue them to be re-notified on save.
-                  committedCrew.length > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "3px 8px", marginBottom: 4, display: "flex", alignItems: "center", gap: 5 } },
+                  committedCrew.length > 0 && h("div", { style: { fontSize: M ? "11px" : "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: M ? "8px" : "4px", padding: M ? "6px 10px" : "3px 8px", marginBottom: M ? 6 : 4, display: "flex", alignItems: "center", gap: 5, lineHeight: 1.4 } },
                     h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
-                    h("span", null, committedCrew.length + " committed crew member" + (committedCrew.length > 1 ? "s" : "") + " on this shift — changing its date or times will queue a re-notification when you save.")),
+                    h("span", null, committedCrew.length + " committed crew member" + (committedCrew.length > 1 ? "s" : "") +
+                      (M ? " on this shift — a date or time change re-notifies them when you save."
+                         : " on this shift — changing its date or times will queue a re-notification when you save."))),
                   // Item breaks
-                  h("div", { style: { display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap", marginBottom: itemPositions.length > 0 ? 4 : 0 } },
+                  h("div", { style: { display: "flex", gap: M ? 6 : 4, alignItems: "center", flexWrap: "wrap", marginBottom: itemPositions.length > 0 ? (M ? 6 : 4) : 0 } },
                     itemBreaks.map(function(brk) {
                       var isPaid = brk.type === "paid";
-                      return h("div", { key: brk.id, style: { display: "inline-flex", gap: 3, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "3px", padding: "2px 6px", fontSize: "9px" } },
-                        h("button", { onClick: function() { updateBreak(s.id, brk.id, { type: isPaid ? "unpaid" : "paid", endTime: isPaid ? _addTime(brk.startTime, 60) : _addTime(brk.startTime, 30) }); },
-                          style: { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
-                          isPaid ? "PAID" : "UNPAID"),
-                        // Break times defer too: a half-typed break feeds the
-                        // labor engine a bogus span, so the day's OT / meal-
-                        // penalty badges flicker (and the "fix" button appears
-                        // and vanishes) between keystrokes.
+                      var brkInp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 };
+                      var typeBtn = h("button", { onClick: function() { updateBreak(s.id, brk.id, { type: isPaid ? "unpaid" : "paid", endTime: isPaid ? _addTime(brk.startTime, 60) : _addTime(brk.startTime, 30) }); },
+                        style: M ? { flexShrink: 0, height: 30, padding: "0 8px", background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "7px", fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }
+                                 : { background: isPaid ? B.accent : B.raised, color: isPaid ? B.btnInk : B.textMut, border: "none", borderRadius: "2px", padding: "0 4px", fontSize: "8px", fontWeight: 700, cursor: "pointer" } },
+                        isPaid ? "PAID" : "UNPAID");
+                      // Break times defer too: a half-typed break feeds the
+                      // labor engine a bogus span, so the day's OT / meal-
+                      // penalty badges flicker (and the "fix" button appears
+                      // and vanishes) between keystrokes.
+                      var bStart = chip({ label: brk.startTime ? ft(brk.startTime) : "Start", empty: !brk.startTime, small: true, bare: true },
                         h(window.LTPTimeField, { value: brk.startTime, onChange: function(v) { updateBreak(s.id, brk.id, { startTime: v }); },
                           ariaLabel: "Break start time",
-                          style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
-                        h("span", { style: { color: B.textMut } }, "\u2192"),
+                          style: M ? NATIVE : brkInp }));
+                      var bEnd = chip({ label: brk.endTime ? ft(brk.endTime) : "End", empty: !brk.endTime, small: true, bare: true, divider: true },
                         h(window.LTPTimeField, { value: brk.endTime, onChange: function(v) { updateBreak(s.id, brk.id, { endTime: v }); },
                           ariaLabel: "Break end time",
-                          style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "2px", padding: "1px 4px", color: B.text, fontSize: "9px", fontFamily: "inherit", outline: "none", width: 105 } }),
-                        h("button", { onClick: function() { removeBreak(s.id, brk.id); }, style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "10px", padding: 0 } }, "\u00d7")
-                      );
+                          style: M ? NATIVE : brkInp }));
+                      var bDel = h("button", { onClick: function() { removeBreak(s.id, brk.id); }, "aria-label": "Remove break",
+                        style: M ? glyphBtn(B.textMut, "18px", 30) : { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "10px", padding: 0 } }, "×");
+                      return M
+                        ? h("div", { key: brk.id, style: { display: "inline-flex", gap: 5, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "10px", padding: "3px 3px 3px 4px" } },
+                            typeBtn, seg(bStart, bEnd, true), bDel)
+                        : h("div", { key: brk.id, style: { display: "inline-flex", gap: 3, alignItems: "center", background: isPaid ? B.accent + "11" : B.surface, border: "1px solid " + (isPaid ? B.accent + "44" : B.border), borderRadius: "3px", padding: "2px 6px", fontSize: "9px" } },
+                            typeBtn, bStart, h("span", { style: { color: B.textMut } }, "→"), bEnd, bDel);
                     }),
                     h("button", { onClick: function() { addBreak(s.id); },
-                      style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "3px", padding: "2px 6px", color: B.textMut, cursor: "pointer", fontSize: "8px", fontWeight: 600 } }, "+ Break")
+                      style: M ? { background: "transparent", border: "1px dashed " + B.border, borderRadius: "8px", padding: "0 10px", height: 30, color: B.textMut, cursor: "pointer", fontSize: "11px", fontWeight: 600, fontFamily: "inherit" }
+                               : { background: "transparent", border: "1px dashed " + B.border, borderRadius: "3px", padding: "2px 6px", color: B.textMut, cursor: "pointer", fontSize: "8px", fontWeight: 600 } }, "+ Break")
                   ),
                   // Item positions
-                  itemPositions.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 3 } },
+                  itemPositions.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: M ? 6 : 3 } },
                     itemPositions.map(function(pos) {
                       var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
                       var crewMember = pos.crewId ? contacts.find(function(c) { return c.id === pos.crewId; }) : null;
@@ -543,139 +623,163 @@
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
                       var hasConflict = posConflicts && posConflicts.length > 0;
-                      return h("div", { key: pos.id, style: { background: hasConflict ? B.danger + "08" : B.surface, border: "1px solid " + (hasConflict ? B.danger + "66" : B.border), borderRadius: "3px", padding: isMobile ? "8px" : "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
-                        hasConflict && h("div", { title: "Double-booked: also on " + posConflicts.map(function(c) { return c.projectName; }).join(", "),
-                          style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
-                          h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
-                        // Role + person-slot share one row on mobile; the wrapper is
-                        // display:contents on desktop so that layout is unchanged.
-                        h("div", { style: { display: isMobile ? "flex" : "contents", flex: isMobile ? "1 1 100%" : undefined, gap: 6, alignItems: "center" } },
-                        // Searchable: the rate card grows, and scrolling a bare
-                        // <select> for "the L2 role" got old fast.
-                        h(window.LTPSearchSelect, {
-                          value: pos.serviceId || "",
+
+                      // ── Row controls, built once and laid out per width ──
+                      var conflictDot = hasConflict && h("div", { title: "Double-booked: also on " + posConflicts.map(function(c) { return c.projectName; }).join(", "),
+                        style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
+                        h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!"));
+                      // Searchable: the rate card grows, and scrolling a bare
+                      // <select> for "the L2 role" got old fast.
+                      var roleSel = h(window.LTPSearchSelect, {
+                        value: pos.serviceId || "",
+                        onChange: function(v) {
+                          var sid = (v === "" || v == null) ? null : Number(v);
+                          var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
+                          updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
+                        },
+                        options: [{ value: "", label: "Role…" }].concat(svcs.map(function(sv) {
+                          return { value: sv.id, label: sv.role, sublabel: sv.description };
+                        })),
+                        searchPlaceholder: "Search roles…",
+                        style: { flex: M ? "1 1 38%" : 1, minWidth: 0 },
+                        triggerStyle: trig,
+                        panelMinWidth: 250,
+                      });
+                      // Person slot — shown when a role has 2+ on the day. Give
+                      // distinct people different numbers so each is tracked
+                      // separately (own hours / OT / meal penalty); leave two
+                      // shifts on the same number to mark them the same person.
+                      var slotSel = (function() {
+                        var roleCountInDay = pos.serviceId ? allPositions.filter(function(p) { return p.serviceId === pos.serviceId; }).length : 0;
+                        if (roleCountInDay < 2) return null;
+                        var effSlot = itemSlots[pos.id] || 1;
+                        var opts = [];
+                        for (var n = 1; n <= roleCountInDay; n++) opts.push(n);
+                        return h("select", { value: effSlot,
+                          title: "Person #" + effSlot + " for this role. Different number = different person (tracked separately); same number across shifts = same person.",
+                          onChange: function(e) { updatePosition(s.id, pos.id, { slot: Number(e.target.value) }); },
+                          style: M ? { flexShrink: 0, width: 62, height: CTL, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 6px", color: B.text, fontSize: "13px", fontFamily: "inherit", boxSizing: "border-box" }
+                                   : { flexShrink: 0, width: 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
+                          opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
+                      })();
+                      // Only crew tagged with this role are listed; everyone
+                      // else sits behind a deliberate "Other crew" click, so a
+                      // role nobody is tagged with never leaves the position
+                      // unassignable. Crew is PICKED here, never authored —
+                      // this field deliberately has no inline-create.
+                      var crewSel = (function() {
+                        // Filter on the LINKED SERVICE's role, not the
+                        // denormalized pos.role: a stale or free-text code
+                        // matches nobody and would push the whole roster
+                        // behind "Other crew". No service = no role being
+                        // filled = offer everyone.
+                        var posSvc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
+                        var co = window.LTP_crewSelectOptions({
+                          crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
+                          allContacts: contacts, leading: [{ value: "", label: "Crew…" }],
+                        });
+                        return h(window.LTPSearchSelect, {
+                          value: pos.crewId || "",
                           onChange: function(v) {
-                            var sid = (v === "" || v == null) ? null : Number(v);
-                            var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
-                            updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
+                            var cid = (v === "" || v == null) ? null : Number(v);
+                            if (cid) { assignCrewToDay(s.id, pos, cid); }
+                            // Clearing the crew reopens the slot — an unassigned position
+                            // can't stay requested/accepted/confirmed (same reason as
+                            // reassignStatus, and it keeps the stale-write guard's
+                            // "downgrade clears the assignee" invariant intact).
+                            else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
                           },
-                          options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
-                            return { value: sv.id, label: sv.role, sublabel: sv.description };
-                          })),
-                          searchPlaceholder: "Search roles\u2026",
-                          style: { flex: 1, minWidth: 0 },
-                          triggerStyle: { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 },
-                          panelMinWidth: 250,
-                        }),
-                        // Person slot \u2014 shown when a role has 2+ on the day. Give
-                        // distinct people different numbers so each is tracked
-                        // separately (own hours / OT / meal penalty); leave two
-                        // shifts on the same number to mark them the same person.
-                        (function() {
-                          var roleCountInDay = pos.serviceId ? allPositions.filter(function(p) { return p.serviceId === pos.serviceId; }).length : 0;
-                          if (roleCountInDay < 2) return null;
-                          var effSlot = itemSlots[pos.id] || 1;
-                          var opts = [];
-                          for (var n = 1; n <= roleCountInDay; n++) opts.push(n);
-                          return h("select", { value: effSlot,
-                            title: "Person #" + effSlot + " for this role. Different number = different person (tracked separately); same number across shifts = same person.",
-                            onChange: function(e) { updatePosition(s.id, pos.id, { slot: Number(e.target.value) }); },
-                            style: { flexShrink: 0, width: isMobile ? 58 : 46, background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px 4px" : "3px 2px", color: B.text, fontSize: "10px", fontFamily: "inherit" } },
-                            opts.map(function(n) { return h("option", { key: n, value: n }, "#" + n); }));
-                        })()
-                        ),
-                        // Only crew tagged with this role are listed; everyone
-                        // else sits behind a deliberate "Other crew" click, so a
-                        // role nobody is tagged with never leaves the position
-                        // unassignable. Crew is PICKED here, never authored —
-                        // this field deliberately has no inline-create.
-                        (function() {
-                          // Filter on the LINKED SERVICE's role, not the
-                          // denormalized pos.role: a stale or free-text code
-                          // matches nobody and would push the whole roster
-                          // behind "Other crew". No service = no role being
-                          // filled = offer everyone.
-                          var posSvc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
-                          var co = window.LTP_crewSelectOptions({
-                            crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
-                            allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
-                          });
-                          return h(window.LTPSearchSelect, {
-                            value: pos.crewId || "",
-                            onChange: function(v) {
-                              var cid = (v === "" || v == null) ? null : Number(v);
-                              if (cid) { assignCrewToDay(s.id, pos, cid); }
-                              // Clearing the crew reopens the slot — an unassigned position
-                              // can't stay requested/accepted/confirmed (same reason as
-                              // reassignStatus, and it keeps the stale-write guard's
-                              // "downgrade clears the assignee" invariant intact).
-                              else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
-                            },
-                            options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
-                            searchPlaceholder: "Search crew\u2026",
-                            style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 },
-                            triggerStyle: { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 },
-                            panelMinWidth: 260,
-                          });
-                        })(),
-                        // Footer row on mobile: status + margin toggle + breaks on
-                        // the left, rate + copy + delete pushed to the right. The
-                        // wrapper is display:contents on desktop so the single-line
-                        // layout there is unchanged.
-                        h("div", { style: { display: isMobile ? "flex" : "contents", flex: isMobile ? "1 1 100%" : undefined, alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: isMobile ? 2 : undefined } },
-                        // Status — read-only in schedule editor, manage via Labor module
-                        h("span", { style: { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: (POS_COLORS[pos.status] || B.textMut), background: (POS_COLORS[pos.status] || B.textMut) + "18", border: "1px solid " + (POS_COLORS[pos.status] || B.textMut) + "33", borderRadius: "3px", padding: "4px 6px" } }, pos.status),
-                        // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
-                        h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
-                          title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
-                          style: { flexShrink: 0, background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
-                          pos.fullMargin ? "✓ MGN" : "MGN"),
-                        // Individual meal break(s) for THIS person (added by the
-                        // meal-penalty fix; removable). Distinct from the item's
-                        // crew-wide breaks above.
-                        (pos.breaks && pos.breaks.length > 0) && h("div", { style: { display: "flex", gap: 2, alignItems: "center" } },
-                          pos.breaks.map(function(br) {
-                            return h("span", { key: br.id, title: "Individual meal break " + window.LTP_formatTime(br.startTime) + " – " + window.LTP_formatTime(br.endTime) + " (this person only)",
-                              style: { display: "inline-flex", alignItems: "center", gap: 2, background: B.warn + "22", border: "1px solid " + B.warn + "55", borderRadius: "3px", padding: "1px 4px", fontSize: "8px", color: B.warn, fontWeight: 600, whiteSpace: "nowrap" } },
-                              "⏸ " + window.LTP_formatTime(br.startTime),
-                              h("button", { onClick: function() { updatePosition(s.id, pos.id, { breaks: (pos.breaks || []).filter(function(x) { return x.id !== br.id; }) }); },
-                                style: { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "9px", padding: 0, lineHeight: 1 } }, "×"));
-                          })),
-                        h("div", { style: { flexShrink: 0, width: 92, textAlign: "right", fontSize: "9px", marginLeft: isMobile ? "auto" : undefined } },
-                          !posUnit ? null : (isUnitPrimary
-                            ? [
-                                // A rate that came from this client's contract is
-                                // marked, so a figure that doesn't match the base
-                                // rate card is never a mystery.
-                                (posUnit.svc && posUnit.svc.clientRate) ? h("div", { key: "cr", style: { marginBottom: 1 } },
-                                  h(window.ClientRateChip, { svc: posUnit.svc, tiny: true })) : null,
-                                h("div", { key: "r", style: { color: B.accent, fontWeight: 600 },
-                                    title: posUnit.minHoursApplied
-                                      ? ("Billed as " + posUnit.billedHours + "h — this client's " + posUnit.minHours + "-hour minimum for " + (posUnit.svc.role || "this role") + " (worked " + posUnit.paidHours + "h).")
-                                      : undefined },
-                                  "$" + Math.round(posUnit.rateTotal)),
-                                posUnit.fullMargin
-                                  ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
-                                  : h("div", { key: "c", style: { color: posUnit.minApplied ? B.warn : B.textMut },
-                                      title: posUnit.minApplied ? "Raised to this crew member's negotiated minimum (payout only — the client rate above is unchanged)." : undefined },
-                                      "$" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
-                              ]
-                            : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))),
-                        h("button", { onClick: function() { removePosition(s.id, pos.id); }, "aria-label": "Remove position",
-                          style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.danger : B.textMut, cursor: "pointer", fontSize: isMobile ? "20px" : "12px", padding: isMobile ? "4px 6px" : 0, minHeight: isMobile ? 40 : undefined } }, "\u00d7"),
-                        i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
-                          title: "Copy role to next item",
-                          // Hover reveal doesn't fire on touch, so keep it visible on mobile.
-                          style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.accent : B.border, cursor: "pointer", fontSize: isMobile ? "18px" : "10px", padding: isMobile ? "4px 8px" : "1px 3px", minHeight: isMobile ? 40 : undefined },
-                          onMouseOver: function(e) { e.currentTarget.style.color = B.accent; },
-                          onMouseOut:  function(e) { e.currentTarget.style.color = isMobile ? B.accent : B.border; } }, "\u21e9")
-                        )
-                      );
+                          options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+                          searchPlaceholder: "Search crew…",
+                          style: { flex: M ? "1 1 52%" : 1, minWidth: 0 },
+                          triggerStyle: trig,
+                          panelMinWidth: 260,
+                        });
+                      })();
+                      // Status — read-only in schedule editor, manage via Labor module
+                      var statusChip = h("span", { style: M
+                          ? { flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "6px", padding: "0 8px", height: 28, display: "inline-flex", alignItems: "center", lineHeight: 1 }
+                          : { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, pos.status);
+                      // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
+                      var mgnBtn = h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
+                        title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
+                        style: M ? pill(!!pos.fullMargin, B.success)
+                                 : { flexShrink: 0, background: pos.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (pos.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: pos.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                        pos.fullMargin ? "✓ MGN" : "MGN");
+                      // Individual meal break(s) for THIS person (added by the
+                      // meal-penalty fix; removable). Distinct from the item's
+                      // crew-wide breaks above.
+                      var indivBreaks = (pos.breaks && pos.breaks.length > 0) && h("div", { style: { display: "flex", gap: M ? 4 : 2, alignItems: "center", flexWrap: "wrap" } },
+                        pos.breaks.map(function(br) {
+                          return h("span", { key: br.id, title: "Individual meal break " + window.LTP_formatTime(br.startTime) + " – " + window.LTP_formatTime(br.endTime) + " (this person only)",
+                            style: { display: "inline-flex", alignItems: "center", gap: M ? 4 : 2, background: B.warn + "22", border: "1px solid " + B.warn + "55", borderRadius: M ? "6px" : "3px", padding: M ? "0 4px 0 7px" : "1px 4px", height: M ? 28 : undefined, fontSize: M ? "10px" : "8px", color: B.warn, fontWeight: 600, whiteSpace: "nowrap" } },
+                            "⏸ " + window.LTP_formatTime(br.startTime),
+                            h("button", { onClick: function() { updatePosition(s.id, pos.id, { breaks: (pos.breaks || []).filter(function(x) { return x.id !== br.id; }) }); }, "aria-label": "Remove meal break",
+                              style: M ? { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "14px", padding: "0 4px", lineHeight: 1, height: 26, fontFamily: "inherit" }
+                                       : { background: "transparent", border: "none", color: B.warn, cursor: "pointer", fontSize: "9px", padding: 0, lineHeight: 1 } }, "×"));
+                        }));
+                      var rateTitle = posUnit && posUnit.minHoursApplied
+                        ? ("Billed as " + posUnit.billedHours + "h — this client's " + posUnit.minHours + "-hour minimum for " + (posUnit.svc.role || "this role") + " (worked " + posUnit.paidHours + "h).")
+                        : undefined;
+                      var costTitle = posUnit && posUnit.minApplied ? "Raised to this crew member's negotiated minimum (payout only — the client rate above is unchanged)." : undefined;
+                      var rateBox = !posUnit ? null : (M
+                        // Phone: rate and cost side by side on the footer line.
+                        ? h("div", { style: { flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" } },
+                            isUnitPrimary
+                              ? [
+                                  (posUnit.svc && posUnit.svc.clientRate) ? h(window.ClientRateChip, { key: "cr", svc: posUnit.svc, tiny: true }) : null,
+                                  h("span", { key: "r", style: { fontSize: "13px", fontWeight: 700, color: B.accent }, title: rateTitle }, "$" + Math.round(posUnit.rateTotal)),
+                                  posUnit.fullMargin
+                                    ? h("span", { key: "c", style: { fontSize: "10px", fontWeight: 700, color: B.success } }, "margin")
+                                    : h("span", { key: "c", style: { fontSize: "11px", color: posUnit.minApplied ? B.warn : B.textMut }, title: costTitle },
+                                        "/ $" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
+                                ]
+                              : h("span", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person"))
+                        : h("div", { style: { flexShrink: 0, width: 92, textAlign: "right", fontSize: "9px" } },
+                            isUnitPrimary
+                              ? [
+                                  // A rate that came from this client's contract is
+                                  // marked, so a figure that doesn't match the base
+                                  // rate card is never a mystery.
+                                  (posUnit.svc && posUnit.svc.clientRate) ? h("div", { key: "cr", style: { marginBottom: 1 } },
+                                    h(window.ClientRateChip, { svc: posUnit.svc, tiny: true })) : null,
+                                  h("div", { key: "r", style: { color: B.accent, fontWeight: 600 }, title: rateTitle }, "$" + Math.round(posUnit.rateTotal)),
+                                  posUnit.fullMargin
+                                    ? h("div", { key: "c", style: { color: B.success, fontWeight: 600 } }, "margin")
+                                    : h("div", { key: "c", style: { color: posUnit.minApplied ? B.warn : B.textMut }, title: costTitle },
+                                        "$" + Math.round(posUnit.costTotal) + (posUnit.minApplied ? " min" : ""))
+                                ]
+                              : h("div", { style: { color: B.textMut, fontStyle: "italic" }, title: "Same person as an earlier shift this day — billed once (see above)." }, "↳ same person")));
+                      // Desktop's placeholder keeps the footer aligned when a row has no rate yet.
+                      if (!rateBox && !M) rateBox = h("div", { style: { flexShrink: 0, width: 92, textAlign: "right", fontSize: "9px" } });
+                      var delBtn = h("button", { onClick: function() { removePosition(s.id, pos.id); }, "aria-label": "Remove position",
+                        style: M ? glyphBtn(B.danger, "22px") : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "×");
+                      var copyBtn = i < schedule.length - 1 && h("button", { onClick: function() { copyPositionToNext(i, pos); },
+                        title: "Copy role to next item", "aria-label": "Copy role to next item",
+                        // Hover reveal doesn't fire on touch, so keep it visible on mobile.
+                        style: M ? glyphBtn(B.accent, "18px") : { flexShrink: 0, background: "transparent", border: "none", color: B.border, cursor: "pointer", fontSize: "10px", padding: "1px 3px" },
+                        onMouseOver: function(e) { e.currentTarget.style.color = B.accent; },
+                        onMouseOut:  function(e) { e.currentTarget.style.color = M ? B.accent : B.border; } }, "⇩");
+
+                      var rowBg = hasConflict ? B.danger + "08" : B.surface, rowBd = "1px solid " + (hasConflict ? B.danger + "66" : B.border);
+                      return M
+                        // Phone: [!] role · #slot · crew on one line; status ·
+                        // MGN · breaks … rate / cost · ⇩ · × on a slim line under.
+                        ? h("div", { key: pos.id, style: { background: rowBg, border: rowBd, borderRadius: "10px", padding: "8px" } },
+                            h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, conflictDot, roleSel, slotSel, crewSel),
+                            h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6, minWidth: 0 } },
+                              statusChip, mgnBtn, indivBreaks,
+                              // Rate + the two glyphs stay right-aligned even on a
+                              // row that has no rate yet (no role picked).
+                              h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" } }, rateBox, copyBtn, delBtn)))
+                        : h("div", { key: pos.id, style: { background: rowBg, border: rowBd, borderRadius: "3px", padding: "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" } },
+                            conflictDot, roleSel, slotSel, crewSel, statusChip, mgnBtn, indivBreaks, rateBox, delBtn, copyBtn);
                     })
                   ),
                   // Add position button
                   h("button", { onClick: function() { addPosition(s.id); },
-                    style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", marginTop: 4, width: "100%" } }, "+ Position")
+                    style: M ? Object.assign({}, dashedBtn, { marginTop: 6 })
+                             : { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "3px 8px", borderRadius: "3px", marginTop: 4, width: "100%" } }, "+ Position")
                 );
               }),
 
@@ -684,14 +788,15 @@
                   var lastItem = dayItems[dayItems.length - 1].item;
                   addItemToDay(group.date !== "_unscheduled" ? group.date : "", lastItem.endTime || "08:00");
                 },
-                style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "6px", borderRadius: "4px", width: "100%", marginBottom: 4 } }, "+ Add Item to This Day"),
+                style: M ? Object.assign({}, dashedBtn, { marginBottom: 4 })
+                         : { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "6px", borderRadius: "4px", width: "100%", marginBottom: 4 } }, "+ Add Item to This Day"),
 
               // Day totals + per-PERSON breakdown. Each unit is one person
               // (role + slot); their meal penalty / OT depend on the shifts they
               // work, so two people in the same role can differ. The badge up top
               // shows the day total; this lists where it comes from, person by
               // person. Slot numbers (#1, #2) appear when a role has 2+ people.
-              allPositions.length > 0 && h("div", { style: { padding: "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: "10px", display: "flex", flexDirection: "column", gap: 2 } },
+              allPositions.length > 0 && h("div", { style: { padding: M ? "8px 6px 2px" : "6px 10px 2px", borderTop: "1px dashed " + B.border, fontSize: M ? "11px" : "10px", display: "flex", flexDirection: "column", gap: M ? 3 : 2 } },
                 (function() {
                   var roleUnitCount = {};
                   dayLabor.units.forEach(function(u) { roleUnitCount[u.serviceId] = (roleUnitCount[u.serviceId] || 0) + 1; });
@@ -716,7 +821,7 @@
                       u.fullMargin && h("span", { style: { color: B.success, fontWeight: 600 } }, "· full margin"));
                   });
                 })(),
-                h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: 3, borderTop: "1px solid " + B.border } },
+                h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: M ? 5 : 3, borderTop: "1px solid " + B.border, fontSize: M ? "12px" : undefined } },
                   h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
                   h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal)))
               )

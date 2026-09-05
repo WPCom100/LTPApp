@@ -245,7 +245,7 @@ def doc_number(period) -> str:
     return f"PAY-{int(y):02d}-{int(n)}"[:21]
 
 
-_TIER_LABEL = {"half": "Half day", "full": "Full day", "mixed": "Mixed"}
+_TIER_LABEL = {"half": "Half day", "full": "Full day", "mixed": "Mixed", "flat": "Flat rate"}
 
 
 def _f(x):

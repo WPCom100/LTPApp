@@ -115,6 +115,23 @@ eq("T8 calcHours 8", CH("09:00", "17:00"), 8);
 eq("T9 calcHours overnight", CH("20:00", "04:00"), 8);
 eq("T10 calcHours missing -> 0", CH("", "17:00"), 0);
 
+// ── formatDateShort / formatDateRangeShort (phone headers + picker chips) ────
+const FDS = window.LTP_formatDateShort, FDR = window.LTP_formatDateRangeShort;
+const NOW = new Date(2026, 8, 5);   // year comparisons pinned to 2026
+eq("DS1 weekday + month + day, no year this year", FDS("2026-09-10", { now: NOW }), "Thu, Sep 10");
+eq("DS2 year shown when it differs", FDS("2027-01-02", { now: NOW }), "Sat, Jan 2, 2027");
+eq("DS3 weekday can be dropped", FDS("2026-09-10", { weekday: false, now: NOW }), "Sep 10");
+eq("DS4 year can be forced", FDS("2026-09-10", { weekday: false, year: true, now: NOW }), "Sep 10, 2026");
+eq("DS5 empty -> empty", FDS("", { now: NOW }), "");
+eq("DS6 non-ISO passes through", FDS("tomorrow", { now: NOW }), "tomorrow");
+eq("DS7 day-of-month is the ISO day in every timezone", FDS("2026-03-01", { now: NOW }), "Sun, Mar 1");
+eq("DR1 range", FDR("2026-09-10", "2026-09-13", { now: NOW }), "Sep 10 \u2013 Sep 13");
+eq("DR2 same day collapses", FDR("2026-09-10", "2026-09-10", { now: NOW }), "Sep 10");
+eq("DR3 missing end -> start only", FDR("2026-09-10", "", { now: NOW }), "Sep 10");
+eq("DR4 missing start -> end only", FDR("", "2026-09-13", { now: NOW }), "Sep 13");
+eq("DR5 both missing -> empty", FDR("", "", { now: NOW }), "");
+eq("DR6 cross-year range carries both years", FDR("2026-12-30", "2027-01-02", { now: NOW }), "Dec 30 \u2013 Jan 2, 2027");
+
 // ── resolveTemplate ──────────────────────────────────────────────────────────
 const TPL = window.LTP_resolveTemplate;
 eq("TP1 substitution", TPL("Hi {{name}}, ref {{ref}}", { name: "Sam", ref: "Q-1" }), "Hi Sam, ref Q-1");
