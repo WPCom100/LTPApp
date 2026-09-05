@@ -66,6 +66,32 @@ window.LTP_formatTime = function(timeStr) {
   return hr12 + ":" + min + " " + ampm;
 };
 
+// Phone-width date: "Thu, Sep 10" — LTP_formatDate's "September 10th, 2026"
+// is most of a phone row on its own. The year is added only when it isn't the
+// current year (opts.year forces it; opts.weekday === false drops the day
+// name). Built from the ISO parts, never Date.parse, so a bare "2026-09-10"
+// stays the calendar day it names in every timezone.
+window.LTP_formatDateShort = function(dateStr, opts) {
+  if (!dateStr) return "";
+  var parts = String(dateStr).split("-");
+  if (parts.length !== 3) return dateStr;
+  var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+  if (isNaN(d.getTime())) return dateStr;
+  var o = opts || {};
+  var f = { month: "short", day: "numeric" };
+  if (o.weekday !== false) f.weekday = "short";
+  if (o.year === true || (o.year !== false && d.getFullYear() !== (o.now || new Date()).getFullYear())) f.year = "numeric";
+  return d.toLocaleDateString("en-US", f);
+};
+// "Sep 10 – Sep 13" (one date when they match or only one is set), for the
+// project line in phone headers.
+window.LTP_formatDateRangeShort = function(startStr, endStr, opts) {
+  var o = Object.assign({ weekday: false }, opts || {});
+  var a = window.LTP_formatDateShort(startStr, o), b = window.LTP_formatDateShort(endStr, o);
+  if (!a || !b || a === b) return a || b;
+  return a + " \u2013 " + b;
+};
+
 // ── Shared Utilities ─────────────────────────────────────────────────────────
 var _idCounter = 0;
 window.LTP_genId = function(prefix) { _idCounter++; return (prefix || "x") + "-" + Date.now() + "-" + _idCounter; };
