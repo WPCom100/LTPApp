@@ -766,8 +766,13 @@ class _DocPDF:
         c.setFont("Roboto-Bold", 9)
         c.setFillColor(INK_SOFT)
         c.drawString(col["item"], self.y - 12, "ITEM")
-        qty_center = col["qty"] + 38
-        c.drawCentredString(qty_center, self.y - 12, "QTY")
+        # QTY is two aligned sub-columns: the number right-aligned at a fixed
+        # edge (so digits line up down the page), the unit label left-aligned
+        # just past it. The header sits flush with the digits, like the other
+        # numeric headers.
+        qty_right = col["qty"] + 30
+        unit_x = qty_right + 3
+        c.drawRightString(qty_right, self.y - 12, "QTY")
         c.drawRightString(col["unit"] + 55, self.y - 12, "UNIT PRICE")
         c.drawRightString(col["total"], self.y - 12, "TOTAL")
         self.y -= 18
@@ -821,19 +826,17 @@ class _DocPDF:
             c.drawString(col["item"], vc, name)
 
             # Quantity with its unit beside it — "3 days", "1 half day",
-            # "5 OT hours" — the pair centred where the bare number used to be.
+            # "5 OT hours". Numbers share a right edge; labels share a left
+            # edge, so both read as clean columns.
             num = _fmt_qty(qty)
             unit_lbl = _qty_label(it, qty)
-            num_w = c.stringWidth(num, "Roboto", fs)
-            lbl_w = c.stringWidth(" " + unit_lbl, "Roboto-Light", 7.5) if unit_lbl else 0
-            qx = qty_center - (num_w + lbl_w) / 2
             c.setFont("Roboto", fs)
             c.setFillColor(INK)
-            c.drawString(qx, vc, num)
+            c.drawRightString(qty_right, vc, num)
             if unit_lbl:
                 c.setFont("Roboto-Light", 7.5)
                 c.setFillColor(MUTED)
-                c.drawString(qx + num_w, vc, " " + unit_lbl)
+                c.drawString(unit_x, vc, unit_lbl)
 
             if has_adj:
                 # Original price — muted strikethrough, upper part of row
