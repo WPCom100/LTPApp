@@ -311,6 +311,13 @@ def test_send_whole_project_requests_only_this_crews_positions():
     assert _pos_status(proj, "p1c") == "requested"
     # The OTHER crew member's position must be left untouched.
     assert _pos_status(proj, "p1x") == "open"
+    # The response carries the moved project row, token included, so the
+    # sending window installs it instead of PUTting its own mirror of the move
+    # back under the pre-send If-Match token (which drew a 409 + "Changed in
+    # another window" toast for the sender's own change).
+    assert req["project"]["id"] == P_SEND
+    assert req["project"]["_rev"] == proj["_rev"]
+    assert _pos_status(req["project"], "p1a") == "requested"
 
 
 def test_send_guards_non_crew_no_email_and_no_sendable():
@@ -382,6 +389,10 @@ def test_silent_send_books_positions_confirmed_without_emailing():
     assert _pos_status(proj, "psi_a") == "confirmed"
     assert _pos_status(proj, "psi_b") == "confirmed"
     assert _pos_crew(proj, "psi_a") == C1                    # crew stays attached
+    # The direct book's pay stamp is written client-side right after this
+    # response; it needs the moved row's token to land, so that row rides along.
+    assert body["project"]["_rev"] == proj["_rev"]
+    assert _pos_status(body["project"], "psi_a") == "confirmed"
     # Another crew member's slot on the same shift is untouched.
     assert _pos_status(proj, "psi_x") == "open"
 
@@ -533,6 +544,10 @@ def test_withdraw_pending_reopens_positions():
     proj = _project(client, tok, P_WITHDRAW)
     assert _pos_status(proj, "p5a") == "open"
     assert _pos_crew(proj, "p5a") is None  # withdraw unassigns the crew member too
+    # Like send, withdraw hands back the reopened row for the window to adopt.
+    assert r.json()["project"]["_rev"] == proj["_rev"]
+    assert _pos_status(r.json()["project"], "p5a") == "open"
+    assert _pos_crew(r.json()["project"], "p5a") is None
 
 
 def test_withdraw_after_answer_is_blocked():

@@ -18,7 +18,7 @@ import os
 import sys
 import types
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from cryptography.fernet import Fernet
 
@@ -263,6 +263,90 @@ async def test_api_error_on_fault():
     _check("raised QboApiError", raised is not None)
     _check("captured fault code", raised is not None and raised.fault_code == "2500")
     _check("safe_message set", raised is not None and "Bad" in raised.safe_message)
+
+
+async def test_transport_error_becomes_typed_error():
+    """A connect failure / timeout used to escape _request as httpx's own
+    exception, which the routes did not map — FastAPI answered a plain-text
+    500 and the sending window reported "Unexpected token 'I' ... is not valid
+    JSON". It is retried once (like a 5xx) and then raised as QboApiError."""
+    print("test_transport_error_becomes_typed_error")
+    import httpx
+    conn = _make_conn(fresh=True)
+    db = MagicMock(); db.flush = AsyncMock()
+    client = MagicMock()
+    client.request = AsyncMock(side_effect=httpx.ConnectTimeout("timed out"))
+    raised = None
+    # Skip the real 2s backoff — scoped, so the rest of the run keeps a real
+    # asyncio.sleep (a process-wide stub turns every sleep loop into a hot one).
+    with patch("backend.quickbooks.asyncio.sleep", new=AsyncMock()):
+        try:
+            await quickbooks._request(conn, db, "POST", "invoice", client_id="c", client_secret="s",
+                                      json={}, httpx_client=client)
+        except QboApiError as e:
+            raised = e
+    _check("raised QboApiError (routes map it to 502)", isinstance(raised, quickbooks.QboUnreachable))
+    _check("retried once before giving up", client.request.await_count == 2)
+    _check("message says QuickBooks could not be reached",
+           raised is not None and "could not be reached" in raised.safe_message
+           and "ConnectTimeout" in raised.safe_message, getattr(raised, "safe_message", None))
+    _check("and names the call that hung",
+           raised is not None and "during POST invoice" in raised.safe_message, getattr(raised, "safe_message", None))
+    _check("and how long it waited",
+           raised is not None and " after " in raised.safe_message and "s (" in raised.safe_message,
+           getattr(raised, "safe_message", None))
+
+
+async def test_transport_error_recovers_on_retry():
+    print("test_transport_error_recovers_on_retry")
+    import httpx
+    conn = _make_conn(fresh=True)
+    db = MagicMock(); db.flush = AsyncMock()
+    resp200 = MagicMock(); resp200.status_code = 200
+    resp200.json = MagicMock(return_value={"Invoice": {"Id": "7"}})
+    client = MagicMock()
+    client.request = AsyncMock(side_effect=[httpx.ReadError("reset"), resp200])
+    with patch("backend.quickbooks.asyncio.sleep", new=AsyncMock()):
+        out = await quickbooks._request(conn, db, "POST", "invoice", client_id="c", client_secret="s",
+                                        json={}, httpx_client=client)
+    _check("second attempt's answer is returned", out["Invoice"]["Id"] == "7")
+
+
+async def test_non_json_success_becomes_typed_error():
+    print("test_non_json_success_becomes_typed_error")
+    conn = _make_conn(fresh=True)
+    db = MagicMock(); db.flush = AsyncMock()
+    resp = MagicMock(); resp.status_code = 200; resp.text = "<html>gateway</html>"
+    resp.json = MagicMock(side_effect=ValueError("not json"))
+    client = MagicMock(); client.request = AsyncMock(return_value=resp)
+    raised = None
+    try:
+        await quickbooks._request(conn, db, "GET", "query", client_id="c", client_secret="s",
+                                  httpx_client=client)
+    except QboApiError as e:
+        raised = e
+    _check("raised QboApiError", isinstance(raised, quickbooks.QboBadResponse))
+    _check("message is human", raised is not None and "could not be read" in raised.safe_message)
+
+
+async def test_refresh_transport_error_keeps_connection():
+    """The token endpoint being unreachable is not a revocation: the refresh
+    token was never spent, so the connection row must survive and the caller
+    gets the typed error rather than httpx's."""
+    print("test_refresh_transport_error_keeps_connection")
+    import httpx
+    conn = _make_conn(fresh=False)
+    db = MagicMock(); db.flush = AsyncMock(); db.commit = AsyncMock(); db.delete = AsyncMock()
+    db.refresh = AsyncMock()
+    client = MagicMock(); client.post = AsyncMock(side_effect=httpx.ConnectError("no route"))
+    raised = None
+    try:
+        await quickbooks.refresh_if_needed(conn, db, client_id="c", client_secret="s", httpx_client=client)
+    except QboApiError as e:
+        raised = e
+    _check("raised the typed unreachable error", isinstance(raised, quickbooks.QboUnreachable))
+    _check("naming the token refresh", raised is not None and "token refresh" in raised.safe_message)
+    _check("connection row was not dropped", db.delete.await_count == 0)
 
 
 # ── Customer address + fields ────────────────────────────────────────────────

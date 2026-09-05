@@ -178,7 +178,59 @@ def _paid_day_override(request: Request) -> bool:
     return raw in ("1", "true", "yes")
 
 
-def _require_fresh(request: Request, row, path: str, item_id) -> None:
+def _same_content(current: dict, mapped: dict | None) -> bool:
+    """Would applying `mapped` (snake_case, already filtered by _dict_to_row)
+    leave the row's client-writable content exactly as it is?
+
+    Compared over the same field set `_row_rev` hashes, after jsonable_encoder
+    on BOTH sides so a stored datetime and the ISO string the client echoes
+    back for it compare equal (Python `==` already treats 1 and 1.0 alike).
+    Anything the encoder cannot reconcile simply compares unequal, which falls
+    through to the ordinary conflict — never past it."""
+    if not mapped:
+        return False
+    proposed = {k: v for k, v in current.items() if k != "_rev"}
+    for snake, val in mapped.items():
+        proposed[_snake_to_camel(snake)] = val
+
+    def hashable(d):
+        return {k: v for k, v in d.items()
+                if k != "_rev" and _camel_to_snake(k) not in _READONLY_COLS}
+
+    return jsonable_encoder(hashable(current)) == jsonable_encoder(hashable(proposed))
+
+
+def _stale_only_by_server_activity(current: dict, mapped: dict | None, token: str) -> bool:
+    """Is the caller's token stale ONLY because the server appended activity
+    entries since the caller read the row?
+
+    Every send, PDF download, QuickBooks push and share-link open stamps an
+    entry onto `activity` server-side, and each stamp moves the row's `_rev`.
+    A window that then saves a real edit (built on the copy it read before the
+    stamp) carries the pre-stamp token and would be refused — and the refusal
+    threw its edit away — even though the update path already unions activity
+    (_merge_activity), so nothing at all would be lost by accepting it.
+
+    Nothing in the app removes an activity entry, so the entries the caller
+    sends are a superset of what it read. Rebuild what it read: the stored row
+    with `activity` cut down to the entries the caller knows. If THAT hashes
+    to the caller's token, the only thing that changed underneath it was an
+    appended entry, and the write is judged fresh. Any other divergence — a
+    status the crew or the client moved, a field another window edited — still
+    fails the comparison and is refused as before."""
+    if not mapped or not isinstance(mapped.get("activity"), list):
+        return False
+    known = {e.get("id") for e in mapped["activity"] if isinstance(e, dict) and e.get("id")}
+    stored = [e for e in (current.get("activity") or []) if isinstance(e, dict)]
+    as_read = [e for e in stored if e.get("id") in known]
+    if len(as_read) == len(stored):
+        return False   # nothing was appended server-side; the token is stale for another reason
+    candidate = {k: v for k, v in current.items() if k != "_rev"}
+    candidate["activity"] = as_read
+    return _row_rev(candidate) == token
+
+
+def _require_fresh(request: Request, row, path: str, item_id, mapped: dict | None = None) -> None:
     """Reject a PUT whose If-Match no longer matches the stored row.
 
     This is the guard that stops a window which loaded before a crew member
@@ -191,6 +243,18 @@ def _require_fresh(request: Request, row, path: str, item_id) -> None:
     (modules/settings.js, modules/invoices.js) working untouched and lets the
     guard roll out without a flag day.
 
+    A stale token with NOTHING to write is not a conflict. The Labor tab mirrors
+    server-side position moves locally (a crew-request send flips open →
+    requested in the browser at the same moment POST /api/crew-requests/send
+    flips it in the database), and its debounced project PUT then arrives
+    carrying the pre-send token and the post-send content. Refusing that write
+    adopted a row identical to the one the window already had and raised a
+    "Changed in another window" toast for a change this very window made. A
+    guard should only fire on a conflict it can actually resolve, and there is
+    nothing to resolve when the write would change no byte — so `mapped` (the
+    incoming write, as _dict_to_row shaped it) is compared against the stored
+    row first and an identical write passes as the no-op it is.
+
     On conflict the CURRENT server row rides along in the 409 body, so the
     client can adopt it without a second round trip."""
     want = (request.headers.get("if-match") or "").strip()
@@ -198,6 +262,14 @@ def _require_fresh(request: Request, row, path: str, item_id) -> None:
         return
     current = _row_to_dict(row)
     if want.strip('"') == current["_rev"]:
+        return
+    if _same_content(current, mapped):
+        print(f"[LTP] if-match: {path} {item_id} written with a stale token but "
+              f"identical content — accepted as a no-op", flush=True)
+        return
+    if _stale_only_by_server_activity(current, mapped, want.strip('"')):
+        print(f"[LTP] if-match: {path} {item_id} written with a token stale only by "
+              f"server-appended activity — accepted; the entries are merged back", flush=True)
         return
     raise HTTPException(
         status_code=409,
@@ -343,8 +415,12 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # Payroll integrity: a non-admin can't introduce a frozen pay snapshot on a
         # brand-new project either — strip any `work`/`adj` off incoming positions
         # (stored side is empty on create). See the update path for the rationale.
-        if model_cls is models.Project and user.role != "admin" and isinstance(mapped.get("schedule"), list):
-            stripped = crew_integrity.enforce_pay_snapshot([], mapped["schedule"])
+        if model_cls is models.Project and user.role != "admin":
+            stripped = 0
+            if isinstance(mapped.get("schedule"), list):
+                stripped += crew_integrity.enforce_pay_snapshot([], mapped["schedule"])
+            if isinstance(mapped.get("fixed_positions"), list):
+                stripped += crew_integrity.enforce_pay_snapshot_fixed([], mapped["fixed_positions"])
             if stripped:
                 print(f"[LTP] payout-integrity: project create by non-admin user "
                       f"id={user.id} ({user.email}) carried {stripped} pay-snapshot "
@@ -389,9 +465,11 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # POST. The frontend's syncEntity routes accordingly.
             raise HTTPException(status_code=404, detail=f"{path} {item_id} not found")
         # Optimistic concurrency — BEFORE any mutation, so a rejected write
-        # leaves the row untouched.
-        _require_fresh(request, row, path, item_id)
+        # leaves the row untouched. The mapped write goes along so a stale
+        # token carrying identical content can be recognised as the no-op it
+        # is (_dict_to_row is a pure reshape; nothing has been applied yet).
         mapped = _dict_to_row(data, model_cls)
+        _require_fresh(request, row, path, item_id, mapped)
         await _validate_fks(mapped, model_cls, db)
         # Stale-write guard (Project only): the frontend PUTs its whole
         # in-memory row and never refetches projects after page load, so a
@@ -417,6 +495,19 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
+        # The same two guards over the flat-rate engagements (Project.fixed_positions):
+        # same id namespace, same status ladder, same frozen work/adj snapshot.
+        if model_cls is models.Project and isinstance(mapped.get("fixed_positions"), list):
+            floored = crew_integrity.enforce_status_floor_fixed(row.fixed_positions, mapped["fixed_positions"])
+            if floored:
+                print(f"[LTP] crew-integrity: project {item_id} save carried "
+                      f"{floored} stale flat-position status downgrade(s) — restored", flush=True)
+            if user.role != "admin":
+                reverted = crew_integrity.enforce_pay_snapshot_fixed(row.fixed_positions, mapped["fixed_positions"])
+                if reverted:
+                    print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
+                          f"user id={user.id} ({user.email}) carried {reverted} flat-position "
+                          f"pay-snapshot change(s) — reverted", flush=True)
         # Paid-day integrity. Runs LAST among the schedule guards, on the FINAL
         # incoming schedule, so a change the floor/pay-snapshot guards already
         # reverted is not reported as a conflict that no longer exists.
@@ -427,8 +518,20 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # `paidDays` map fetched when the editor opened — stale the moment a bill
         # is paid, or a second window saves. That check is a courtesy; this is
         # the enforcement, and it is what makes the client's staleness harmless.
-        if model_cls is models.Project and isinstance(mapped.get("schedule"), list):
-            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, mapped["schedule"])
+        if model_cls is models.Project and (isinstance(mapped.get("schedule"), list)
+                                            or isinstance(mapped.get("fixed_positions"), list)
+                                            or "end_date" in mapped):
+            # A field this write doesn't carry keeps its stored value on both
+            # sides, so only what is actually being changed can register.
+            paid_hits = await payouts.paid_day_conflicts(
+                db, item_id, row.schedule,
+                mapped["schedule"] if isinstance(mapped.get("schedule"), list) else row.schedule,
+                stored_fixed=row.fixed_positions,
+                incoming_fixed=(mapped["fixed_positions"] if isinstance(mapped.get("fixed_positions"), list)
+                                else row.fixed_positions),
+                stored_end=row.end_date,
+                incoming_end=mapped.get("end_date", row.end_date),
+            )
             if paid_hits:
                 if not _paid_day_override(request):
                     raise HTTPException(
@@ -499,7 +602,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         # schedule: every paid day on the project disappears, so every one of
         # them is a conflict.
         if model_cls is models.Project:
-            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [])
+            paid_hits = await payouts.paid_day_conflicts(db, item_id, row.schedule, [],
+                                                         stored_fixed=row.fixed_positions, incoming_fixed=[],
+                                                         stored_end=row.end_date, incoming_end=row.end_date)
             if paid_hits and not _paid_day_override(request):
                 raise HTTPException(
                     status_code=409,

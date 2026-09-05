@@ -22,8 +22,14 @@ const periods = JSON.parse(fs.readFileSync(path.join(fxDir, "payout_periods.json
 // ── Snapshot parity: LTP_payoutRows still matches the recorded expected ───────
 const pr = window.LTP_payoutRows(snap.projects, snap.contacts, snap.services, snap.range.start, snap.range.end);
 eq("PS1 grandTotal", pr.grandTotal, snap.expected.grandTotal);
+// Sum per (crew, project, date): a flat engagement paid on a signed shift day is
+// a second row under the same key (the server merges them into one ledger line).
 const got = {};
-pr.groups.forEach((g) => g.rows.forEach((r) => { got[g.crewId + "|" + r.projectName + "|" + r.date] = r.payable; }));
+pr.groups.forEach((g) => g.rows.forEach((r) => {
+  const k = g.crewId + "|" + r.projectName + "|" + r.date;
+  if (!(k in got)) got[k] = null;
+  if (r.payable != null) got[k] = Math.round(((got[k] || 0) + r.payable) * 100) / 100;
+}));
 snap.expected.rows.forEach((r) => {
   const k = r.crewId + "|" + r.projectName + "|" + r.date;
   eq("PS row " + k, got[k], r.payable);

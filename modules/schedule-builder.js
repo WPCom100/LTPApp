@@ -20,7 +20,130 @@
       .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId }) {
+  // ── Flat-rate positions panel ─────────────────────────────────────────────
+  // People hired for the WHOLE project at a fixed fee with no call times — a
+  // lighting designer, a stage manager. They live in project.fixedPositions,
+  // not on a schedule day (see backend/models.py::Project.fixed_positions and
+  // the helpers in components/domain-crew.js): the fee (what we pay) and the
+  // bill (what the client pays) are typed per position, margin is the
+  // difference, and the fee lands in the payroll period the PROJECT'S END DATE
+  // falls into — paid on that period's pay day with everything else, no
+  // per-position pay date. Status is read-only here, exactly like a shift
+  // position: requests, confirms and releases happen in Labor.
+  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+  var ACTIVE_POS = { requested: 1, accepted: 1, confirmed: 1 };
+
+  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, settings, isMobile }) {
+    var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
+    var money = window.LTP_money;
+    var rows = list || [];
+    function update(id, patch) {
+      onChange(rows.map(function(p) { return p.id === id ? Object.assign({}, p, patch) : p; }));
+    }
+    function add() {
+      onChange(rows.concat([{ id: genId("fpos"), serviceId: null, role: "", crewId: null, status: "open",
+                              fee: 0, bill: 0, fullMargin: false, note: "" }]));
+    }
+    // When the fee is paid: the payroll period the project's end date falls
+    // into, on that period's pay day (Settings → pay period anchor / length /
+    // pay-day offset). Spelled out here so the producer never has to work it out.
+    var endISO = window.LTP_fixedPayDate(project);
+    var ppCfg = settings || {};
+    var pp = (endISO && ppCfg.payPeriodAnchor) ? window.LTP_payPeriodBounds(ppCfg.payPeriodAnchor, ppCfg.payPeriodLengthDays || 14, endISO) : null;
+    var payDay = pp ? window.LTP_payPeriodPayDay(pp.end, ppCfg.payPeriodPayDayOffsetDays || 0) : null;
+    var payLine = !endISO
+      ? "Set the project's end date \u2014 the fee is paid with the payroll period that date falls into."
+      : pp
+        ? "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into \u2014 pay day " + fmt(payDay) + ", alongside every other payout in that period."
+        : "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into. Set the pay-period start date in Settings to see the pay day.";
+    var inp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px",
+                color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
+    var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+    var trig = { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 };
+    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: isMobile ? 10 : 12, marginBottom: 12 } },
+      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 8 : 0 } },
+        h("div", { style: { minWidth: 0, flex: "1 1 320px" } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em" } }, "Flat-rate positions"),
+          h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2, lineHeight: 1.4 } },
+            "Hired for the whole project at a fixed fee, no call times \u2014 they get the schedule outline and set their own hours. "
+            + "The fee is stated on their request. " + payLine)),
+        h("button", { onClick: add,
+          style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
+          "+ Flat-rate position")),
+      rows.map(function(p) {
+        var svc = p.serviceId ? svcs.find(function(sv) { return sv.id === p.serviceId; }) : null;
+        var pc = POS_COLORS[p.status] || B.textMut;
+        var fee = Number(p.fee) || 0, bill = Number(p.bill) || 0;
+        var margin = Math.round((bill - (p.fullMargin ? 0 : fee)) * 100) / 100;
+        var co = window.LTP_crewSelectOptions({
+          crew: crew, role: svc ? svc.role : "", selectedId: p.crewId,
+          allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
+        });
+        return h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
+          // Role — a rate-card service, required: it routes the fee to that
+          // role's QuickBooks expense account and names the quote line.
+          h(window.LTPSearchSelect, {
+            value: p.serviceId || "",
+            onChange: function(v) {
+              var sid = (v === "" || v == null) ? null : Number(v);
+              var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
+              update(p.id, { serviceId: sid, role: sv ? sv.role : "" });
+            },
+            options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
+              return { value: sv.id, label: sv.role, sublabel: sv.description };
+            })),
+            searchPlaceholder: "Search roles\u2026",
+            style: { flex: isMobile ? "1 1 45%" : "1 1 110px", minWidth: 0 },
+            triggerStyle: trig, panelMinWidth: 250,
+          }),
+          // Crew — role-matched first, like every crew picker. Clearing or
+          // changing the person reopens the slot (a request belongs to whoever
+          // was asked).
+          h(window.LTPSearchSelect, {
+            value: p.crewId || "",
+            onChange: function(v) {
+              var cid = (v === "" || v == null) ? null : Number(v);
+              if (cid) update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" });
+              else update(p.id, { crewId: null, status: "open" });
+            },
+            options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+            searchPlaceholder: "Search crew\u2026",
+            style: { flex: isMobile ? "1 1 45%" : "1 1 130px", minWidth: 0 },
+            triggerStyle: trig, panelMinWidth: 260,
+          }),
+          h("label", { style: lbl, title: "What we pay this person for the whole project." }, "Fee $",
+            h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: fee === 0 ? "" : p.fee, placeholder: "0",
+              onChange: function(e) { update(p.id, { fee: e.target.value === "" ? 0 : Number(e.target.value) }); },
+              style: Object.assign({}, inp, { width: isMobile ? 84 : 72 }) })),
+          h("label", { style: lbl, title: "What the client is charged for this position (0 = absorbed in the package price, no quote line)." }, "Bill $",
+            h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: bill === 0 ? "" : p.bill, placeholder: "0",
+              onChange: function(e) { update(p.id, { bill: e.target.value === "" ? 0 : Number(e.target.value) }); },
+              style: Object.assign({}, inp, { width: isMobile ? 84 : 72 }) })),
+          // Full-margin toggle — bills the client, zeroes the cost (the owner filling the role).
+          h("button", { onClick: function() { update(p.id, { fullMargin: !p.fullMargin }); },
+            title: p.fullMargin ? "Full margin: company cost is $0 for this position (bill still charged). Click to cost it at the fee." : "Mark full margin \u2014 zero the company cost (bill still charged), e.g. the owner filling the role.",
+            style: { flexShrink: 0, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 5px", color: p.fullMargin ? B.success : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+            p.fullMargin ? "\u2713 MGN" : "MGN"),
+          h("input", { type: "text", value: p.note || "", placeholder: "Scope note for the crew (optional)", maxLength: 500,
+            onChange: function(e) { update(p.id, { note: e.target.value }); },
+            style: Object.assign({}, inp, { flex: "1 1 150px" }) }),
+          // Status — read-only here, managed in Labor (same as shift positions).
+          h("span", { style: { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, p.status),
+          h("div", { style: { flexShrink: 0, width: 96, textAlign: "right", fontSize: "9px" } },
+            h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + money(bill)),
+            p.fullMargin
+              ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
+              : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin))),
+          !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.",
+            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 role needed"),
+          !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).",
+            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 no project end date"),
+          h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
+            style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.danger : B.textMut, cursor: "pointer", fontSize: isMobile ? "20px" : "12px", padding: isMobile ? "4px 6px" : 0, minHeight: isMobile ? 40 : undefined } }, "\u00d7"));
+      }));
+  }
+
+  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
     var isMobile = window.LTP_useIsMobile();
     var company = companies.find(function(c) { return c.id === project.companyId; });
 
@@ -52,6 +175,9 @@
         }),
         scheduleNotes: p.scheduleNotes || "",
         scheduleActivity: (p.scheduleActivity || []).map(function(a) { return Object.assign({}, a); }),
+        // Flat-rate engagements (no schedule day). Shallow-cloned like
+        // positions; their pay/work/adj snapshots are only ever replaced.
+        fixedPositions: (p.fixedPositions || []).map(function(x) { return Object.assign({}, x); }),
       };
     }
     var initial = useMemo(function() { return initialFrom(project); }, [project.id]);
@@ -103,7 +229,9 @@
     var [paidWarn, setPaidWarn] = useState(null);   // [{crewId, date, ds}] while confirming
     var paidSeq = React.useRef(0);
     useEffect(function() {
-      var dates = (project.schedule || []).map(function(s) { return s.date; }).filter(Boolean).sort();
+      var dates = (project.schedule || []).map(function(s) { return s.date; })
+        .concat((project.fixedPositions || []).length ? [window.LTP_fixedPayDate(project)] : [])
+        .filter(Boolean).sort();
       if (!dates.length) { setPaidDays({}); return; }
       var seq = ++paidSeq.current;   // ignore a slower earlier project's late response
       fetch("/api/qbo/payouts/day-status", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -133,8 +261,19 @@
     // crew-wide breaks AND the position's individual breaks, and the crew's
     // positions (role/service/status). A change to any of these reprices pay, so
     // all of them must be in the signature or the paid-day guard misses the edit.
-    function _paidSig(schedule) {
+    function _paidSig(schedule, fixed) {
       var m = {};
+      // Flat-rate engagements fingerprint under the project's END date:
+      // service, role, status, fee and the full-margin flag all reprice the
+      // fee. Mirrors the "flat" branch of backend/payouts.py::paid_day_signature.
+      var flatDate = window.LTP_fixedPayDate(project);
+      (fixed || []).forEach(function(p) {
+        if (!p || p.crewId == null) return;
+        var d = flatDate;
+        if (!d) return;
+        var key = p.crewId + "|" + d;
+        (m[key] = m[key] || []).push(["flat", p.serviceId, p.role, p.status, Number(p.fee) || 0, !!p.fullMargin].join(","));
+      });
       (schedule || []).forEach(function(s) {
         if (!s.date) return;
         (s.positions || []).forEach(function(p) {
@@ -149,7 +288,8 @@
     }
     function changedPaidDays() {
       if (!Object.keys(paidDays).length) return [];
-      var before = _paidSig(cleanRef.current.schedule), after = _paidSig(draft.schedule);
+      var before = _paidSig(cleanRef.current.schedule, cleanRef.current.fixedPositions);
+      var after = _paidSig(draft.schedule, draft.fixedPositions);
       var out = [];
       Object.keys(paidDays).forEach(function(cd) {
         if ((before[cd] || []).join(";") !== (after[cd] || []).join(";")) {
@@ -220,8 +360,16 @@
         totalCost += dayLabor.costTotal;
       });
       var days = Object.keys(dateMap).length;
-      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost) };
-    }, [draft.schedule, contacts]);
+      // Flat-rate engagements: typed bill/fee, no rate engine — added on top of
+      // the day labor so the summary previews the whole project's margin.
+      var flat = window.LTP_fixedPositionsTotals(draft.fixedPositions);
+      totalRate += flat.rateTotal;
+      totalCost += flat.costTotal;
+      totalPos += flat.count;
+      filledPos += flat.filled;
+      return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost),
+               flatCount: flat.count, flatFilled: flat.filled, flatRate: Math.round(flat.rateTotal), flatCost: Math.round(flat.costTotal) };
+    }, [draft.schedule, draft.fixedPositions, contacts]);
 
     // ── Compute changes for activity ─────────────────────────────────────────
     function computeSchedChanges(before, after) {
@@ -260,6 +408,25 @@
         });
       });
       bs.forEach(function(s) { if (!as.find(function(a) { return a.id === s.id; })) changes.push({ cat: "Day Removed", detail: (s.title || "?") + (s.date ? " (" + fmt(s.date) + ")" : "") }); });
+      // Flat-rate engagements — same shape of entries, keyed on the role.
+      var bf = before.fixedPositions || [], af = after.fixedPositions || [];
+      var bfMap = {}; bf.forEach(function(p) { bfMap[p.id] = p; });
+      var money = window.LTP_money;
+      function roleName(p) { var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null; return sv ? sv.role : (p.role || "?"); }
+      function crewName(id) { var c = id ? contacts.find(function(x) { return x.id === id; }) : null; return c ? c.firstName + " " + c.lastName : "Unassigned"; }
+      af.forEach(function(p) {
+        var label = "Flat-rate " + roleName(p);
+        var bp = bfMap[p.id];
+        if (!bp) { changes.push({ cat: "Flat-rate Position Added", detail: roleName(p) + (Number(p.fee) ? " \u00b7 fee $" + money(p.fee) : "") }); return; }
+        if (bp.serviceId !== p.serviceId) changes.push({ cat: label + " \u2014 Role Changed", detail: roleName(bp) + " \u2192 " + roleName(p) });
+        if (bp.crewId !== p.crewId) changes.push({ cat: label, detail: crewName(bp.crewId) + " \u2192 " + crewName(p.crewId) });
+        if (bp.status !== p.status) changes.push({ cat: label + " Status", detail: bp.status + " \u2192 " + p.status });
+        if ((Number(bp.fee) || 0) !== (Number(p.fee) || 0)) changes.push({ cat: label + " Fee", detail: "$" + money(bp.fee) + " \u2192 $" + money(p.fee) });
+        if ((Number(bp.bill) || 0) !== (Number(p.bill) || 0)) changes.push({ cat: label + " Bill", detail: "$" + money(bp.bill) + " \u2192 $" + money(p.bill) });
+        if (!!bp.fullMargin !== !!p.fullMargin) changes.push({ cat: label + " Cost", detail: p.fullMargin ? "Full margin ($0 cost)" : "Costed at the fee" });
+        if ((bp.note || "") !== (p.note || "")) changes.push({ cat: label + " Note", detail: "Updated" });
+      });
+      bf.forEach(function(p) { if (!af.find(function(a) { return a.id === p.id; })) changes.push({ cat: "Flat-rate Position Removed", detail: roleName(p) }); });
       if ((before.scheduleNotes || "") !== (after.scheduleNotes || "")) changes.push({ cat: "Notes", detail: "Updated" });
       return changes.length > 0 ? changes : null;
     }
@@ -283,7 +450,8 @@
         // (removed/reassigned) and crew whose still-held shift was MOVED. Both
         // park into the notify tray, grouped per person, for the producer to
         // send or decline. Snapshot here (the draft is about to persist).
-        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, svcs);
+        var removed = window.LTP_diffRemovedCrew(cleanRef.current.schedule, draft.schedule, contacts, svcs)
+          .concat(window.LTP_diffRemovedFixed(cleanRef.current.fixedPositions, draft.fixedPositions, contacts, svcs));
         var changed = window.LTP_diffChangedShifts(cleanRef.current.schedule, draft.schedule, contacts, svcs);
         removed.concat(changed).forEach(function(g) {
           window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: project.id, projectName: project.name || "", template: g.template, shifts: g.shifts });
@@ -307,14 +475,19 @@
       // Keep any row with real content (title/date/crew/breaks), not just
       // titled rows — unlabeled-but-real days were being dropped on save.
       var cleanSchedule = draft.schedule.filter(window.LTP_scheduleRowHasContent);
+      // A flat-rate row survives once anything was entered into it; a pristine
+      // "+ Flat-rate position" row that was never touched is dropped.
+      var cleanFixed = (draft.fixedPositions || []).filter(function(p) {
+        return p && (p.serviceId || p.crewId != null || (Number(p.fee) || 0) > 0 || (Number(p.bill) || 0) > 0 || (p.note || "").trim());
+      });
 
       setProjects(function(prev) {
         return prev.map(function(p) {
-          return p.id === project.id ? Object.assign({}, p, { schedule: cleanSchedule, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity }) : p;
+          return p.id === project.id ? Object.assign({}, p, { schedule: cleanSchedule, fixedPositions: cleanFixed, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity }) : p;
         });
       });
 
-      var saved = { schedule: cleanSchedule, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity };
+      var saved = { schedule: cleanSchedule, fixedPositions: cleanFixed, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity };
       setDraftRaw(saved);
       cleanRef.current = saved;
       setIsDirty(false);
@@ -330,6 +503,24 @@
     function handleScheduleChange(newSchedule) {
       setDraft(function(d) { return Object.assign({}, d, { schedule: newSchedule }); });
     }
+    function handleFixedChange(list) {
+      setDraft(function(d) { return Object.assign({}, d, { fixedPositions: list }); });
+    }
+    // Removing an engagement someone already holds confirms first — the
+    // removal notice itself is parked on save (LTP_diffRemovedFixed).
+    function removeFixed(pos) {
+      var drop = function() {
+        setDraft(function(d) { return Object.assign({}, d, { fixedPositions: (d.fixedPositions || []).filter(function(p) { return p.id !== pos.id; }) }); });
+      };
+      if (pos.crewId && ACTIVE_POS[pos.status]) {
+        var cm = contacts.find(function(c) { return c.id === pos.crewId; });
+        setDlg({ title: "Remove flat-rate position", variant: "danger", confirmLabel: "Remove",
+          message: (cm ? cm.firstName + " " + cm.lastName : "This crew member") + " is " + pos.status + " for this engagement. Removing it releases them \u2014 a notice is queued to the notify tray when you save.",
+          onConfirm: function() { drop(); setDlg(null); } });
+        return;
+      }
+      drop();
+    }
 
     function printSchedule() {
       var sorted = draft.schedule.slice().sort(function(a, b) { return (a.date + a.time) > (b.date + b.time) ? 1 : -1; });
@@ -342,7 +533,13 @@
         return "<tr><td>" + escAttr(s.title) + "</td><td>" + fmt(s.date) + "</td><td>" + ft(s.time) + " \u2192 " + ft(s.endTime) + "</td><td>" + (dur || "\u2014") + "</td><td>" + posText + "</td></tr>";
       }).join("");
       var w = window.open("", "_blank");
-      w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table><div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
+      var flatRows = (draft.fixedPositions || []).map(function(p) {
+        var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null;
+        var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
+        return "<tr><td>" + escAttr(sv ? sv.role + " \u2014 " + sv.description : (p.role || "?")) + "</td><td>" + (cm ? escAttr(cm.firstName + " " + cm.lastName) : "(open)") + "</td><td>" + escAttr(p.status) + "</td><td>" + escAttr(p.note || "") + "</td></tr>";
+      }).join("");
+      var flatHtml = flatRows ? "<h2 style='margin:22px 0 8px'>Flat-rate positions \u2014 whole project, no call times</h2><table><thead><tr><th>Role</th><th>Crew</th><th>Status</th><th>Scope</th></tr></thead><tbody>" + flatRows + "</tbody></table>" : "";
+      w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table>" + flatHtml + "<div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
       w.document.close(); w.print();
     }
 
@@ -382,12 +579,13 @@
 
     function openSend(kind) {
       var noun = KIND[kind].noun;
-      if (draft.schedule.length === 0) { showAlert("No Schedule", "Add schedule days before creating a " + noun + "."); return; }
+      var hasFlat = (draft.fixedPositions || []).some(function(p) { return p && p.serviceId && (Number(p.bill) || 0) > 0; });
+      if (draft.schedule.length === 0 && !hasFlat) { showAlert("No Schedule", "Add schedule days before creating a " + noun + "."); return; }
       // Lines are priced off `draft`, not the persisted project — sending an
       // unsaved schedule would bill times the project doesn't have.
       if (isDirty) { showAlert("Unsaved Changes", "Save the schedule before sending to a " + noun + "."); return; }
-      var hasPositions = draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
-      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days before creating a " + noun + "."); return; }
+      var hasPositions = hasFlat || draft.schedule.some(function(s) { return (s.positions || []).some(function(p) { return p.serviceId; }); });
+      if (!hasPositions) { showAlert("No Positions", "Add positions to schedule days (or a billed flat-rate position) before creating a " + noun + "."); return; }
       setSendDlg({ kind: kind, step: "grouping" });
     }
 
@@ -398,7 +596,7 @@
     function chooseGrouping(grouping) {
       var kind = sendDlg.kind;
       var sections = window.LTP_scheduleLaborSections(
-        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId);
+        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId, draft.fixedPositions);
       if (sections.length === 0) {
         setSendDlg(null);
         // Positions exist (openSend checked) but nothing priced — every day is
@@ -545,6 +743,8 @@
       h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0 } },
+          h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
+            contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {
@@ -575,6 +775,10 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Positions"),
               h("span", { style: { fontSize: "12px", fontWeight: 600, color: stats.filledPos === stats.totalPos && stats.totalPos > 0 ? B.success : B.text } }, stats.filledPos + " / " + stats.totalPos + " filled")),
+            stats.flatCount > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
+              h("span", { style: { fontSize: "11px", color: B.textSec } }, "Flat-rate"),
+              h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text }, title: "Bill $" + stats.flatRate.toLocaleString() + " · cost $" + stats.flatCost.toLocaleString() + " (included in the totals below)" },
+                stats.flatFilled + " / " + stats.flatCount + " confirmed \u00b7 $" + stats.flatRate.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Total Rate"),
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + stats.totalRate.toLocaleString())),

@@ -431,7 +431,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
+    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
@@ -453,7 +453,7 @@
     // negotiated. The line keeps its snapshotted price — an invoice must not
     // silently re-price itself — so a mismatch offers a one-click apply instead.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate) return null;
+      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -500,7 +500,8 @@
           onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
         }, style: selStyle },
           h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
-          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
+          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
+          svcRateType === "flat" && h("option", { value: "flat" }, "Flat")),
         item.type === "product" && isDraft && prodData && prodVariants.length > 0 && h("select", {
           value: lineVariantId, onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
@@ -554,7 +555,11 @@
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
-        h("option", { value: "ot" }, "OT")
+        h("option", { value: "ot" }, "OT"),
+        // A flat-rate engagement line (from the schedule's flat-rate positions)
+        // keeps its typed price; the option exists so the select reads "Flat"
+        // rather than falling back to the first option.
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
       ),
       // Pricing-variant selector (products with variants only) — mirrors the
       // quote builder. Switching re-snapshots name/price/cost from the variant.
@@ -1104,7 +1109,14 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
-            var updated = Object.assign({}, baseDraft, {
+            // The send stamped an email_sent entry on the row. Adopt the row it
+            // handed back and mark it sent ON THAT COPY, so this edit carries
+            // the entry and goes out under the post-send token. Built on
+            // baseDraft, it went out under the pre-send token, was refused as
+            // a stale write, and the invoice stayed a draft while the email and
+            // the QuickBooks invoice both existed.
+            var sentBase = window.LTP_adoptServerRow("invoices", resp.body && resp.body.row) || baseDraft;
+            var updated = Object.assign({}, sentBase, {
               status: isResend ? baseDraft.status : "sent",
               sentDate: isResend ? baseDraft.sentDate : today,
               sendRecipients: sendRecipients,  // remember who this went to
@@ -1166,8 +1178,11 @@
         .then(function(resp) {
           if (resp.status === 200 && resp.body && resp.body.unwound) {
             // Mirror the cleared link locally so the UI stops claiming a sync
-            // that no longer exists.
-            var cleared = Object.assign({}, invoiceObj, {
+            // that no longer exists — on the stamped row the server handed back
+            // (adopted as server state) when it did, so this mirror is not
+            // written back under a token the unwind's own stamp made stale.
+            var unwoundRow = window.LTP_adoptServerRow("invoices", resp.body.invoice);
+            var cleared = Object.assign({}, unwoundRow || invoiceObj, {
               qbInvoiceId: null, qbSyncToken: null, qbSyncStatus: null, qbSyncedAt: null,
               qbSyncedSignature: null, qbLastError: null, qbTaxTotal: null, qbTotalAmt: null,
             });
@@ -1248,7 +1263,10 @@
           // What the response means, and what to say about it — domain-qbo.js.
           var outcome = window.LTP_qboPushOutcome(resp, money2);
           if (outcome.ok) {
-            var updated = window.LTP_applyQboPush(draft, resp.body, qbSig);
+            // Build on the stamped row the push handed back (adopted as server
+            // state), not on `draft` — see persistAndPushQbo.
+            var pushedRow = window.LTP_adoptServerRow("invoices", resp.body && resp.body.invoice);
+            var updated = window.LTP_applyQboPush(pushedRow || draft, resp.body, qbSig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
           }
@@ -1278,15 +1296,35 @@
       var taxable = invoiceObj.clientType === "contact" ? !!party : !!(party && party.taxable);
       var sig = qbSignature(invoiceObj, party, proj, taxable);
       return fetch("/api/invoices/" + invoiceObj.id, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(invoiceObj) })
-        .then(function(r) { if (!r.ok) throw new Error("save failed (" + r.status + ")"); })
+        .then(function(r) {
+          if (!r.ok) throw new Error("save failed (" + r.status + ")");
+          // This PUT bypasses the persisted-state hook, so the hook's If-Match
+          // token for the row is stale from here on unless it learns the new
+          // revision — adopt the row the server wrote back.
+          return r.json().then(function(row) { window.LTP_adoptServerRow("invoices", row); }, function() { /* no body — the live refresh will catch up */ });
+        })
         .then(function() {
           return fetch("/api/qbo/invoices/" + invoiceObj.id + "/push", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify({ signature: sig }) });
         })
-        .then(function(r) { return r.json().then(function(b) { return { status: r.status, body: b }; }); })
+        .then(function(r) { return window.LTP_readJsonResponse(r); })
         .then(function(resp) {
           var outcome = window.LTP_qboPushOutcome(resp, money2);
+          if (!outcome.ok) {
+            // Into the ring buffer + error toasts, the same place a failed
+            // sync lands — a failure that only ever showed in a modal was
+            // gone the moment it was dismissed, with no record anywhere.
+            if (window.LTP_STATE && window.LTP_STATE.reportError) {
+              window.LTP_STATE.reportError("POST qbo/invoices/" + invoiceObj.id + "/push",
+                { status: resp.status, body: JSON.stringify(resp.body || {}).slice(0, 300) });
+            }
+          }
           if (outcome.ok) {
-            var withQb = window.LTP_applyQboPush(invoiceObj, resp.body, sig);
+            // The push stamped a qbo_synced entry on the row (moving its
+            // revision). Adopt the returned row and build on it, so the
+            // window's copy carries that entry and its next write — marking
+            // the invoice sent — goes out under the token the server holds.
+            var pushedRow = window.LTP_adoptServerRow("invoices", resp.body && resp.body.invoice);
+            var withQb = window.LTP_applyQboPush(pushedRow || invoiceObj, resp.body, sig);
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === withQb.id ? withQb : i; }); });
             setDraftRaw(function(d) { return (d && d.id === withQb.id) ? withQb : d; });
             if (cleanRef.current && cleanRef.current.id === withQb.id) cleanRef.current = withQb;
@@ -1320,6 +1358,9 @@
           return { ok: false, reason: outcome.reason, error: d.error || ("HTTP " + resp.status) };
         })
         .catch(function(e) {
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/invoices/" + invoiceObj.id + "/push", { error: String(e.message || e) });
+          }
           if (!opts.quiet) window.LTP_toast("QuickBooks sync failed", { message: "Network or server error: " + String(e.message || e), variant: "error" });
           return { ok: false, reason: "network", error: "Network or server error: " + String(e.message || e) };
         });

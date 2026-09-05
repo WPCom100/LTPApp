@@ -186,7 +186,26 @@
 // v72: the two lines above merged. Nothing changed here beyond this log and the
 // version string, but a device holding either branch's shell has only half of
 // the merged app, so both populations need a new generation.
-var CACHE_VERSION = 'ltp-shell-v72';
+// v73: sending a crew request no longer draws "PUT projects/N HTTP 409" and a
+// "Changed in another window" toast from the sender's own window. The Labor
+// tab's mirror of the send is installed as server state (data-state.js gained
+// adoptRow) instead of an edit the debounced project PUT pushed back under the
+// pre-send If-Match token; the direct-book pay stamp rides the same path. Both
+// files are runtime-cached, so a device pairing the new labor.js with the old
+// data-state.js would silently fall back to the old flip.
+// v74: a QuickBooks push that fails outside the route's own error mapping is
+// answered as JSON and recorded on the invoice; the invoice-send and quote-tax
+// callers read non-JSON answers without throwing and report failures into the
+// API error list. domain-qbo.js, data-state.js, invoices.js, quotes-builder.js.
+// v75: sending a quote or invoice no longer leaves it a draft behind a
+// "Changed in another window" toast. Send and push hand back the stamped row;
+// the builders adopt it and mark it sent on that copy, under the token the
+// server holds. domain-qbo.js, invoices.js, quotes-builder.js.
+// v76: the rest of the "Changed in another window" family. The PDF download
+// records the server's own stamp on the row it hands back; the manual
+// QuickBooks update and the failed-send unwind build on the returned row.
+// doc-pdf.js, invoices.js.
+var CACHE_VERSION = 'ltp-shell-v76';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

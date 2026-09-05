@@ -34,6 +34,7 @@ passed in by the caller (read from env in the route), never imported here, so
 this module stays free of app/config coupling — same pattern as gmail.send.
 """
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -114,6 +115,33 @@ class QboApiError(QboError):
         self.fault_code = fault_code
         self.safe_message = _summarize_fault(status, body)
         super().__init__(f"QuickBooks API error ({status}): {self.safe_message}")
+
+
+class QboUnreachable(QboApiError):
+    """No HTTP answer came back from Intuit at all — a connect failure, a
+    timeout, a dropped connection. Subclasses QboApiError so every route's
+    existing 502 mapping applies unchanged. Before this, httpx's exception
+    escaped the route as FastAPI's plain-text 500, which the sending window
+    reported as "Unexpected token 'I', \"Internal S\"... is not valid JSON": the
+    reason never reached anyone, and nothing was recorded on the invoice."""
+
+    def __init__(self, exc: Exception, what: str = "", waited: float | None = None):
+        # Name the call and how long it waited: "POST invoice" hanging for the
+        # full timeout while "GET query" answers is a different problem (Intuit
+        # slow on that operation) from every call failing (nothing from this
+        # server reaches Intuit), and the message is what the admin sees.
+        during = f" during {what}" if what else ""
+        after = f" after {waited:.0f}s" if waited is not None else ""
+        super().__init__(0, f"QuickBooks could not be reached{during}{after} "
+                            f"({type(exc).__name__}). Check the connection and try again.")
+
+
+class QboBadResponse(QboApiError):
+    """Intuit answered 2xx with a body that is not JSON (an edge proxy page, a
+    truncated reply). Same reasoning as QboUnreachable."""
+
+    def __init__(self, status: int):
+        super().__init__(status, "QuickBooks returned a response that could not be read. Try again.")
 
 
 # ── Fault parsing ────────────────────────────────────────────────────────────
@@ -250,11 +278,17 @@ async def refresh_if_needed(
         # Intuit authenticates the client via HTTP Basic auth, not body params.
         auth = (client_id, client_secret)
         headers = {"Accept": "application/json"}
-        if httpx_client is None:
-            async with httpx.AsyncClient(timeout=15.0) as cli:
-                resp = await cli.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers)
-        else:
-            resp = await httpx_client.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers, timeout=15.0)
+        try:
+            if httpx_client is None:
+                async with httpx.AsyncClient(timeout=15.0) as cli:
+                    resp = await cli.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers)
+            else:
+                resp = await httpx_client.post(QBO_TOKEN_URL, data=payload, auth=auth, headers=headers, timeout=15.0)
+        except httpx.HTTPError as e:
+            # The refresh token was NOT spent (nothing answered), so the
+            # connection stays; the caller reports and the next call retries.
+            print(f"[LTP] qbo: token endpoint unreachable: {type(e).__name__}: {e}", flush=True)
+            raise QboUnreachable(e, what="the token refresh")
 
         if resp.status_code == 400:
             # invalid_grant. Before treating this as a real revocation, re-read the
@@ -324,7 +358,11 @@ async def _persist_refresh(conn: models.QboConnection, db: AsyncSession, resp, n
               f"{resp.text[:200]}", flush=True)
         raise QboApiError(resp.status_code, "QuickBooks token endpoint returned an error.")
 
-    data = resp.json()
+    try:
+        data = resp.json()
+    except ValueError:
+        print(f"[LTP] qbo: token endpoint returned non-JSON: {resp.text[:200]}", flush=True)
+        raise QboBadResponse(resp.status_code)
     new_access = data.get("access_token")
     if not new_access:
         raise QboApiError(200, "QuickBooks token refresh returned no access token.")
@@ -431,7 +469,7 @@ async def _request(
     if params:
         req_params.update(params)
 
-    async def _do(token: str) -> httpx.Response:
+    async def _send(token: str) -> httpx.Response:
         headers = {
             "Authorization": f"Bearer {token}",
             "Accept": "application/json",
@@ -442,6 +480,27 @@ async def _request(
             async with httpx.AsyncClient(timeout=30.0) as cli:
                 return await cli.request(method, url, headers=headers, params=req_params, json=json)
         return await httpx_client.request(method, url, headers=headers, params=req_params, json=json, timeout=30.0)
+
+    async def _do(token: str) -> httpx.Response:
+        # A transport failure (connect refused, DNS, timeout, connection reset)
+        # gets the same one retry a 5xx gets, then becomes a typed error the
+        # routes already know how to answer — never a bare exception.
+        started = time.monotonic()
+        try:
+            return await _send(token)
+        except httpx.HTTPError as first:
+            print(f"[LTP] qbo: {method} {resource} transport error after "
+                  f"{time.monotonic() - started:.1f}s ({type(first).__name__}: {first}); "
+                  f"retrying once", flush=True)
+            await asyncio.sleep(2.0)
+            again = time.monotonic()
+            try:
+                return await _send(token)
+            except httpx.HTTPError as e:
+                waited = time.monotonic() - again
+                print(f"[LTP] qbo: {method} {resource} transport error again after "
+                      f"{waited:.1f}s ({type(e).__name__}: {e}); giving up", flush=True)
+                raise QboUnreachable(e, what=f"{method} {resource}", waited=waited)
 
     resp = await _do(access_token)
 
@@ -464,7 +523,12 @@ async def _request(
         resp = await _do(access_token)
 
     if 200 <= resp.status_code < 300:
-        return resp.json()
+        try:
+            return resp.json()
+        except ValueError:
+            print(f"[LTP] qbo: {method} {resource} answered {resp.status_code} with "
+                  f"non-JSON: {resp.text[:200]}", flush=True)
+            raise QboBadResponse(resp.status_code)
     raise QboApiError(resp.status_code, resp.text, fault_code(resp.text))
 
 

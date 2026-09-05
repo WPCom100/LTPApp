@@ -134,8 +134,60 @@
     return h("div", null, art, rule);
   }
 
+  function fmtMoney(n) {
+    return "$" + (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // "3 shifts" / "1 flat-rate engagement" / "3 shifts + 1 flat-rate engagement"
+  // — matches the request email's count line (backend/routes/crew.py::_ask_label).
+  function askLabel(list) {
+    var nShift = 0, nFlat = 0;
+    (list || []).forEach(function(x) { if (x && x.flat) nFlat++; else nShift++; });
+    var parts = [];
+    if (nShift || !nFlat) parts.push(nShift + " call" + (nShift === 1 ? "" : "s"));
+    if (nFlat) parts.push(nFlat + " flat-rate engagement" + (nFlat === 1 ? "" : "s"));
+    return parts.join(" + ");
+  }
+
+  // ── A flat-rate engagement line ────────────────────────────────────────────
+  // A designer or stage manager hired for the WHOLE project at a fixed fee, no
+  // call times: the line states the role, the fee (it IS the offer), the
+  // project's date range, and the schedule OUTLINE — each scheduled day and
+  // what it is, no times — so they can plan their own hours around it.
+  function renderEngagement(s, i, isLast, compact) {
+    var rangeParts = [fmtDate(s.projectStart), fmtDate(s.projectEnd)].filter(function(x) { return x; });
+    var range = rangeParts.length === 2 && rangeParts[0] !== rangeParts[1] ? rangeParts[0] + " – " + rangeParts[1] : (rangeParts[0] || "");
+    var outline = (s.projectDates || []).filter(function(d) { return d && d.date; });
+    var noteRow = (s.note && String(s.note).trim())
+      ? h("div", { style: { marginTop: 10, padding: "8px 12px", background: INSET, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "13px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, s.note)
+      : null;
+    return h("div", {
+      key: s.positionId || i,
+      style: { display: "flex", alignItems: "flex-start", padding: "18px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR },
+    },
+      h("div", { style: { width: 36, flexShrink: 0, paddingTop: 1, fontSize: "14px", fontWeight: 800, color: ORANGE, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, String(i + 1).padStart(2, "0")),
+      h("div", { style: { flex: 1, minWidth: 0 } },
+        h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
+          h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT } }, "Flat-rate engagement" + (range ? "  ·  " + range : "")),
+          s.fee != null && h("div", { style: { flexShrink: 0, whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 600, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtMoney(s.fee))),
+        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: 6 } }, (s.roleLabel || "Crew")),
+        s.department && h("div", { style: { marginTop: 6 } },
+          h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department)),
+        outline.length > 0 && h("div", { style: { marginTop: 12, padding: "10px 12px", background: INSET, borderRadius: 6 } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: MUTE, marginBottom: 6 } }, "Schedule outline — set your own hours"),
+          outline.map(function(d, di) {
+            var when = fmtDateShort(d.date) + (d.endDate ? " – " + fmtDateShort(d.endDate) : "");
+            return h("div", { key: di, style: { display: "flex", gap: 12, alignItems: "baseline", padding: "3px 0", fontSize: "13px" } },
+              h("span", { style: { flexShrink: 0, fontFamily: MONO, fontVariantNumeric: "tabular-nums", color: ORANGE_SOFT, fontSize: "12px" } }, when),
+              d.title && h("span", { style: { color: TEXT } }, d.title));
+          })),
+        noteRow)
+    );
+  }
+
   // ── A single ruled "call line" ─────────────────────────────────────────────
   function renderShift(s, i, isLast, compact) {
+    if (s && s.flat) return renderEngagement(s, i, isLast, compact);
     var dateLine = fmtDate(s.date);
     var start = fmtTime(s.startTime);
     var end = fmtTime(s.endTime);
@@ -191,6 +243,19 @@
     // Event title: "LTP - <position acronym> - <project>" (e.g. "LTP - A1 - Sunset Gala").
     var acronym = s.role || s.roleLabel || "Crew";
     var title = "LTP - " + acronym + " - " + (projectName || "Project");
+    if (s.flat) {
+      // A flat engagement has no call: one all-day event spanning the project's
+      // dates, with the schedule outline in the description.
+      var lines = (s.projectDates || []).filter(function(d) { return d && d.date; }).map(function(d) {
+        return fmtDateShort(d.date) + (d.endDate ? " – " + fmtDateShort(d.endDate) : "") + (d.title ? " · " + d.title : "");
+      });
+      var flatNote = (s.note && String(s.note).trim()) ? String(s.note).trim() : "";
+      var body = ["Flat-rate engagement" + (s.fee != null ? " · " + fmtMoney(s.fee) : "")].concat(lines).join("\n");
+      return window.LTP_gcalUrl({
+        title: title, date: s.projectStart, endDate: s.projectEnd || s.projectStart, allDay: true,
+        location: location || "", details: flatNote ? body + "\n\n" + flatNote : body,
+      });
+    }
     var base = [
       s.startTime ? "Call " + fmtTime(s.startTime) : "",
       s.endTime ? "Wrap " + fmtTime(s.endTime) : "",
@@ -207,7 +272,7 @@
 
   function calButtons(shifts, projectName, location) {
     if (!window.LTP_gcalUrl) return null;
-    var usable = (shifts || []).filter(function(s) { return s.date; });
+    var usable = (shifts || []).filter(function(s) { return s.date || (s.flat && s.projectStart); });
     if (!usable.length) return null;
     var single = usable.length === 1;
     // Each call is its own event (its own date + call/wrap time), so a crew
@@ -217,7 +282,8 @@
     var btns = usable.map(function(s, i) {
       var href = calUrlFor(s, projectName, location);
       if (!href) return null;
-      var label = single ? "Add to Calendar"
+      var label = s.flat ? (single ? "Add project dates to Calendar" : "Project dates")
+        : single ? "Add to Calendar"
         : (fmtDateShort(s.date) + (s.startTime ? " · " + fmtTime(s.startTime) : ""));
       return h("a", {
         key: s.positionId || i, href: href, target: "_blank", rel: "noopener", className: "ltp-cal-btn",
@@ -449,11 +515,15 @@
       : status === "withdrawn" ? { t: "Withdrawn", c: NEUTRAL }
       : { t: "Awaiting your response", c: ORANGE_SOFT };
 
+    var flatOnly = shifts.length > 0 && shifts.every(function(s) { return s.flat; });
+    var hasFlat = shifts.some(function(s) { return s.flat; });
+    var what = flatOnly ? "this engagement" : (hasFlat ? "this project" : "these calls");
     var intent = withdrawn ? null
       : status === "accepted"
-        ? (isConfirmed ? "You're confirmed for the following calls." : "You've accepted these calls — a producer will confirm you shortly.")
-      : status === "declined" ? "Here are the calls on this request."
-      : "You've been requested for the following calls.";
+        ? (isConfirmed ? "You're confirmed for the following." : "You've accepted " + what + " — a producer will confirm you shortly.")
+      : status === "declined" ? "Here is what was on this request."
+      : (flatOnly ? "You've been requested for the following engagement — a flat fee for the whole project, hours your own."
+                  : "You've been requested for the following.");
 
     // ── Accept / Decline submit (inline reveal → POST → reload) ───────────────
     function submit() {
@@ -506,7 +576,7 @@
           type: "button", className: "ltp-accept-btn",
           disabled: submitting, onClick: function() { openMode("accept"); },
           style: { flex: stacked ? "0 0 auto" : "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (respondMode === "decline") ? 0.45 : 1 },
-        }, "Accept These Calls"),
+        }, flatOnly ? "Accept This Engagement" : (hasFlat ? "Accept" : "Accept These Calls")),
         h("button", {
           type: "button", className: "ltp-decline-btn",
           disabled: submitting, onClick: function() { openMode("decline"); },
@@ -558,7 +628,7 @@
       actionZone = h("div", { style: { marginTop: 40 } }, bannerNode);
     } else {
       actionZone = h("div", { ref: actionRef, style: { marginTop: 40, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
-        h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take these calls?"),
+        h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take " + what + "?"),
         pendingChoiceButtons(isMobile),
         inlineReveal());
     }
@@ -576,7 +646,7 @@
       }
       shiftSection = h("div", { style: { marginTop: 36 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: ORANGE } },
-          "Shifts — " + shifts.length + " call" + (shifts.length === 1 ? "" : "s")),
+          (flatOnly ? "Engagement — " : "Shifts — ") + askLabel(shifts)),
         // Panel fill + 10px side padding, pulled out 10px each side with negative
         // margins so the rows keep their exact width (the table doesn't shrink) —
         // the slightly-lighter background just bleeds 10px past the content edges.

@@ -331,6 +331,68 @@ All three FKs CASCADE, so an override can't outlive its client or its service.
 The engine reads only `minHours` / `minCostHours` off the resolved service; the
 rate/cost columns are ordinary rate-card values by the time they reach it.
 
+## Flat-rate positions (fixed-cost hires)
+
+Some people are hired for the **whole production at a flat fee** and never get
+contracted call times — a lighting designer, a stage manager. We hand them the
+schedule and they make their own hours. These are **flat-rate positions**: they
+live on the project (`projects.fixed_positions`), not on a schedule day, and
+they ride the same crew-request and payroll rails as a shift.
+
+### Where they are
+
+- **Schedule Builder → Flat-rate positions** (the panel above the day list).
+  Each row is a rate-card **role** (required — it routes the fee to that role's
+  QuickBooks expense account and names the quote line), the **crew** member
+  (role-matched picker, same as a shift), the **fee** (what we pay), the
+  **bill** (what the client is charged), a full-margin toggle, and a
+  crew-facing **scope note**. Margin is bill − fee; the Schedule Summary folds
+  the flat totals into Total Rate / Total Cost / Margin. The panel also says
+  which payroll period and pay day the fee lands on (see the rules below).
+- **Labor → Assignments** lists them under a *Flat-rate — whole project* group
+  with a `Flat $…` chip. Send Request / Book Without Emailing, Confirm, Release
+  and Cancel all work as for a shift. A confirm **locks the fee** the way a
+  shift locks its computed pay.
+- **Labor → Payouts** shows each confirmed engagement as a row dated on the
+  **project's end date**, so it sits in the payroll period that date falls into
+  and is paid on that period's pay day (the following Friday, per the pay-period
+  settings) together with every other payout in the period. It is an estimate
+  until you **Mark complete** (`✓ Complete`, or `Complete…` to enter a different
+  final amount); that freezes the figure exactly like a day sign-off, and the
+  QuickBooks vendor-bill export posts it in that period. Adjustments, undo,
+  lock/re-lock and the paid-day guard apply as they do to days.
+- **Send to Quote / Invoice** adds one **Flat** service line per billed
+  engagement (qty 1 at the bill amount, cost = the fee). An engagement billed at
+  $0 (absorbed in a package price) produces no line.
+
+### What the crew member sees
+
+The request email and the crew page describe the **engagement, not calls**: the
+role, the **flat fee** (stated on purpose — it is the offer being accepted),
+the project's date range, and a **schedule outline** listing each scheduled day
+and what it is, with no times. Hourly shifts on the same request still show no
+pay. A confirmed engagement's *Add to Calendar* button creates one all-day
+event spanning the project dates.
+
+### Rules worth knowing
+
+- An engagement is payable only after **Mark complete**; a confirmed-but-
+  incomplete one is reported as pending (and excluded from the export).
+- There is deliberately **no per-position pay date**: the project's end date
+  decides the payroll period. With **no project end date** the fee cannot land
+  in any period — the builder flags the row until one is set.
+- A flat fee paid on the same date as a signed shift day for the same person
+  and project is **merged into one bill line** in QuickBooks (the ledger is one
+  line per person-project-date); the Payouts tab still shows them as two rows.
+- Changing the fee, role, status or full-margin flag on an engagement that is
+  already **paid** in QuickBooks trips the same paid-day guard as a shift edit
+  (409 `paid_day_conflict` unless overridden).
+- **Labor → Weekly Schedule** shows a flat engagement on every day of the
+  project's date range (the project's own dates, else the span of its
+  scheduled days), marked with a dashed edge and "Flat rate · whole project"
+  in place of call times. The Calendar grid, which places rows on a single
+  date, does not show them.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that
@@ -637,7 +699,9 @@ Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`
 `PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
 row the API returns includes one). If the row changed since you read it, the PUT
 is refused with `409` and the response body carries the current row so the client
-can adopt it. Omitting the header keeps last-write-wins. See *Live sync* below.
+can adopt it — unless the write would change nothing, which passes as the no-op
+it is (a stale token with nothing to write is not a conflict). Omitting the
+header keeps last-write-wins. See *Live sync* below.
 
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
@@ -675,6 +739,17 @@ open window could learn about it, so the Crew Requests tab would show the shift
 name as the literal string "Project" and hide the Confirm button, and the stale
 window would revert the acceptance on its next save. `If-Match` closes that last
 hole; live sync makes it rare in the first place.
+
+**Server-side moves the window itself asked for.** Sending or withdrawing a crew
+request also moves position statuses on the project row, and the Labor tab
+shows that move at once. It must not push it back: a copy of the move written
+under the pre-send token is a stale write in name only, and refusing it told the
+producer the project had "changed in another window" for a change they had just
+made. So the tab installs the move as *server* state (`LTP_STATE.adoptRow`,
+which moves the sync baseline with the row and queues no PUT), and the
+send/withdraw responses carry the moved project row with its `_rev` so the
+window adopts the real thing — and a direct book's pay stamp, written right
+after, goes out under a token the server accepts.
 
 A stream is recycled every 30 minutes (`LTP_LIVESYNC_MAX_STREAM_SECONDS`).
 Auth is checked when a connection opens and never again, so without a cap a

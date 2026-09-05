@@ -80,6 +80,41 @@ window.LTP_applyQboPush = function(invoice, body, sentSignature) {
 // "updated" means the QuickBooks invoice existed before this push — a resend,
 // or an earlier export — and deleting it would destroy a record the customer
 // may already hold.
+// Read a QuickBooks-route response as {status, body} WITHOUT assuming the body
+// is JSON. A route that fails outside its own error mapping answers with
+// FastAPI's plain-text "Internal Server Error"; `r.json()` on that threw
+// "Unexpected token 'I', \"Internal S\"... is not valid JSON", which is what the
+// producer was shown instead of a status. A non-JSON body becomes
+// {error: "HTTP <status> — <text>"} so every consumer's `body.error` reads.
+window.LTP_readJsonResponse = function(r) {
+  return r.text().then(function(text) {
+    var body;
+    try {
+      body = text ? JSON.parse(text) : {};
+    } catch (e) {
+      body = { reason: "non_json", error: "HTTP " + r.status + " \u2014 " + (String(text || "").trim() || "empty response").slice(0, 160) };
+    }
+    return { status: r.status, body: body };
+  });
+};
+
+// Install a row a route just handed back (with its `_rev`) as SERVER state —
+// components/data-state.js::adoptRow — and return a copy without `_rev` to
+// build the window's own follow-up edit on. Send and push both stamp activity
+// on the row, which moves its revision; an edit built on the pre-send copy and
+// written under the pre-send token was refused as a stale write, and the
+// window adopted the server's copy over it: the email had gone out, the
+// QuickBooks invoice existed, and the document stayed a draft.
+// Returns null when the response carried no row (an older server).
+window.LTP_adoptServerRow = function(key, row) {
+  if (!row || typeof row !== "object" || row.id == null) return null;
+  var S = window.LTP_STATE;
+  if (S && typeof S.adoptRow === "function") S.adoptRow(key, row);
+  var copy = Object.assign({}, row);
+  delete copy._rev;
+  return copy;
+};
+
 window.LTP_qboPushOutcome = function(resp, money) {
   var fmt = money || function(n) { return String(n); };
   var status = resp && resp.status;

@@ -15,6 +15,7 @@ Under pytest this module shares the session-wide DB from tests/conftest.py; run
 as a plain script it uses its own DATABASE_URL (the setdefault below).
 """
 import asyncio
+import copy
 import os
 import re
 import sys
@@ -51,6 +52,7 @@ P_STAMP = 7401         # stamp movement on write
 P_REV = 7402           # If-Match happy path / stale path
 P_ACCEPT = 7403        # the crew-accept stale-write reproduction
 P_DEL = 7404           # delete moves the stamp via count(*)
+P_MIRROR = 7405        # the Labor tab's mirror of a send racing the send itself
 CO_GZIP = 6401         # company used for the gzip payload check
 INV_REV = 6501         # invoice used for the _rev / readonly-column check
 
@@ -98,6 +100,11 @@ def _setup():
                             _pos("acc_p2", C_CREW, service=S_ROLE)]),
                 ]))
                 db.add(models.Project(id=P_DEL, name="Delete Me", schedule=[]))
+                db.add(models.Project(id=P_MIRROR, name="Mirror Project", schedule=[
+                    _shift("mir_s1", "Load In", "2026-09-21",
+                           [_pos("mir_p1", C_CREW, service=S_ROLE),
+                            _pos("mir_p2", C_CREW, service=S_ROLE)]),
+                ]))
                 db.add(models.Invoice(id=INV_REV, status="draft", notes="rev probe",
                                       share_token="rev-probe-share-token"))
                 await db.commit()
@@ -284,6 +291,95 @@ def test_an_identical_rewrite_is_not_a_conflict():
                         headers={"If-Match": row["_rev"]}, cookies={"ltp_session": tok})
     assert second.status_code == 200, \
         "a no-op rewrite leaves the content hash unchanged, so it must not conflict"
+
+
+def test_stale_token_with_identical_content_is_a_no_op():
+    """A stale If-Match carrying a write that changes NOTHING is not a
+    conflict — there is nothing for the guard to resolve. The guard still
+    fires the moment the same stale token carries a real change."""
+    client, tok = _setup()
+    stale = client.get(f"/api/projects/{P_REV}", cookies={"ltp_session": tok}).json()
+    # Someone else writes first.
+    client.put(f"/api/projects/{P_REV}", json={"id": P_REV, "name": "Moved Elsewhere"},
+               cookies={"ltp_session": tok})
+    current = client.get(f"/api/projects/{P_REV}", cookies={"ltp_session": tok}).json()
+    body = {k: v for k, v in current.items() if k != "_rev"}
+    r = client.put(f"/api/projects/{P_REV}", json=body,
+                   headers={"If-Match": stale["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 200, \
+        f"a stale token with identical content must pass as a no-op, got {r.status_code}: {r.text}"
+    assert r.json()["_rev"] == current["_rev"], "and must not move the row"
+    body["name"] = "Stale Overwrite"
+    r = client.put(f"/api/projects/{P_REV}", json=body,
+                   headers={"If-Match": stale["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 409, "the same stale token with a real change is still refused"
+
+
+def test_labor_mirror_of_a_send_is_not_a_conflict():
+    """The report: "PUT projects/23 HTTP 409 — Changed in another window" the
+    moment a crew request is sent, with no other window open.
+
+    The Labor tab flips open → requested locally when Send is clicked, while
+    POST /api/crew-requests/send flips the same positions in the database. The
+    window's debounced project PUT then carries the PRE-send token and the
+    POST-send content. Refusing it adopted a row identical to the one the
+    window already had and told the producer someone else had changed it."""
+    client, tok = _setup()
+    snapshot = client.get(f"/api/projects/{P_MIRROR}", cookies={"ltp_session": tok}).json()
+
+    sent = client.post("/api/crew-requests/send",
+                       json={"projectId": P_MIRROR, "contactId": C_CREW},
+                       cookies={"ltp_session": tok})
+    assert sent.status_code == 200, sent.text
+    # The response carries the moved project row exactly as a fetch would
+    # return it, so the window can install it (and its token) in place of
+    # its mirror.
+    live = client.get(f"/api/projects/{P_MIRROR}", cookies={"ltp_session": tok}).json()
+    assert sent.json()["project"]["_rev"] == live["_rev"], \
+        "send must hand back the project row with the SAME _rev a GET now returns"
+    assert [p["status"] for s in live["schedule"] for p in s["positions"]] == ["requested", "requested"]
+
+    # The window's mirror: its pre-send snapshot with the same flip applied,
+    # written under the pre-send token. Identical content — a no-op, not a
+    # conflict.
+    mirror = copy.deepcopy({k: v for k, v in snapshot.items() if k != "_rev"})
+    for shift in mirror["schedule"]:
+        for pos in shift["positions"]:
+            pos["status"] = "requested"
+    r = client.put(f"/api/projects/{P_MIRROR}", json=mirror,
+                   headers={"If-Match": snapshot["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 200, f"the mirror must not conflict, got {r.status_code}: {r.text}"
+    assert r.json()["_rev"] == live["_rev"], "nothing changed, so the row must not move"
+
+    # But the UNFLIPPED snapshot — a genuinely stale window reverting the send
+    # — is still refused under that token.
+    stale = {k: v for k, v in snapshot.items() if k != "_rev"}
+    r = client.put(f"/api/projects/{P_MIRROR}", json=stale,
+                   headers={"If-Match": snapshot["_rev"]}, cookies={"ltp_session": tok})
+    assert r.status_code == 409, "a stale window's revert must still be refused"
+
+
+def test_a_share_link_open_publishes_the_stamp():
+    """A customer opening the share link stamps `client_viewed` onto the quote
+    — a server-side write to a synced row — but published nothing, so every
+    producer window kept its pre-open token until the sweep."""
+    client, tok = _setup()
+    quote = client.post("/api/quotes", json={
+        "id": 7901, "clientType": "company", "status": "sent",
+        "sections": [{"id": "s1", "label": "L",
+                      "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
+    }, cookies={"ltp_session": tok})
+    assert quote.status_code == 200, quote.text
+    token = quote.json()["shareToken"]   # server-minted; the column is server-owned
+    before = _stamps(client, tok)
+    r = client.get(f"/api/view/{token}",
+                   headers={"User-Agent": "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Safari/537.36"})
+    assert r.status_code == 200, r.text[:200]
+    stamped = client.get("/api/quotes/7901", cookies={"ltp_session": tok}).json()
+    types = [a.get("type") for a in (stamped.get("activity") or [])]
+    assert "client_viewed" in types, f"the open should have been stamped, got {types}"
+    after = _stamps(client, tok)
+    assert after["quotes"] != before["quotes"], "the open moved the row; the quotes stamp must move with it"
 
 
 # ── The original report, end to end ─────────────────────────────────────────

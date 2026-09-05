@@ -70,6 +70,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import gmail, livesync, models
 from backend.activity import append_activity
+from backend.routes.api import _row_to_dict
 from backend.email_compose import (
     _build_view_url, _email_brand, _render_signature, email_shell,
 )
@@ -373,6 +374,7 @@ async def send_email(
     # every other window needs to know. get_db publishes only what was marked.
     livesync.mark_dirty(db, "invoices" if body.entityType == "invoice" else "quotes")
 
+    await db.refresh(entity)
     return {
         "ok": True,
         "gmailMessageId": gmail_message_id,
@@ -381,4 +383,12 @@ async def send_email(
             {"email": r.recipient_email, "role": r.recipient_role}
             for r in recipient_rows
         ],
+        # The row as it now stands, `_rev` included. The sending window marks
+        # the document sent right after this, and that write has to be judged
+        # against THIS revision — the stamp above moved it. Without the row,
+        # the window's PUT carried the pre-send token, was refused as a stale
+        # write, and the window adopted the server's copy over its own: the
+        # email went out, the QuickBooks invoice existed, and the document
+        # stayed a draft (see components/data-state.js::adoptRow).
+        "row": _row_to_dict(entity),
     }

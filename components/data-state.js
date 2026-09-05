@@ -283,6 +283,14 @@
       var wasBase = baseById[id];
       if (wasBase !== undefined && same(wasBase, mine)) return;   // untouched locally
       if (at[id] !== undefined) {                                  // locally edited
+        // Edited here to exactly what the server now holds: the two sides
+        // converged (the Labor tab mirrors a crew-request send locally while
+        // the server makes the same move). There is no edit left to push, so
+        // the server's copy — and, in the caller, its revision — is the right
+        // one to keep. Treating it as a kept local edit pinned the OLD
+        // revision to a row that then re-sent identical content and drew a
+        // 409 for a "change in another window" this window had made itself.
+        if (same(out[at[id]], mine)) return;
         out[at[id]] = mine;
         if (keptOut) keptOut.push(id);
         return;
@@ -510,7 +518,33 @@
     var useRef    = React.useRef;
 
     var pair = useState(fallback);
-    var value = pair[0], setValue = pair[1];
+    var value = pair[0];
+    // Every write goes through one stable setter that applies the update to
+    // latestValueRef EAGERLY, before React has rendered it. Invariant #4 below
+    // promises latestValueRef is always the freshest state; without this it
+    // was only the freshest RENDERED state, and React 18 batches everything
+    // inside one promise callback. installServerRows builds the next value
+    // from latestValueRef and sets it as a plain value, so a functional edit
+    // queued just before it in the same tick — a direct book's pay stamp on
+    // project A, followed by adopting the response row for project B — was
+    // computed by React, then replaced by a plain value built without it.
+    // Resolving updaters here, in call order, makes the last plain value the
+    // sequential result. Identity is stable, so modules can list the setter
+    // in effect deps as they would React's own.
+    var rawSetRef = useRef(null);
+    rawSetRef.current = pair[1];
+    var setterRef = useRef(null);
+    if (!setterRef.current) {
+      setterRef.current = function(next) {
+        if (typeof next === "function") next = next(latestValueRef.current);
+        latestValueRef.current = next;
+        // The read-only mirror (see LTP_DATA_LIVE below) keeps step too, so a
+        // module reading it inside the same tick sees what it just wrote.
+        if (window.LTP_DATA_LIVE) window.LTP_DATA_LIVE[key] = next;
+        rawSetRef.current(next);
+      };
+    }
+    var setValue = setterRef.current;
     var readyPair = useState(false);
     var ready = readyPair[0], setReady = readyPair[1];
 
@@ -590,6 +624,95 @@
     var remoteEpochRef = useRef(0);
 
     latestValueRef.current = value;
+
+    // Install `rows` as what the server holds right now, folding in whatever
+    // this window has not synced yet, and take `revs` for every row the merge
+    // did not resolve in favour of a local edit. Shared by the live-sync
+    // refresh (rows = the whole collection, refetched) and adoptRow below
+    // (rows = the baseline with one row the server just handed us swapped in).
+    function installServerRows(rows, revs) {
+      var removed = [], keptLocal = [];
+      var next = mergeRemote(prevSyncedRef.current, latestValueRef.current,
+                             rows, removed, keptLocal);
+      // Adopt the server's revision for every row EXCEPT the ones the merge
+      // just resolved in favour of our local copy.
+      //
+      // Those rows are precisely the ones If-Match exists for: our edit is
+      // based on the revision we last read, and the write must be judged
+      // against THAT. Taking the server's newer rev here handed the next PUT
+      // a token the server already agrees with, so _require_fresh passed and
+      // the other window's change was overwritten with no 409, no toast and
+      // no LTP_API_ERRORS entry — the exact failure this whole mechanism was
+      // built to make impossible.
+      var keepStale = {};
+      keptLocal.forEach(function(id) { keepStale[id] = true; });
+      var freshRevs = {};
+      Object.keys(revs || {}).forEach(function(id) {
+        if (!keepStale[id]) freshRevs[id] = revs[id];
+      });
+      revsRef.current = Object.assign({}, revsRef.current, freshRevs);
+      if (removed.length && window.LTP_toast) {
+        window.LTP_toast("Deleted in another window", {
+          message: removed.length === 1
+            ? "A record you were editing was deleted elsewhere, so your changes to it were dropped."
+            : removed.length + " records you were editing were deleted elsewhere, so your changes to them were dropped.",
+          variant: "warn",
+          // Sticky but NOT page-scoped: work was lost, and that stays
+          // true wherever they navigate to next.
+          sticky: true,
+        });
+      }
+      // Baseline becomes what the SERVER actually holds, so the next diff
+      // re-sends exactly the local edits the merge preserved — no more,
+      // no less.
+      prevSyncedRef.current = rows;
+      baselineEpochRef.current += 1;
+      if (same(next, latestValueRef.current)) return;   // nothing to re-render
+      // Deliberately NOT skipping the next sync: if the merge kept a
+      // local edit, it still has to reach the server.
+      remoteEpochRef.current += 1;
+      setValue(next);   // eager: a second install in the same tick sees this one
+    }
+
+    // A row the server handed this window OUTSIDE the collection fetch — the
+    // response to a crew-request send or withdraw carries the project row it
+    // just moved. Installing it here does three things a plain setValue
+    // cannot: the row lands as server state (nothing is queued for the
+    // debounced PUT), its `_rev` becomes the If-Match token for the next real
+    // edit, and any unsynced local edit to it is preserved exactly as a
+    // refresh would preserve it. A row without `_rev` is allowed: that is how
+    // the Labor tab mirrors a move it knows the server is making before the
+    // response is back, without pushing a copy of it.
+    //
+    // Before this, a local edit made right after such a response — a direct
+    // book stamping pay, a send mirroring open → requested — went out with the
+    // PRE-response token, was refused as a stale write, and the window adopted
+    // the server row over its own: the pay stamp was thrown away with it.
+    function adoptRow(row) {
+      if (!row || typeof row !== "object" || row.id == null) return false;
+      if (!hydratedRef.current || classify(key) !== "entity") return false;
+      var stripped = stripRev(row);
+      var rows = (prevSyncedRef.current || []).slice();
+      var at = -1;
+      rows.forEach(function(r, i) { if (r && r.id === row.id) at = i; });
+      if (at >= 0) rows[at] = stripped; else rows.push(stripped);
+      var revs = {};
+      if (row._rev != null) revs[row.id] = row._rev;
+      installServerRows(rows, revs);
+      return true;
+    }
+
+    // Registered by key so a module can reach the hook that owns a collection
+    // without its parent threading a callback down — the same reason
+    // LTP_DATA_LIVE exists.
+    useEffect(function() {
+      if (classify(key) !== "entity") return;
+      if (!window.LTP_DATA_ADOPT) window.LTP_DATA_ADOPT = {};
+      window.LTP_DATA_ADOPT[key] = adoptRow;
+      return function() {
+        if (window.LTP_DATA_ADOPT && window.LTP_DATA_ADOPT[key] === adoptRow) delete window.LTP_DATA_ADOPT[key];
+      };
+    }, []);
 
     // Read-only mirror of every persisted collection, kept in step at render
     // time. theme.js::LTP_useRecordWatch reads it so a form can watch the row it
@@ -747,47 +870,7 @@
               return;
             }
             if (!Array.isArray(fetched.rows)) return;
-            var removed = [], keptLocal = [];
-            var next = mergeRemote(prevSyncedRef.current, latestValueRef.current,
-                                   fetched.rows, removed, keptLocal);
-            // Adopt the server's revision for every row EXCEPT the ones the merge
-            // just resolved in favour of our local copy.
-            //
-            // Those rows are precisely the ones If-Match exists for: our edit is
-            // based on the revision we last read, and the write must be judged
-            // against THAT. Taking the server's newer rev here handed the next PUT
-            // a token the server already agrees with, so _require_fresh passed and
-            // the other window's change was overwritten with no 409, no toast and
-            // no LTP_API_ERRORS entry — the exact failure this whole mechanism was
-            // built to make impossible.
-            var keepStale = {};
-            keptLocal.forEach(function(id) { keepStale[id] = true; });
-            var freshRevs = {};
-            Object.keys(fetched.revs || {}).forEach(function(id) {
-              if (!keepStale[id]) freshRevs[id] = fetched.revs[id];
-            });
-            revsRef.current = Object.assign({}, revsRef.current, freshRevs);
-            if (removed.length && window.LTP_toast) {
-              window.LTP_toast("Deleted in another window", {
-                message: removed.length === 1
-                  ? "A record you were editing was deleted elsewhere, so your changes to it were dropped."
-                  : removed.length + " records you were editing were deleted elsewhere, so your changes to them were dropped.",
-                variant: "warn",
-                // Sticky but NOT page-scoped: work was lost, and that stays
-                // true wherever they navigate to next.
-                sticky: true,
-              });
-            }
-            // Baseline becomes what the SERVER actually holds, so the next diff
-            // re-sends exactly the local edits the merge preserved — no more,
-            // no less.
-            prevSyncedRef.current = fetched.rows;
-            baselineEpochRef.current += 1;
-            if (same(next, latestValueRef.current)) return;   // nothing to re-render
-            // Deliberately NOT skipping the next sync: if the merge kept a
-            // local edit, it still has to reach the server.
-            remoteEpochRef.current += 1;
-            setValue(next);
+            installServerRows(fetched.rows, fetched.revs);
           } catch (e) {
             recordError("refresh " + key, { error: String(e) });
           }
@@ -893,6 +976,19 @@
     // Attach a one-shot header to the next write of one row. See the
     // "One-shot write headers" note above.
     armWrite: armWrite,
+    // Install one server-shaped row (with or without `_rev`) into the hook
+    // that owns `key`, as server state rather than a user edit. Returns false
+    // when no hydrated hook owns that collection. See adoptRow in the hook.
+    adoptRow: function(key, row) {
+      var fn = window.LTP_DATA_ADOPT && window.LTP_DATA_ADOPT[key];
+      return fn ? fn(row) : false;
+    },
+    // For the hand-rolled fetches that do not go through syncEntity (the
+    // QuickBooks push before an invoice send, the quote tax calculation):
+    // record a failure into the same ring buffer + toast pipeline, so it shows
+    // wherever the app lists API errors instead of only in a modal the user
+    // has already dismissed.
+    reportError: recordError,
     // Exported for tests (tests/test_live_sync.js).
     _mergeRemote: mergeRemote,
     _splitRevs: splitRevs,

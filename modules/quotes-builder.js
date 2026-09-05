@@ -618,7 +618,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
+    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var isAccepted = quoteStatus === "accepted";
@@ -650,7 +650,7 @@
     // snapshotted price — re-pricing on the client's behalf would silently
     // rewrite a sent quote — so a mismatch is surfaced with a one-click apply.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate) return null;
+      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -704,7 +704,8 @@
           onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
         }, style: qsel },
           h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
-          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
+          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
+          svcRateType === "flat" && h("option", { value: "flat" }, "Flat")),
         item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
           value: lineVariantId, onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
@@ -766,7 +767,11 @@
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
-        h("option", { value: "ot" }, "OT")
+        h("option", { value: "ot" }, "OT"),
+        // A flat-rate engagement line (from the schedule's flat-rate positions)
+        // keeps its typed price; the option exists so the select reads "Flat"
+        // rather than falling back to the first option.
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
       ),
       // Read-only rate-type label when locked, OR when the source service was
       // deleted (no svcData to recompute prices from — see Option B).
@@ -1329,7 +1334,7 @@
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ signature: qbTaxSig }),
       })
-        .then(function(r) { return r.json().then(function(body) { return { status: r.status, body: body }; }); })
+        .then(function(r) { return window.LTP_readJsonResponse(r); })
         .then(function(resp) {
           setCalcTax(false);
           if (resp.status === 200) {
@@ -1347,10 +1352,23 @@
             return updated;
           }
           var err = (resp.body && resp.body.error) || "Could not calculate sales tax.";
+          // Same ring buffer + toast pipeline as a failed sync, so it is on
+          // record after this toast is dismissed.
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/quotes/" + draft.id + "/estimate-tax",
+              { status: resp.status, body: JSON.stringify(resp.body || {}).slice(0, 300) });
+          }
           window.LTP_toast("Tax calculation failed", { message: err, variant: "error" });
           return null;
         })
-        .catch(function() { setCalcTax(false); window.LTP_toast("Tax calculation failed", { message: "Network error.", variant: "error" }); return null; });
+        .catch(function(e) {
+          setCalcTax(false);
+          if (window.LTP_STATE && window.LTP_STATE.reportError) {
+            window.LTP_STATE.reportError("POST qbo/quotes/" + draft.id + "/estimate-tax", { error: String(e && e.message || e) });
+          }
+          window.LTP_toast("Tax calculation failed", { message: "Network error: " + String(e && e.message || e), variant: "error" });
+          return null;
+        });
     }
 
     function save() {
@@ -1570,7 +1588,10 @@
           if (resp.status === 200) {
             var today = todayISO();
             var sentOn = isResend ? baseDraft.sentDate : today;
-            var updated = Object.assign({}, baseDraft, {
+            // Adopt the stamped row the send handed back and mark it sent on
+            // THAT copy — see the invoice builder's sendInvoiceEmail for why.
+            var sentBase = window.LTP_adoptServerRow("quotes", resp.body && resp.body.row) || baseDraft;
+            var updated = Object.assign({}, sentBase, {
               status: isResend ? baseDraft.status : "sent",
               sentDate: sentOn,
               // Freeze the shelf life at send time. Until now this was implicit
