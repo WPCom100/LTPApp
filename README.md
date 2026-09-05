@@ -393,6 +393,34 @@ event spanning the project dates.
   in place of call times. The Calendar grid, which places rows on a single
   date, does not show them.
 
+## Schedule builder on a phone
+
+At `(max-width: 600px)` (`window.LTP_useIsMobile`) the builder switches to a
+layout designed around 16px inputs — index.html forces that size on every
+field so iOS never zooms on focus, so the phone layout is built for it rather
+than shrunk from the desktop ledger. Desktop is untouched.
+
+- **Header** — one row: `←`, the project name over "Schedule · dates · client",
+  **Save** (only while there are unsaved edits) and a `⋯` menu holding Send to
+  Quote, Send to Invoice, Print and Discard.
+- **Summary strip** — Days / Filled / Rate / Margin as four tiles at the top of
+  the column, in place of the side panel's Schedule Summary (which would sit
+  below the whole editor on a phone). Notes and Activity still stack under the
+  editor as cards.
+- **Date and time pickers** — a formatted chip ("Thu, Sep 10", "8:00 AM |
+  6:00 PM") with the real `LTPDateField` / `LTPTimeField` stretched over it at
+  opacity 0 (`chip` + `NATIVE` in `components/schedule-editor.js`). Tapping
+  opens the native wheel picker; the deferred-commit rules the fields carry are
+  unchanged because the same components render. On a narrow desktop window,
+  where a tap doesn't open a picker by itself, the chip calls `showPicker()`.
+- **Rows** — role and crew share one line, with a slim footer (status · MGN ·
+  breaks … rate / cost · ⇩ · ×). Flat-rate positions read role · crew / FEE $ ·
+  BILL $ · MGN / note / status … bill · margin · ×.
+
+Short dates come from `window.LTP_formatDateShort` / `LTP_formatDateRangeShort`
+(`components/domain-util.js`), which build from the ISO parts so a bare
+`YYYY-MM-DD` stays the calendar day it names in every timezone.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that

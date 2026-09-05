@@ -56,17 +56,29 @@
       : pp
         ? "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into \u2014 pay day " + fmt(payDay) + ", alongside every other payout in that period."
         : "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into. Set the pay-period start date in Settings to see the pay day.";
-    var inp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px",
-                color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
-    var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
-    var trig = { borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px", fontSize: "10px", minHeight: 0 };
-    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: isMobile ? 10 : 12, marginBottom: 12 } },
+    // Density: desktop is the dense one-line ledger row; a phone (16px inputs,
+    // forced by index.html) lays each position out as a small card — role ·
+    // crew / fee · bill · MGN / note / status … margin · × — in the same
+    // 36px controls and chips the day editor uses (components/schedule-editor.js).
+    var M = isMobile, CTL = 36;
+    var inp = M
+      ? { background: "transparent", border: "none", padding: 0, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", minWidth: 0, width: "100%", boxSizing: "border-box" }
+      : { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
+    var lbl = M
+      // Phone: the label lives INSIDE the field's box ("FEE $ 1500") so the
+      // pair reads as one control and nothing wraps under it.
+      ? { flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0, height: CTL, padding: "0 10px", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", boxSizing: "border-box", fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: B.textMut, whiteSpace: "nowrap" }
+      : { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+    var trig = M ? { borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: CTL } : { borderRadius: "3px", padding: "3px 5px", fontSize: "10px", minHeight: 0 };
+    var warnChip = { color: B.warn, fontSize: M ? "10px" : "9px", fontWeight: 700, whiteSpace: "nowrap" };
+    return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: M ? "10px" : "6px", padding: M ? 10 : 12, marginBottom: M ? 10 : 12 } },
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: rows.length ? 8 : 0 } },
         // Title only — the when-is-it-paid explanation sits behind a hover so the
         // panel stays as lean as the day editor below it.
         h("div", { title: payLine, style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", cursor: "help" } }, "Flat-rate positions"),
         h("button", { onClick: add,
-          style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
+          style: M ? { background: "transparent", border: "1px dashed " + B.accent + "55", color: B.accent, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: "0 10px", height: 30, borderRadius: "8px", whiteSpace: "nowrap", flexShrink: 0, fontFamily: "inherit" }
+                   : { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
           "+ Flat-rate position")),
       rows.map(function(p) {
         var svc = p.serviceId ? svcs.find(function(sv) { return sv.id === p.serviceId; }) : null;
@@ -77,67 +89,85 @@
           crew: crew, role: svc ? svc.role : "", selectedId: p.crewId,
           allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
         });
-        return h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
-          // Role — a rate-card service, required: it routes the fee to that
-          // role's QuickBooks expense account and names the quote line.
-          h(window.LTPSearchSelect, {
-            value: p.serviceId || "",
-            onChange: function(v) {
-              var sid = (v === "" || v == null) ? null : Number(v);
-              var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
-              update(p.id, { serviceId: sid, role: sv ? sv.role : "" });
-            },
-            options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
-              return { value: sv.id, label: sv.role, sublabel: sv.description };
-            })),
-            searchPlaceholder: "Search roles\u2026",
-            style: { flex: isMobile ? "1 1 45%" : "1 1 110px", minWidth: 0 },
-            triggerStyle: trig, panelMinWidth: 250,
-          }),
-          // Crew — role-matched first, like every crew picker. Clearing or
-          // changing the person reopens the slot (a request belongs to whoever
-          // was asked).
-          h(window.LTPSearchSelect, {
-            value: p.crewId || "",
-            onChange: function(v) {
-              var cid = (v === "" || v == null) ? null : Number(v);
-              if (cid) update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" });
-              else update(p.id, { crewId: null, status: "open" });
-            },
-            options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
-            searchPlaceholder: "Search crew\u2026",
-            style: { flex: isMobile ? "1 1 45%" : "1 1 130px", minWidth: 0 },
-            triggerStyle: trig, panelMinWidth: 260,
-          }),
-          h("label", { style: lbl, title: "What we pay this person for the whole project." }, "Fee $",
-            h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: fee === 0 ? "" : p.fee, placeholder: "0",
-              onChange: function(e) { update(p.id, { fee: e.target.value === "" ? 0 : Number(e.target.value) }); },
-              style: Object.assign({}, inp, { width: isMobile ? 84 : 72 }) })),
-          h("label", { style: lbl, title: "What the client is charged for this position (0 = absorbed in the package price, no quote line)." }, "Bill $",
-            h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: bill === 0 ? "" : p.bill, placeholder: "0",
-              onChange: function(e) { update(p.id, { bill: e.target.value === "" ? 0 : Number(e.target.value) }); },
-              style: Object.assign({}, inp, { width: isMobile ? 84 : 72 }) })),
-          // Full-margin toggle — bills the client, zeroes the cost (the owner filling the role).
-          h("button", { onClick: function() { update(p.id, { fullMargin: !p.fullMargin }); },
-            title: p.fullMargin ? "Full margin: company cost is $0 for this position (bill still charged). Click to cost it at the fee." : "Mark full margin \u2014 zero the company cost (bill still charged), e.g. the owner filling the role.",
-            style: { flexShrink: 0, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 5px", color: p.fullMargin ? B.success : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
-            p.fullMargin ? "\u2713 MGN" : "MGN"),
-          h("input", { type: "text", value: p.note || "", placeholder: "Scope note for the crew (optional)", maxLength: 500,
-            onChange: function(e) { update(p.id, { note: e.target.value }); },
-            style: Object.assign({}, inp, { flex: "1 1 150px" }) }),
-          // Status — read-only here, managed in Labor (same as shift positions).
-          h("span", { style: { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, p.status),
-          h("div", { style: { flexShrink: 0, width: 96, textAlign: "right", fontSize: "9px" } },
-            h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + money(bill)),
-            p.fullMargin
-              ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
-              : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin))),
-          !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.",
-            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 role needed"),
-          !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).",
-            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 no project end date"),
-          h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
-            style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.danger : B.textMut, cursor: "pointer", fontSize: isMobile ? "20px" : "12px", padding: isMobile ? "4px 6px" : 0, minHeight: isMobile ? 40 : undefined } }, "\u00d7"));
+        // ── Row controls, built once and laid out per width ──
+        // Role — a rate-card service, required: it routes the fee to that
+        // role's QuickBooks expense account and names the quote line.
+        var roleSel = h(window.LTPSearchSelect, {
+          value: p.serviceId || "",
+          onChange: function(v) {
+            var sid = (v === "" || v == null) ? null : Number(v);
+            var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
+            update(p.id, { serviceId: sid, role: sv ? sv.role : "" });
+          },
+          options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
+            return { value: sv.id, label: sv.role, sublabel: sv.description };
+          })),
+          searchPlaceholder: "Search roles\u2026",
+          style: { flex: M ? "1 1 40%" : "1 1 110px", minWidth: 0 },
+          triggerStyle: trig, panelMinWidth: 250,
+        });
+        // Crew — role-matched first, like every crew picker. Clearing or
+        // changing the person reopens the slot (a request belongs to whoever
+        // was asked).
+        var crewSel = h(window.LTPSearchSelect, {
+          value: p.crewId || "",
+          onChange: function(v) {
+            var cid = (v === "" || v == null) ? null : Number(v);
+            if (cid) update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" });
+            else update(p.id, { crewId: null, status: "open" });
+          },
+          options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+          searchPlaceholder: "Search crew\u2026",
+          style: { flex: M ? "1 1 52%" : "1 1 130px", minWidth: 0 },
+          triggerStyle: trig, panelMinWidth: 260,
+        });
+        var feeField = h("label", { style: lbl, title: "What we pay this person for the whole project." }, "Fee $",
+          h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: fee === 0 ? "" : p.fee, placeholder: "0",
+            onChange: function(e) { update(p.id, { fee: e.target.value === "" ? 0 : Number(e.target.value) }); },
+            style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
+        var billField = h("label", { style: lbl, title: "What the client is charged for this position (0 = absorbed in the package price, no quote line)." }, "Bill $",
+          h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: bill === 0 ? "" : p.bill, placeholder: "0",
+            onChange: function(e) { update(p.id, { bill: e.target.value === "" ? 0 : Number(e.target.value) }); },
+            style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
+        // Full-margin toggle — bills the client, zeroes the cost (the owner filling the role).
+        var mgnBtn = h("button", { onClick: function() { update(p.id, { fullMargin: !p.fullMargin }); },
+          title: p.fullMargin ? "Full margin: company cost is $0 for this position (bill still charged). Click to cost it at the fee." : "Mark full margin \u2014 zero the company cost (bill still charged), e.g. the owner filling the role.",
+          style: M ? { flexShrink: 0, height: CTL, padding: "0 10px", borderRadius: "8px", fontSize: "10px", fontWeight: 700, lineHeight: 1, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), color: p.fullMargin ? B.success : B.textMut, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }
+                   : { flexShrink: 0, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), borderRadius: "3px", padding: "2px 5px", color: p.fullMargin ? B.success : B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+          p.fullMargin ? "\u2713 MGN" : "MGN");
+        var noteInput = h("input", { type: "text", value: p.note || "", placeholder: "Scope note for the crew (optional)", maxLength: 500,
+          onChange: function(e) { update(p.id, { note: e.target.value }); },
+          style: M ? { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", height: CTL, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", width: "100%", minWidth: 0, boxSizing: "border-box" }
+                   : Object.assign({}, inp, { flex: "1 1 150px" }) });
+        // Status — read-only here, managed in Labor (same as shift positions).
+        var statusChip = h("span", { style: M
+            ? { flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "6px", padding: "0 8px", height: 28, display: "inline-flex", alignItems: "center", lineHeight: 1 }
+            : { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, p.status);
+        var moneyBox = M
+          ? h("div", { style: { flexShrink: 0, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, whiteSpace: "nowrap" } },
+              h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + money(bill)),
+              p.fullMargin
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.success } }, "margin")
+                : h("span", { style: { fontSize: "11px", color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin)))
+          : h("div", { style: { flexShrink: 0, width: 96, textAlign: "right", fontSize: "9px" } },
+              h("div", { style: { color: B.accent, fontWeight: 600 } }, "$" + money(bill)),
+              p.fullMargin
+                ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
+                : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin)));
+        var roleWarn = !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.", style: warnChip }, "\u26a0 role needed");
+        var endWarn = !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).", style: warnChip }, "\u26a0 no project end date");
+        var delBtn = h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
+          style: M ? { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" }
+                   : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "\u00d7");
+        var line = { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" };
+        return M
+          ? h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "10px", padding: 8, marginBottom: 8 } },
+              h("div", { style: line }, roleSel, crewSel),
+              h("div", { style: Object.assign({ marginTop: 6 }, line) }, feeField, billField, mgnBtn),
+              h("div", { style: { marginTop: 6 } }, noteInput),
+              h("div", { style: Object.assign({ marginTop: 6 }, line) }, statusChip, roleWarn, endWarn, moneyBox, delBtn))
+          : h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
+              roleSel, crewSel, feeField, billField, mgnBtn, noteInput, statusChip, moneyBox, roleWarn, endWarn, delBtn);
       }));
   }
 
@@ -710,37 +740,87 @@
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
+    // Phone header: one row — ← · project name over "Schedule · client · dates"
+    // · Save (only while dirty) · ⋯. Send to Quote / Invoice, Print and Discard
+    // live in the ⋯ menu; five wrapping buttons were pushing the schedule
+    // itself below the fold. Desktop keeps its full action bar.
+    var savedChip = justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: isMobile ? "0 10px" : "5px 10px", height: isMobile ? 34 : undefined, display: "inline-flex", alignItems: "center", borderRadius: isMobile ? "8px" : "6px", whiteSpace: "nowrap" } }, "\u2713 Saved");
+    var header = isMobile
+      ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, background: B.surface, borderBottom: "1px solid " + B.border, padding: "calc(8px + env(safe-area-inset-top)) 10px 8px", flexShrink: 0, zIndex: 5 } },
+          h("button", { onClick: function() { nav("projects/" + project.id); }, "aria-label": "Back to project", className: "ltp-tap",
+            style: { flexShrink: 0, width: 36, height: 36, borderRadius: "8px", background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontSize: "18px", lineHeight: 1, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\u2190"),
+          h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "-0.01em" } }, project.name),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+              // Dates before the client: while Save is showing the line
+              // truncates, and the dates are the half a producer needs.
+              ["Schedule", window.LTP_formatDateRangeShort(project.startDate, project.endDate) || null, company ? company.name : null].filter(Boolean).join(" \u00b7 "))),
+          h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
+            !isDirty && savedChip,
+            isDirty && h(window.Btn, { small: true, onClick: save, style: { height: 34, padding: "0 14px", fontSize: "12px" } }, "Save"),
+            h(window.LTPOverflowMenu, { items: [
+              { label: "Send to Quote", onClick: function() { openSend("quote"); } },
+              { label: "Send to Invoice", onClick: function() { openSend("invoice"); } },
+              { label: "Print schedule", onClick: printSchedule },
+              isDirty && { label: "Discard changes", variant: "danger", onClick: discard },
+            ] })))
+      : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
+            h("button", { onClick: function() { nav("projects/" + project.id); },
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
+            h("div", null,
+              h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
+              h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
+                (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "nowrap" } },
+            savedChip,
+            h("button", { onClick: function() { openSend("quote"); },
+              style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
+            // Bills the schedule straight to the client, skipping the quote's
+            // delivered/invoiced ledger entirely \u2014 these are direct-bill lines.
+            h("button", { onClick: function() { openSend("invoice"); },
+              style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Invoice"),
+            h("button", { onClick: printSchedule,
+              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
+            isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
+            isDirty && h(window.Btn, { small: true, onClick: save }, "Save Schedule")));
+
+    // Phone summary strip — the side panel's Schedule Summary as four tiles at
+    // the top of the column (the side panel itself stacks under the editor on
+    // a phone, where a producer never scrolled down to find it).
+    function tile(label, value, color, first) {
+      return h("div", { style: { padding: "8px 4px", textAlign: "center", borderLeft: first ? "none" : "1px solid " + B.border, minWidth: 0 } },
+        h("div", { style: { fontSize: "15px", fontWeight: 700, color: color || B.text, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, value),
+        h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2 } }, label));
+    }
+    var allFilled = stats.filledPos === stats.totalPos && stats.totalPos > 0;
+    var summaryStrip = isMobile && h("div", { title: "Cost $" + stats.totalCost.toLocaleString(),
+        style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", marginBottom: 10, overflow: "hidden" } },
+      tile("Days", stats.days, null, true),
+      tile("Filled", stats.filledPos + "/" + stats.totalPos, allFilled ? B.success : null),
+      tile("Rate", "$" + stats.totalRate.toLocaleString(), B.accent),
+      tile("Margin", "$" + stats.margin.toLocaleString(), stats.margin >= 0 ? B.success : B.danger));
+
+    // Side sections: bordered blocks in the desktop column; rounded cards
+    // between the editor and the bottom of the page on a phone.
+    var sideCard = isMobile
+      ? { background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", padding: 12 }
+      : { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 };
+    var sideH4 = { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" };
+
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header. In the full-screen builder the app topbar is hidden, so
-      // on mobile this header takes the status-bar safe-area inset and its
-      // actions wrap instead of overflowing off-screen.
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", gap: isMobile ? 10 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
-        h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
-          h("button", { onClick: function() { nav("projects/" + project.id); },
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
-          h("div", null,
-            h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),
-            h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-              (company ? company.name + " \u00b7 " : "") + fmt(project.startDate) + " \u2192 " + fmt(project.endDate)))),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
-          justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px" } }, "\u2713 Saved"),
-          h("button", { onClick: function() { openSend("quote"); },
-            style: { background: B.accent, border: "none", borderRadius: "6px", padding: "6px 12px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Quote"),
-          // Bills the schedule straight to the client, skipping the quote's
-          // delivered/invoiced ledger entirely \u2014 these are direct-bill lines.
-          h("button", { onClick: function() { openSend("invoice"); },
-            style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "6px", padding: "6px 12px", color: B.accent, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2192 Send to Invoice"),
-          h("button", { onClick: printSchedule,
-            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "Print"),
-          isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
-          isDirty && h(window.Btn, { small: true, onClick: save }, "Save Schedule"))
-      ),
+      // on mobile this header takes the status-bar safe-area inset.
+      header,
 
       // Body: main + side panel on desktop; single scrolling column on mobile
       // so the editor gets full width and the summary/notes/activity stack below.
-      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10 } },
+      h("div", { style: { flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 8 : 14, overflowY: isMobile ? "auto" : "hidden", overflowX: "hidden", paddingTop: 10, paddingBottom: isMobile ? "calc(16px + env(safe-area-inset-bottom))" : 0 } },
         // Main content (scrollable)
-        h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0 } },
+        // Phone: hug the content (flex 1 would stretch an empty schedule and
+        // push Notes / Activity to the bottom of the screen).
+        h("div", { style: { flex: isMobile ? "0 0 auto" : 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0, padding: isMobile ? "0 6px" : 0 } },
+          summaryStrip,
           h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
             contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
@@ -763,9 +843,20 @@
         ),
 
         // Side panel
-        h("div", { style: { width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: 4, overflowY: isMobile ? "visible" : "auto" } },
-          // SUMMARY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
+        h("div", { style: { width: isMobile ? "auto" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: isMobile ? 8 : 4, overflowY: isMobile ? "visible" : "auto", padding: isMobile ? "0 6px" : 0 } },
+          // SUMMARY — on a phone it is the strip at the top of the column
+          // instead; only the client-rates note keeps a section down here.
+          isMobile && clientRateRoles.length > 0 && h("div", { style: sideCard },
+            h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.info, textTransform: "uppercase", letterSpacing: "0.1em", marginBottom: 5 } },
+              (company ? company.name : "Client") + " rates"),
+            clientRateRoles.map(function(s) {
+              var maps = window.LTP_serviceRateMaps(s);
+              return h("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", gap: 6, fontSize: "11px", padding: "2px 0" } },
+                h("span", { style: { color: B.textSec, fontWeight: 600 } }, s.role,
+                  s.minHours > 0 && h("span", { style: { color: B.info, fontWeight: 700 } }, " \u00b7 " + s.minHours + "h min")),
+                h("span", { style: { color: B.textMut } }, "$" + Math.round(maps.priceMap.day) + "/day"));
+            })),
+          !isMobile && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Schedule Summary"),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Schedule Days"),
@@ -823,8 +914,8 @@
             var seen = {};
             projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
             if (projectConflicts.length === 0) return null;
-            return h("div", { style: { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
-              h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.danger, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Scheduling Conflicts"),
+            return h("div", { style: isMobile ? Object.assign({}, sideCard, { background: B.danger + "11", borderColor: B.danger + "44" }) : { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
+              h("h4", { style: Object.assign({}, sideH4, { color: B.danger }) }, "Scheduling Conflicts"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
                   return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + B.danger + "33" } },
@@ -837,17 +928,17 @@
           }(),
 
           // NOTES
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Internal Notes"),
+          h("div", { style: sideCard },
+            h("h4", { style: sideH4 }, "Internal Notes"),
             h("textarea", { value: draft.scheduleNotes || "",
               onChange: function(e) { setDraft(function(d) { return Object.assign({}, d, { scheduleNotes: e.target.value }); }); },
               placeholder: "Schedule notes, crew preferences, special requirements\u2026",
-              style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
+              style: { width: "100%", boxSizing: "border-box", background: B.raised, border: "1px solid " + B.border, borderRadius: isMobile ? "8px" : "6px", padding: isMobile ? "8px 10px" : "8px", color: B.text, fontSize: isMobile ? "16px" : "11px", fontFamily: "inherit", outline: "none", resize: "vertical", minHeight: 60 } })
           ),
 
           // ACTIVITY
-          h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14, flex: 1, display: "flex", flexDirection: "column", minHeight: 120 } },
-            h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 8px" } }, "Activity"),
+          h("div", { style: Object.assign({}, sideCard, { flex: 1, display: "flex", flexDirection: "column", minHeight: 120 }) },
+            h("h4", { style: sideH4 }, "Activity"),
             h("div", { style: { flex: 1, overflowY: "auto" } },
               (draft.scheduleActivity || []).slice().reverse().map(function(a) {
                 var typeColors = { created: B.info, saved: B.success };
