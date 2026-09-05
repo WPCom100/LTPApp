@@ -323,7 +323,7 @@
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search services\u2026",
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
         h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 350, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
-          filterList(services || [], ["role", "department"]).slice(0, 60).map(function(s) {
+          filterList(window.LTP_sortServices(services), ["role", "department"]).slice(0, 60).map(function(s) {
             return h("div", { key: s.id, onClick: function() {
                 onAdd({ id: genId("item"), type: "service", serviceId: s.id, name: s.role + " \u2014 " + s.description, rateType: "day", qty: 1, unitPrice: s.dayRate || 0, adjustedPrice: null, cost: s.dayCost || 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
               },

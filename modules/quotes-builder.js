@@ -506,7 +506,7 @@
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search services…",
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", marginBottom: 10 } }),
         h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 380, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
-          filterList(services, ["role", "description", "department"]).slice(0, 80).map(function(s) {
+          filterList(window.LTP_sortServices(services), ["role", "description", "department"]).slice(0, 80).map(function(s) {
             var inSection = !!sectionServiceIds[s.id];
             return h("div", { key: s.id, onClick: function() { addService(s); },
               style: { background: B.raised, border: inSection ? "2px solid " + B.accent : "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },

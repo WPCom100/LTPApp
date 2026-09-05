@@ -213,7 +213,13 @@
 // domain helpers, and most of modules/. Shipped to master first without this
 // bump (PR #64, guard red), so v76 devices were going to hold the old shell
 // for a launch and never see the update banner.
-var CACHE_VERSION = 'ltp-shell-v77';
+// v78: exported schedule lines read in position order — letters-only roles
+// first (LD, PM, SPOT), then numbered (L1, L2), each position's lines from
+// flat to day, half day and hours — and every role dropdown is alphabetical
+// (numbers as numbers). domain-rates.js, domain-crew.js, the schedule editor
+// and builder, both document builders, labor.js, client-rates.js, settings.js,
+// quotes-services.js.
+var CACHE_VERSION = 'ltp-shell-v78';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

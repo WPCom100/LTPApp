@@ -145,7 +145,7 @@ eq("G2 flat line shape", [flatLines[0].type, flatLines[0].serviceId, flatLines[0
    ["service", 3, "LD — Lighting Designer", 1, 2000, 1500]);
 eq("G3 note spans the scheduled dates", flatLines[0].notes, "Flat-rate position · 2026-09-10 – 2026-09-13");
 eq("G4 full-margin line costs 0", [flatLines[1].unitPrice, flatLines[1].cost], [900, 0]);
-ok("G5 hourly day line still emitted first", items[0].rateType === "day" && items[0].serviceId === 1);
+eq("G5 read order: the letters-only position (LD, flat) before the numbered one (L1, day)", items.map(function(i) { return i.serviceId + ":" + i.rateType; }), ["3:flat", "3:flat", "1:day", "1:ot"]);
 const flatOnly = window.LTP_scheduleLaborSections([], services, {}, "split", fmt, null, [flat("q1", 8, 1500, { bill: 2000 })]);
 eq("G6 flat-only schedule still bills, grouped by department", [flatOnly.length, flatOnly[0].label, flatOnly[0].items.length], [1, "Lighting", 1]);
 eq("G7 nothing billable → []", window.LTP_scheduleLaborSections([], services, {}, "one", fmt, null, [flat("q2", 8, 100, { bill: 0 })]), []);

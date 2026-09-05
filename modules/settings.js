@@ -522,7 +522,7 @@
           h("div", null,
             h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Roles \u00b7 from rate card"),
             (function() {
-              var roles = Array.from(new Set((services || []).map(function(s) { return s.role; }).filter(Boolean))).sort();
+              var roles = Array.from(new Set((services || []).map(function(s) { return s.role; }).filter(Boolean))).sort(window.LTP_compareRoleCodes);
               if (roles.length === 0) {
                 return h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", lineHeight: 1.5 } },
                   "No roles yet. Add services under Quotes \u2192 Services and they'll appear on the crew form automatically.");
