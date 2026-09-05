@@ -317,7 +317,7 @@
     // and crew sharing one row, one slim footer row per position, and the
     // native date/time pickers tucked behind compact formatted chips (`chip`).
     var M = isMobile;
-    var CTL = 36;
+    var CTL = window.LTP_CTL;
     var ft = window.LTP_formatTime, fmtShort = window.LTP_formatDateShort;
     var mInp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", height: CTL, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", width: "100%", minWidth: 0, boxSizing: "border-box" };
     var trig = M ? { borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: CTL }
@@ -333,45 +333,13 @@
                background: on ? color + "22" : "transparent", border: "1px solid " + (on ? color : B.border), color: on ? color : B.textMut,
                cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" };
     }
-    // Native pickers behind a chip. A raw <input type="date"> on iOS is a wide,
-    // oddly tall control reading "09/10/2026", and three of them (date, start,
-    // end) were most of the item header. On a phone the deferred field is still
-    // rendered — its buffering and commit rules are untouched — but stretched
-    // over a formatted chip at opacity 0: the chip is what you see ("Thu, Sep
-    // 10", "8:00 AM"), the input is what you tap, and the tap opens the native
-    // wheel picker exactly as before. Desktop gets the field itself, unchanged.
-    var NATIVE = { position: "absolute", top: 0, left: 0, width: "100%", height: "100%", opacity: 0, margin: 0, padding: 0, border: 0,
-                   fontSize: "16px", background: "transparent", color: "transparent", cursor: "pointer", zIndex: 1 };
-    // A phone opens the picker on the tap itself. A narrow DESKTOP window
-    // (mouse, no touch) only focuses the invisible input, and the calendar
-    // glyph that would open the popup is hidden with it — so ask for the
-    // picker outright there (showPicker needs a user gesture; this is one).
-    var pointerOpensPicker = (function() {
-      try { return window.matchMedia("(hover: none)").matches; } catch (e) { return true; }
-    })();
-    function openPicker(e) {
-      if (pointerOpensPicker) return;
-      var el = e.currentTarget.querySelector("input");
-      if (el && typeof el.showPicker === "function") { try { el.showPicker(); } catch (err) { /* unsupported type or not a gesture */ } }
-    }
-    function chip(opts, field) {
-      if (!M) return field;
-      var tone = opts.warn ? B.warn : opts.empty ? B.textMut : B.text;
-      var style = { position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", height: opts.small ? 30 : CTL,
-                    padding: opts.small ? "0 8px" : "0 10px", fontSize: opts.small ? "12px" : "13px", fontWeight: 600, color: tone,
-                    whiteSpace: "nowrap", boxSizing: "border-box", overflow: "hidden", minWidth: 0 };
-      // `bare` chips sit inside a segmented pill (see seg) which draws the box.
-      if (!opts.bare) Object.assign(style, { borderRadius: "8px", background: B.bg, border: "1px solid " + (opts.warn ? B.warn : B.border) });
-      if (opts.divider) style.borderLeft = "1px solid " + B.border;
-      return h("div", { style: Object.assign(style, opts.style), onClick: openPicker },
-        h("span", { "aria-hidden": "true", style: { overflow: "hidden", textOverflow: "ellipsis" } }, opts.label),
-        field);
-    }
-    // Two bare chips in one bordered pill: [ 8:00 AM | 6:00 PM ].
-    function seg(a, b, small) {
-      return h("div", { style: { display: "inline-flex", alignItems: "stretch", border: "1px solid " + B.border, borderRadius: "8px", background: B.bg,
-                                 overflow: "hidden", flexShrink: 0, height: small ? 30 : CTL, boxSizing: "border-box" } }, a, b);
-    }
+    // Native pickers behind a chip (window.LTP_pickerChip, ui.js): on a phone
+    // the deferred field is rendered over a formatted chip at opacity 0 — the
+    // chip is what you see ("Thu, Sep 10"), the field is what you tap, and its
+    // buffering/commit rules are untouched. Desktop gets the field itself.
+    var NATIVE = window.LTP_NATIVE;
+    function chip(opts, field) { return M ? window.LTP_pickerChip(opts, field) : field; }
+    var seg = window.LTP_pickerSeg;
     var dashedBtn = M
       ? { background: "transparent", border: "1px dashed " + B.accent + "55", color: B.accent, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "0 10px", height: 34, borderRadius: "8px", width: "100%", fontFamily: "inherit" }
       : null;

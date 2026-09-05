@@ -393,7 +393,9 @@ event spanning the project dates.
   in place of call times. The Calendar grid, which places rows on a single
   date, does not show them.
 
-## Schedule builder on a phone
+## Phone layouts
+
+### Schedule builder on a phone
 
 At `(max-width: 600px)` (`window.LTP_useIsMobile`) the builder switches to a
 layout designed around 16px inputs — index.html forces that size on every
@@ -420,6 +422,28 @@ than shrunk from the desktop ledger. Desktop is untouched.
 Short dates come from `window.LTP_formatDateShort` / `LTP_formatDateRangeShort`
 (`components/domain-util.js`), which build from the ISO parts so a bare
 `YYYY-MM-DD` stays the calendar day it names in every timezone.
+
+### The phone kit (`components/ui.js`)
+
+The builder's pieces are shared so every phone screen uses the same 36px
+controls (`window.LTP_CTL`):
+
+- `LTP_pickerChip(opts, field)` / `LTP_pickerSeg(a, b)` — a formatted chip with
+  the real date/time field (styled `LTP_NATIVE`) stretched over it; `prefix`
+  adds a small label ("FROM · Mon, Sep 7").
+- `LTP_inlineField(label, input, opts)` — "FEE $ [1500]" in one box, the input
+  styled `LTP_INLINE_INPUT`.
+- `LTPStatStrip({ items })` — N tiles in one bordered row, the phone stand-in
+  for a row of `StatCard`s.
+
+Where they are used, besides the schedule builder: the quote and invoice
+builders (line items read badge · name · ▲▼ · ×, then [rate] [QTY] [ADJ $] on
+one row; the add-item picker puts the name on its own line; Discard sits in the
+⋯ menu), Labor → Assignments (stat strip, chip strip, project · Manual Shift
+row), Labor → Payouts (one-row period navigator, From/To chips, stat strip),
+Labor → Crew Roster (search row + chip strip) and Weekly Schedule (short week
+label). Desktop rendering is untouched everywhere — the phone styles are merged
+in only under `LTP_useIsMobile()`.
 
 ## Email feature deploy notes
 

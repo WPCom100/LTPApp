@@ -201,7 +201,8 @@
         ),
         !isMobile && h(window.Btn, { small: true, onClick: function() { setShowAdd(true); setEditingId(null); } }, "+ Add Product")
       ),
-      isMobile && h(window.LTPFab, { label: "Add product", onClick: function() { setShowAdd(true); setEditingId(null); } }),
+      // Hidden while a form is open — it sat on top of the form's Add button.
+      isMobile && !showAdd && editingId == null && h(window.LTPFab, { label: "Add product", onClick: function() { setShowAdd(true); setEditingId(null); } }),
 
       // Search
       h("div", { style: { marginBottom: 10 } },

@@ -60,15 +60,16 @@
     // forced by index.html) lays each position out as a small card — role ·
     // crew / fee · bill · MGN / note / status … margin · × — in the same
     // 36px controls and chips the day editor uses (components/schedule-editor.js).
-    var M = isMobile, CTL = 36;
+    var M = isMobile, CTL = window.LTP_CTL;
     var inp = M
-      ? { background: "transparent", border: "none", padding: 0, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", minWidth: 0, width: "100%", boxSizing: "border-box" }
+      ? window.LTP_INLINE_INPUT
       : { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 5px", color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
-    var lbl = M
-      // Phone: the label lives INSIDE the field's box ("FEE $ 1500") so the
-      // pair reads as one control and nothing wraps under it.
-      ? { flex: 1, display: "flex", alignItems: "center", gap: 6, minWidth: 0, height: CTL, padding: "0 10px", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", boxSizing: "border-box", fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: B.textMut, whiteSpace: "nowrap" }
-      : { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+    var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
+    // Phone: the label lives INSIDE the field's box ("FEE $ 1500") so the pair
+    // reads as one control and nothing wraps under it (window.LTP_inlineField).
+    function moneyField(label, title, input) {
+      return M ? window.LTP_inlineField(label, input, { title: title }) : h("label", { style: lbl, title: title }, label, input);
+    }
     var trig = M ? { borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: CTL } : { borderRadius: "3px", padding: "3px 5px", fontSize: "10px", minHeight: 0 };
     var warnChip = { color: B.warn, fontSize: M ? "10px" : "9px", fontWeight: 700, whiteSpace: "nowrap" };
     return h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: M ? "10px" : "6px", padding: M ? 10 : 12, marginBottom: M ? 10 : 12 } },
@@ -121,11 +122,11 @@
           style: { flex: M ? "1 1 52%" : "1 1 130px", minWidth: 0 },
           triggerStyle: trig, panelMinWidth: 260,
         });
-        var feeField = h("label", { style: lbl, title: "What we pay this person for the whole project." }, "Fee $",
+        var feeField = moneyField("Fee $", "What we pay this person for the whole project.",
           h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: fee === 0 ? "" : p.fee, placeholder: "0",
             onChange: function(e) { update(p.id, { fee: e.target.value === "" ? 0 : Number(e.target.value) }); },
             style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
-        var billField = h("label", { style: lbl, title: "What the client is charged for this position (0 = absorbed in the package price, no quote line)." }, "Bill $",
+        var billField = moneyField("Bill $", "What the client is charged for this position (0 = absorbed in the package price, no quote line).",
           h("input", { type: "number", min: 0, step: "0.01", inputMode: "decimal", value: bill === 0 ? "" : p.bill, placeholder: "0",
             onChange: function(e) { update(p.id, { bill: e.target.value === "" ? 0 : Number(e.target.value) }); },
             style: M ? inp : Object.assign({}, inp, { width: 72 }) }));
@@ -788,18 +789,13 @@
     // Phone summary strip — the side panel's Schedule Summary as four tiles at
     // the top of the column (the side panel itself stacks under the editor on
     // a phone, where a producer never scrolled down to find it).
-    function tile(label, value, color, first) {
-      return h("div", { style: { padding: "8px 4px", textAlign: "center", borderLeft: first ? "none" : "1px solid " + B.border, minWidth: 0 } },
-        h("div", { style: { fontSize: "15px", fontWeight: 700, color: color || B.text, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, value),
-        h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.1em", marginTop: 2 } }, label));
-    }
     var allFilled = stats.filledPos === stats.totalPos && stats.totalPos > 0;
-    var summaryStrip = isMobile && h("div", { title: "Cost $" + stats.totalCost.toLocaleString(),
-        style: { display: "grid", gridTemplateColumns: "repeat(4, 1fr)", background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", marginBottom: 10, overflow: "hidden" } },
-      tile("Days", stats.days, null, true),
-      tile("Filled", stats.filledPos + "/" + stats.totalPos, allFilled ? B.success : null),
-      tile("Rate", "$" + stats.totalRate.toLocaleString(), B.accent),
-      tile("Margin", "$" + stats.margin.toLocaleString(), stats.margin >= 0 ? B.success : B.danger));
+    var summaryStrip = isMobile && h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+      { label: "Days", value: stats.days },
+      { label: "Filled", value: stats.filledPos + "/" + stats.totalPos, color: allFilled ? B.success : null },
+      { label: "Rate", value: "$" + stats.totalRate.toLocaleString(), color: B.accent, title: "Cost $" + stats.totalCost.toLocaleString() },
+      { label: "Margin", value: "$" + stats.margin.toLocaleString(), color: stats.margin >= 0 ? B.success : B.danger, title: "Cost $" + stats.totalCost.toLocaleString() },
+    ] });
 
     // Side sections: bordered blocks in the desktop column; rounded cards
     // between the editor and the bottom of the page on a phone.
