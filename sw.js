@@ -205,7 +205,15 @@
 // records the server's own stamp on the row it hands back; the manual
 // QuickBooks update and the failed-send unwind build on the returned row.
 // doc-pdf.js, invoices.js.
-var CACHE_VERSION = 'ltp-shell-v76';
+// v77: flat-rate positions (fixed-cost hires on the schedule, crew requests,
+// Labor and payouts) and the phone layouts — the schedule builder rebuilt for a
+// phone, then the quote/invoice builders, Labor tabs, dashboard and scan modal
+// on the same kit (ui.js gained the picker chips, inline fields and stat
+// strip). Eighteen cached files moved: app.js, ui.js, schedule-editor.js, the
+// domain helpers, and most of modules/. Shipped to master first without this
+// bump (PR #64, guard red), so v76 devices were going to hold the old shell
+// for a launch and never see the update banner.
+var CACHE_VERSION = 'ltp-shell-v77';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
