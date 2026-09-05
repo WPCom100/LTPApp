@@ -100,7 +100,7 @@
     // Only roles that don't already have a row for this client (plus the one
     // being edited) — a second row for the same service would be ambiguous.
     var options = [{ value: "", label: "Select a role…" }].concat(
-      (services || []).filter(function(s) { return !taken[s.id] || s.id === serviceId; })
+      window.LTP_sortServices(services).filter(function(s) { return !taken[s.id] || s.id === serviceId; })
         .map(function(s) { return { value: s.id, label: s.role, sublabel: s.description + " · " + money(s.dayRate || 0) + "/day" }; }));
 
     function submit() {

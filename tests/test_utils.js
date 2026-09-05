@@ -132,6 +132,24 @@ eq("DR4 missing start -> end only", FDR("", "2026-09-13", { now: NOW }), "Sep 13
 eq("DR5 both missing -> empty", FDR("", "", { now: NOW }), "");
 eq("DR6 cross-year range carries both years", FDR("2026-12-30", "2027-01-02", { now: NOW }), "Dec 30 \u2013 Jan 2, 2027");
 
+// ── role ordering (dropdowns + exported schedule lines) ─────────────────────
+const CRC = window.LTP_compareRoleCodes, RG = window.LTP_roleGroup, CRG = window.LTP_compareRoleGroups;
+const eqj = (n, g, e) => eq(n, JSON.stringify(g), JSON.stringify(e));   // eq is strict; arrays compare by JSON
+eqj("RO1 dropdown order is alphabetical, numbers as numbers", ["SPOT", "L10", "PM", "L2", "LD", "L1", "SM", "a1"].sort(CRC), ["a1", "L1", "L2", "L10", "LD", "PM", "SM", "SPOT"]);
+eq("RO2 case-insensitive", CRC("pm", "PM"), 0);
+eqj("RO3 letters-only is group 0, letter+number 1, anything else 2", [RG("PM"), RG("SPOT"), RG("L1"), RG("L10"), RG("A/V"), RG("Spot Op 2"), RG("")], [0, 0, 1, 1, 2, 2, 2]);
+eqj("RO4 export order: letters-only first (alphabetical), then numbered, then the rest",
+   ["L2", "SPOT", "A/V", "L1", "LD", "PM", "L10", "SM"].sort(CRG), ["LD", "PM", "SM", "SPOT", "L1", "L2", "L10", "A/V"]);
+const SS = window.LTP_sortServices([{ id: 3, role: "L2", description: "b" }, { id: 1, role: "PM", description: "z" }, { id: 2, role: "L1", description: "b" }, { id: 4, role: "L1", description: "a" }]);
+eqj("RO5 sortServices: role, then description, and never mutates the input", SS.map((s) => s.id), [4, 2, 3, 1]);
+eqj("RO6 sortServices tolerates null", window.LTP_sortServices(null), []);
+const CLL = window.LTP_compareLaborLines;
+eqj("RO7 lines of one position run flat, day, half, hourly, OT",
+   [{ role: "PM", rateType: "ot" }, { role: "PM", rateType: "half" }, { role: "PM", rateType: "flat" }, { role: "PM", rateType: "hourly" }, { role: "PM", rateType: "day" }].sort(CLL).map((l) => l.rateType),
+   ["flat", "day", "half", "hourly", "ot"]);
+eqj("RO8 positions before rate types", [{ role: "L1", rateType: "day" }, { role: "PM", rateType: "ot" }, { role: "L1", rateType: "flat" }].sort(CLL).map((l) => l.role + ":" + l.rateType),
+   ["PM:ot", "L1:flat", "L1:day"]);
+
 // ── resolveTemplate ──────────────────────────────────────────────────────────
 const TPL = window.LTP_resolveTemplate;
 eq("TP1 substitution", TPL("Hi {{name}}, ref {{ref}}", { name: "Sam", ref: "Q-1" }), "Hi Sam, ref Q-1");

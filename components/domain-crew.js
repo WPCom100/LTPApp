@@ -55,6 +55,19 @@
 // Returns [] when the schedule bills nothing — no dated+timed day carries a
 // position with a serviceId and no flat-rate position bills the client. Callers
 // treat that as "nothing to send".
+// The order the lines are read in, on a quote or an invoice: letters-only
+// positions first (PM, SPOT, LD, SM), then numbered ones (L1, L2, L3), each
+// group alphabetical (LTP_compareRoleGroups); every position's lines sit
+// together, largest unit first — flat (the whole project), day, half day, then
+// hours (hourly, then overtime). a/b: { role, description, rateType }.
+var _RATE_TYPE_ORDER = { flat: 0, day: 1, half: 2, hourly: 3, ot: 4 };
+window.LTP_compareLaborLines = function(a, b) {
+  var ra = _RATE_TYPE_ORDER[a && a.rateType], rb = _RATE_TYPE_ORDER[b && b.rateType];
+  return window.LTP_compareRoleGroups(a && a.role, b && b.role)
+    || String((a && a.description) || "").localeCompare(String((b && b.description) || ""), "en", { sensitivity: "base" })
+    || ((ra == null ? 9 : ra) - (rb == null ? 9 : rb));
+};
+
 window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId, fixedPositions) {
   var gen = genId || window.LTP_genId;
   var fmt = fmtDate || function(d) { return d; };
@@ -116,14 +129,14 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   // Build the labor line items once (identical for both groupings); each
   // carries its department so we can either split by department or pool
   // everything into a single section.
-  var laborItems = [];  // [{ dept, item }]
+  var laborItems = [];  // [{ dept, role, description, rateType, item }] — the sort keys ride beside the line
 
   // Day-rate lines. Per-unit cost is the blended cost across the qty
   // (full-margin positions contribute $0), so one line carries the right margin
   // without splitting paid vs owner crew.
   Object.keys(dayRateItems).forEach(function(key) {
     var li = dayRateItems[key];
-    laborItems.push({ dept: li.dept, item: {
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: li.tier === "half" ? "half" : "day", item: {
       id: gen("item"), type: "service", serviceId: li.svc.id,
       name: li.svc.role + " — " + li.svc.description,
       rateType: li.tier === "half" ? "half" : "day",
@@ -138,7 +151,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   Object.keys(otItems).forEach(function(key) {
     var li = otItems[key];
     if (li.rateHours <= 0) return;
-    laborItems.push({ dept: li.dept, item: {
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "ot", item: {
       id: gen("item"), type: "service", serviceId: li.svc.id,
       name: li.svc.role + " — " + li.svc.description,
       rateType: "ot",
@@ -161,7 +174,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     if (!svc) return;
     var bill = Math.round((Number(p.bill) || 0) * 100) / 100;
     if (bill <= 0) return;   // absorbed in a package price — nothing to bill separately
-    laborItems.push({ dept: svc.department || "Other", item: {
+    laborItems.push({ dept: svc.department || "Other", role: svc.role, description: svc.description, rateType: "flat", item: {
       id: gen("item"), type: "service", serviceId: svc.id,
       name: svc.role + " — " + svc.description,
       rateType: "flat",
@@ -173,6 +186,12 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   });
 
   if (laborItems.length === 0) return [];
+
+  // Read order (see LTP_compareLaborLines): letters-only positions, then
+  // numbered ones, each position's lines together from the largest unit down.
+  // Sorted once here so the single section and the per-department sections
+  // agree, and so the split keeps each section in the same order.
+  laborItems.sort(window.LTP_compareLaborLines);
 
   if (grouping === "one") {
     return [{ id: gen("sec"), label: "Labor", customDates: false, startDate: "", endDate: "",

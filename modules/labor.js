@@ -470,7 +470,7 @@
               // visible and removable even if its service is gone.
               var roleOptions = [];
               (services || []).forEach(function(s) { if (s.role && roleOptions.indexOf(s.role) === -1) roleOptions.push(s.role); });
-              roleOptions.sort();
+              roleOptions.sort(window.LTP_compareRoleCodes);
               (f.crewRoles || []).forEach(function(r) { if (roleOptions.indexOf(r) === -1) roleOptions.push(r); });
               function addCustomRole() {
                 var v = customRole.trim();
@@ -618,7 +618,7 @@
 
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; })
       .sort(function(a, b) { return ((a.firstName || "") + (a.lastName || "")).localeCompare((b.firstName || "") + (b.lastName || "")); });
-    var svcs = (services || []).slice().sort(function(a, b) { return (a.role || "").localeCompare(b.role || ""); });
+    var svcs = window.LTP_sortServices(services);
 
     function updateRow(i, patch) { setRows(function(rs) { return rs.map(function(r, j) { return j === i ? Object.assign({}, r, patch) : r; }); }); }
     function addRow() { setRows(function(rs) { return rs.concat([{ serviceId: "", crewId: "" }]); }); }

@@ -100,7 +100,7 @@
             var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
             update(p.id, { serviceId: sid, role: sv ? sv.role : "" });
           },
-          options: [{ value: "", label: "Role\u2026" }].concat(svcs.map(function(sv) {
+          options: [{ value: "", label: "Role…" }].concat(window.LTP_sortServices(svcs).map(function(sv) {
             return { value: sv.id, label: sv.role, sublabel: sv.description };
           })),
           searchPlaceholder: "Search roles\u2026",

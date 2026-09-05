@@ -393,6 +393,22 @@ event spanning the project dates.
   in place of call times. The Calendar grid, which places rows on a single
   date, does not show them.
 
+## Role order (dropdowns and exported lines)
+
+Every role/position dropdown in the app — the schedule editor and flat-rate
+panel pickers, the manual-shift and client-rate pickers, the quote/invoice
+item pickers, the roster's role tags — lists roles alphabetically with numbers
+compared as numbers: `L1, L2, L10, LD, PM, SM, SPOT`
+(`window.LTP_sortServices` / `LTP_compareRoleCodes` in `components/domain-rates.js`).
+
+Lines that Send to Quote / Send to Invoice generate from a schedule
+(`window.LTP_scheduleLaborSections`) are ordered the way the document is read:
+letters-only positions first (`LD, PM, SM, SPOT`), then letter+number positions
+(`L1, L2, L3 …`), alphabetical within each group, and every position's lines
+together from the largest unit down — flat (whole project), day, half day, then
+hours (hourly, overtime). Splitting by department keeps that order inside each
+section (`LTP_compareLaborLines` in `components/domain-crew.js`).
+
 ## Phone layouts
 
 ### Schedule builder on a phone

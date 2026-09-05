@@ -267,6 +267,32 @@ const day = (id, date, time, endTime, positions, breaks) =>
   near("J4 half day is priced at half the day rate", shortOut[0].items[0].unitPrice, 300);
 }
 {
+  // Read order of the exported lines: letters-only positions first (LD, PM,
+  // SPOT), then numbered ones (L1, L2), alphabetical within each; every
+  // position's lines together — flat, day, half day, then hours.
+  const CARD = SVCS.concat([
+    { id: 3, role: "PM",   description: "Production Manager", department: "Production", dayRate: 800, dayCost: 400 },
+    { id: 4, role: "SPOT", description: "Spot Op",            department: "Lighting",   dayRate: 400, dayCost: 200 },
+    { id: 5, role: "L1",   description: "Lighting Lead",      department: "Lighting",   dayRate: 700, dayCost: 350 },
+    { id: 6, role: "L2",   description: "Lighting Tech",      department: "Lighting",   dayRate: 600, dayCost: 300 },
+    { id: 7, role: "LD",   description: "Lighting Designer",  department: "Lighting",   dayRate: 0,   dayCost: 0 },
+  ]);
+  const schedule = [
+    // Full day: L2, L1, SPOT, PM (deliberately out of order); SPOT's unbroken call also earns OT.
+    day("d1", "2026-08-10", "08:00", "16:00", [pos("p1", 6), pos("p2", 5), pos("p4", 3)], MEAL),
+    day("d1b", "2026-08-10", "08:00", "16:00", [pos("p3", 4)]),
+    // Half day: PM and L1 again.
+    day("d2", "2026-08-11", "09:00", "13:00", [pos("p5", 3), pos("p6", 5)]),
+  ];
+  const flat = [{ id: "f1", serviceId: 7, role: "LD", crewId: 9, status: "confirmed", fee: 1500, bill: 2000, fullMargin: false }];
+  const one = SECTIONS(schedule, CARD, {}, "one", fmtDate, window.LTP_genId, flat);
+  eq("K1 one section, read order", one[0].items.map((i) => i.name.split(" — ")[0] + ":" + i.rateType),
+     ["LD:flat", "PM:day", "PM:half", "SPOT:day", "SPOT:ot", "L1:day", "L1:half", "L2:day"]);
+  const split = SECTIONS(schedule, CARD, {}, "split", fmtDate, window.LTP_genId, flat);
+  eq("K2 split keeps each department in the same order", split.map((s) => s.label + ": " + s.items.map((i) => i.name.split(" — ")[0] + ":" + i.rateType).join(",")),
+     ["Lighting: LD:flat,SPOT:day,SPOT:ot,L1:day,L1:half,L2:day", "Production: PM:day,PM:half"]);
+}
+{
   // End-to-end: schedule → sections → labelled → appended into a doc that
   // already has content. This is exactly what Send to Quote / Send to Invoice
   // does on the append path.
