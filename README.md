@@ -345,20 +345,22 @@ they ride the same crew-request and payroll rails as a shift.
   Each row is a rate-card **role** (required — it routes the fee to that role's
   QuickBooks expense account and names the quote line), the **crew** member
   (role-matched picker, same as a shift), the **fee** (what we pay), the
-  **bill** (what the client is charged), a full-margin toggle, the **pay date**,
-  and a crew-facing **scope note**. Margin is bill − fee; the Schedule Summary
-  folds the flat totals into Total Rate / Total Cost / Margin.
+  **bill** (what the client is charged), a full-margin toggle, and a
+  crew-facing **scope note**. Margin is bill − fee; the Schedule Summary folds
+  the flat totals into Total Rate / Total Cost / Margin. The panel also says
+  which payroll period and pay day the fee lands on (see the rules below).
 - **Labor → Assignments** lists them under a *Flat-rate — whole project* group
   with a `Flat $…` chip. Send Request / Book Without Emailing, Confirm, Release
   and Cancel all work as for a shift. A confirm **locks the fee** the way a
   shift locks its computed pay.
-- **Labor → Payouts** shows each confirmed engagement as a row dated on its
-  **pay date** — the position's own, else the project's end date (the row says
-  which). It is an estimate until you **Mark complete** (`✓ Complete`, or
-  `Complete…` to enter a different final amount); that freezes the figure
-  exactly like a day sign-off, and the QuickBooks vendor-bill export posts it in
-  that date's pay period. Adjustments, undo, lock/re-lock and the paid-day guard
-  apply as they do to days.
+- **Labor → Payouts** shows each confirmed engagement as a row dated on the
+  **project's end date**, so it sits in the payroll period that date falls into
+  and is paid on that period's pay day (the following Friday, per the pay-period
+  settings) together with every other payout in the period. It is an estimate
+  until you **Mark complete** (`✓ Complete`, or `Complete…` to enter a different
+  final amount); that freezes the figure exactly like a day sign-off, and the
+  QuickBooks vendor-bill export posts it in that period. Adjustments, undo,
+  lock/re-lock and the paid-day guard apply as they do to days.
 - **Send to Quote / Invoice** adds one **Flat** service line per billed
   engagement (qty 1 at the bill amount, cost = the fee). An engagement billed at
   $0 (absorbed in a package price) produces no line.
@@ -376,8 +378,9 @@ event spanning the project dates.
 
 - An engagement is payable only after **Mark complete**; a confirmed-but-
   incomplete one is reported as pending (and excluded from the export).
-- With **no pay date and no project end date** the fee cannot land in any pay
-  period — the builder flags the row.
+- There is deliberately **no per-position pay date**: the project's end date
+  decides the payroll period. With **no project end date** the fee cannot land
+  in any period — the builder flags the row until one is set.
 - A flat fee paid on the same date as a signed shift day for the same person
   and project is **merged into one bill line** in QuickBooks (the ledger is one
   line per person-project-date); the Payouts tab still shows them as two rows.

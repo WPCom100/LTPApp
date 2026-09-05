@@ -733,7 +733,8 @@ window.LTP_detectCrewConflicts = function(projects) {
 // positions, so the crew-request and payout pipelines carry both. What differs:
 //   • no rate engine — `fee` (what we pay) and `bill` (what the client pays)
 //     are typed, margin = bill − fee, `fullMargin` zeroes the cost;
-//   • no date — the PAY date (LTP_fixedPayDate) picks the pay period;
+//   • no date — the project's END date (LTP_fixedPayDate) picks the pay
+//     period, and the fee is paid on that period's pay day;
 //   • "Mark complete" (LTP_completeFixedPosition) replaces the day sign-off.
 
 // The pay-side figure for a flat engagement as it stands NOW — the typed fee,

@@ -120,7 +120,7 @@
           dept: svc ? svc.department : "",
           crewName: cm ? cm.firstName + " " + cm.lastName : null,
           flat: true, fee: Number(p.fee) || 0, bill: Number(p.bill) || 0, fullMargin: !!p.fullMargin,
-          payDate: window.LTP_fixedPayDate(p, proj),
+          payDate: window.LTP_fixedPayDate(proj),   // project end — the payroll period it falls into pays the fee
           projectStart: projectStart, projectEnd: projectEnd,
         });
       });
@@ -1433,8 +1433,8 @@
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept),
-                            // Flat-rate engagement: the fee (what the request states) and the pay date.
-                            pos.flat && h("span", { title: "Flat-rate engagement for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid " + fmt(pos.payDate) : " \u00b7 no pay date set") + " \u2014 edit in the Schedule Builder.",
+                            // Flat-rate engagement: the fee (what the request states) and when it is paid.
+                            pos.flat && h("span", { title: "Flat-rate engagement for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " \u00b7 no project end date \u2014 set one so the fee can be paid") + " \u2014 edit in the Schedule Builder.",
                               style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginLeft: 6, cursor: "help", whiteSpace: "nowrap" } },
                               "Flat $" + window.LTP_money(pos.fee))),
                           h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
@@ -2384,6 +2384,11 @@
       var amt = (amount != null && amount !== "" && !isNaN(Number(amount))) ? Number(amount) : null;
       var total = row.fullMargin ? 0 : (amt != null ? amt : (row.current ? row.current.total : 0));
       var who = crewLabel(row.crewId) + " \u00b7 " + (row.roleLabel || "flat rate") + " \u00b7 " + row.projectName;
+      // When it is paid: the payroll period the project end date falls into,
+      // on that period's pay day — the same day as everything else in it.
+      var pp = payConfigured ? window.LTP_payPeriodBounds(payAnchor, payLen, row.date) : null;
+      var payDay = pp ? window.LTP_payPeriodPayDay(pp.end, payOffset) : null;
+      var when = payDay ? "paid " + fmt(payDay) + " with the pay period of " + fmt(row.date) : "payable with the pay period of " + fmt(row.date);
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
@@ -2391,11 +2396,11 @@
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: user,
             message: "Engagement completed: " + who + " \u2192 " + fmtMoney(total),
-            changes: [{ cat: "Engagement Completed", detail: who + " \u2192 " + fmtMoney(total) + " (paid " + fmt(row.date) + ")" }] };
+            changes: [{ cat: "Engagement Completed", detail: who + " \u2192 " + fmtMoney(total) + " (" + when + ")" }] };
           return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
         });
       });
-      window.LTP_toast("Engagement completed", { message: who + " \u2192 " + fmtMoney(total) + ", payable " + fmt(row.date) + ".", variant: "success" });
+      window.LTP_toast("Engagement completed", { message: who + " \u2192 " + fmtMoney(total) + ", " + when + ".", variant: "success" });
     }
 
     function doNoShow(row) {
@@ -2591,7 +2596,7 @@
                   };
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: isMobile ? "flex-start" : "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
                     h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date),
-                      isFlat && h("div", { style: { fontSize: "8px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, r.payDateSet ? "pay date" : "project end")),
+                      isFlat && h("div", { title: "Flat fees are paid with the payroll period the project's end date falls into.", style: { fontSize: "8px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "project end")),
                     h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
                       h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } },

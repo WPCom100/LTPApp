@@ -8,7 +8,7 @@
 //   - LTP_fixedPositionPay / LTP_stampFixedPay (lock at confirm)
 //   - LTP_completeFixedPosition / LTP_uncompleteFixedPosition ("Mark complete")
 //   - LTP_setFixedAdjustments / LTP_getFixedAdjustments
-//   - LTP_fixedPayDate (own date → project end date → "")
+//   - LTP_fixedPayDate (the project's end date → "" without one)
 //   - LTP_payoutRows flat rows (range, locked/current/drift/signed/payable, totals)
 //   - LTP_scheduleLaborSections flat quote lines
 //   - LTP_diffRemovedFixed / LTP_fixedSnapshots / LTP_fixedPositionsTotals
@@ -31,7 +31,7 @@ const contacts = [
 ];
 function flat(id, crewId, fee, extra) {
   return Object.assign({ id: id, serviceId: 3, role: "LD", crewId: crewId, status: "confirmed",
-    fee: fee, bill: 2000, fullMargin: false, payDate: "", note: "" }, extra || {});
+    fee: fee, bill: 2000, fullMargin: false, note: "" }, extra || {});
 }
 
 // ── Pay figure ───────────────────────────────────────────────────────────────
@@ -70,40 +70,49 @@ eq("D2 getter reads back", window.LTP_getFixedAdjustments(adj, "a").length, 1);
 ok("D3 empty list clears", !("adj" in window.LTP_setFixedAdjustments(adj, "a", [])[0]));
 eq("D4 getter on unknown id → []", window.LTP_getFixedAdjustments(adj, "nope"), []);
 
-// ── Pay date resolution ──────────────────────────────────────────────────────
-eq("E1 own payDate wins", window.LTP_fixedPayDate({ payDate: "2026-09-20" }, { endDate: "2026-09-13" }), "2026-09-20");
-eq("E2 falls back to project end", window.LTP_fixedPayDate({ payDate: "" }, { endDate: "2026-09-13" }), "2026-09-13");
-eq("E3 nothing → empty", window.LTP_fixedPayDate({ payDate: "" }, { endDate: "" }), "");
-eq("E4 malformed own date → project end", window.LTP_fixedPayDate({ payDate: "2026-02-31" }, { endDate: "2026-09-13" }), "2026-09-13");
-eq("E5 missing project → empty", window.LTP_fixedPayDate({ payDate: "" }, null), "");
+// ── Pay date resolution: the project's end date, nothing else ────────────────
+eq("E1 project end date", window.LTP_fixedPayDate({ endDate: "2026-09-13" }), "2026-09-13");
+eq("E2 no end date → empty", window.LTP_fixedPayDate({ endDate: "" }), "");
+eq("E3 malformed end date → empty", window.LTP_fixedPayDate({ endDate: "2026-02-31" }), "");
+eq("E4 missing project → empty", window.LTP_fixedPayDate(null), "");
+// The payroll period that date falls into is where the fee is paid, on that
+// period's pay day (the following Friday with a Sunday period end + 5 days).
+const ppEnd = window.LTP_payPeriodBounds("2026-09-07", 14, window.LTP_fixedPayDate({ endDate: "2026-09-13" }));
+eq("E5 lands in the period containing the end date", [ppEnd.start, ppEnd.end], ["2026-09-07", "2026-09-20"]);
+eq("E6 paid on that period's pay day", window.LTP_payPeriodPayDay(ppEnd.end, 5), "2026-09-25");
 
 // ── Payout rows ──────────────────────────────────────────────────────────────
-let fixed = [flat("a", 8, 1500, { payDate: "2026-07-15" }), flat("b", 5, 800), flat("c", 8, 999, { status: "requested" }),
-             flat("d", 8, 400, { payDate: "2026-07-16", fullMargin: true }), flat("e", 5, 100, { payDate: "2026-08-01" })];
+// Dana's engagements on Summer Fest (ends 07-15): one completed with an
+// adjustment, one requested (ignored), one completed at full margin. Alex:
+// confirmed-but-incomplete on Autumn Gala (ends 07-18) → pending; a completed
+// one on a project ending 08-01 → outside the range.
+let fixed = [flat("a", 8, 1500), flat("c", 8, 999, { status: "requested" }), flat("d", 8, 400, { fullMargin: true })];
 fixed = window.LTP_stampFixedPay(fixed, 8, "2026-07-01T09:00:00Z");
 fixed = window.LTP_completeFixedPosition(fixed, "a", null, "2026-07-14T20:00:00Z", "tester");
 fixed = window.LTP_setFixedAdjustments(fixed, "a", [{ id: "x", amount: 50, label: "Travel" }]);
 fixed = window.LTP_completeFixedPosition(fixed, "d", null, "2026-07-16T20:00:00Z", "tester");
-// bump the fee on "a" AFTER completing (frozen figure must not move) and on a
-// locked-but-open one to see drift
+// bump the fee on "a" AFTER completing (frozen figure must not move)
 fixed = fixed.map(function(p) { return p.id === "a" ? Object.assign({}, p, { fee: 1600 }) : p; });
-const proj = { id: 10, name: "Summer Fest", endDate: "2026-07-18", schedule: [], fixedPositions: fixed };
-const pr = window.LTP_payoutRows([proj], contacts, services, "2026-07-06", "2026-07-19");
+const proj = { id: 10, name: "Summer Fest", endDate: "2026-07-15", schedule: [], fixedPositions: fixed };
+const projB = { id: 11, name: "Autumn Gala", endDate: "2026-07-18", schedule: [], fixedPositions: [flat("b", 5, 800)] };
+const projC = { id: 12, name: "Winter Show", endDate: "2026-08-01", schedule: [],
+  fixedPositions: window.LTP_completeFixedPosition([flat("e", 5, 100)], "e", null, "t", "u") };
+const pr = window.LTP_payoutRows([proj, projB, projC], contacts, services, "2026-07-06", "2026-07-19");
 const dana = pr.groups.find(function(g) { return g.crewId === 8; });
 const alex = pr.groups.find(function(g) { return g.crewId === 5; });
 ok("F1 two crew groups", pr.groups.length === 2 && dana && alex);
 eq("F2 Dana rows: completed + full-margin (requested one skipped)", dana.rows.map(function(r) { return r.posId; }), ["a", "d"]);
 const ra = dana.rows[0];
-eq("F3 flat row shape", [ra.kind, ra.date, ra.roleLabel, ra.projectName], ["flat", "2026-07-15", "LD — Lighting Designer", "Summer Fest"]);
+eq("F3 flat row dated on the project end", [ra.kind, ra.date, ra.roleLabel, ra.projectName], ["flat", "2026-07-15", "LD — Lighting Designer", "Summer Fest"]);
 eq("F4 frozen payable = work total + adjustments (fee bump ignored)", ra.payable, 1550);
 ok("F5 signed carries the completion", ra.signed && ra.signed.state === "completed" && ra.signed.pay.total === 1500);
 ok("F6 no drift once completed", ra.drift === false);
 eq("F7 full-margin row pays 0", [dana.rows[1].payable, dana.rows[1].fullMargin], [0, true]);
 eq("F8 Dana total = signed only", dana.total, 1550);
 const rb = alex.rows[0];
-eq("F9 Alex: pending on the project end date", [rb.date, rb.payable, rb.payDateSet, rb.signed], ["2026-07-18", null, false, null]);
+eq("F9 Alex: pending on the project end date", [rb.date, rb.payable, rb.signed], ["2026-07-18", null, null]);
 eq("F10 pending estimate is the fee", rb.estimate, 800);
-ok("F11 out-of-range engagement excluded", !alex.rows.some(function(r) { return r.posId === "e"; }));
+ok("F11 engagement on a project ending outside the range excluded", !alex.rows.some(function(r) { return r.posId === "e"; }));
 eq("F12 grand/pending totals", [pr.grandTotal, pr.pendingTotal, pr.pendingCount], [1550, 800, 1]);
 eq("F13 unlocked count (Alex was never stamped)", pr.unlockedCount, 1);
 // Drift: locked at 1500, fee now 1700, not yet completed.
@@ -112,13 +121,13 @@ const drifted = { id: 11, name: "Drift", endDate: "2026-07-18", schedule: [],
 const pd = window.LTP_payoutRows([drifted], contacts, services, "2026-07-06", "2026-07-19");
 ok("F14 drift flagged when the fee moved after lock", pd.groups[0].rows[0].drift === true && pd.driftCount === 1);
 eq("F15 estimate stays at the locked figure", pd.groups[0].rows[0].estimate, 1500);
-// No pay date resolvable → not a row anywhere.
-const nodate = { id: 12, name: "Undated", endDate: "", schedule: [], fixedPositions: [flat("h", 8, 500)] };
-eq("F16 no pay date → no row", window.LTP_payoutRows([nodate], contacts, services, "", "").groups.length, 0);
+// No project end date → not a row anywhere.
+const nodate = { id: 14, name: "Undated", endDate: "", schedule: [], fixedPositions: [flat("h", 8, 500)] };
+eq("F16 no project end date → no row", window.LTP_payoutRows([nodate], contacts, services, "", "").groups.length, 0);
 // A flat row alongside a shift day on the same date stays a separate UI row.
 const both = { id: 13, name: "Both", endDate: "2026-07-08", schedule: [
     { id: "s", date: "2026-07-08", time: "08:00", endTime: "18:00", breaks: [], positions: [{ id: "p", crewId: 8, serviceId: 1, role: "L1", status: "confirmed" }] }],
-  fixedPositions: [flat("k", 8, 300, { payDate: "2026-07-08" })] };
+  fixedPositions: [flat("k", 8, 300)] };
 const pb = window.LTP_payoutRows([both], contacts, services, "2026-07-06", "2026-07-19");
 eq("F17 same-date shift + flat are two rows", pb.groups[0].rows.map(function(r) { return r.kind || "day"; }), ["flat", "day"]);
 

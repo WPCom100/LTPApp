@@ -24,10 +24,11 @@ Two responsibilities:
 Flat-rate engagements (Project.fixed_positions — a designer or stage manager
 hired for the whole job at a fixed fee, no shift times) ride the same rails:
 "Mark complete" on the Payouts tab freezes ``work.pay`` on the position exactly
-like a day sign-off, and the fee is billed on the position's pay date (or the
-project's end date when none is set). Because the bill ledger is unique per
-(crew, project, date), a flat fee whose pay date coincides with a signed shift
-day on the same project MERGES into that day's entry — one ledger line, two
+like a day sign-off, and the fee is billed on the PROJECT'S END DATE — so it
+lands in the payroll period that date falls into and is paid on that period's
+pay day with every other payout. Because the bill ledger is unique per
+(crew, project, date), a flat fee whose date coincides with a signed shift day
+on the same project MERGES into that day's entry — one ledger line, two
 sources — see ``_merge_flat_into_day``.
 
 Money is float dollars rounded to the cent, matching the rest of the app.
@@ -195,17 +196,14 @@ def _rollup_state(states):
     return "worked"
 
 
-def fixed_pay_date(pos, project_end_date):
-    """The date a flat-rate engagement is paid on — its own ``payDate`` when
-    that is a real ISO date, else the project's end date, else None (not
-    payable anywhere until one of the two is set). Mirrors
+def fixed_pay_date(project_end_date):
+    """The date a flat-rate engagement is billed on: the project's end date,
+    or None when the project has none (not payable anywhere until it does).
+    The payroll period containing that date is where the fee lands, and the
+    period's pay day is when it is paid — the same Friday as every other payout
+    in that period. There is deliberately no per-position override. Mirrors
     components/domain-payouts.js::LTP_fixedPayDate — keep the two in step, the
-    ledger line's date is whichever this resolves to."""
-    if not isinstance(pos, dict):
-        return None
-    own = pos.get("payDate")
-    if _parse_iso(own) is not None:
-        return own
+    ledger line's date is what this resolves to."""
     if _parse_iso(project_end_date) is not None:
         return project_end_date
     return None
@@ -232,14 +230,16 @@ def _flat_units(fp, work_pay):
 
 
 def _merge_flat_into_day(day, flat):
-    """Fold a flat engagement into a same-(crew, project, date) shift day so the
+    """Fold a flat engagement into a same-(crew, project, date) entry so the
     period keeps ONE entry per ledger key. Money adds; units and adjustments
-    concatenate; the tier reads ``mixed`` so the bill description says so."""
+    concatenate; the tier reads ``mixed`` once a shift day and a flat fee share
+    the line (two flat engagements on one project stay ``flat``)."""
     day["payable"] = js_round2(day["payable"] + flat["payable"])
     day["adj_total"] = js_round2(day["adj_total"] + flat["adj_total"])
     day["units"] = list(day["units"]) + list(flat["units"])
     day["adjustments"] = list(day["adjustments"]) + list(flat["adjustments"])
-    day["tier"] = "mixed"
+    if not (day.get("flat") and day.get("tier") == "flat"):
+        day["tier"] = "mixed"
     day["flat"] = True
     return day
 
@@ -260,9 +260,11 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                  units: [{service_id, amount}], flat?: True}],   # SIGNED days (payable may be <=0)
          pending: [{project_id, project_name, date, flat?: True}]}  # confirmed but unsigned
 
-    A flat engagement is a "day" dated on its pay date (``fixed_pay_date``):
-    ``tier == "flat"`` on its own, ``mixed`` when merged into a shift day paid
-    the same date. It is pending until "Mark complete" freezes ``work.pay``.
+    A flat engagement is a "day" dated on the project's END date
+    (``fixed_pay_date``) — the payroll period that date falls into is where it
+    is paid: ``tier == "flat"`` on its own, ``mixed`` when merged into a shift
+    day on the same date. It is pending until "Mark complete" freezes
+    ``work.pay``.
 
     The biller (backend/qbo_payouts.py) applies the billable filter (drop $0,
     resolve expense accounts, block a bill whose total <= 0). This function
@@ -349,10 +351,10 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     "units": units_out, "adjustments": adjustments,
                 })
 
-        # Flat-rate engagements: one entry per confirmed position, dated on its
-        # pay date. Processed AFTER the project's shift days so a same-date shift
-        # entry already exists to merge into. Both spellings are read so the
-        # JS↔Python parity fixture can feed raw camelCase project JSON.
+        # Flat-rate engagements: one entry per confirmed position, dated on the
+        # project's end date. Processed AFTER the project's shift days so a
+        # same-date shift entry already exists to merge into. Both spellings are
+        # read so the JS↔Python parity fixture can feed raw camelCase project JSON.
         fixed_list = proj.get("fixed_positions")
         if fixed_list is None:
             fixed_list = proj.get("fixedPositions")
@@ -365,9 +367,9 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
             cid = fp.get("crewId")
             if cid is None or fp.get("status") != "confirmed":
                 continue
-            d = fixed_pay_date(fp, proj_end)
+            d = fixed_pay_date(proj_end)
             if not d:
-                continue  # no pay date resolvable — the builder flags this row
+                continue  # project has no end date — the builder flags the row
             if start_iso and d < start_iso:
                 continue
             if end_iso and d > end_iso:
@@ -448,12 +450,12 @@ def paid_day_signature(schedule, fixed_positions=None, end_date=None) -> dict:
     (service, role, status) — because any of those changing means the frozen
     `work.pay` snapshot we already billed no longer describes the day worked.
 
-    Flat-rate engagements (``fixed_positions``) fingerprint under their PAY date
-    (``fixed_pay_date``, which is why ``end_date`` comes along): the fee, the
-    full-margin flag, service, status — and, server side, the frozen snapshot.
-    Moving the project's end date with an unset payDate moves the key itself,
-    which reads as a change on both the old and the new date — correct, since
-    the paid ledger line no longer describes when that fee is paid.
+    Flat-rate engagements (``fixed_positions``) fingerprint under the project's
+    END date (``fixed_pay_date``, which is why ``end_date`` comes along): the
+    fee, the full-margin flag, service, status — and, server side, the frozen
+    snapshot. Moving the project's end date moves the key itself, which reads
+    as a change on both the old and the new date — correct, since the paid
+    ledger line no longer describes when that fee is paid.
 
     Deliberately STRICTER than the client in one respect: it also covers `work`
     and `adj` themselves. Those are the billed money, and crew_integrity's
@@ -466,11 +468,12 @@ def paid_day_signature(schedule, fixed_positions=None, end_date=None) -> dict:
     not is a paid day that changes without anyone being asked.
     """
     m: dict = {}
+    flat_date = fixed_pay_date(end_date)
     for fp in (fixed_positions or []):
         if not isinstance(fp, dict):
             continue
         cid = fp.get("crewId")
-        d = fixed_pay_date(fp, end_date)
+        d = flat_date
         if cid is None or not d:
             continue
         m.setdefault("%s|%s" % (cid, d), []).append(json.dumps([

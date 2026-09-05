@@ -167,16 +167,18 @@ class Project(Base):
     # the same frozen `pay` / `work` / `adj` snapshot shape, so crew_integrity
     # and payouts treat the two alike.
     #   list[{id, serviceId, role, crewId, status, fee, bill, fullMargin,
-    #         payDate, note, pay?, work?, adj?}]
+    #         note, pay?, work?, adj?}]
     #   serviceId  rate-card role (required) — drives crew-picker matching and
     #              the QuickBooks expense account, never the amount
     #   fee        what we pay the person (cost side). Deliberately shown on the
     #              crew request email/page — it IS the offer being accepted
     #   bill       what the client is charged (rate side); margin = bill − fee
     #   fullMargin bill the client, $0 cost (the owner filling the role)
-    #   payDate    ISO date the fee is paid on — picks the pay period. Empty →
-    #              the project's end_date (backend/payouts.py::fixed_pay_date)
     #   note       crew-facing scope line (what the engagement covers)
+    #   (timing)   no per-position pay date, deliberately: the fee lands in the
+    #              payroll period the project's end_date falls into and is paid
+    #              on that period's pay day with every other payout
+    #              (backend/payouts.py::fixed_pay_date)
     #   pay        {total, lockedAt} stamped at confirm, like a shift's `pay`
     #   work       {state:"completed", pay:{total, tier:"flat", units:[…]},
     #              signedAt, signedBy} — written by "Mark complete" on the

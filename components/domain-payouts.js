@@ -51,8 +51,9 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
   var byCrew = {};   // String(crewId) → { crewId, rows: [] }
   (projects || []).forEach(function(proj) {
     // Flat-rate engagements (proj.fixedPositions): one row per confirmed
-    // position, dated on its PAY date (LTP_fixedPayDate) — that is what picks
-    // the pay period. Same row shape as a day, plus `kind: "flat"`; `locked`
+    // position, dated on the project's END date (LTP_fixedPayDate) — the pay
+    // period that date falls into is where the fee is paid, on that period's
+    // pay day. Same row shape as a day, plus `kind: "flat"`; `locked`
     // is the fee stamped at confirm, `current` the fee as typed now, `signed`
     // the "Mark complete" freeze. Python mirror: backend/payouts.py — which
     // additionally MERGES a flat entry into a signed shift day on the same
@@ -60,7 +61,7 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
     // three; the UI keeps them as two rows and the totals agree either way.
     (proj.fixedPositions || []).forEach(function(p) {
       if (!p || p.crewId == null || p.status !== "confirmed") return;
-      var d = window.LTP_fixedPayDate(p, proj);
+      var d = window.LTP_fixedPayDate(proj);
       if (!d) return;
       if (startDate && d < startDate) return;
       if (endDate && d > endDate) return;
@@ -78,7 +79,7 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       if (!byCrew[k]) byCrew[k] = { crewId: p.crewId, rows: [] };
       byCrew[k].rows.push({ kind: "flat", posId: p.id, serviceId: p.serviceId,
         roleLabel: svc ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")) : (p.role || "Flat rate"),
-        fee: Number(p.fee) || 0, fullMargin: !!p.fullMargin, payDateSet: !!p.payDate,
+        fee: Number(p.fee) || 0, fullMargin: !!p.fullMargin,
         crewId: p.crewId, projectId: proj.id, projectName: proj.name,
         date: d, locked: locked, current: current, drift: drift,
         signed: signed, adjustments: adjustments, adjTotal: adjTotal, estimate: estimate,
@@ -195,14 +196,13 @@ function _ppLen(lengthDays) {
   return (n >= 1 && n <= 31) ? n : 14;   // guard/default to bi-weekly
 }
 
-// The date a flat-rate engagement is paid on — its own payDate when that is a
-// real ISO date, else the project's end date, else "" (not payable anywhere
-// until one of the two is set; the Schedule Builder flags the row). The bill
-// ledger line carries whichever this resolves to. Python mirror:
+// The date a flat-rate engagement is billed on: the project's end date, or ""
+// when the project has none (not payable anywhere until it does; the Schedule
+// Builder flags the row). The payroll period containing that date is where the
+// fee lands and its pay day is when it is paid — with every other payout in
+// that period. Deliberately no per-position override. Python mirror:
 // backend/payouts.py::fixed_pay_date — keep the two in step.
-window.LTP_fixedPayDate = function(pos, project) {
-  var own = pos && pos.payDate;
-  if (_ppEpochDays(own) !== null) return own;
+window.LTP_fixedPayDate = function(project) {
   var end = project && project.endDate;
   if (_ppEpochDays(end) !== null) return end;
   return "";

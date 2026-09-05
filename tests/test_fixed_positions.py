@@ -16,9 +16,9 @@ this module covers every seam they pass through:
     needed) and auto-withdraws when the position is removed; a stale PUT can't
     downgrade its status; a non-admin can't plant a frozen pay snapshot
   - payouts: derive_payout_drafts turns a completed engagement into a "day" on
-    its pay date (falling back to the project end date), keeps an incomplete
-    one pending, merges with a signed shift day on the same date, and
-    plan_bill posts it to the role's expense account
+    the project's END date (so it lands in that date's payroll period), keeps
+    an incomplete one pending, merges with a signed shift day on the same
+    date, and plan_bill posts it to the role's expense account
   - the paid-day guard refuses a fee change on a PAID flat engagement (409)
     unless overridden, and passes unrelated edits
   - a crewConfirmed notice for a flat hire uses the project date range and
@@ -76,9 +76,9 @@ _client = None
 _seeded = False
 
 
-def _fp(pid, crew, status="open", service=S_LD, fee=1500.0, bill=2000.0, pay_date="", note="", work=None, adj=None):
+def _fp(pid, crew, status="open", service=S_LD, fee=1500.0, bill=2000.0, note="", work=None, adj=None):
     p = {"id": pid, "serviceId": service, "role": "LD", "crewId": crew, "status": status,
-         "fee": fee, "bill": bill, "fullMargin": False, "payDate": pay_date, "note": note}
+         "fee": fee, "bill": bill, "fullMargin": False, "note": note}
     if work is not None:
         p["work"] = work
     if adj is not None:
@@ -170,8 +170,7 @@ def _setup():
                                       schedule=[], fixed_positions=[_fp("fp-snap", C_LD, status="confirmed")]))
                 db.add(models.Project(id=P_PAID, name="Paid Gala", start_date="2026-09-10", end_date="2026-09-13",
                                       schedule=[], fixed_positions=[
-                                          _fp("fp-paid", C_LD, status="confirmed", pay_date="2026-09-20",
-                                              work=_flat_work(1500.0))]))
+                                          _fp("fp-paid", C_LD, status="confirmed", work=_flat_work(1500.0))]))
                 db.add(models.Project(id=P_NOTIFY, name="Notify Gala", venue="The Barn",
                                       start_date="2026-09-10", end_date="2026-09-13",
                                       schedule=[], fixed_positions=[_fp("fp-not", C_LD, status="confirmed")]))
@@ -180,14 +179,15 @@ def _setup():
                                       fixed_positions=[_fp("fp-mx", C_LD)]))
                 await db.flush()
 
-                # A PAID vendor bill covering the flat fee on P_PAID (pay date 09-20).
-                paid = models.PayoutBill(contact_id=C_LD, period_start="2026-09-14",
-                                         period_end="2026-09-27", doc_number="PAY-26-19",
+                # A PAID vendor bill covering the flat fee on P_PAID — billed on the
+                # project's end date (09-13), the payroll period it falls into.
+                paid = models.PayoutBill(contact_id=C_LD, period_start="2026-09-07",
+                                         period_end="2026-09-20", doc_number="PAY-26-18",
                                          qb_paid_at=datetime.now(timezone.utc))
                 db.add(paid)
                 await db.flush()
                 db.add(models.PayoutBillLine(payout_bill_id=paid.id, contact_id=C_LD,
-                                             project_id=P_PAID, date="2026-09-20", amount=1500.0))
+                                             project_id=P_PAID, date="2026-09-13", amount=1500.0))
                 await db.commit()
 
         _run(seed())
@@ -247,12 +247,12 @@ def test_fixed_positions_round_trip_and_shape():
     client, tok = _setup()
     body = {"id": P_CRUD, "name": "CRUD Gala", "status": "upcoming", "category": "Labor",
             "startDate": "2026-10-01", "endDate": "2026-10-03", "schedule": [],
-            "fixedPositions": [_fp("fp-crud", None, fee=900, bill=1200, pay_date="2026-10-03")]}
+            "fixedPositions": [_fp("fp-crud", None, fee=900, bill=1200, note="Plot + focus")]}
     r = client.post("/api/projects", json=body, cookies={"ltp_session": tok})
     assert r.status_code == 200, r.text
     got = _project(client, tok, P_CRUD)
     assert got["fixedPositions"][0]["fee"] == 900 and got["fixedPositions"][0]["bill"] == 1200
-    assert got["fixedPositions"][0]["payDate"] == "2026-10-03"
+    assert got["fixedPositions"][0]["note"] == "Plot + focus"
     # Container shape is enforced like every other JSON column.
     r = client.put(f"/api/projects/{P_CRUD}", json={"fixedPositions": True}, cookies={"ltp_session": tok})
     assert r.status_code == 400, r.text
@@ -414,13 +414,16 @@ def test_non_admin_cannot_plant_flat_pay_snapshot_admin_can():
 _CREW = {C_LD: {"first_name": "Dana", "last_name": "Designer"}}
 
 
-def test_derive_flat_pending_until_complete_and_pay_date_fallback():
-    projects = [{"id": 1, "name": "Gala", "schedule": [], "end_date": "2026-09-13",
-                 "fixed_positions": [
-                     _fp("a", C_LD, status="confirmed"),                        # incomplete → pending on end_date
-                     _fp("b", C_LD, status="confirmed", pay_date="2026-09-20", work=_flat_work(1500.0)),
-                     _fp("c", C_LD, status="requested", work=_flat_work(1.0)),   # not confirmed → ignored
-                 ]}]
+def test_derive_flat_pending_until_complete_and_dated_on_project_end():
+    projects = [
+        {"id": 1, "name": "Gala", "schedule": [], "end_date": "2026-09-13",
+         "fixed_positions": [
+             _fp("a", C_LD, status="confirmed"),                          # incomplete → pending on the end date
+             _fp("c", C_LD, status="requested", work=_flat_work(1.0)),     # not confirmed → ignored
+         ]},
+        {"id": 2, "name": "Recital", "schedule": [], "end_date": "2026-09-20",
+         "fixed_positions": [_fp("b", C_LD, status="confirmed", work=_flat_work(1500.0))]},  # complete → billed on 09-20
+    ]
     drafts = payouts.derive_payout_drafts(projects, _CREW, "2026-09-01", "2026-09-30")
     assert len(drafts) == 1
     d = drafts[0]
@@ -431,12 +434,19 @@ def test_derive_flat_pending_until_complete_and_pay_date_fallback():
     assert day["payable"] == 1500.0 and day["units"] == [
         {"service_id": S_LD, "amount": 1500.0, "paid_hours": 0.0, "ot_hours": 0.0}]
     assert d["total_signed"] == 1500.0
-    # Out of range → nothing.
+    # The end date alone picks the period: a range that excludes it sees nothing.
     assert payouts.derive_payout_drafts(projects, _CREW, "2026-10-01", "2026-10-31") == []
-    # No pay date resolvable at all → not payable anywhere (the builder flags it).
-    nodate = [{"id": 2, "name": "Undated", "schedule": [], "end_date": "",
+    # No project end date → not payable anywhere (the builder flags it).
+    nodate = [{"id": 3, "name": "Undated", "schedule": [], "end_date": "",
                "fixed_positions": [_fp("z", C_LD, status="confirmed", work=_flat_work(5.0))]}]
     assert payouts.derive_payout_drafts(nodate, _CREW, "", "") == []
+    # Two engagements on one project stay one "flat" entry (same ledger key).
+    two = [{"id": 4, "name": "Fair", "schedule": [], "end_date": "2026-09-20",
+            "fixed_positions": [_fp("x", C_LD, status="confirmed", work=_flat_work(1000.0)),
+                                _fp("y", C_LD, status="confirmed", work=_flat_work(250.0, service=S_L1), service=S_L1)]}]
+    d2 = payouts.derive_payout_drafts(two, _CREW, "2026-09-01", "2026-09-30")[0]
+    assert len(d2["days"]) == 1 and d2["days"][0]["payable"] == 1250.0 and d2["days"][0]["tier"] == "flat"
+    assert [u["service_id"] for u in d2["days"][0]["units"]] == [S_LD, S_L1]
 
 
 def test_derive_flat_merges_into_same_date_shift_day_and_keeps_adjustments():
@@ -457,8 +467,8 @@ def test_derive_flat_merges_into_same_date_shift_day_and_keeps_adjustments():
 
 
 def test_plan_bill_posts_flat_fee_to_the_role_expense_account():
-    projects = [{"id": 4, "name": "Gala", "schedule": [], "end_date": "2026-09-13",
-                 "fixed_positions": [_fp("f", C_LD, status="confirmed", pay_date="2026-09-20", work=_flat_work(1500.0))]}]
+    projects = [{"id": 4, "name": "Gala", "schedule": [], "end_date": "2026-09-20",
+                 "fixed_positions": [_fp("f", C_LD, status="confirmed", work=_flat_work(1500.0))]}]
     d = payouts.derive_payout_drafts(projects, _CREW, "2026-09-14", "2026-09-27")[0]
     period = {"start": "2026-09-14", "end": "2026-09-27", "index": 5, "year2": 26, "number": 19, "pay_day": "2026-10-02"}
     accounts = {"default_expense": "10", "ap": None, "by_service": {S_LD: "77"}}
@@ -471,18 +481,19 @@ def test_plan_bill_posts_flat_fee_to_the_role_expense_account():
 
 # ── Paid-day guard ──────────────────────────────────────────────────────────
 
-def test_paid_day_signature_covers_flat_fee_status_and_pay_date():
-    base = [_fp("f", C_LD, status="confirmed", pay_date="2026-09-20", work=_flat_work(1500.0))]
+def test_paid_day_signature_covers_flat_fee_status_and_project_end():
+    base = [_fp("f", C_LD, status="confirmed", work=_flat_work(1500.0))]
+    key = f"{C_LD}|2026-09-13"
     sig = payouts.paid_day_signature([], base, "2026-09-13")
-    assert set(sig) == {f"{C_LD}|2026-09-20"}
+    assert set(sig) == {key}                       # keyed on the project's end date
     # Fee, status and full-margin all change the fingerprint; bill does not.
-    assert payouts.paid_day_signature([], [dict(base[0], fee=1600)], "")[f"{C_LD}|2026-09-20"] != sig[f"{C_LD}|2026-09-20"]
-    assert payouts.paid_day_signature([], [dict(base[0], bill=9999)], "") == sig
-    assert payouts.paid_day_signature([], [dict(base[0], fullMargin=True)], "") != sig
-    # No payDate → keyed on the project end date; no end date either → absent.
-    undated = [dict(base[0], payDate="")]
-    assert set(payouts.paid_day_signature([], undated, "2026-09-13")) == {f"{C_LD}|2026-09-13"}
-    assert payouts.paid_day_signature([], undated, "") == {}
+    assert payouts.paid_day_signature([], [dict(base[0], fee=1600)], "2026-09-13")[key] != sig[key]
+    assert payouts.paid_day_signature([], [dict(base[0], bill=9999)], "2026-09-13") == sig
+    assert payouts.paid_day_signature([], [dict(base[0], fullMargin=True)], "2026-09-13") != sig
+    assert payouts.paid_day_signature([], [dict(base[0], status="accepted")], "2026-09-13") != sig
+    # Moving the project end date moves the key; no end date → absent.
+    assert set(payouts.paid_day_signature([], base, "2026-09-20")) == {f"{C_LD}|2026-09-20"}
+    assert payouts.paid_day_signature([], base, "") == {}
 
 
 def test_put_refuses_fee_change_on_paid_flat_engagement_unless_overridden():
@@ -499,7 +510,7 @@ def test_put_refuses_fee_change_on_paid_flat_engagement_unless_overridden():
     assert r.status_code == 409, r.text
     detail = r.json()["detail"]
     assert detail["code"] == "paid_day_conflict"
-    assert detail["days"][0]["date"] == "2026-09-20" and detail["days"][0]["name"] == "Dana Designer"
+    assert detail["days"][0]["date"] == "2026-09-13" and detail["days"][0]["name"] == "Dana Designer"
     assert _fixed(_project(client, tok, P_PAID), "fp-paid")["fee"] == 1500.0
     # With the override header the write lands.
     r = client.put(f"/api/projects/{P_PAID}", json=proj,

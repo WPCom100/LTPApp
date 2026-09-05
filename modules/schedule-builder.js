@@ -26,13 +26,14 @@
   // not on a schedule day (see backend/models.py::Project.fixed_positions and
   // the helpers in components/domain-crew.js): the fee (what we pay) and the
   // bill (what the client pays) are typed per position, margin is the
-  // difference, and the pay DATE — blank = the project's end date — picks the
-  // pay period the fee lands in. Status is read-only here, exactly like a
-  // shift position: requests, confirms and releases happen in Labor.
+  // difference, and the fee lands in the payroll period the PROJECT'S END DATE
+  // falls into — paid on that period's pay day with everything else, no
+  // per-position pay date. Status is read-only here, exactly like a shift
+  // position: requests, confirms and releases happen in Labor.
   var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
   var ACTIVE_POS = { requested: 1, accepted: 1, confirmed: 1 };
 
-  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, isMobile }) {
+  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, settings, isMobile }) {
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var money = window.LTP_money;
     var rows = list || [];
@@ -41,9 +42,20 @@
     }
     function add() {
       onChange(rows.concat([{ id: genId("fpos"), serviceId: null, role: "", crewId: null, status: "open",
-                              fee: 0, bill: 0, fullMargin: false, payDate: "", note: "" }]));
+                              fee: 0, bill: 0, fullMargin: false, note: "" }]));
     }
-    var endLabel = project.endDate ? fmt(project.endDate) : "";
+    // When the fee is paid: the payroll period the project's end date falls
+    // into, on that period's pay day (Settings → pay period anchor / length /
+    // pay-day offset). Spelled out here so the producer never has to work it out.
+    var endISO = window.LTP_fixedPayDate(project);
+    var ppCfg = settings || {};
+    var pp = (endISO && ppCfg.payPeriodAnchor) ? window.LTP_payPeriodBounds(ppCfg.payPeriodAnchor, ppCfg.payPeriodLengthDays || 14, endISO) : null;
+    var payDay = pp ? window.LTP_payPeriodPayDay(pp.end, ppCfg.payPeriodPayDayOffsetDays || 0) : null;
+    var payLine = !endISO
+      ? "Set the project's end date \u2014 the fee is paid with the payroll period that date falls into."
+      : pp
+        ? "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into \u2014 pay day " + fmt(payDay) + ", alongside every other payout in that period."
+        : "Paid with the payroll period the project end date (" + fmt(endISO) + ") falls into. Set the pay-period start date in Settings to see the pay day.";
     var inp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "8px" : "3px 5px",
                 color: B.text, fontSize: "10px", fontFamily: "inherit", outline: "none", minWidth: 0, boxSizing: "border-box" };
     var lbl = { display: "inline-flex", alignItems: "center", gap: 4, fontSize: "9px", color: B.textMut, fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 };
@@ -54,8 +66,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em" } }, "Flat-rate positions"),
           h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2, lineHeight: 1.4 } },
             "Hired for the whole project at a fixed fee, no call times \u2014 they get the schedule outline and set their own hours. "
-            + "The fee is stated on their request; it is paid in the pay period of the pay date (blank = project end date"
-            + (endLabel ? ", " + endLabel : "") + ").")),
+            + "The fee is stated on their request. " + payLine)),
         h("button", { onClick: add,
           style: { background: "transparent", border: "1px dashed " + B.accent + "44", color: B.accent, cursor: "pointer", fontSize: "9px", fontWeight: 600, padding: "4px 10px", borderRadius: "3px", whiteSpace: "nowrap", flexShrink: 0 } },
           "+ Flat-rate position")),
@@ -64,7 +75,6 @@
         var pc = POS_COLORS[p.status] || B.textMut;
         var fee = Number(p.fee) || 0, bill = Number(p.bill) || 0;
         var margin = Math.round((bill - (p.fullMargin ? 0 : fee)) * 100) / 100;
-        var payDate = window.LTP_fixedPayDate(p, project);
         var co = window.LTP_crewSelectOptions({
           crew: crew, role: svc ? svc.role : "", selectedId: p.crewId,
           allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
@@ -114,9 +124,6 @@
             title: p.fullMargin ? "Full margin: company cost is $0 for this position (bill still charged). Click to cost it at the fee." : "Mark full margin \u2014 zero the company cost (bill still charged), e.g. the owner filling the role.",
             style: { flexShrink: 0, background: p.fullMargin ? B.success + "22" : "transparent", border: "1px solid " + (p.fullMargin ? B.success : B.border), borderRadius: "3px", padding: isMobile ? "5px 10px" : "2px 5px", color: p.fullMargin ? B.success : B.textMut, fontSize: isMobile ? "10px" : "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
             p.fullMargin ? "\u2713 MGN" : "MGN"),
-          h("label", { style: lbl, title: "The date this fee is paid on \u2014 it lands in that date's pay period. Blank = the project's end date." }, "Pay",
-            h(window.LTPDateField, { value: p.payDate || "", onChange: function(v) { update(p.id, { payDate: v }); },
-              ariaLabel: "Pay date", style: Object.assign({}, inp, { width: isMobile ? "auto" : 118 }) })),
           h("input", { type: "text", value: p.note || "", placeholder: "Scope note for the crew (optional)", maxLength: 500,
             onChange: function(e) { update(p.id, { note: e.target.value }); },
             style: Object.assign({}, inp, { flex: "1 1 150px" }) }),
@@ -129,14 +136,14 @@
               : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin))),
           !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.",
             style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 role needed"),
-          !payDate && h("span", { title: "No pay date, and the project has no end date \u2014 this fee can't land in a pay period until one is set.",
-            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 no pay date"),
+          !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).",
+            style: { color: B.warn, fontSize: "9px", fontWeight: 700, whiteSpace: "nowrap" } }, "\u26a0 no project end date"),
           h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
             style: { flexShrink: 0, background: "transparent", border: "none", color: isMobile ? B.danger : B.textMut, cursor: "pointer", fontSize: isMobile ? "20px" : "12px", padding: isMobile ? "4px 6px" : 0, minHeight: isMobile ? 40 : undefined } }, "\u00d7"));
       }));
   }
 
-  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId }) {
+  window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
     var isMobile = window.LTP_useIsMobile();
     var company = companies.find(function(c) { return c.id === project.companyId; });
 
@@ -223,7 +230,7 @@
     var paidSeq = React.useRef(0);
     useEffect(function() {
       var dates = (project.schedule || []).map(function(s) { return s.date; })
-        .concat((project.fixedPositions || []).map(function(fp) { return window.LTP_fixedPayDate(fp, project); }))
+        .concat((project.fixedPositions || []).length ? [window.LTP_fixedPayDate(project)] : [])
         .filter(Boolean).sort();
       if (!dates.length) { setPaidDays({}); return; }
       var seq = ++paidSeq.current;   // ignore a slower earlier project's late response
@@ -256,12 +263,13 @@
     // all of them must be in the signature or the paid-day guard misses the edit.
     function _paidSig(schedule, fixed) {
       var m = {};
-      // Flat-rate engagements fingerprint under their PAY date: service, role,
-      // status, fee and the full-margin flag all reprice the fee. Mirrors the
-      // "flat" branch of backend/payouts.py::paid_day_signature.
+      // Flat-rate engagements fingerprint under the project's END date:
+      // service, role, status, fee and the full-margin flag all reprice the
+      // fee. Mirrors the "flat" branch of backend/payouts.py::paid_day_signature.
+      var flatDate = window.LTP_fixedPayDate(project);
       (fixed || []).forEach(function(p) {
         if (!p || p.crewId == null) return;
-        var d = window.LTP_fixedPayDate(p, project);
+        var d = flatDate;
         if (!d) return;
         var key = p.crewId + "|" + d;
         (m[key] = m[key] || []).push(["flat", p.serviceId, p.role, p.status, Number(p.fee) || 0, !!p.fullMargin].join(","));
@@ -416,7 +424,6 @@
         if ((Number(bp.fee) || 0) !== (Number(p.fee) || 0)) changes.push({ cat: label + " Fee", detail: "$" + money(bp.fee) + " \u2192 $" + money(p.fee) });
         if ((Number(bp.bill) || 0) !== (Number(p.bill) || 0)) changes.push({ cat: label + " Bill", detail: "$" + money(bp.bill) + " \u2192 $" + money(p.bill) });
         if (!!bp.fullMargin !== !!p.fullMargin) changes.push({ cat: label + " Cost", detail: p.fullMargin ? "Full margin ($0 cost)" : "Costed at the fee" });
-        if ((bp.payDate || "") !== (p.payDate || "")) changes.push({ cat: label + " Pay Date", detail: (bp.payDate ? fmt(bp.payDate) : "Project end") + " \u2192 " + (p.payDate ? fmt(p.payDate) : "Project end") });
         if ((bp.note || "") !== (p.note || "")) changes.push({ cat: label + " Note", detail: "Updated" });
       });
       bf.forEach(function(p) { if (!af.find(function(a) { return a.id === p.id; })) changes.push({ cat: "Flat-rate Position Removed", detail: roleName(p) }); });
@@ -471,7 +478,7 @@
       // A flat-rate row survives once anything was entered into it; a pristine
       // "+ Flat-rate position" row that was never touched is dropped.
       var cleanFixed = (draft.fixedPositions || []).filter(function(p) {
-        return p && (p.serviceId || p.crewId != null || (Number(p.fee) || 0) > 0 || (Number(p.bill) || 0) > 0 || (p.note || "").trim() || p.payDate);
+        return p && (p.serviceId || p.crewId != null || (Number(p.fee) || 0) > 0 || (Number(p.bill) || 0) > 0 || (p.note || "").trim());
       });
 
       setProjects(function(prev) {
@@ -529,10 +536,9 @@
       var flatRows = (draft.fixedPositions || []).map(function(p) {
         var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null;
         var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-        var pd = window.LTP_fixedPayDate(p, project);
-        return "<tr><td>" + escAttr(sv ? sv.role + " \u2014 " + sv.description : (p.role || "?")) + "</td><td>" + (cm ? escAttr(cm.firstName + " " + cm.lastName) : "(open)") + "</td><td>" + escAttr(p.status) + "</td><td>" + (pd ? fmt(pd) : "\u2014") + "</td><td>" + escAttr(p.note || "") + "</td></tr>";
+        return "<tr><td>" + escAttr(sv ? sv.role + " \u2014 " + sv.description : (p.role || "?")) + "</td><td>" + (cm ? escAttr(cm.firstName + " " + cm.lastName) : "(open)") + "</td><td>" + escAttr(p.status) + "</td><td>" + escAttr(p.note || "") + "</td></tr>";
       }).join("");
-      var flatHtml = flatRows ? "<h2 style='margin:22px 0 8px'>Flat-rate positions \u2014 whole project, no call times</h2><table><thead><tr><th>Role</th><th>Crew</th><th>Status</th><th>Pay date</th><th>Scope</th></tr></thead><tbody>" + flatRows + "</tbody></table>" : "";
+      var flatHtml = flatRows ? "<h2 style='margin:22px 0 8px'>Flat-rate positions \u2014 whole project, no call times</h2><table><thead><tr><th>Role</th><th>Crew</th><th>Status</th><th>Scope</th></tr></thead><tbody>" + flatRows + "</tbody></table>" : "";
       w.document.write("<html><head><title>" + escAttr(project.name) + " Schedule</title><style>body{font-family:sans-serif;padding:20px;max-width:1000px;margin:auto;color:#333}h1{margin:0 0 4px;font-size:22px}h2{margin:0 0 12px;font-size:14px;color:#666}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid #ddd;font-size:12px}th{border-bottom:2px solid #333;font-size:13px}.footer{margin-top:30px;padding-top:10px;border-top:1px solid #ddd;font-size:10px;color:#999;display:flex;justify-content:space-between}</style></head><body><h1>" + escAttr(project.name) + " \u2014 Schedule</h1><h2>" + escAttr(company ? company.name : "") + " \u00b7 " + fmt(project.startDate) + " \u2192 " + fmt(project.endDate) + "</h2><table><thead><tr><th>Day</th><th>Date</th><th>Times</th><th>Duration</th><th>Crew</th></tr></thead><tbody>" + rows + "</tbody></table>" + flatHtml + "<div class='footer'><span>" + escAttr(window.LTP_COMPANY_NAME || "") + "</span><span>Printed: " + fmt(todayISO()) + "</span></div></body></html>");
       w.document.close(); w.print();
     }
@@ -738,7 +744,7 @@
         // Main content (scrollable)
         h("div", { style: { flex: 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0 } },
           h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
-            contacts: contacts, svcs: svcs, project: project, isMobile: isMobile }),
+            contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
             crewConflicts: window.LTP_detectCrewConflicts(projects),
             checkCrewConflict: function(crewId, date) {

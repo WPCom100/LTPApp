@@ -67,85 +67,17 @@
     {
       "id": 10,
       "name": "Summer Fest",
-      "endDate": "2026-07-18",
+      "endDate": "2026-07-08",
       "fixedPositions": [
-        {
-          "id": "f1",
-          "serviceId": 3,
-          "role": "LD",
-          "crewId": 8,
-          "status": "confirmed",
-          "fee": 1500,
-          "bill": 1950,
-          "fullMargin": false,
-          "payDate": "2026-07-15",
-          "note": "",
-          "pay": {
-            "lockedAt": "2026-07-01T09:00:00Z",
-            "total": 1500,
-            "paidHours": 0,
-            "otHours": 0,
-            "mealPenaltyHours": 0,
-            "tier": "flat",
-            "units": [
-              {
-                "serviceId": 3,
-                "tier": "flat",
-                "paidHours": 0,
-                "otHours": 0,
-                "dayCost": 1500,
-                "otCost": 0,
-                "minApplied": false,
-                "minHoursApplied": false,
-                "fullMargin": false,
-                "total": 1500
-              }
-            ]
-          },
-          "work": {
-            "state": "completed",
-            "pay": {
-              "total": 1500,
-              "paidHours": 0,
-              "otHours": 0,
-              "mealPenaltyHours": 0,
-              "tier": "flat",
-              "units": [
-                {
-                  "serviceId": 3,
-                  "tier": "flat",
-                  "paidHours": 0,
-                  "otHours": 0,
-                  "dayCost": 1500,
-                  "otCost": 0,
-                  "minApplied": false,
-                  "minHoursApplied": false,
-                  "fullMargin": false,
-                  "total": 1500
-                }
-              ]
-            },
-            "signedAt": "2026-07-14T20:00:00Z",
-            "signedBy": "tester"
-          },
-          "adj": [
-            {
-              "id": "adjf1",
-              "amount": 50,
-              "label": "Travel"
-            }
-          ]
-        },
         {
           "id": "f2",
           "serviceId": 3,
           "role": "LD",
-          "crewId": 5,
+          "crewId": 7,
           "status": "confirmed",
           "fee": 800,
           "bill": 1040,
           "fullMargin": false,
-          "payDate": "",
           "note": "",
           "pay": {
             "lockedAt": "2026-07-01T09:00:00Z",
@@ -179,7 +111,6 @@
           "fee": 300,
           "bill": 390,
           "fullMargin": false,
-          "payDate": "2026-07-08",
           "note": "",
           "pay": {
             "lockedAt": "2026-07-01T09:00:00Z",
@@ -239,68 +170,7 @@
           "fee": 999,
           "bill": 1298.7,
           "fullMargin": false,
-          "payDate": "",
           "note": ""
-        },
-        {
-          "id": "f5",
-          "serviceId": 3,
-          "role": "LD",
-          "crewId": 8,
-          "status": "confirmed",
-          "fee": 400,
-          "bill": 520,
-          "fullMargin": true,
-          "payDate": "2026-07-16",
-          "note": "",
-          "pay": {
-            "lockedAt": "2026-07-01T09:00:00Z",
-            "total": 0,
-            "paidHours": 0,
-            "otHours": 0,
-            "mealPenaltyHours": 0,
-            "tier": "flat",
-            "units": [
-              {
-                "serviceId": 3,
-                "tier": "flat",
-                "paidHours": 0,
-                "otHours": 0,
-                "dayCost": 0,
-                "otCost": 0,
-                "minApplied": false,
-                "minHoursApplied": false,
-                "fullMargin": true,
-                "total": 0
-              }
-            ]
-          },
-          "work": {
-            "state": "completed",
-            "pay": {
-              "total": 0,
-              "paidHours": 0,
-              "otHours": 0,
-              "mealPenaltyHours": 0,
-              "tier": "flat",
-              "units": [
-                {
-                  "serviceId": 3,
-                  "tier": "flat",
-                  "paidHours": 0,
-                  "otHours": 0,
-                  "dayCost": 0,
-                  "otCost": 0,
-                  "minApplied": false,
-                  "minHoursApplied": false,
-                  "fullMargin": true,
-                  "total": 0
-                }
-              ]
-            },
-            "signedAt": "2026-07-16T20:00:00Z",
-            "signedBy": "tester"
-          }
         }
       ],
       "schedule": [
@@ -537,6 +407,134 @@
     {
       "id": 11,
       "name": "Warehouse",
+      "endDate": "2026-07-15",
+      "fixedPositions": [
+        {
+          "id": "f1",
+          "serviceId": 3,
+          "role": "LD",
+          "crewId": 8,
+          "status": "confirmed",
+          "fee": 1500,
+          "bill": 1950,
+          "fullMargin": false,
+          "note": "",
+          "pay": {
+            "lockedAt": "2026-07-01T09:00:00Z",
+            "total": 1500,
+            "paidHours": 0,
+            "otHours": 0,
+            "mealPenaltyHours": 0,
+            "tier": "flat",
+            "units": [
+              {
+                "serviceId": 3,
+                "tier": "flat",
+                "paidHours": 0,
+                "otHours": 0,
+                "dayCost": 1500,
+                "otCost": 0,
+                "minApplied": false,
+                "minHoursApplied": false,
+                "fullMargin": false,
+                "total": 1500
+              }
+            ]
+          },
+          "work": {
+            "state": "completed",
+            "pay": {
+              "total": 1500,
+              "paidHours": 0,
+              "otHours": 0,
+              "mealPenaltyHours": 0,
+              "tier": "flat",
+              "units": [
+                {
+                  "serviceId": 3,
+                  "tier": "flat",
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "dayCost": 1500,
+                  "otCost": 0,
+                  "minApplied": false,
+                  "minHoursApplied": false,
+                  "fullMargin": false,
+                  "total": 1500
+                }
+              ]
+            },
+            "signedAt": "2026-07-14T20:00:00Z",
+            "signedBy": "tester"
+          },
+          "adj": [
+            {
+              "id": "adjf1",
+              "amount": 50,
+              "label": "Travel"
+            }
+          ]
+        },
+        {
+          "id": "f5",
+          "serviceId": 3,
+          "role": "LD",
+          "crewId": 8,
+          "status": "confirmed",
+          "fee": 400,
+          "bill": 520,
+          "fullMargin": true,
+          "note": "",
+          "pay": {
+            "lockedAt": "2026-07-01T09:00:00Z",
+            "total": 0,
+            "paidHours": 0,
+            "otHours": 0,
+            "mealPenaltyHours": 0,
+            "tier": "flat",
+            "units": [
+              {
+                "serviceId": 3,
+                "tier": "flat",
+                "paidHours": 0,
+                "otHours": 0,
+                "dayCost": 0,
+                "otCost": 0,
+                "minApplied": false,
+                "minHoursApplied": false,
+                "fullMargin": true,
+                "total": 0
+              }
+            ]
+          },
+          "work": {
+            "state": "completed",
+            "pay": {
+              "total": 0,
+              "paidHours": 0,
+              "otHours": 0,
+              "mealPenaltyHours": 0,
+              "tier": "flat",
+              "units": [
+                {
+                  "serviceId": 3,
+                  "tier": "flat",
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "dayCost": 0,
+                  "otCost": 0,
+                  "minApplied": false,
+                  "minHoursApplied": false,
+                  "fullMargin": true,
+                  "total": 0
+                }
+              ]
+            },
+            "signedAt": "2026-07-16T20:00:00Z",
+            "signedBy": "tester"
+          }
+        }
+      ],
       "schedule": [
         {
           "id": "s5",
@@ -692,12 +690,6 @@
         "payable": null
       },
       {
-        "crewId": 5,
-        "projectName": "Summer Fest",
-        "date": "2026-07-18",
-        "payable": null
-      },
-      {
         "crewId": 6,
         "projectName": "Summer Fest",
         "date": "2026-07-08",
@@ -711,21 +703,21 @@
       },
       {
         "crewId": 7,
+        "projectName": "Summer Fest",
+        "date": "2026-07-08",
+        "payable": null
+      },
+      {
+        "crewId": 7,
         "projectName": "Warehouse",
         "date": "2026-07-11",
         "payable": 0
       },
       {
         "crewId": 8,
-        "projectName": "Summer Fest",
+        "projectName": "Warehouse",
         "date": "2026-07-15",
         "payable": 1550
-      },
-      {
-        "crewId": 8,
-        "projectName": "Summer Fest",
-        "date": "2026-07-16",
-        "payable": 0
       }
     ],
     "byCrew": {

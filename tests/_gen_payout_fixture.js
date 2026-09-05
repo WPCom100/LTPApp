@@ -37,20 +37,19 @@ function shift(id, date, time, endTime, positions) {
   return { id: id, date: date, time: time, endTime: endTime, breaks: [], positions: positions };
 }
 
-// Flat-rate engagements (project.fixedPositions) — see backend/models.py.
+// Flat-rate engagements (project.fixedPositions) — see backend/models.py. A
+// flat fee is billed on the PROJECT'S END DATE (the payroll period it falls
+// into pays it), so each project's endDate is what places its engagements.
 function flat(id, crewId, fee, extra) {
   return Object.assign({ id: id, serviceId: 3, role: "LD", crewId: crewId, status: "confirmed",
-    fee: fee, bill: fee * 1.3, fullMargin: false, payDate: "", note: "" }, extra || {});
+    fee: fee, bill: fee * 1.3, fullMargin: false, note: "" }, extra || {});
 }
 
-// Project 10 — Summer Fest (ends 07-18: the fallback pay date for an
-// engagement with no payDate of its own)
-let p10 = { id: 10, name: "Summer Fest", endDate: "2026-07-18", fixedPositions: [
-  flat("f1", 8, 1500, { payDate: "2026-07-15" }),          // completed + adjustment -> 1550 on 07-15
-  flat("f2", 5, 800),                                      // confirmed, NOT completed -> pending on 07-18
-  flat("f3", 6, 300, { payDate: "2026-07-08" }),           // completed; same date as Blair's signed L1 day -> merges server-side
+// Project 10 — Summer Fest (ends 07-08, the same day Blair has a signed L1 day)
+let p10 = { id: 10, name: "Summer Fest", endDate: "2026-07-08", fixedPositions: [
+  flat("f2", 7, 800),                                      // confirmed, NOT completed -> pending on 07-08
+  flat("f3", 6, 300),                                      // completed; same date as Blair's signed L1 day -> merges server-side
   flat("f4", 8, 999, { status: "requested" }),             // not confirmed -> ignored
-  flat("f5", 8, 400, { payDate: "2026-07-16", fullMargin: true }),  // completed, full margin -> $0 row
 ], schedule: [
   shift("s1", "2026-07-08", "08:00", "18:00", [pos("p1", 5, 1, "L1"), pos("p2", 6, 1, "L1")]),      // full day L1 x2
   shift("s2", "2026-07-09", "08:00", "13:00", [pos("p3", 5, 1, "L1")]),                              // Alex half L1
@@ -66,14 +65,14 @@ p10.schedule = window.LTP_setPayAdjustments(p10.schedule, 5, "2026-07-09",
   [{ id: "adj1", amount: 50, label: "Parking" }, { id: "adj2", amount: -20, label: "Advance" }]);
 // 07-10 stays confirmed but unsigned (pending).
 // Flat engagements: lock the fee at "confirm", then complete the ones that are done.
-[8, 5, 6].forEach(function(cid) { p10.fixedPositions = window.LTP_stampFixedPay(p10.fixedPositions, cid, "2026-07-01T09:00:00Z"); });
-p10.fixedPositions = window.LTP_completeFixedPosition(p10.fixedPositions, "f1", null, "2026-07-14T20:00:00Z", "tester");
-p10.fixedPositions = window.LTP_setFixedAdjustments(p10.fixedPositions, "f1", [{ id: "adjf1", amount: 50, label: "Travel" }]);
+[7, 6].forEach(function(cid) { p10.fixedPositions = window.LTP_stampFixedPay(p10.fixedPositions, cid, "2026-07-01T09:00:00Z"); });
 p10.fixedPositions = window.LTP_completeFixedPosition(p10.fixedPositions, "f3", null, "2026-07-08T20:00:00Z", "tester");
-p10.fixedPositions = window.LTP_completeFixedPosition(p10.fixedPositions, "f5", null, "2026-07-16T20:00:00Z", "tester");
 
-// Project 11 — Warehouse
-let p11 = { id: 11, name: "Warehouse", schedule: [
+// Project 11 — Warehouse (ends 07-15: Dana's two engagements bill there)
+let p11 = { id: 11, name: "Warehouse", endDate: "2026-07-15", fixedPositions: [
+  flat("f1", 8, 1500),                                     // completed + adjustment -> 1550 on 07-15
+  flat("f5", 8, 400, { fullMargin: true }),                // completed, full margin -> $0, same ledger key as f1
+], schedule: [
   shift("s5", "2026-07-08", "08:00", "18:00", [pos("p6", 5, 2, "A1")]),                              // Alex full A1 (same date as p10 -> 2nd row)
   shift("s6", "2026-07-11", "08:00", "18:00", [pos("p7", 7, 1, "L1", true)]),                        // owner full-margin -> $0
   shift("s7", "2026-07-11", "08:00", "18:00", [pos("p8", 6, 1, "L1")]),                              // Blair no-show + kill fee
@@ -82,6 +81,10 @@ p11.schedule = window.LTP_signOffDay(p11.schedule, 5, "2026-07-08", {}, services
 p11.schedule = window.LTP_signOffDay(p11.schedule, 7, "2026-07-11", {}, services, crewMins, "2026-07-11T20:00:00Z", "tester");
 p11.schedule = window.LTP_signOffDay(p11.schedule, 6, "2026-07-11", { p8: { state: "no_show" } }, services, crewMins, "2026-07-11T20:00:00Z", "tester");
 p11.schedule = window.LTP_setPayAdjustments(p11.schedule, 6, "2026-07-11", [{ id: "adj3", amount: 100, label: "Kill fee" }]);
+p11.fixedPositions = window.LTP_stampFixedPay(p11.fixedPositions, 8, "2026-07-01T09:00:00Z");
+p11.fixedPositions = window.LTP_completeFixedPosition(p11.fixedPositions, "f1", null, "2026-07-14T20:00:00Z", "tester");
+p11.fixedPositions = window.LTP_setFixedAdjustments(p11.fixedPositions, "f1", [{ id: "adjf1", amount: 50, label: "Travel" }]);
+p11.fixedPositions = window.LTP_completeFixedPosition(p11.fixedPositions, "f5", null, "2026-07-16T20:00:00Z", "tester");
 
 const projects = [p10, p11];
 const range = { start: "2026-07-06", end: "2026-07-19" };
