@@ -96,8 +96,14 @@
       // rows — `flat: true`, schedItemId null — so they can be assigned,
       // requested, confirmed and paid through the same flows as a shift. The
       // dateless bucket on the Assignments tab is theirs alone (a dateless
-      // SHIFT row is skipped above), and the Calendar / Weekly grids, which
-      // match rows on a date, simply never place them.
+      // SHIFT row is skipped above). The Calendar grid, which matches rows on
+      // a date, never places them; the Weekly Schedule spreads each one across
+      // the project's date range (projectStart/projectEnd — the project's own
+      // dates, else the span of its scheduled days).
+      var datedDays = Object.keys(dateGroups).filter(function(k) { return k !== "_unscheduled"; }).sort();
+      var projectStart = proj.startDate || (datedDays.length ? datedDays[0] : "");
+      var projectEnd = proj.endDate || (datedDays.length ? datedDays[datedDays.length - 1] : "");
+      if (projectEnd && projectStart && projectEnd < projectStart) projectEnd = projectStart;
       (proj.fixedPositions || []).forEach(function(p) {
         if (!p) return;
         var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
@@ -115,6 +121,7 @@
           crewName: cm ? cm.firstName + " " + cm.lastName : null,
           flat: true, fee: Number(p.fee) || 0, bill: Number(p.bill) || 0, fullMargin: !!p.fullMargin,
           payDate: window.LTP_fixedPayDate(p, proj),
+          projectStart: projectStart, projectEnd: projectEnd,
         });
       });
     });
@@ -1861,10 +1868,21 @@
     // Build schedule: crewId → [{ date, projectName, role, callTime }]
     var scheduleMap = {};
     crew.forEach(function(c) { scheduleMap[c.id] = []; });
+    var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
     allPositions.forEach(function(p) {
-      if (!p.crewId || weekDates.indexOf(p.date) === -1) return;
-      if (p.status !== "accepted" && p.status !== "confirmed" && p.status !== "requested") return;
-      if (scheduleMap[p.crewId]) scheduleMap[p.crewId].push(p);
+      if (!p.crewId || !ACTIVE[p.status] || !scheduleMap[p.crewId]) return;
+      if (p.flat) {
+        // A flat-rate engagement has no call: it is on for EVERY day of the
+        // project's date range, so it lands in each of those cells this week
+        // (a copy per day, dated so the cell/day lookups below just work).
+        if (!p.projectStart || !p.projectEnd) return;
+        weekDates.forEach(function(ds) {
+          if (ds >= p.projectStart && ds <= p.projectEnd) scheduleMap[p.crewId].push(Object.assign({}, p, { date: ds }));
+        });
+        return;
+      }
+      if (weekDates.indexOf(p.date) === -1) return;
+      scheduleMap[p.crewId].push(p);
     });
 
     var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
@@ -1874,6 +1892,7 @@
     // call time shows just that; one with neither shows nothing (the row/cell
     // simply omits the line) rather than a dangling dash.
     function shiftTimes(pos) {
+      if (pos.flat) return "Flat rate \u00b7 whole project";
       var a = ft(pos.callTime), b = ft(pos.endTime);
       if (a && b) return a + " \u2013 " + b;
       return a || b || "";
@@ -1907,7 +1926,8 @@
               : rows.map(function(r, ri) {
                   var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
                   var cname = r.crew.firstName + " " + r.crew.lastName;
-                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px solid " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 } },
+                  return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px " + (r.pos.flat ? "dashed" : "solid") + " " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 },
+                      title: r.pos.flat ? "Flat-rate engagement — on for the whole project (" + fmt(r.pos.projectStart) + " – " + fmt(r.pos.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
                       h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
@@ -1943,7 +1963,8 @@
               return h("div", { key: ds, style: { background: dayShifts.length > 0 ? B.accent + "11" : B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: 3, minHeight: 40 } },
                 dayShifts.map(function(s, si) {
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
-                  return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px solid " + sc.color } },
+                  return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px " + (s.flat ? "dashed" : "solid") + " " + sc.color },
+                      title: s.flat ? "Flat-rate engagement — on for the whole project (" + fmt(s.projectStart) + " – " + fmt(s.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { fontWeight: 600 } }, s.roleCode),
                     shiftTimes(s) && h("div", { style: { color: B.textSec, fontSize: "8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } }, shiftTimes(s)),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));

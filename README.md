@@ -384,7 +384,11 @@ event spanning the project dates.
 - Changing the fee, role, status or full-margin flag on an engagement that is
   already **paid** in QuickBooks trips the same paid-day guard as a shift edit
   (409 `paid_day_conflict` unless overridden).
-- Not on the Calendar / Weekly Schedule grids — they have no date to sit on.
+- **Labor → Weekly Schedule** shows a flat engagement on every day of the
+  project's date range (the project's own dates, else the span of its
+  scheduled days), marked with a dashed edge and "Flat rate · whole project"
+  in place of call times. The Calendar grid, which places rows on a single
+  date, does not show them.
 
 ## Email feature deploy notes
 
