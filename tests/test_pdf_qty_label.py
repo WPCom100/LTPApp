@@ -71,3 +71,66 @@ def test_every_line_kind_renders_with_its_unit(kind):
                  {"id": 1, "name": "Autumn Gala", "startDate": "2026-09-10", "endDate": "2026-09-13"}, {}, "Tester")
     pdf = buf.getvalue()
     assert pdf[:4] == b"%PDF" and len(pdf) > 2000
+
+
+# ── Column alignment ───────────────────────────────────────────────────────
+
+def _spy_section(items):
+    """Draw one section through _DocPDF with the canvas's string calls
+    recorded. Returns (right_calls, left_calls): lists of (x, text) from
+    drawRightString / drawString respectively."""
+    from backend.pdf_generator import _DocPDF, _register_fonts
+    _register_fonts()
+    doc = _DocPDF(io.BytesIO(), "quote", {}, {}, {},
+                  {"startDate": "2026-09-10", "endDate": "2026-09-13"}, {}, "T")
+    right, left = [], []
+    real_r, real_l = doc.c.drawRightString, doc.c.drawString
+
+    def spy_r(x, y, text, *a, **k):
+        right.append((round(x, 3), text))
+        return real_r(x, y, text, *a, **k)
+
+    def spy_l(x, y, text, *a, **k):
+        left.append((round(x, 3), text))
+        return real_l(x, y, text, *a, **k)
+
+    doc.c.drawRightString = spy_r
+    doc.c.drawString = spy_l
+    doc._draw_section({"id": "s1", "label": "Labor", "customDates": False,
+                       "startDate": "", "endDate": "", "items": items})
+    return right, left
+
+
+def test_quantities_share_a_right_edge_and_units_a_left_edge():
+    """Numbers of different widths (1, 3, 12, 2.5, 120) line up on one right
+    edge, directly under the QTY header, and every unit label starts at one
+    left edge past it. Centring each "number + unit" pair as a group made the
+    digits ragged down the page."""
+    items = [
+        {"id": "a", "type": "service", "name": "LD", "rateType": "flat", "qty": 1, "unitPrice": 2000, "adjustedPrice": None},
+        {"id": "b", "type": "service", "name": "PM", "rateType": "day", "qty": 3, "unitPrice": 800, "adjustedPrice": 700},
+        {"id": "c", "type": "service", "name": "L1", "rateType": "hourly", "qty": 2.5, "unitPrice": 65, "adjustedPrice": None},
+        {"id": "d", "type": "service", "name": "SPOT", "rateType": "ot", "qty": 5, "unitPrice": 60, "adjustedPrice": None},
+        {"id": "e", "type": "equipment", "name": "LED Par Wash", "rentalLabel": "3-Day", "qty": 12, "unitPrice": 45, "adjustedPrice": None},
+        {"id": "f", "type": "equipment", "name": "Cable Ramp", "rentalLabel": "Weekly", "qty": 120, "unitPrice": 4.5, "adjustedPrice": None},
+        {"id": "g", "type": "fee", "name": "Delivery", "unit": "trip", "qty": 2, "unitPrice": 250, "adjustedPrice": None},
+        {"id": "h", "type": "product", "name": "Gaffer Tape", "qty": 4, "unitPrice": 22, "adjustedPrice": None},
+        {"id": "i", "type": "note", "text": "A caption between lines", "name": ""},
+    ]
+    right, left = _spy_section(items)
+
+    nums = {"1", "3", "2.5", "5", "12", "120", "2", "4"}
+    drawn_nums = {t for _, t in right if t in nums}
+    assert drawn_nums == nums, drawn_nums
+    num_x = {x for x, t in right if t in nums}
+    assert len(num_x) == 1, f"quantities drawn at several right edges: {sorted(num_x)}"
+
+    header_x = {x for x, t in right if t == "QTY"}
+    assert header_x == num_x, (header_x, num_x)
+
+    labels = {"flat rate", "days", "hours", "OT hours", "units", "trips", "ea"}
+    drawn_labels = {t for _, t in left if t in labels}
+    assert drawn_labels == labels, drawn_labels
+    label_x = {x for x, t in left if t in labels}
+    assert len(label_x) == 1, f"unit labels drawn at several left edges: {sorted(label_x)}"
+    assert label_x.pop() > num_x.pop()
