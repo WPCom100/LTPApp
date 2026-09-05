@@ -47,8 +47,43 @@
 // Omit it and every project prices off the base card exactly as before.
 window.LTP_payoutRows = function(projects, contacts, services, startDate, endDate, clientRates) {
   var crewMins = window.LTP_crewMinMap(contacts);
+  var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
   var byCrew = {};   // String(crewId) → { crewId, rows: [] }
   (projects || []).forEach(function(proj) {
+    // Flat-rate engagements (proj.fixedPositions): one row per confirmed
+    // position, dated on its PAY date (LTP_fixedPayDate) — that is what picks
+    // the pay period. Same row shape as a day, plus `kind: "flat"`; `locked`
+    // is the fee stamped at confirm, `current` the fee as typed now, `signed`
+    // the "Mark complete" freeze. Python mirror: backend/payouts.py — which
+    // additionally MERGES a flat entry into a signed shift day on the same
+    // (crew, project, date), because the bill ledger is unique per those
+    // three; the UI keeps them as two rows and the totals agree either way.
+    (proj.fixedPositions || []).forEach(function(p) {
+      if (!p || p.crewId == null || p.status !== "confirmed") return;
+      var d = window.LTP_fixedPayDate(p, proj);
+      if (!d) return;
+      if (startDate && d < startDate) return;
+      if (endDate && d > endDate) return;
+      var k = String(p.crewId);
+      var current = window.LTP_fixedPositionPay(p);
+      var locked = p.pay || null;
+      var signed = (p.work && p.work.pay)
+        ? { state: p.work.state || "completed", pay: p.work.pay, signedAt: p.work.signedAt, signedBy: p.work.signedBy }
+        : null;
+      var drift = !!(!signed && locked && Math.abs((locked.total || 0) - current.total) > 0.005);
+      var adjustments = p.adj || [];
+      var adjTotal = Math.round(adjustments.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
+      var estimate = Math.round(((locked ? locked.total : current.total) + adjTotal) * 100) / 100;
+      var svc = svcById[p.serviceId];
+      if (!byCrew[k]) byCrew[k] = { crewId: p.crewId, rows: [] };
+      byCrew[k].rows.push({ kind: "flat", posId: p.id, serviceId: p.serviceId,
+        roleLabel: svc ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")) : (p.role || "Flat rate"),
+        fee: Number(p.fee) || 0, fullMargin: !!p.fullMargin, payDateSet: !!p.payDate,
+        crewId: p.crewId, projectId: proj.id, projectName: proj.name,
+        date: d, locked: locked, current: current, drift: drift,
+        signed: signed, adjustments: adjustments, adjTotal: adjTotal, estimate: estimate,
+        payable: signed ? Math.round((signed.pay.total + adjTotal) * 100) / 100 : null });
+    });
     // A project is always billed to its company; an internal/manual shift has
     // none and prices off the base card.
     var svcs = window.LTP_servicesForClient(services, clientRates, window.LTP_clientRef(proj));
@@ -159,6 +194,19 @@ function _ppLen(lengthDays) {
   var n = parseInt(lengthDays, 10);
   return (n >= 1 && n <= 31) ? n : 14;   // guard/default to bi-weekly
 }
+
+// The date a flat-rate engagement is paid on — its own payDate when that is a
+// real ISO date, else the project's end date, else "" (not payable anywhere
+// until one of the two is set; the Schedule Builder flags the row). The bill
+// ledger line carries whichever this resolves to. Python mirror:
+// backend/payouts.py::fixed_pay_date — keep the two in step.
+window.LTP_fixedPayDate = function(pos, project) {
+  var own = pos && pos.payDate;
+  if (_ppEpochDays(own) !== null) return own;
+  var end = project && project.endDate;
+  if (_ppEpochDays(end) !== null) return end;
+  return "";
+};
 
 // Integer index of the period containing `dateISO` (0 = the anchor's own period).
 window.LTP_payPeriodIndex = function(anchorISO, lengthDays, dateISO) {

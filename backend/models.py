@@ -156,6 +156,33 @@ class Project(Base):
                                                          #        are one person, different slots are different people for OT tracking)
     schedule_notes = Column(Text, default="")            # free-text notes shown in the schedule builder
     schedule_activity = Column(JSON, default=list)       # list[{id, date, time, type, message, user, userId, changes}] — schedule save log
+    # Flat-rate ("fixed cost") positions — people hired for the WHOLE project at
+    # a negotiated flat fee with no contracted shift times (a lighting designer,
+    # a stage manager …). They make their own hours against the project's dates,
+    # so they deliberately do NOT live on a schedule row: every schedule consumer
+    # keys money and crew asks on a dated, timed shift, and a flat engagement
+    # has neither. They share the position id namespace with
+    # schedule[].positions[] (crew_requests.position_ids may reference either),
+    # the same open → requested → accepted/declined → confirmed lifecycle, and
+    # the same frozen `pay` / `work` / `adj` snapshot shape, so crew_integrity
+    # and payouts treat the two alike.
+    #   list[{id, serviceId, role, crewId, status, fee, bill, fullMargin,
+    #         payDate, note, pay?, work?, adj?}]
+    #   serviceId  rate-card role (required) — drives crew-picker matching and
+    #              the QuickBooks expense account, never the amount
+    #   fee        what we pay the person (cost side). Deliberately shown on the
+    #              crew request email/page — it IS the offer being accepted
+    #   bill       what the client is charged (rate side); margin = bill − fee
+    #   fullMargin bill the client, $0 cost (the owner filling the role)
+    #   payDate    ISO date the fee is paid on — picks the pay period. Empty →
+    #              the project's end_date (backend/payouts.py::fixed_pay_date)
+    #   note       crew-facing scope line (what the engagement covers)
+    #   pay        {total, lockedAt} stamped at confirm, like a shift's `pay`
+    #   work       {state:"completed", pay:{total, tier:"flat", units:[…]},
+    #              signedAt, signedBy} — written by "Mark complete" on the
+    #              Payouts tab; work.pay.total is billed verbatim to the vendor bill
+    #   adj        pay adjustments, same shape as a shift's
+    fixed_positions = Column(JSON, default=list)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

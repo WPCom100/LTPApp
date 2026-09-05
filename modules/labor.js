@@ -12,6 +12,18 @@
 
   var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info } };
 
+  // "3 shifts" / "1 flat-rate engagement" / "3 shifts + 1 flat-rate engagement"
+  // — the count line for a request, matching the server's email header
+  // (backend/routes/crew.py::_ask_label). `list` is aggregatePositions rows.
+  function askLabel(list) {
+    var nShift = 0, nFlat = 0;
+    (list || []).forEach(function(p) { if (p && p.flat) nFlat++; else nShift++; });
+    var parts = [];
+    if (nShift || !nFlat) parts.push(nShift + " shift" + (nShift === 1 ? "" : "s"));
+    if (nFlat) parts.push(nFlat + " flat-rate engagement" + (nFlat === 1 ? "" : "s"));
+    return parts.join(" + ");
+  }
+
   // ── Aggregate positions from all project schedules ─────────────────────
   // THE rate card for ONE project — the catalog with that project's client's
   // negotiated overrides folded in (theme.js::LTP_servicesForClient). Every pay
@@ -78,6 +90,33 @@
           });
         });
       });
+
+      // Flat-rate engagements (proj.fixedPositions): hired for the whole
+      // project at a fixed fee, no date and no call times. They get their own
+      // rows — `flat: true`, schedItemId null — so they can be assigned,
+      // requested, confirmed and paid through the same flows as a shift. The
+      // dateless bucket on the Assignments tab is theirs alone (a dateless
+      // SHIFT row is skipped above), and the Calendar / Weekly grids, which
+      // match rows on a date, simply never place them.
+      (proj.fixedPositions || []).forEach(function(p) {
+        if (!p) return;
+        var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
+        var cm = p.crewId ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
+        all.push({
+          projectId: proj.id, projectName: proj.name, companyId: proj.companyId,
+          schedItemId: null, schedTitle: "Flat-rate engagement",
+          date: "", callTime: "", endTime: "", dayCall: null, dayWrap: null,
+          posId: p.id, role: p.role, serviceId: p.serviceId,
+          slot: 1, dayRoleCount: 0,
+          crewId: p.crewId, status: p.status, note: p.note || "",
+          svcName: svc ? svc.role + " — " + svc.description : (p.role || "?"),
+          roleCode: svc ? svc.role : "Crew",
+          dept: svc ? svc.department : "",
+          crewName: cm ? cm.firstName + " " + cm.lastName : null,
+          flat: true, fee: Number(p.fee) || 0, bill: Number(p.bill) || 0, fullMargin: !!p.fullMargin,
+          payDate: window.LTP_fixedPayDate(p, proj),
+        });
+      });
     });
     all.sort(function(a, b) { return (a.date + " " + (a.callTime || "")) > (b.date + " " + (b.callTime || "")) ? 1 : -1; });
     return all;
@@ -88,6 +127,12 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
+        // A flat-rate engagement has no schedule item — it lives in fixedPositions.
+        if (schedItemId == null) {
+          return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
+            return pos.id !== posId ? pos : Object.assign({}, pos, patch);
+          }) });
+        }
         return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           if (s.id !== schedItemId) return s;
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
@@ -108,6 +153,11 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
+        if (schedItemId == null) {   // flat-rate engagement: its own scope note
+          return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
+            return pos.id !== posId ? pos : Object.assign({}, pos, { note: note });
+          }) });
+        }
         return Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           if (s.id !== schedItemId) return s;
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
@@ -125,19 +175,23 @@
   // Same-result writes converge with the debounced PUT.
   function flipPositionsLocal(setProjects, projectId, posIds, fromStatus, toStatus, clearCrew) {
     var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
+    function flip(pos) {
+      if (idSet[pos.id] && pos.status === fromStatus) {
+        var patch = { status: toStatus };
+        if (clearCrew) patch.crewId = null;
+        return Object.assign({}, pos, patch);
+      }
+      return pos;
+    }
     setProjects(function(prev) {
       return prev.map(function(proj) {
         if (projectId != null && proj.id !== projectId) return proj;
-        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            if (idSet[pos.id] && pos.status === fromStatus) {
-              var patch = { status: toStatus };
-              if (clearCrew) patch.crewId = null;
-              return Object.assign({}, pos, patch);
-            }
-            return pos;
-          }) });
-        }) });
+        return Object.assign({}, proj, {
+          schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(flip) });
+          }),
+          fixedPositions: (proj.fixedPositions || []).map(flip),
+        });
       });
     });
   }
@@ -157,11 +211,13 @@
   // — what the server's _update_positions does on a send — and nothing else.
   function withPositionsMoved(proj, posIds, fromStatus, toStatus) {
     var idSet = {}; (posIds || []).forEach(function(id) { idSet[id] = true; });
-    return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-      return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-        return (idSet[pos.id] && pos.status === fromStatus) ? Object.assign({}, pos, { status: toStatus }) : pos;
-      }) });
-    }) });
+    function move(pos) { return (idSet[pos.id] && pos.status === fromStatus) ? Object.assign({}, pos, { status: toStatus }) : pos; }
+    return Object.assign({}, proj, {
+      schedule: (proj.schedule || []).map(function(s) {
+        return Object.assign({}, s, { positions: (s.positions || []).map(move) });
+      }),
+      fixedPositions: (proj.fixedPositions || []).map(move),
+    });
   }
 
   // Mirror a status move the server is making — one (crew, project) group per
@@ -218,6 +274,7 @@
         if (p.id !== o.projectId) return p;
         var changed = 0;
         var confirmDates = {};
+        var confirmedFlat = [];
         var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
           return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
             if (ids[ps.id] && from[ps.status] && ps.crewId === o.contactId) {
@@ -227,11 +284,24 @@
             }
             return ps;
           })});
-        })});
+        }), fixedPositions: (p.fixedPositions || []).map(function(ps) {
+          if (ids[ps.id] && from[ps.status] && ps.crewId === o.contactId) {
+            changed++;
+            confirmedFlat.push(ps.id);
+            return Object.assign({}, ps, { status: "confirmed" });
+          }
+          return ps;
+        }) });
         if (changed > 0) {
+          var lockedAt = new Date().toISOString();
           updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
             updated.schedule, o.contactId, svcsFor(o.services, o.clientRates, p), window.LTP_crewMinMap(o.contacts),
-            new Date().toISOString(), Object.keys(confirmDates)) });
+            lockedAt, Object.keys(confirmDates)) });
+          // A flat engagement locks the fee agreed at hire the same way a day
+          // locks its computed pay (LTP_stampFixedPay).
+          if (confirmedFlat.length) {
+            updated = Object.assign({}, updated, { fixedPositions: window.LTP_stampFixedPay(updated.fixedPositions, o.contactId, lockedAt, confirmedFlat) });
+          }
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: o.message + ": " + o.crewName + " (" + changed + " position" + (changed > 1 ? "s" : "") + ")",
@@ -270,13 +340,17 @@
       var next = prev.map(function(proj) {
         var map = byProject[proj.id];
         if (!map) return proj;
-        return Object.assign({}, proj, { schedule: (proj.schedule || []).map(function(s) {
-          return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
-            var entry = map[pos.id];
-            if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
-            return pos;
-          }) });
-        }) });
+        function apply(pos) {
+          var entry = map[pos.id];
+          if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
+          return pos;
+        }
+        return Object.assign({}, proj, {
+          schedule: (proj.schedule || []).map(function(s) {
+            return Object.assign({}, s, { positions: (s.positions || []).map(apply) });
+          }),
+          fixedPositions: (proj.fixedPositions || []).map(apply),
+        });
       });
       return changed ? next : prev;
     });
@@ -709,6 +783,18 @@
     // slot isn't a change to a commitment they've been locked into yet).
     function confirmedCrewForNote(pos, applyToDay, noteText) {
       var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      if (pos.flat) {
+        // A flat engagement's note is its scope line; only its own (confirmed,
+        // emailable) holder is notified, as an engagement card.
+        var fp = proj && (proj.fixedPositions || []).find(function(x) { return x.id === pos.posId; });
+        if (!fp || fp.status !== "confirmed" || !fp.crewId) return [];
+        var fc = (contacts || []).find(function(x) { return x.id === fp.crewId; });
+        if (!fc || !(fc.email || "").trim()) return [];
+        var fsv = fp.serviceId ? (services || []).find(function(s) { return s.id === fp.serviceId; }) : null;
+        return [{ crewId: fp.crewId, crewName: (fc.firstName + " " + fc.lastName).trim(), shifts: [{
+          roleLabel: fsv ? (fsv.role + (fsv.description ? " — " + fsv.description : "")) : (fp.role || "Crew"),
+          shiftTitle: "", date: "", startTime: "", endTime: "", note: noteText, flat: true }] }];
+      }
       var shift = proj && (proj.schedule || []).find(function(s) { return s.id === pos.schedItemId; });
       if (!shift) return [];
       var byCrew = {};
@@ -840,7 +926,8 @@
       window.LTP_outbox.add({
         crewId: crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew",
         projectId: projectId, projectName: proj ? proj.name : "", template: template,
-        shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, positionIds, services) : [],
+        shifts: proj ? window.LTP_shiftSnapshots(proj.schedule, positionIds, services)
+                         .concat(window.LTP_fixedSnapshots(proj.fixedPositions, positionIds, services)) : [],
       });
     }
 
@@ -914,7 +1001,9 @@
       // Nothing emails inline.
       var template = window.LTP_removalTemplate(pos.status);
       var affectedIds = scopeIds ? scopeIds.slice() : [];
-      if (!scopeIds) {
+      // A flat engagement is its own scope — there is no "same date" to sweep.
+      if (!scopeIds && pos.flat) { affectedIds = [pos.posId]; affectIds = {}; affectIds[pos.posId] = true; }
+      if (!scopeIds && !pos.flat) {
         var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
         if (proj) (proj.schedule || []).forEach(function(s) {
           if (s.date !== pos.date) return;
@@ -931,19 +1020,23 @@
         return prev.map(function(p) {
           if (p.id !== pos.projectId) return p;
           var changeCount = 0;
-          var updated = Object.assign({}, p, { schedule: (p.schedule || []).map(function(s) {
-            if (s.date !== pos.date) return s;
-            return Object.assign({}, s, { positions: (s.positions || []).map(function(ps) {
-              var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
-              if (hit) {
-                changeCount++;
-                var patch = { status: newStatus };
-                if (clearCrew) patch.crewId = null;
-                return Object.assign({}, ps, patch);
-              }
-              return ps;
-            })});
-          })});
+          function cascade(ps) {
+            var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
+            if (hit) {
+              changeCount++;
+              var patch = { status: newStatus };
+              if (clearCrew) patch.crewId = null;
+              return Object.assign({}, ps, patch);
+            }
+            return ps;
+          }
+          var updated = Object.assign({}, p, {
+            schedule: (p.schedule || []).map(function(s) {
+              if (pos.flat || s.date !== pos.date) return s;
+              return Object.assign({}, s, { positions: (s.positions || []).map(cascade) });
+            }),
+            fixedPositions: pos.flat ? (p.fixedPositions || []).map(cascade) : p.fixedPositions,
+          });
           var actionLabel = pos.status === "confirmed" ? "Position cancelled" : pos.status === "accepted" ? "Crew released" : "Request withdrawn";
           var actEntry = {
             id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
@@ -1026,7 +1119,7 @@
         // flagged, the key has to enforce it directly. Free-text roles (no
         // serviceId) fall back to posId, so each stands alone — matching how the
         // conflict detector already keys them.
-        var ck = pos.crewId + "|" + (pos.serviceId || pos.posId);
+        var ck = pos.crewId + "|" + (pos.flat ? pos.posId : (pos.serviceId || pos.posId));
         if (!crewMap[ck]) {
           crewMap[ck] = { type: "day", pos: pos, items: [], allPosIds: [] };
           dayBookings.push(crewMap[ck]);
@@ -1279,7 +1372,8 @@
           pg.dates.map(function(g) {
             return h("div", { key: pg.projectId + "|" + (g.date || "_") },
               h("div", { style: { padding: "8px 14px", display: "flex", gap: 10, alignItems: "center", background: B.raised, borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + B.info } },
-                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Unscheduled"),
+                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Flat-rate \u2014 whole project"),
+                !g.date && h("span", { style: { fontSize: "9px", color: B.textMut } }, "no call times \u2014 fee stated on the request"),
                 g.dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, ft(g.dayCall) + " \u2192 " + ft(g.dayWrap)),
                 h("span", { style: { fontSize: "9px", color: B.textMut } }, (g.dayBookings || []).length + " crew")),
               // Crew rows grouped by matching schedule items
@@ -1331,7 +1425,11 @@
                             // people so the right person goes into the right slot.
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
-                            pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept)),
+                            pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept),
+                            // Flat-rate engagement: the fee (what the request states) and the pay date.
+                            pos.flat && h("span", { title: "Flat-rate engagement for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid " + fmt(pos.payDate) : " \u00b7 no pay date set") + " \u2014 edit in the Schedule Builder.",
+                              style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginLeft: 6, cursor: "help", whiteSpace: "nowrap" } },
+                              "Flat $" + window.LTP_money(pos.fee))),
                           h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
                             var cid = (v === "" || v == null) ? null : Number(v);
                             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
@@ -1552,7 +1650,7 @@
                         isSelected && h("span", { style: { color: B.btnInk, fontSize: "10px", fontWeight: 700 } }, "\u2713")),
                       h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
                         h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
-                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + entry.shifts.length + " shift" + (entry.shifts.length !== 1 ? "s" : ""))),
+                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
                       // No email on file — the request can't be sent, but the
                       // person can still be booked directly (that path never
                       // needed an address).
@@ -1578,13 +1676,15 @@
                     "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
                     " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
                     " private page will be sent. They can accept or decline and leave a note."),
-                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "Shifts in this request (" + peShifts.length + ")"),
+                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "In this request: " + askLabel(peShifts)),
                   peShifts.length === 0
                     ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
                     : peShifts.map(function(sp, i) {
                         return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
                           h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
-                          h("span", { style: { color: B.textMut } }, "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
+                          h("span", { style: { color: B.textMut } }, sp.flat
+                            ? "  \u00b7  Flat rate $" + window.LTP_money(sp.fee) + "  \u00b7  whole project (date outline, no times)"
+                            : "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
                       }))
               )
             ),
@@ -2182,7 +2282,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_setFixedAdjustments(p.fixedPositions || [], row.posId, list) })
+            : Object.assign({}, p, { schedule: window.LTP_setPayAdjustments(p.schedule || [], row.crewId, row.date, list) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Pay adjustments: " + who + " \u2014 " + what + " \u2192 " +
@@ -2200,6 +2302,7 @@
     // The person's confirmed shifts on a row's day — the entries the adjust
     // modal edits and the no-show path marks.
     function dayShifts(row) {
+      if (row.kind === "flat") return [];   // no shifts behind a flat engagement
       var proj = projects.find(function(p) { return p.id === row.projectId; });
       var out = [];
       ((proj && proj.schedule) || []).forEach(function(s) {
@@ -2248,6 +2351,32 @@
 
     function markWorked(row) { signOff(row, {}, "worked as scheduled"); }
 
+    // ── Flat-rate engagements: "Mark complete" (the flat-rate sign-off) ──────
+    // Freezes the final fee as work.pay (LTP_completeFixedPosition) so the
+    // engagement becomes payable on its pay date. `amount` overrides the fee
+    // when the final figure differs from what was agreed; omitted = the fee as
+    // it stands (a drift chip warns first, like a day's rate change would).
+    var [completeDlg, setCompleteDlg] = useState(null);   // { row, amount }
+    function completeFlat(row, amount) {
+      var now = new Date().toISOString();
+      var user = window.LTP_CURRENT_USER || "User";
+      var amt = (amount != null && amount !== "" && !isNaN(Number(amount))) ? Number(amount) : null;
+      var total = row.fullMargin ? 0 : (amt != null ? amt : (row.current ? row.current.total : 0));
+      var who = crewLabel(row.crewId) + " \u00b7 " + (row.roleLabel || "flat rate") + " \u00b7 " + row.projectName;
+      setProjects(function(prev) {
+        return prev.map(function(p) {
+          if (p.id !== row.projectId) return p;
+          var updated = Object.assign({}, p, { fixedPositions: window.LTP_completeFixedPosition(p.fixedPositions || [], row.posId, amt, now, user) });
+          var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
+            type: "saved", user: user,
+            message: "Engagement completed: " + who + " \u2192 " + fmtMoney(total),
+            changes: [{ cat: "Engagement Completed", detail: who + " \u2192 " + fmtMoney(total) + " (paid " + fmt(row.date) + ")" }] };
+          return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
+        });
+      });
+      window.LTP_toast("Engagement completed", { message: who + " \u2192 " + fmtMoney(total) + ", payable " + fmt(row.date) + ".", variant: "success" });
+    }
+
     function doNoShow(row) {
       setNoShowDlg(null);
       var actuals = {};
@@ -2279,7 +2408,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_unsignDay(p.schedule || [], row.crewId, row.date) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_uncompleteFixedPosition(p.fixedPositions || [], row.posId) })
+            : Object.assign({}, p, { schedule: window.LTP_unsignDay(p.schedule || [], row.crewId, row.date) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Sign-off undone: " + crewLabel(row.crewId) + " · " + fmt(row.date) + " (was " + fmtMoney(row.payable || 0) + ")",
@@ -2300,7 +2431,9 @@
       setProjects(function(prev) {
         return prev.map(function(p) {
           if (p.id !== row.projectId) return p;
-          var updated = Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, svcsFor(services, clientRates, p), mins, now, [row.date]) });
+          var updated = row.kind === "flat"
+            ? Object.assign({}, p, { fixedPositions: window.LTP_stampFixedPay(p.fixedPositions || [], row.crewId, now, [row.posId]) })
+            : Object.assign({}, p, { schedule: window.LTP_stampPay(p.schedule, row.crewId, svcsFor(services, clientRates, p), mins, now, [row.date]) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: (window.LTP_CURRENT_USER || "User"),
             message: "Pay " + (wasLocked ? "re-locked" : "locked") + ": " + crewLabel(row.crewId) + " · " + fmt(row.date) + " → " + fmtMoney(newTotal),
@@ -2340,6 +2473,7 @@
 
     function tierLabel(src) {
       if (!src) return "—";
+      if (src.tier === "flat") return "Flat rate";
       if (!src.tier && !(src.paidHours > 0)) return "No-show";
       var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : "Mixed";
       var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
@@ -2409,7 +2543,7 @@
         data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
 
       data.groups.length === 0
-        ? h(window.EmptyState, { text: "No confirmed crew shifts between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
+        ? h(window.EmptyState, { text: "No confirmed crew shifts or flat-rate engagements paid between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
         : data.groups.map(function(g) {
             return h("div", { key: g.crewId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
               h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
@@ -2425,17 +2559,22 @@
                   var src = r.signed ? r.signed.pay : (r.locked || r.current);
                   var minApplied = !!(src && (src.units || []).some(function(u) { return u.minApplied; }));
                   var allMargin = !!(src && (src.units || []).length > 0 && (src.units || []).every(function(u) { return u.fullMargin; }));
-                  var canSign = !r.signed && r.date <= todayISO();  // no signing off the future
-                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" } };
+                  var isFlat = r.kind === "flat";
+                  // No signing off the future — except a flat engagement, which
+                  // completes when the work is done, whenever its pay date falls.
+                  var canSign = !r.signed && (isFlat || r.date <= todayISO());
+                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" }, completed: { c: B.success, t: "✓ complete" } };
                   var sBtn = function(label, onClick, bg, title) {
                     return h("button", { onClick: onClick, title: title,
                       style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
                   };
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + (r.drift ? B.danger + "66" : B.border), borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 8, alignItems: isMobile ? "flex-start" : "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
-                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date)),
+                    h("div", { style: { width: 86, flexShrink: 0, order: isMobile ? 0 : undefined, fontSize: "11px", fontWeight: 600, color: B.text } }, fmt(r.date),
+                      isFlat && h("div", { style: { fontSize: "8px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, r.payDateSet ? "pay date" : "project end")),
                     h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
-                      h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, tierLabel(src)),
+                      h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } },
+                        isFlat ? "Flat rate \u00b7 " + (r.roleLabel || "engagement") + " \u00b7 whole project" : tierLabel(src)),
                       (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
                         r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
@@ -2443,7 +2582,7 @@
                     // Pay amount: pinned to the top row's right on mobile (order 2),
                     // trails the action buttons on desktop.
                     h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", order: isMobile ? 2 : undefined, marginLeft: isMobile ? "auto" : undefined, fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
-                      title: r.signed ? "Final signed-off pay." : "Estimate — becomes payable when the day is signed off." },
+                      title: r.signed ? (isFlat ? "Final fee — marked complete." : "Final signed-off pay.") : (isFlat ? "Fee — becomes payable once the engagement is marked complete." : "Estimate — becomes payable when the day is signed off.") },
                       (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)),
                     // Chips + sign-off buttons: a wrapped second line on mobile,
                     // inline on desktop (display:contents leaves the row unchanged).
@@ -2465,14 +2604,16 @@
                         ? h(React.Fragment, null,
                             chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
                               "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, "Undo the sign-off — the day returns to pending."))
+                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the engagement returns to pending." : "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
-                            !r.locked && chip(B.warn, "not locked", "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
+                            !r.locked && chip(B.warn, "not locked", isFlat ? "Confirmed without a locked fee — the figure shown is the fee as typed today." : "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
                             (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
                               style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                            canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
-                            canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
-                            canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
+                            isFlat && canSign && sBtn("✓ Complete", function() { guardPaid(r, function() { completeFlat(r, null); }); }, B.success, "Mark the engagement complete at the fee — it becomes payable on its pay date."),
+                            isFlat && canSign && sBtn("Complete…", function() { guardPaid(r, function() { setCompleteDlg({ row: r, amount: String(r.current ? r.current.total : 0) }); }); }, null, "Mark complete at a different final amount."),
+                            !isFlat && canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
+                            !isFlat && canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
+                            !isFlat && canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
                       sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
@@ -2490,7 +2631,9 @@
         // reconcile. And since every add and delete below writes immediately,
         // what is on screen is always what is stored.
         var adjProj = projects.find(function(x) { return x.id === d.row.projectId; });
-        var list = window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
+        var list = d.row.kind === "flat"
+          ? window.LTP_getFixedAdjustments((adjProj && adjProj.fixedPositions) || [], d.row.posId)
+          : window.LTP_getPayAdjustments((adjProj && adjProj.schedule) || [], d.row.crewId, d.row.date);
         var net = Math.round(list.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
         var pendingAmt = parseFloat(d.amount);
         var canAdd = !isNaN(pendingAmt) && pendingAmt !== 0;
@@ -2536,6 +2679,22 @@
             // Save button could only imply something was still pending, and a
             // Cancel would falsely promise to undo what is already stored.
             h(window.Btn, { onClick: function() { setAdjPayDlg(null); } }, "Done")));
+      })(),
+
+      // Flat-rate engagement: mark complete at a final amount (default = the fee).
+      completeDlg && (function() {
+        var d = completeDlg;
+        var amt = parseFloat(d.amount);
+        var ok = !isNaN(amt) && amt >= 0;
+        return h(window.LTPModal, { title: "Mark complete — " + crewLabel(d.row.crewId) + " · " + (d.row.roleLabel || "flat rate"), onClose: function() { setCompleteDlg(null); } },
+          h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+            "Freezes the final fee for " + d.row.projectName + ". It becomes payable on " + fmt(d.row.date) + " and is what the QuickBooks vendor bill posts." +
+            (d.row.fullMargin ? " This engagement is marked full margin, so it pays $0 regardless of the amount." : "")),
+          h("div", { style: { width: 160, marginBottom: 14 } },
+            h(window.LTPInput, { label: "Final amount ($)", value: d.amount, type: "number", onChange: function(v) { setCompleteDlg(Object.assign({}, d, { amount: v })); } })),
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setCompleteDlg(null); } }, "Cancel"),
+            h(window.Btn, { disabled: !ok, onClick: function() { setCompleteDlg(null); completeFlat(d.row, amt); } }, "Mark Complete")));
       })(),
 
       // No-show confirm
@@ -2671,7 +2830,8 @@
           var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
           // Snapshot the shifts BEFORE flipping (it reads the live positions),
           // then reopen them AND clear the crew so the slot returns to empty.
-          var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services) : [];
+          var snapshotShifts = proj ? window.LTP_shiftSnapshots(proj.schedule, req.positionIds, services)
+                                        .concat(window.LTP_fixedSnapshots(proj.fixedPositions, req.positionIds, services)) : [];
           // The server reopened and unassigned these slots in the same write.
           // Take its row (with its _rev) rather than replaying the move as an
           // edit the debounced PUT would push back under a stale token.
@@ -2722,6 +2882,9 @@
         (s.positions || []).forEach(function(p) {
           if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date });
         });
+      });
+      if (proj) (proj.fixedPositions || []).forEach(function(p) {
+        if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: "", flat: true, fee: Number(p.fee) || 0 });
       });
       var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
@@ -2835,7 +2998,8 @@
                         ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
                             info.positions.map(function(p, pi) {
                               return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
-                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel + (p.date ? "  ·  " + fmt(p.date) : ""));
+                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel
+                                  + (p.flat ? "  ·  flat rate $" + window.LTP_money(p.fee) + " · whole project" : (p.date ? "  ·  " + fmt(p.date) : "")));
                             }))
                         : !info.known
                           // Distinct from "no positions": we are missing the

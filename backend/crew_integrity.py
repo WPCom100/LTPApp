@@ -54,6 +54,11 @@ assigned and the request still reads pending/accepted. The producer then sees
     deliberate change — every deliberate downgrade in the UI (Release /
     Withdraw / Cancel / Reassign) clears or changes the assignee.
 
+Flat-rate engagements (``Project.fixed_positions`` — no date, no times, a flat
+fee for the whole job) share the position id namespace and status ladder, so
+every walk in this module covers them as well; a request may reference any mix
+of shift positions and flat engagements.
+
 Position ids are stable (``theme.js`` ``genId`` = ``pos-<ts>-<counter>``; saves,
 edits, and reordering all preserve them), so trimming only ever fires on a
 genuine change — a removed shift OR a position reassigned to a different crew
@@ -89,9 +94,20 @@ _STATUS_FLOOR = {
 _STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confirmed": 3}
 
 
+def _fixed_positions(project) -> list:
+    """The project's flat-rate engagements (Project.fixed_positions), as a list
+    of position dicts. They live outside the schedule — no date, no times — but
+    share the position id namespace and status ladder, so every walk over
+    ``schedule[].positions[]`` in this module walks these too."""
+    if project is None:
+        return []
+    raw = getattr(project, "fixed_positions", None) or []
+    return [p for p in raw if isinstance(p, dict)]
+
+
 def _assigned_position_ids(project, contact_id) -> set:
-    """Position ids that still exist in the schedule AND are still assigned to
-    ``contact_id``.
+    """Position ids that still exist in the schedule (or the flat-rate list)
+    AND are still assigned to ``contact_id``.
 
     A request owns only the shifts its crew member currently holds. A position
     that was reassigned to someone else (or unassigned) is no longer live for the
@@ -117,6 +133,12 @@ def _assigned_position_ids(project, contact_id) -> set:
             pid = pos.get("id")
             if pid is not None and pos.get("crewId") == contact_id:
                 present.add(pid)
+    # A flat-rate engagement has no date by design — it is live for as long as
+    # it exists and is still this crew member's.
+    for pos in _fixed_positions(project):
+        pid = pos.get("id")
+        if pid is not None and pos.get("crewId") == contact_id:
+            present.add(pid)
     return present
 
 
@@ -147,7 +169,16 @@ def _heal_position_statuses(req: models.CrewRequest, project) -> list:
                 healed.append(pos.get("id"))
     if healed:
         flag_modified(project, "schedule")
-    return healed
+    healed_fixed = []
+    for pos in _fixed_positions(project):
+        if (pos.get("id") in ids
+                and pos.get("crewId") == req.contact_id
+                and pos.get("status") in heal_from):
+            pos["status"] = target
+            healed_fixed.append(pos.get("id"))
+    if healed_fixed:
+        flag_modified(project, "fixed_positions")
+    return healed + healed_fixed
 
 
 def reconcile_one(req: models.CrewRequest, project) -> dict | None:
@@ -341,6 +372,24 @@ def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
                     pos["adj"] = prev_adj
                 fixed += 1
     return fixed
+
+
+def enforce_status_floor_fixed(stored_fixed, incoming_fixed) -> int:
+    """``enforce_status_floor`` for the flat-rate list (Project.fixed_positions).
+    Same rule, same reason; the list is a bare position list rather than shift
+    rows, so it is wrapped as one pseudo-shift. Mutates ``incoming_fixed`` in
+    place; returns the number of positions restored."""
+    return enforce_status_floor([{"positions": stored_fixed or []}],
+                                [{"positions": incoming_fixed or []}])
+
+
+def enforce_pay_snapshot_fixed(stored_fixed, incoming_fixed) -> int:
+    """``enforce_pay_snapshot`` for the flat-rate list: a non-admin write may not
+    create or change a flat engagement's frozen ``work``/``adj`` (its fee is
+    billed to a vendor bill exactly like a signed day). Mutates
+    ``incoming_fixed`` in place; returns the number restored/stripped."""
+    return enforce_pay_snapshot([{"positions": stored_fixed or []}],
+                                [{"positions": incoming_fixed or []}])
 
 
 async def reconcile_all(db: AsyncSession) -> int:

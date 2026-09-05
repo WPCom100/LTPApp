@@ -15,9 +15,14 @@ Two routers, mirroring the split that already exists for quotes/invoices
 
 The accept/decline flow drives the POSITION status machine that the Labor
 module already understands (components/status-enums.js). Positions live in
-Project.schedule[].positions[] (JSON); we mutate their `status` in place and
+Project.schedule[].positions[] (JSON) — and, for flat-rate engagements (a
+designer or stage manager hired for the whole job at a fixed fee, no shift
+times), in Project.fixed_positions[]; we mutate their `status` in place and
 flag_modified the column. See backend/models.py CrewRequest for the full
-state machine.
+state machine. A request may cover any mix of the two; a flat engagement is
+sent as "the project" — its dates outline, no times — and, unlike an hourly
+shift, STATES ITS FEE on the email and the landing page: the fee is the offer
+being accepted, so hiding it would make the acceptance meaningless.
 
 Security model (reuses the hardened patterns from SECURITY_REVIEW.md):
   - token minted server-side via secrets.token_urlsafe(32) (~256 bits), never
@@ -112,7 +117,78 @@ def _update_positions(project, position_ids, *, to_status, require_from=None, cl
             changed += 1
     if changed:
         flag_modified(project, "schedule")
-    return changed
+    changed_fixed = 0
+    for pos in _fixed_list(project):
+        if pos.get("id") not in ids:
+            continue
+        if require_from is not None and pos.get("status") not in require_from:
+            continue
+        pos["status"] = to_status
+        if clear_crew:
+            pos["crewId"] = None
+        changed_fixed += 1
+    if changed_fixed:
+        flag_modified(project, "fixed_positions")
+    return changed + changed_fixed
+
+
+def _fixed_list(project) -> list:
+    """The project's flat-rate engagements as position dicts (see
+    backend/models.py::Project.fixed_positions). Empty for a missing project."""
+    if project is None:
+        return []
+    return [p for p in (getattr(project, "fixed_positions", None) or []) if isinstance(p, dict)]
+
+
+def _project_date_outline(project) -> list:
+    """The crew-facing OUTLINE of a project's dates for a flat-rate engagement:
+    every dated schedule day as {date, title} — no times, no crew, no positions.
+    A flat hire makes their own hours against these, so the outline is what the
+    request describes instead of a call/wrap. De-duplicated per (date, title)
+    and date-sorted; multi-day rows (endDate after date) carry their endDate."""
+    if project is None:
+        return []
+    seen = set()
+    out = []
+    for shift in (project.schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        d = (shift.get("date") or "").strip()
+        if not d:
+            continue
+        title = (shift.get("title") or "").strip()
+        end = (shift.get("endDate") or "").strip()
+        key = (d, title, end if end > d else "")
+        if key in seen:
+            continue
+        seen.add(key)
+        row = {"date": d, "title": title}
+        if end and end > d:
+            row["endDate"] = end
+        out.append(row)
+    out.sort(key=lambda r: (r["date"], r["title"]))
+    return out
+
+
+def _ask_label(shifts) -> str:
+    """'3 shifts' / '1 flat-rate engagement' / '3 shifts + 1 flat-rate
+    engagement' — the count line the request email header, the producer push
+    and the crew page all agree on."""
+    n_shift = sum(1 for s in (shifts or []) if not s.get("flat"))
+    n_flat = sum(1 for s in (shifts or []) if s.get("flat"))
+    parts = []
+    if n_shift or not n_flat:
+        parts.append(str(n_shift) + " shift" + ("" if n_shift == 1 else "s"))
+    if n_flat:
+        parts.append(str(n_flat) + " flat-rate engagement" + ("" if n_flat == 1 else "s"))
+    return " + ".join(parts)
+
+
+def _money(x) -> str:
+    try:
+        return "${:,.2f}".format(float(x))
+    except (TypeError, ValueError):
+        return "$0.00"
 
 
 def _crew_shifts(project, position_ids, services_by_id) -> list:
@@ -121,21 +197,51 @@ def _crew_shifts(project, position_ids, services_by_id) -> list:
     only — never carries crewId, serviceId internals, or other crew's slots."""
     ids = set(position_ids or [])
     out = []
+
+    def _role(pos):
+        svc = services_by_id.get(pos.get("serviceId"))
+        if svc is not None:
+            role_code = (svc.role or "")
+            role_label = role_code
+            if svc.description:
+                role_label = (role_label + " — " + svc.description).strip(" —")
+            return role_code, role_label, (svc.department or "")
+        role_code = pos.get("role") or ""
+        return role_code, role_code, ""
+
+    # Flat-rate engagements first: they are the headline of a mixed request,
+    # and carry the project's date outline in place of a call/wrap. The fee is
+    # included ON PURPOSE (it is the offer) — the only cost figure any crew-facing
+    # payload carries; hourly shifts still expose no money at all.
+    outline = None
+    for pos in _fixed_list(project):
+        if pos.get("id") not in ids:
+            continue
+        if outline is None:
+            outline = _project_date_outline(project)
+        role_code, role_label, dept = _role(pos)
+        out.append({
+            "positionId": pos.get("id"),
+            "role": role_code,
+            "roleLabel": role_label or "Crew",
+            "department": dept,
+            "status": pos.get("status"),
+            "note": (pos.get("note") or "").strip(),
+            "shiftTitle": "",
+            "date": "",
+            "startTime": "",
+            "endTime": "",
+            "flat": True,
+            "fee": _fee_number(pos.get("fee")),
+            "projectStart": (project.start_date or "") if project else "",
+            "projectEnd": (project.end_date or "") if project else "",
+            "projectDates": outline,
+        })
     for shift in (project.schedule or []):
         for pos in (shift.get("positions") or []):
             if pos.get("id") not in ids:
                 continue
-            svc = services_by_id.get(pos.get("serviceId"))
-            if svc is not None:
-                role_code = (svc.role or "")
-                role_label = role_code
-                if svc.description:
-                    role_label = (role_label + " — " + svc.description).strip(" —")
-                dept = svc.department or ""
-            else:
-                role_code = pos.get("role") or ""
-                role_label = role_code
-                dept = ""
+            role_code, role_label, dept = _role(pos)
             out.append({
                 "positionId": pos.get("id"),
                 # `role` is the bare role acronym (A1, L1, …) for the calendar
@@ -152,8 +258,17 @@ def _crew_shifts(project, position_ids, services_by_id) -> list:
                 "startTime": shift.get("time") or "",
                 "endTime": shift.get("endTime") or "",
             })
-    out.sort(key=lambda s: (s["date"] or "", s["startTime"] or ""))
+    out.sort(key=lambda s: (0 if s.get("flat") else 1, s["date"] or "", s["startTime"] or ""))
     return out
+
+
+def _fee_number(x) -> float:
+    """A flat fee as a plain number (money is float dollars app-wide)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    return v if v == v else 0.0   # NaN guard
 
 
 def _coerce_shifts(raw) -> list:
@@ -180,6 +295,10 @@ def _coerce_shifts(raw) -> list:
             "prevDate": str(s.get("prevDate") or "")[:40],
             "prevStartTime": str(s.get("prevStartTime") or "")[:20],
             "prevEndTime": str(s.get("prevEndTime") or "")[:20],
+            # A flat-rate engagement's removal notice renders as an engagement
+            # card (no date/time line). Flag only — no fee, no dates: a
+            # cancellation doesn't restate the offer.
+            "flat": s.get("flat") is True,
         })
     return out
 
@@ -257,6 +376,9 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
     row doesn't wrap onto two lines."""
     rows = []
     for s in shifts:
+        if s.get("flat"):
+            rows.append(_flat_card_html(s, accent))
+            continue
         when = _fmt_iso_date(s.get("date"))
         rng = " – ".join([x for x in (_fmt_hhmm(s.get("startTime")), _fmt_hhmm(s.get("endTime"))) if x])
         when_time = "&nbsp;&nbsp;·&nbsp;&nbsp;".join([escape(x) for x in (when, rng) if x])
@@ -294,6 +416,59 @@ def _crew_shifts_html(shifts: list, accent: str) -> str:
             'style="width:100%;margin:8px 0 16px">' + "".join(rows) + "</table>")
 
 
+def _date_range_label(start, end) -> str:
+    """'Thu, Sep 10, 2026 – Sun, Sep 20, 2026', a single date when they match,
+    '' when neither is set."""
+    a = _fmt_iso_date(start) if start else ""
+    b = _fmt_iso_date(end) if end else ""
+    if a and b and a != b:
+        return a + " – " + b
+    return a or b
+
+
+def _flat_card_html(s: dict, accent: str) -> str:
+    """One accent-edged card for a flat-rate engagement: role, the flat fee,
+    the project's date range, then the date OUTLINE (each scheduled day + what
+    it is — no times, the hire sets their own), and the producer's scope note.
+    Only ever rendered for entries _crew_shifts flagged ``flat``; a removal
+    snapshot (no fee, no dates) collapses to role + 'Flat-rate engagement'."""
+    fee = s.get("fee")
+    fee_line = ("Flat-rate engagement&nbsp;&nbsp;·&nbsp;&nbsp;<strong style=\"color:#233038\">"
+                + escape(_money(fee)) + "</strong>") if fee is not None else "Flat-rate engagement"
+    line_fee = '<div style="font-size:12px;color:#7a838c;margin-top:3px">' + fee_line + '</div>'
+    rng = _date_range_label(s.get("projectStart"), s.get("projectEnd"))
+    line_rng = ('<div style="font-size:12px;color:#7a838c;margin-top:3px">Project dates:&nbsp;'
+                + escape(rng) + '</div>') if rng else ""
+    outline = [d for d in (s.get("projectDates") or []) if isinstance(d, dict) and d.get("date")]
+    line_outline = ""
+    if outline:
+        items = []
+        for d in outline:
+            when = _fmt_iso_date(d.get("date"))
+            if d.get("endDate"):
+                when += " – " + _fmt_iso_date(d.get("endDate"))
+            title = (d.get("title") or "").strip()
+            items.append('<div style="padding:2px 0">' + escape(when)
+                         + ('&nbsp;&nbsp;·&nbsp;&nbsp;<span style="color:#3d4852">' + escape(title) + '</span>' if title else "")
+                         + '</div>')
+        line_outline = ('<div style="font-size:12px;color:#7a838c;margin-top:8px;padding:8px 10px;'
+                        'background-color:#f7f9fa;border-radius:5px">'
+                        '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.06em;'
+                        'color:#8a949e;margin-bottom:3px">Schedule outline — set your own hours</div>'
+                        + "".join(items) + '</div>')
+    note = escape(s.get("note") or "").replace("\n", "<br>")
+    line_note = ('<div style="font-size:12px;color:#3d4852;margin-top:6px;padding:7px 10px;'
+                 'background-color:#f7f9fa;border-radius:5px;border-left:2px solid ' + accent + '">'
+                 + note + '</div>') if note else ""
+    return (
+        '<tr><td style="padding:11px 14px;border:1px solid #eceef0;border-left:3px solid ' + accent + ';'
+        'background-color:#ffffff;border-radius:6px">'
+        '<div style="font-size:14px;font-weight:bold;color:#233038">' + escape(s.get("roleLabel") or "Crew") + '</div>'
+        + line_fee + line_rng + line_outline + line_note +
+        '</td></tr><tr><td style="font-size:0;line-height:0;padding:0">&nbsp;</td></tr>'
+    )
+
+
 def _add_to_calendar_cta(view_url: str, accent: str) -> str:
     """A single 'Add to Calendar' button that opens the crew call sheet, where
     the per-shift Google-Calendar buttons live. Email clients can't run the
@@ -316,13 +491,18 @@ def _add_to_calendar_cta(view_url: str, accent: str) -> str:
     )
 
 
-def _crew_header_html(project_name: str, shift_count: int, view_url: str, accent: str, site_address: str = "") -> str:
+def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, site_address: str = "") -> str:
     """Themed call-to-action card with a single accent button that opens the
     crew landing page (where Accept / Decline + the note actually happen).
     One button — both responses live on the same page, so two links here would
-    be redundant."""
+    be redundant. ``shifts`` is the crew-facing list (or a bare count, for
+    callers that only know how many) — the count line says shifts and/or
+    flat-rate engagements."""
     url = escape(view_url)
-    n = str(shift_count) + " shift" + ("" if shift_count == 1 else "s")
+    if isinstance(shifts, int):
+        n = str(shifts) + " shift" + ("" if shifts == 1 else "s")
+    else:
+        n = escape(_ask_label(shifts))
     loc = ('<div style="font-size:12px;color:#8a949e;margin:0 0 2px">' + escape(site_address) + '</div>') if site_address else ""
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
@@ -354,7 +534,7 @@ def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, br
             .replace("{{companyName}}", company)
             .replace("{{location}}", site_address))
     return _paragraphs_to_html(body, {
-        "{{header}}": _crew_header_html(project_name, len(shifts), view_url, brand["accent"], site_address),
+        "{{header}}": _crew_header_html(project_name, shifts, view_url, brand["accent"], site_address),
         "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]),
         "{{signature}}": signature_html,
     })
@@ -469,6 +649,16 @@ _NOTIFY_FALLBACKS = {
 }
 
 
+_EMPTY_LABEL_LINE = re.compile(r"^[ \t]*[^\n:{}]{1,40}:[ \t]*$", re.MULTILINE)
+
+
+def _drop_empty_label_lines(text: str) -> str:
+    """Remove template lines that resolved to a bare 'Label:' with nothing after
+    it (a flat-rate engagement has no call or wrap time). Only whole lines of
+    that exact shape go; prose with a colon mid-sentence is untouched."""
+    return _EMPTY_LABEL_LINE.sub("", text or "")
+
+
 async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data, project_name=None, token=None) -> dict:
     """Best-effort send of a crew notification email. NEVER raises (mirrors
     _send_crew_email): a delivery failure must not undo the producer's
@@ -493,11 +683,22 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # venue names the place, the address gets the crew there.
         site_address = await _resolve_site_address(db, project)
         location = " — ".join(x for x in [((project.venue if project else "") or "").strip(), site_address] if x)
+        # A flat-rate engagement has no call/wrap: {{date}} becomes the project's
+        # date range and the two time vars resolve empty — and any template line
+        # left as a bare "Call:" / "Wrap:" label is dropped below, so the shipped
+        # confirmation body still reads cleanly for a flat hire.
+        is_flat = bool(first.get("flat"))
+        if is_flat:
+            date_text = _date_range_label(
+                first.get("projectStart") or (project.start_date if project else ""),
+                first.get("projectEnd") or (project.end_date if project else ""))
+        else:
+            date_text = _fmt_iso_date(first.get("date")) if first.get("date") else ""
         repl = {
             "{{companyName}}": brand["company"],
             "{{crewName}}": ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there",
             "{{role}}": first.get("roleLabel") or "",
-            "{{date}}": _fmt_iso_date(first.get("date")) if first.get("date") else "",
+            "{{date}}": date_text,
             "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
             "{{wrapTime}}": _fmt_hhmm(first.get("endTime")) if first.get("endTime") else "",
             "{{location}}": location,
@@ -511,6 +712,8 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # Subject is plain text — substitute the project name plainly there.
         subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}").replace("{{projectName}}", project_name)
         body_text = _sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or "")
+        if is_flat:
+            body_text = _drop_empty_label_lines(body_text)
         # {{shifts}} renders the themed shift list (same block the request email
         # uses) so a withdrawal can spell out exactly which shifts it covers. The
         # block is offered to every notify template; single-position notices
@@ -725,8 +928,10 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
             ) or "A crew member"
             project_name = (project.name if project else "") or "a project"
             n = len(req.position_ids or [])
+            n_flat = sum(1 for p in _fixed_list(project) if p.get("id") in set(req.position_ids or []))
             title = f"{crew_name} {decision} a crew request"
-            body = project_name + " · " + str(n) + (" shift" if n == 1 else " shifts")
+            body = project_name + " · " + _ask_label(
+                [{"flat": True}] * n_flat + [{}] * max(0, n - n_flat))
             if comment:
                 body += " · “" + comment + "”"
             url = f"/#/projects/{req.project_id}" if req.project_id else "/#/dashboard"
@@ -838,11 +1043,19 @@ async def send_crew_request(
                 continue
             if pos.get("status") in _SENDABLE_FROM:
                 sendable.append(pos.get("id"))
+    # Flat-rate engagements need no date — the ask IS the whole project.
+    for pos in _fixed_list(project):
+        if pos.get("crewId") != contact_id:
+            continue
+        if explicit and str(pos.get("id")) not in explicit_set:
+            continue
+        if pos.get("status") in _SENDABLE_FROM:
+            sendable.append(pos.get("id"))
 
     if not sendable:
         raise HTTPException(
             status_code=400,
-            detail={"reason": "no sendable positions — assign this crew member to a scheduled day (with a date) on the project first"},
+            detail={"reason": "no sendable positions — assign this crew member to a scheduled day (with a date) or a flat-rate position on the project first"},
         )
 
     # A direct book is already answered: it records an agreement the producer

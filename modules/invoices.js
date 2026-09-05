@@ -431,7 +431,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours" };
+    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "qty") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var svcData = item.type === "service" && item.serviceId ? (services || []).find(function(sv) { return sv.id === item.serviceId; }) : null;
@@ -453,7 +453,7 @@
     // negotiated. The line keeps its snapshotted price — an invoice must not
     // silently re-price itself — so a mismatch offers a one-click apply instead.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate) return null;
+      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -500,7 +500,8 @@
           onUpdate(sectionId, item.id, { rateType: rt, unitPrice: maps.priceMap[rt] || 0, cost: maps.costMap[rt] || 0, adjustedPrice: null });
         }, style: selStyle },
           h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
-          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT")),
+          h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
+          svcRateType === "flat" && h("option", { value: "flat" }, "Flat")),
         item.type === "product" && isDraft && prodData && prodVariants.length > 0 && h("select", {
           value: lineVariantId, onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
@@ -554,7 +555,11 @@
         h("option", { value: "day" }, "Day"),
         h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"),
-        h("option", { value: "ot" }, "OT")
+        h("option", { value: "ot" }, "OT"),
+        // A flat-rate engagement line (from the schedule's flat-rate positions)
+        // keeps its typed price; the option exists so the select reads "Flat"
+        // rather than falling back to the first option.
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
       ),
       // Pricing-variant selector (products with variants only) — mirrors the
       // quote builder. Switching re-snapshots name/price/cost from the variant.
