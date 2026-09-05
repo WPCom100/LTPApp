@@ -35,6 +35,8 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
+from backend.doc_units import qty_label
+
 
 # ── Brand palette (light theme) ─────────────────────────────────────────────
 # The document renders on a WHITE page (see _bg), so every color below is
@@ -123,47 +125,10 @@ def _fmt_money(val):
         return "$0.00"
 
 
-# The unit behind a quantity, for the QTY column: "3 days", "1 half day",
-# "5 OT hours", "1 flat rate"; "2 units" of equipment (the rental period already
-# sits in the name); a fee's own unit ("1 trip", "8 percent"); "ea" for a
-# product. Mirrors the qtyLabel the builders print beside the field, so the
-# PDF names the same thing the producer priced.
-_SERVICE_UNITS = {
-    "day": ("day", "days"), "half": ("half day", "half days"), "hourly": ("hour", "hours"),
-    "ot": ("OT hour", "OT hours"), "flat": ("flat rate", "flat rate"),
-}
-_NO_PLURAL = {"each", "ea", "percent", "%", "hrs", "hr"}
-
-
-def _plural(unit):
-    if unit.endswith(("s", "x", "z", "ch", "sh")):
-        return unit + "es"
-    if unit.endswith("y") and len(unit) > 1 and unit[-2] not in "aeiou":
-        return unit[:-1] + "ies"
-    return unit + "s"
-
-
-def _qty_label(it, qty):
-    kind = (it.get("type") or "").strip().lower()
-    try:
-        one = float(qty or 0) == 1
-    except (TypeError, ValueError):
-        one = False
-    if kind == "service":
-        single, many = _SERVICE_UNITS.get((it.get("rateType") or "day").strip().lower(), _SERVICE_UNITS["day"])
-        return single if one else many
-    if kind == "equipment":
-        return "unit" if one else "units"
-    unit = (it.get("unit") or "").strip().lower()
-    if kind == "fee":
-        if not unit or unit == "flat":
-            return "flat rate"
-        return unit if (one or unit in _NO_PLURAL) else _plural(unit)
-    if kind == "product":
-        if not unit or unit in _NO_PLURAL:
-            return "ea"
-        return unit if one else _plural(unit)
-    return ""
+# The unit behind a quantity, for the QTY column ("3 days", "1 half day",
+# "5 OT hours", "2 units", "1 trip", "ea") — shared with the online view's
+# payload so both surfaces name the same thing the producer priced.
+_qty_label = qty_label
 
 
 def _fmt_qty(val):

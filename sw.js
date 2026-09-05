@@ -219,7 +219,11 @@
 // (numbers as numbers). domain-rates.js, domain-crew.js, the schedule editor
 // and builder, both document builders, labor.js, client-rates.js, settings.js,
 // quotes-services.js.
-var CACHE_VERSION = 'ltp-shell-v78';
+// v79: the online quote/invoice view names the unit beside each quantity —
+// "3 days", "1 half day", "5 OT hours" — in the two aligned sub-columns the
+// PDF uses (digits on one right edge, labels on one left edge; stacked under
+// the number on a phone). client-view.js; the payload carries it as qtyLabel.
+var CACHE_VERSION = 'ltp-shell-v79';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -260,12 +260,40 @@
     var secStart = sec.customDates ? sec.startDate : (entity.customStartDate || (project && project.startDate));
     var secEnd   = sec.customDates ? sec.endDate   : (entity.customEndDate   || (project && project.endDate));
 
-    var cols = compact ? "minmax(0,1fr) 34px 80px 84px" : "minmax(0,1fr) 56px 112px 112px";
+    var cols = compact ? "minmax(0,1fr) 50px 76px 80px" : "minmax(0,1fr) 104px 112px 112px";
     var moneySize = compact ? "12px" : "13px";
+
+    // QTY reads as two aligned sub-columns, like the PDF: the number
+    // right-aligned at a fixed edge (so digits line up down the page) and the
+    // unit label — "days", "half day", "OT hours", "units", "trips", "ea",
+    // derived server-side as it.qtyLabel — left-aligned just past it. On a
+    // phone the label drops under the number, both flush to that same edge.
+    var QTY_NUM_W = 36;
+    var qtyCols = QTY_NUM_W + "px minmax(0,1fr)";
+    var labelStyle = { fontFamily: FONT, color: MUTE, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 };
+    function qtyCell(num, label) {
+      var numEl = h("div", { style: { textAlign: "right", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, num);
+      if (compact) {
+        return h("div", { style: { minWidth: 0 } },
+          numEl,
+          label ? h("div", { style: Object.assign({ fontSize: "10px", textAlign: "right", marginTop: 1 }, labelStyle) }, label) : null);
+      }
+      return h("div", { style: { display: "grid", gridTemplateColumns: qtyCols, columnGap: 6, alignItems: "baseline", minWidth: 0 } },
+        numEl,
+        h("div", { style: Object.assign({ fontSize: "11px" }, labelStyle) }, label || ""));
+    }
+    // The header sits flush with the digits (the trailing letter-spacing is
+    // pulled back so "Y" lands on the number edge), like UNIT PRICE and TOTAL
+    // over their right-aligned figures.
+    var qtyHeader = compact
+      ? h("div", { style: { textAlign: "right", marginRight: "-0.14em" } }, "Qty")
+      : h("div", { style: { display: "grid", gridTemplateColumns: qtyCols, columnGap: 6 } },
+          h("div", { style: { textAlign: "right", marginRight: "-0.14em" } }, "Qty"),
+          h("div"));
 
     var headerRow = h("div", { style: { display: "grid", gridTemplateColumns: cols, columnGap: compact ? 8 : 12, padding: "10px 0", borderBottom: "1px solid " + HAIR, fontSize: "10px", fontWeight: 700, color: MUTE, letterSpacing: "0.14em", textTransform: "uppercase" } },
       h("div", null, "Item"),
-      h("div", { style: { textAlign: "center" } }, "Qty"),
+      qtyHeader,
       h("div", { style: { textAlign: "right" } }, compact ? "Unit" : "Unit Price"),
       h("div", { style: { textAlign: "right" } }, "Total"));
 
@@ -293,7 +321,7 @@
         h("div", { style: { fontSize: compact ? "13px" : "14px", fontWeight: 600, color: TEXT, lineHeight: 1.4, overflowWrap: "break-word" } },
           it.name || "",
           (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")")),
-        h("div", { style: { textAlign: "center", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtQty(qty)),
+        qtyCell(fmtQty(qty), it.qtyLabel),
         h("div", { style: { textAlign: "right", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } },
           hasAdj
             ? h("div", null,

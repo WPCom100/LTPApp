@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import models
+from backend.doc_units import qty_label
 
 
 async def doc_display_name(db: AsyncSession, row) -> str:
@@ -249,9 +250,12 @@ async def load_settings(db: AsyncSession) -> dict:
 # adding a field here is a deliberate act with a reader to point at.
 
 # modules/client-view.js reads exactly these off a line item: it.id, it.type,
-# it.name, it.qty, it.unitPrice, it.adjustedPrice, it.rentalLabel, and for a
-# note row n.text / n.name / n.id. Everything else — cost, deliveredQty,
-# invoicedQty, notes, taxable, rateType and every *Id foreign key — is internal.
+# it.name, it.qty, it.unitPrice, it.adjustedPrice, it.rentalLabel, plus
+# it.qtyLabel — which is DERIVED in public_section_items ("days", "half day",
+# "OT hours", "units", "trips", "ea"; the PDF's vocabulary), never copied — and
+# for a note row n.text / n.name / n.id. Everything else — cost, deliveredQty,
+# invoicedQty, notes, taxable, rateType, unit and every *Id foreign key — is
+# internal.
 # NOTE: this scrub feeds ONLY the JSON at GET /api/view/{token}. The public PDF
 # (routes/view.py::public_pdf) renders from the unsanitized quote_dict, so
 # narrowing here cannot change what the PDF prints.
@@ -299,6 +303,11 @@ def public_section_items(sections: list) -> list:
             if not isinstance(it, dict):
                 continue
             scrubbed = {k: v for k, v in it.items() if k in _PUBLIC_ITEM_KEYS}
+            # Derived, not copied: the unit behind the quantity, in the same
+            # words the PDF prints, so the client page can name it without
+            # the internal rateType/unit fields it is worked out from.
+            if scrubbed.get("type") != "note":
+                scrubbed["qtyLabel"] = qty_label(it, it.get("qty"))
             scrubbed_items.append(scrubbed)
         out.append({
             "id": sec.get("id"),
