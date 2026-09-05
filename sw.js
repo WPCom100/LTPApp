@@ -223,7 +223,10 @@
 // "3 days", "1 half day", "5 OT hours" — in the two aligned sub-columns the
 // PDF uses (digits on one right edge, labels on one left edge; stacked under
 // the number on a phone). client-view.js; the payload carries it as qtyLabel.
-var CACHE_VERSION = 'ltp-shell-v79';
+// v80: the phone layout of that view keeps every item on one line — smaller
+// type, tighter money columns, an ellipsis for a name longer than its column
+// (as on the PDF); the unit still sits under the number. client-view.js.
+var CACHE_VERSION = 'ltp-shell-v80';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
