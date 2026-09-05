@@ -637,7 +637,7 @@
                           var sv = sid ? svcs.find(function(sv2) { return sv2.id === sid; }) : null;
                           updatePosition(s.id, pos.id, { serviceId: sid, role: sv ? sv.role : "" });
                         },
-                        options: [{ value: "", label: "Role…" }].concat(svcs.map(function(sv) {
+                        options: [{ value: "", label: "Role…" }].concat(window.LTP_sortServices(svcs).map(function(sv) {
                           return { value: sv.id, label: sv.role, sublabel: sv.description };
                         })),
                         searchPlaceholder: "Search roles…",
@@ -846,7 +846,7 @@
             // none (assign them from the schedule row via the Role dropdown).
             var assignable = (c.crewRoles || []).map(function(roleCode) {
               return svcs.find(function(sv) { return sv.role === roleCode; });
-            }).filter(Boolean);
+            }).filter(Boolean).sort(window.LTP_compareServices);
             return h("div", { key: c.id, style: { display: "flex", gap: 8, alignItems: "center" } },
               h("div", { style: { flex: 1 } },
                 h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),

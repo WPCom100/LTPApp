@@ -153,7 +153,7 @@
       return true;
     }).sort(function(a, b) {
       if (a.department !== b.department) return a.department.localeCompare(b.department);
-      return a.role.localeCompare(b.role);
+      return window.LTP_compareRoleCodes(a.role, b.role);
     });
 
     function addService(d) {

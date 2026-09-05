@@ -140,6 +140,38 @@ window.LTP_servicesForClient = function(services, clientRates, ref) {
   return hit ? out : list;
 };
 
+// ── Role ordering ────────────────────────────────────────────────────────────
+// One comparator for every role/position list in the app — the schedule
+// editor's and flat-rate panel's role pickers, the manual-shift and
+// client-rate pickers, the quote/invoice item pickers, the roster's role tags —
+// so "L1, L2, L10, LD, PM, SM, SPOT" reads the same everywhere. Natural order:
+// a number inside a code compares as a number (L2 before L10), case is ignored.
+window.LTP_compareRoleCodes = function(a, b) {
+  return String(a == null ? "" : a).trim().localeCompare(String(b == null ? "" : b).trim(), "en", { numeric: true, sensitivity: "base" });
+};
+window.LTP_compareServices = function(a, b) {
+  return window.LTP_compareRoleCodes(a && a.role, b && b.role)
+    || String((a && a.description) || "").localeCompare(String((b && b.description) || ""), "en", { sensitivity: "base" })
+    || (((a && a.id) || 0) - ((b && b.id) || 0));
+};
+window.LTP_sortServices = function(list) {
+  return (list || []).slice().sort(window.LTP_compareServices);
+};
+
+// Position groups for a billed schedule (Send to Quote / Send to Invoice, in
+// window.LTP_scheduleLaborSections): roles that are letters only (PM, SPOT, LD,
+// SM) come first, then letter+number roles (L1, L2, L3 …), then anything else
+// (a code with punctuation or spaces); alphabetical within each group.
+window.LTP_roleGroup = function(role) {
+  var r = String(role == null ? "" : role).trim();
+  if (/^[A-Za-z]+$/.test(r)) return 0;
+  if (/^[A-Za-z]+\d+$/.test(r)) return 1;
+  return 2;
+};
+window.LTP_compareRoleGroups = function(a, b) {
+  return (window.LTP_roleGroup(a) - window.LTP_roleGroup(b)) || window.LTP_compareRoleCodes(a, b);
+};
+
 // Service line rate maps. Given a service's rate card, returns { priceMap,
 // costMap } keyed by rate type (day/half/hourly/ot). Half/hourly/OT fall back
 // to derived ratios (×0.5, ÷10, ÷10×1.5) when not explicitly set. Single
