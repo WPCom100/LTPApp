@@ -525,14 +525,22 @@
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, "Crew Roster (" + crew.length + ")"),
         h(window.Btn, { small: true, onClick: function() { setCustomRole(""); setEditingCrew({ firstName: "", lastName: "", email: "", phone: "", role: "", crewDepartments: [], crewRoles: [], crewNotes: "", crewStatus: "active", minDayCost: 0, isCrew: true, companyIds: [] }); } }, "+ Add Crew")),
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
-        departments.map(function(d) {
+      // Phone: the search box takes its own row and the department chips
+      // scroll in a strip (one flex row ran the search box off-screen).
+      (function() {
+        var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" } : null;
+        var chips = departments.map(function(d) {
           return h("button", { key: d, onClick: function() { setDeptFilter(d); },
-            style: { background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? B.btnInk : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } }, d);
-        }),
-        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
-          style: { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } })
-      ),
+            style: Object.assign({ background: deptFilter === d ? B.accent : B.raised, color: deptFilter === d ? B.btnInk : B.textMut, border: "1px solid " + (deptFilter === d ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) }, d);
+        });
+        var searchInput = h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
+          style: isMobile ? { width: "100%", boxSizing: "border-box", height: 36, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 12px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" }
+                          : { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } });
+        if (isMobile) return h("div", { style: { marginBottom: 12 } },
+          h("div", { style: { marginBottom: 8 } }, searchInput),
+          h(window.LTPScrollStrip, { isMobile: true, mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips));
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } }, chips, searchInput);
+      })(),
       h(window.LTPList, null,
         filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
         filtered.map(function(c) {
@@ -1313,41 +1321,61 @@
     }
 
     return h("div", null,
-      // Stats
-      h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 } },
-        h(window.StatCard, { label: "Total Positions", value: stats.total }),
-        h(window.StatCard, { label: "Open", value: stats.open, accent: stats.open > 0 ? B.warn : B.textMut }),
-        h(window.StatCard, { label: "Requested", value: stats.requested, accent: B.warn }),
-        h(window.StatCard, { label: "Accepted", value: stats.accepted, accent: stats.accepted > 0 ? B.success : B.textMut }),
-        h(window.StatCard, { label: "Confirmed", value: stats.confirmed, accent: B.success }),
-        stats.conflicts > 0 && h(window.StatCard, { label: "Conflicts", value: stats.conflicts, accent: B.danger })
-      ),
-      // Filters + Batch Actions
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
+      // Stats — phone: one compact strip (five stacked 180px cards were a
+      // whole screen); desktop: the StatCard row.
+      isMobile
+        ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+            { label: "Total", value: stats.total },
+            { label: "Open", value: stats.open, color: stats.open > 0 ? B.warn : B.textMut },
+            { label: "Requested", value: stats.requested, color: B.warn },
+            { label: "Accepted", value: stats.accepted, color: stats.accepted > 0 ? B.success : B.textMut },
+            { label: "Confirmed", value: stats.confirmed, color: B.success },
+            stats.conflicts > 0 && { label: "Conflicts", value: stats.conflicts, color: B.danger } ] })
+        : h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 } },
+            h(window.StatCard, { label: "Total Positions", value: stats.total }),
+            h(window.StatCard, { label: "Open", value: stats.open, accent: stats.open > 0 ? B.warn : B.textMut }),
+            h(window.StatCard, { label: "Requested", value: stats.requested, accent: B.warn }),
+            h(window.StatCard, { label: "Accepted", value: stats.accepted, accent: stats.accepted > 0 ? B.success : B.textMut }),
+            h(window.StatCard, { label: "Confirmed", value: stats.confirmed, accent: B.success }),
+            stats.conflicts > 0 && h(window.StatCard, { label: "Conflicts", value: stats.conflicts, accent: B.danger })
+          ),
+      // Filters + Batch Actions. Phone: the status chips scroll in one strip,
+      // then project picker · + Manual Shift (· Send) share a 36px row —
+      // instead of nine controls wrapping over four lines.
+      (function() {
+        var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" } : null;
+        var chips = ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: { background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" } },
+            style: Object.assign({ background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
-        }),
+        });
         // Values stay STRINGS: the filter is compared with `Number(projFilter)`
         // and against the literal "all" further up.
-        h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
+        var projSelect = h(window.LTPSearchSelect, { value: projFilter, onChange: function(v) { setProjFilter(v); },
           // sentinel:true — "All Projects" is a real value but not a record, so
           // it shouldn't be held in the list while you search for a project.
           options: [{ value: "all", label: "All Projects", sentinel: true }].concat(
             projOptions.map(function(p) { return { value: String(p.id), label: p.name }; })),
           searchPlaceholder: "Search projects\u2026",
-          style: { width: 190, flexShrink: 0 },
-          triggerStyle: { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
+          style: isMobile ? { flex: "1 1 160px", minWidth: 0 } : { width: 190, flexShrink: 0 },
+          triggerStyle: isMobile ? { background: B.raised, borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: 36 }
+                                 : { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
           panelMinWidth: 240,
-        }),
-        h("div", { style: { flex: 1 } }),
-        h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
-          style: { background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "+ Manual Shift"),
-        pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
-          style: { background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" } }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8")
-      ),
+        });
+        var actMobile = isMobile ? { borderRadius: "8px", padding: "0 12px", height: 36, fontSize: "12px", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 } : null;
+        var manualBtn = h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
+          style: Object.assign({ background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile) }, "+ Manual Shift");
+        var sendBtn = pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
+          style: Object.assign({ background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile, isMobile ? { flex: "1 1 auto" } : null) }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8");
+        if (isMobile) return [
+          h(window.LTPScrollStrip, { key: "chips", isMobile: true, wrapStyle: { marginBottom: 8 },
+            mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips),
+          h("div", { key: "row", style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, manualBtn, sendBtn)
+        ];
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
+          chips, projSelect, h("div", { style: { flex: 1 } }), manualBtn, sendBtn);
+      })(),
       // One-off manual-shift adder (warehouse labor etc. \u2014 see ManualShiftModal).
       showManualShift && h(ManualShiftModal, { services: services, contacts: contacts, onSave: createManualShift, onClose: function() { setShowManualShift(false); } }),
       // Lightweight editor for an existing manual shift (internal project) \u2014
@@ -1863,7 +1891,7 @@
       var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
       weekDates.push(d.toISOString().substring(0, 10));
     }
-    var weekLabel = fmt(weekDates[0]) + " \u2014 " + fmt(weekDates[6]);
+    var weekLabel = isMobile ? window.LTP_formatDateRangeShort(weekDates[0], weekDates[6]) : fmt(weekDates[0]) + " \u2014 " + fmt(weekDates[6]);
 
     // Build schedule: crewId → [{ date, projectName, role, callTime }]
     var scheduleMap = {};
@@ -2509,46 +2537,75 @@
       return t + " · " + hrs + (byMin ? " (contract minimum)" : "");
     }
 
+    // Phone: the presets are pill chips in a scrolling strip (merged in only
+    // on a phone so the desktop buttons are untouched).
+    var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap" } : null;
     var presetBtn = function(key, label) {
       var active = preset === key;
       return h("button", { key: key, onClick: function() { pickPreset(key); },
-        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+        style: Object.assign({ background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, chipMobile) }, label);
     };
     // Pay-period presets: "period" (this cycle) / "lastperiod" (previous). Active
     // highlight tracks the navigator index, not a distinct preset value.
     var payPeriodBtn = function(key, label) {
       var active = preset === "period" && curPeriod && (key === "period" ? periodIndex === curPeriod.index : periodIndex === curPeriod.index - 1);
       return h("button", { key: key, onClick: function() { pickPreset(key); },
-        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, label);
+        style: Object.assign({ background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, chipMobile) }, label);
     };
     // ◀ [period label · pay day] ▶ — shown only when a cycle is configured and a
-    // pay-period preset is active (not for week/month/custom).
-    var periodNav = (payConfigured && preset === "period") ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
-      h("button", { onClick: function() { shiftPeriod(-1); }, className: "ltp-tap", "aria-label": "Previous pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "◀"),
-      h("div", null,
-        h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
-          (function() { var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex); return n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : ""; })()
-          + window.LTP_payPeriodLabel(range.start, range.end)),
-        h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(window.LTP_payPeriodPayDay(range.end, payOffset)))),
-      h("button", { onClick: function() { shiftPeriod(1); }, className: "ltp-tap", "aria-label": "Next pay period", style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, "▶")) : null;
+    // pay-period preset is active (not for week/month/custom). Phone: one row,
+    // the label centred between 36px arrows, dates in the short form (the long
+    // label wrapped to three lines with an arrow stranded on each side).
+    var periodNav = (payConfigured && preset === "period") ? (function() {
+      var n = window.LTP_payPeriodNumberInYear(payAnchor, payLen, periodIndex);
+      var payDay = window.LTP_payPeriodPayDay(range.end, payOffset);
+      var navBtn = function(dir, glyph, label) {
+        return h("button", { onClick: function() { shiftPeriod(dir); }, className: "ltp-tap", "aria-label": label,
+          style: isMobile ? { flexShrink: 0, width: 36, height: 36, display: "inline-flex", alignItems: "center", justifyContent: "center", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", color: B.textMut, cursor: "pointer", fontFamily: "inherit", padding: 0 }
+                          : { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "4px 12px", color: B.textMut, cursor: "pointer", fontFamily: "inherit" } }, glyph);
+      };
+      if (isMobile) return h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 10 } },
+        navBtn(-1, "◀", "Previous pay period"),
+        h("div", { style: { flex: 1, minWidth: 0, textAlign: "center" } },
+          h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } },
+            (n ? "Pay Period #" + n.number + " · " : "") + window.LTP_formatDateRangeShort(range.start, range.end)),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day " + window.LTP_formatDateShort(payDay))),
+        navBtn(1, "▶", "Next pay period"));
+      return h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" } },
+        navBtn(-1, "◀", "Previous pay period"),
+        h("div", null,
+          h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.text } },
+            (n ? ("Pay Period #" + n.number + " · " + n.year + "  ") : "") + window.LTP_payPeriodLabel(range.start, range.end)),
+          h("div", { style: { fontSize: "10px", color: B.textMut } }, "Pay day: " + window.LTP_formatDate(payDay))),
+        navBtn(1, "▶", "Next pay period"));
+    })() : null;
 
     var fromInput = h(window.LTPInput, { label: "From", value: range.start, onChange: function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, type: "date" });
     var toInput = h(window.LTPInput, { label: "To", value: range.end, onChange: function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, type: "date" });
+    // Phone: From / To as picker chips (the native date input hidden behind a
+    // formatted chip — the schedule builder's pattern) beside the exports, in
+    // place of two labelled 80px inputs.
+    var dateChip = function(prefix, value, onChange, aria) {
+      return window.LTP_pickerChip({ prefix: prefix, label: window.LTP_formatDateShort(value) || "Date", empty: !value, style: { flex: 1 } },
+        h(window.LTPDateField, { value: value, onChange: onChange, ariaLabel: aria, style: window.LTP_NATIVE }));
+    };
+    var exportBtnStyle = isMobile ? { height: 36, padding: "0 12px", fontSize: "12px", flexShrink: 0 } : undefined;
 
     return h("div", null,
-      // Range controls + export. On mobile the custom From/To inputs drop to
-      // their own row so the presets + export don't crush against them.
+      // Range controls + export. Phone: presets scroll in one chip strip, then
+      // From · To chips share a row with the exports.
       isMobile
-      ? h("div", { style: { marginBottom: 14 } },
-          h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 } },
+      ? h("div", { style: { marginBottom: 10 } },
+          h(window.LTPScrollStrip, { isMobile: true, wrapStyle: { marginBottom: 8 },
+            mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } },
             payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
-            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
-            h("div", { style: { flex: 1 } }),
-            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); } }, "Export to QuickBooks"),
-            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0 }, "Export CSV")),
-          h("div", { style: { display: "flex", gap: 8 } },
-            h("div", { style: { flex: 1 } }, fromInput),
-            h("div", { style: { flex: 1 } }, toInput)))
+            presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month")),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 8 } },
+            dateChip("From", range.start, function(v) { setPreset("custom"); setRange({ start: v, end: range.end }); }, "From date"),
+            dateChip("To", range.end, function(v) { setPreset("custom"); setRange({ start: range.start, end: v }); }, "To date")),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" } },
+            canExport && h(window.Btn, { small: true, onClick: function() { if (preset !== "period") pickPreset("period"); setExportDlg({}); }, style: exportBtnStyle }, "Export to QuickBooks"),
+            h(window.Btn, { small: true, variant: "ghost", onClick: exportCSV, disabled: data.groups.length === 0, style: exportBtnStyle }, "Export CSV")))
       : h("div", { style: { display: "flex", gap: 8, alignItems: "flex-end", marginBottom: 14, flexWrap: "wrap" } },
           payConfigured && payPeriodBtn("period", "This Pay Period"), payConfigured && payPeriodBtn("lastperiod", "Last Pay Period"),
           presetBtn("week", "This Week"), presetBtn("lastweek", "Last Week"), presetBtn("month", "This Month"),
@@ -2561,12 +2618,20 @@
       periodNav,
 
       // Period summary — payable is SIGNED work only; pending days are estimates.
-      h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
-        h(window.StatCard, { label: "Period Payout", value: fmtMoney(data.grandTotal), sub: "signed off", accent: B.accent }),
-        h(window.StatCard, { label: "Crew", value: String(data.groups.length) }),
-        data.pendingCount > 0 && h(window.StatCard, { label: "Pending Sign-off", value: String(data.pendingCount), sub: "est. " + fmtMoney(data.pendingTotal), accent: B.warn }),
-        data.unlockedCount > 0 && h(window.StatCard, { label: "Not Locked", value: String(data.unlockedCount), accent: B.warn }),
-        data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
+      // Phone: one compact strip instead of a column of 180px cards.
+      isMobile
+        ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+            { label: "Payout", value: "$" + Math.round(data.grandTotal).toLocaleString(), sub: "signed off", color: B.accent, title: fmtMoney(data.grandTotal) + " signed off" },
+            { label: "Crew", value: String(data.groups.length) },
+            data.pendingCount > 0 && { label: "Pending", value: String(data.pendingCount), sub: "est. $" + Math.round(data.pendingTotal).toLocaleString(), color: B.warn, title: "Pending sign-off · est. " + fmtMoney(data.pendingTotal) },
+            data.unlockedCount > 0 && { label: "Unlocked", value: String(data.unlockedCount), color: B.warn, title: "Not locked" },
+            data.driftCount > 0 && { label: "Changed", value: String(data.driftCount), color: B.danger, title: "Changed since lock" } ] })
+        : h("div", { style: { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" } },
+            h(window.StatCard, { label: "Period Payout", value: fmtMoney(data.grandTotal), sub: "signed off", accent: B.accent }),
+            h(window.StatCard, { label: "Crew", value: String(data.groups.length) }),
+            data.pendingCount > 0 && h(window.StatCard, { label: "Pending Sign-off", value: String(data.pendingCount), sub: "est. " + fmtMoney(data.pendingTotal), accent: B.warn }),
+            data.unlockedCount > 0 && h(window.StatCard, { label: "Not Locked", value: String(data.unlockedCount), accent: B.warn }),
+            data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
 
       data.groups.length === 0
         ? h(window.EmptyState, { text: "No confirmed crew shifts or flat-rate positions paid between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })

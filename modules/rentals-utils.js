@@ -167,8 +167,11 @@
     function onCreated(rec) { if (rec && rec.id != null) { onChange(rec.id); setQuery(""); setFocused(false); } }
     var showCreate = focused && !sel && query.length > 0;
 
-    return h("div", { style: { position: "relative" } },
-      h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 10px", minHeight: 37 } },
+    // minWidth: 0 (twice) + width: 100% on the input: a text input's intrinsic
+    // width (~20 characters) otherwise pushes the whole field past a phone's
+    // edge inside a grid cell (the scan modal's batch panel).
+    return h("div", { style: { position: "relative", minWidth: 0 } },
+      h("div", { style: { display: "flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "0 8px 0 10px", minHeight: 37, minWidth: 0 } },
         sel && h("span", { style: { background: B.accent, color: B.btnInk, fontSize: "11px", padding: "2px 8px", borderRadius: "4px", fontWeight: 600, marginRight: 6, whiteSpace: "nowrap" } },
           sel.name,
           h("button", { onClick: function(e) { e.stopPropagation(); onChange(null); setQuery(""); }, style: { background: "none", border: "none", color: B.btnInk, cursor: "pointer", fontSize: "12px", fontWeight: 700, padding: "0 0 0 4px" } }, "×")
@@ -178,7 +181,7 @@
           onFocus: function() { if (!sel) setFocused(true); },
           onBlur:  function() { setTimeout(function() { setFocused(false); }, 180); },
           onClick: function() { if (sel) { onChange(null); setQuery(""); setFocused(true); } },
-          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, padding: "8px 0", cursor: sel ? "pointer" : "text" }
+          style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", flex: 1, minWidth: 0, width: "100%", padding: "8px 0", cursor: sel ? "pointer" : "text" }
         }),
         // Inline add/edit of the CRM company itself. A vendor you're buying
         // from often doesn't exist in CRM yet at the moment you're logging the
