@@ -123,6 +123,49 @@ def _fmt_money(val):
         return "$0.00"
 
 
+# The unit behind a quantity, for the QTY column: "3 days", "1 half day",
+# "5 OT hours", "1 flat rate"; "2 units" of equipment (the rental period already
+# sits in the name); a fee's own unit ("1 trip", "8 percent"); "ea" for a
+# product. Mirrors the qtyLabel the builders print beside the field, so the
+# PDF names the same thing the producer priced.
+_SERVICE_UNITS = {
+    "day": ("day", "days"), "half": ("half day", "half days"), "hourly": ("hour", "hours"),
+    "ot": ("OT hour", "OT hours"), "flat": ("flat rate", "flat rate"),
+}
+_NO_PLURAL = {"each", "ea", "percent", "%", "hrs", "hr"}
+
+
+def _plural(unit):
+    if unit.endswith(("s", "x", "z", "ch", "sh")):
+        return unit + "es"
+    if unit.endswith("y") and len(unit) > 1 and unit[-2] not in "aeiou":
+        return unit[:-1] + "ies"
+    return unit + "s"
+
+
+def _qty_label(it, qty):
+    kind = (it.get("type") or "").strip().lower()
+    try:
+        one = float(qty or 0) == 1
+    except (TypeError, ValueError):
+        one = False
+    if kind == "service":
+        single, many = _SERVICE_UNITS.get((it.get("rateType") or "day").strip().lower(), _SERVICE_UNITS["day"])
+        return single if one else many
+    if kind == "equipment":
+        return "unit" if one else "units"
+    unit = (it.get("unit") or "").strip().lower()
+    if kind == "fee":
+        if not unit or unit == "flat":
+            return "flat rate"
+        return unit if (one or unit in _NO_PLURAL) else _plural(unit)
+    if kind == "product":
+        if not unit or unit in _NO_PLURAL:
+            return "ea"
+        return unit if one else _plural(unit)
+    return ""
+
+
 def _fmt_qty(val):
     """Render a quantity for display: whole numbers stay clean ('2'), genuine
     decimals keep their fractional part with trailing zeros trimmed ('2.5',
@@ -723,7 +766,7 @@ class _DocPDF:
         c.setFont("Roboto-Bold", 9)
         c.setFillColor(INK_SOFT)
         c.drawString(col["item"], self.y - 12, "ITEM")
-        qty_center = col["qty"] + 15
+        qty_center = col["qty"] + 38
         c.drawCentredString(qty_center, self.y - 12, "QTY")
         c.drawRightString(col["unit"] + 55, self.y - 12, "UNIT PRICE")
         c.drawRightString(col["total"], self.y - 12, "TOTAL")
@@ -777,9 +820,20 @@ class _DocPDF:
             c.setFillColor(INK)
             c.drawString(col["item"], vc, name)
 
+            # Quantity with its unit beside it — "3 days", "1 half day",
+            # "5 OT hours" — the pair centred where the bare number used to be.
+            num = _fmt_qty(qty)
+            unit_lbl = _qty_label(it, qty)
+            num_w = c.stringWidth(num, "Roboto", fs)
+            lbl_w = c.stringWidth(" " + unit_lbl, "Roboto-Light", 7.5) if unit_lbl else 0
+            qx = qty_center - (num_w + lbl_w) / 2
             c.setFont("Roboto", fs)
             c.setFillColor(INK)
-            c.drawCentredString(qty_center, vc, _fmt_qty(qty))
+            c.drawString(qx, vc, num)
+            if unit_lbl:
+                c.setFont("Roboto-Light", 7.5)
+                c.setFillColor(MUTED)
+                c.drawString(qx + num_w, vc, " " + unit_lbl)
 
             if has_adj:
                 # Original price — muted strikethrough, upper part of row
