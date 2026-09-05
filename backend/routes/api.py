@@ -495,7 +495,7 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
                     print(f"[LTP] payout-integrity: project {item_id} save by non-admin "
                           f"user id={user.id} ({user.email}) carried {reverted} pay-snapshot "
                           f"change(s) — reverted", flush=True)
-        # The same two guards over the flat-rate engagements (Project.fixed_positions):
+        # The same two guards over the flat-rate positions (Project.fixed_positions):
         # same id namespace, same status ladder, same frozen work/adj snapshot.
         if model_cls is models.Project and isinstance(mapped.get("fixed_positions"), list):
             floored = crew_integrity.enforce_status_floor_fixed(row.fixed_positions, mapped["fixed_positions"])

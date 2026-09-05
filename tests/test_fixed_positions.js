@@ -47,7 +47,7 @@ eq("A7 garbage fee → 0", window.LTP_fixedPositionPay(flat("a", 8, "x")).total,
 // ── Lock at confirm ──────────────────────────────────────────────────────────
 let list = [flat("a", 8, 1500), flat("b", 8, 200, { status: "requested" }), flat("c", 5, 900)];
 let locked = window.LTP_stampFixedPay(list, 8, "2026-07-01T09:00:00Z");
-ok("B1 confirmed engagement of the crew locks", locked[0].pay && locked[0].pay.total === 1500 && locked[0].pay.lockedAt === "2026-07-01T09:00:00Z");
+ok("B1 confirmed flat-rate position of the crew locks", locked[0].pay && locked[0].pay.total === 1500 && locked[0].pay.lockedAt === "2026-07-01T09:00:00Z");
 ok("B2 unconfirmed one untouched", !locked[1].pay);
 ok("B3 other crew untouched", !locked[2].pay && locked[2] === list[2]);
 locked = window.LTP_stampFixedPay(list, 8, "t", ["zzz"]);
@@ -55,10 +55,10 @@ ok("B4 ids filter → nothing when no match", !locked[0].pay);
 
 // ── Mark complete / undo ─────────────────────────────────────────────────────
 let done = window.LTP_completeFixedPosition(list, "a", null, "2026-07-14T20:00:00Z", "tester");
-ok("C1 work frozen on the engagement", done[0].work && done[0].work.state === "completed" && done[0].work.pay.total === 1500);
+ok("C1 work frozen on the position", done[0].work && done[0].work.state === "completed" && done[0].work.pay.total === 1500);
 eq("C2 signer recorded", [done[0].work.signedAt, done[0].work.signedBy], ["2026-07-14T20:00:00Z", "tester"]);
 eq("C3 completing at another amount", window.LTP_completeFixedPosition(list, "a", 1750, "t", "u")[0].work.pay.total, 1750);
-ok("C4 a non-confirmed engagement can't complete", !window.LTP_completeFixedPosition(list, "b", null, "t", "u")[1].work);
+ok("C4 a non-confirmed flat-rate position can't complete", !window.LTP_completeFixedPosition(list, "b", null, "t", "u")[1].work);
 ok("C5 original untouched (pure)", !list[0].work);
 let undone = window.LTP_uncompleteFixedPosition(done, "a");
 ok("C6 undo strips work", !undone[0].work && undone[1] === done[1]);
@@ -82,7 +82,7 @@ eq("E5 lands in the period containing the end date", [ppEnd.start, ppEnd.end], [
 eq("E6 paid on that period's pay day", window.LTP_payPeriodPayDay(ppEnd.end, 5), "2026-09-25");
 
 // ── Payout rows ──────────────────────────────────────────────────────────────
-// Dana's engagements on Summer Fest (ends 07-15): one completed with an
+// Dana's flat-rate positions on Summer Fest (ends 07-15): one completed with an
 // adjustment, one requested (ignored), one completed at full margin. Alex:
 // confirmed-but-incomplete on Autumn Gala (ends 07-18) → pending; a completed
 // one on a project ending 08-01 → outside the range.
@@ -112,7 +112,7 @@ eq("F8 Dana total = signed only", dana.total, 1550);
 const rb = alex.rows[0];
 eq("F9 Alex: pending on the project end date", [rb.date, rb.payable, rb.signed], ["2026-07-18", null, null]);
 eq("F10 pending estimate is the fee", rb.estimate, 800);
-ok("F11 engagement on a project ending outside the range excluded", !alex.rows.some(function(r) { return r.posId === "e"; }));
+ok("F11 flat-rate position on a project ending outside the range excluded", !alex.rows.some(function(r) { return r.posId === "e"; }));
 eq("F12 grand/pending totals", [pr.grandTotal, pr.pendingTotal, pr.pendingCount], [1550, 800, 1]);
 eq("F13 unlocked count (Alex was never stamped)", pr.unlockedCount, 1);
 // Drift: locked at 1500, fee now 1700, not yet completed.
@@ -140,10 +140,10 @@ const secs = window.LTP_scheduleLaborSections(sched, services, {}, "one", fmt, f
    flat("q4", 5, 700, { bill: 900, fullMargin: true })]);
 const items = secs[0].items;
 const flatLines = items.filter(function(i) { return i.rateType === "flat"; });
-eq("G1 one flat line per billed engagement with a role", flatLines.length, 2);
+eq("G1 one flat line per billed flat-rate position with a role", flatLines.length, 2);
 eq("G2 flat line shape", [flatLines[0].type, flatLines[0].serviceId, flatLines[0].name, flatLines[0].qty, flatLines[0].unitPrice, flatLines[0].cost],
    ["service", 3, "LD — Lighting Designer", 1, 2000, 1500]);
-eq("G3 note spans the scheduled dates", flatLines[0].notes, "Flat-rate engagement · 2026-09-10 – 2026-09-13");
+eq("G3 note spans the scheduled dates", flatLines[0].notes, "Flat-rate position · 2026-09-10 – 2026-09-13");
 eq("G4 full-margin line costs 0", [flatLines[1].unitPrice, flatLines[1].cost], [900, 0]);
 ok("G5 hourly day line still emitted first", items[0].rateType === "day" && items[0].serviceId === 1);
 const flatOnly = window.LTP_scheduleLaborSections([], services, {}, "split", fmt, null, [flat("q1", 8, 1500, { bill: 2000 })]);
@@ -156,7 +156,7 @@ const after = [flat("r2", 8, 800, { status: "open" })];   // r1 deleted, r2 reas
 const removed = window.LTP_diffRemovedFixed(before, after, contacts, services);
 eq("H1 one notice per person + type", removed.map(function(g) { return g.crewId + ":" + g.template; }).sort(), ["5:crewWithdrawn", "8:crewCancelled"]);
 const canc = removed.find(function(g) { return g.crewId === 8; });
-eq("H2 snapshot is an engagement card", [canc.shifts[0].flat, canc.shifts[0].roleLabel, canc.shifts[0].date, canc.crewName], [true, "LD — Lighting Designer", "", "Dana Designer"]);
+eq("H2 snapshot is a flat-rate position card", [canc.shifts[0].flat, canc.shifts[0].roleLabel, canc.shifts[0].date, canc.crewName], [true, "LD — Lighting Designer", "", "Dana Designer"]);
 eq("H3 unchanged list → no notices", window.LTP_diffRemovedFixed(before, before, contacts, services), []);
 eq("H4 snapshots by id", window.LTP_fixedSnapshots(before, ["r2"], services).map(function(s) { return s.positionId; }), ["r2"]);
 const tot = window.LTP_fixedPositionsTotals([flat("t1", 8, 1500, { bill: 2000 }), flat("t2", 5, 700, { bill: 900, fullMargin: true, status: "open" })]);

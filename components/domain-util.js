@@ -514,7 +514,7 @@ window.LTP_settingsAddress = function(s) {
 // sets the wrap (rolling to the next day for an overnight shift whose wrap is
 // earlier than the call); otherwise the event runs one hour (same minutes, hour
 // clamped to 23). {allDay: true, endDate} instead makes an all-day event
-// spanning date → endDate inclusive (a flat-rate engagement has no call time).
+// spanning date → endDate inclusive (a flat-rate position has no call time).
 // {location} adds a place; attendees is an array of emails; details is
 // optional. Times are floating (no timezone) so they render as the posted
 // wall-clock wherever the crew member opens the link.
@@ -525,7 +525,7 @@ window.LTP_gcalUrl = function(opts) {
   var startStamp = d + "T" + time.replace(":", "") + "00";
   var endStamp;
   if (opts.allDay) {
-    // An all-day span (a flat-rate engagement covering the project's dates):
+    // An all-day span (a flat-rate position covering the project's dates):
     // Google's all-day form is date-only stamps with an EXCLUSIVE end, so the
     // last day advances by one. No endDate → a single all-day event.
     var lastISO = opts.endDate && opts.endDate >= (opts.date || "") ? opts.endDate : opts.date;

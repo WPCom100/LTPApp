@@ -353,7 +353,7 @@ they ride the same crew-request and payroll rails as a shift.
   with a `Flat $…` chip. Send Request / Book Without Emailing, Confirm, Release
   and Cancel all work as for a shift. A confirm **locks the fee** the way a
   shift locks its computed pay.
-- **Labor → Payouts** shows each confirmed engagement as a row dated on the
+- **Labor → Payouts** shows each confirmed flat-rate position as a row dated on the
   **project's end date**, so it sits in the payroll period that date falls into
   and is paid on that period's pay day (the following Friday, per the pay-period
   settings) together with every other payout in the period. It is an estimate
@@ -362,21 +362,21 @@ they ride the same crew-request and payroll rails as a shift.
   QuickBooks vendor-bill export posts it in that period. Adjustments, undo,
   lock/re-lock and the paid-day guard apply as they do to days.
 - **Send to Quote / Invoice** adds one **Flat** service line per billed
-  engagement (qty 1 at the bill amount, cost = the fee). An engagement billed at
+  flat-rate position (qty 1 at the bill amount, cost = the fee). A flat-rate position billed at
   $0 (absorbed in a package price) produces no line.
 
 ### What the crew member sees
 
-The request email and the crew page describe the **engagement, not calls**: the
+The request email and the crew page describe the **flat-rate position, not calls**: the
 role, the **flat fee** (stated on purpose — it is the offer being accepted),
 the project's date range, and a **schedule outline** listing each scheduled day
 and what it is, with no times. Hourly shifts on the same request still show no
-pay. A confirmed engagement's *Add to Calendar* button creates one all-day
+pay. A confirmed flat-rate position's *Add to Calendar* button creates one all-day
 event spanning the project dates.
 
 ### Rules worth knowing
 
-- An engagement is payable only after **Mark complete**; a confirmed-but-
+- A flat-rate position is payable only after **Mark complete**; a confirmed-but-
   incomplete one is reported as pending (and excluded from the export).
 - There is deliberately **no per-position pay date**: the project's end date
   decides the payroll period. With **no project end date** the fee cannot land
@@ -384,10 +384,10 @@ event spanning the project dates.
 - A flat fee paid on the same date as a signed shift day for the same person
   and project is **merged into one bill line** in QuickBooks (the ledger is one
   line per person-project-date); the Payouts tab still shows them as two rows.
-- Changing the fee, role, status or full-margin flag on an engagement that is
+- Changing the fee, role, status or full-margin flag on a flat-rate position that is
   already **paid** in QuickBooks trips the same paid-day guard as a shift edit
   (409 `paid_day_conflict` unless overridden).
-- **Labor → Weekly Schedule** shows a flat engagement on every day of the
+- **Labor → Weekly Schedule** shows a flat-rate position on every day of the
   project's date range (the project's own dates, else the span of its
   scheduled days), marked with a dashed edge and "Flat rate · whole project"
   in place of call times. The Calendar grid, which places rows on a single

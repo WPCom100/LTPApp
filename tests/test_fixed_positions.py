@@ -8,18 +8,18 @@ this module covers every seam they pass through:
   - CRUD round-trip + JSON shape validation of the new column
   - crew request send: a flat position is sendable with no date; the email
     states the fee + the project's date outline; a mixed request says
-    "N shifts + 1 flat-rate engagement"
+    "N shifts + 1 flat-rate position"
   - the public crew payload: the flat entry carries flat/fee/projectDates and
     still no crewId/serviceId internals
   - accept / withdraw drive the flat position's status like a shift's
   - integrity: a request over a flat position survives project saves (no date
     needed) and auto-withdraws when the position is removed; a stale PUT can't
     downgrade its status; a non-admin can't plant a frozen pay snapshot
-  - payouts: derive_payout_drafts turns a completed engagement into a "day" on
+  - payouts: derive_payout_drafts turns a completed flat-rate position into a "day" on
     the project's END date (so it lands in that date's payroll period), keeps
     an incomplete one pending, merges with a signed shift day on the same
     date, and plan_bill posts it to the role's expense account
-  - the paid-day guard refuses a fee change on a PAID flat engagement (409)
+  - the paid-day guard refuses a fee change on a PAID flat-rate position (409)
     unless overridden, and passes unrelated edits
   - a crewConfirmed notice for a flat hire uses the project date range and
     drops the empty Call:/Wrap: lines
@@ -278,7 +278,7 @@ def test_send_flat_position_creates_request_and_email_states_fee_and_outline():
     assert _fixed(req["project"], "fp-send")["status"] == "requested"
 
     html = captured["html_body"]
-    assert "Flat-rate engagement" in html
+    assert "Flat-rate position" in html
     assert "$1,500.00" in html                       # the fee IS the offer
     assert "Project dates" in html and "Sep 10, 2026" in html and "Sep 13, 2026" in html
     # Outline: each scheduled day + its title, no times.
@@ -286,16 +286,16 @@ def test_send_flat_position_creates_request_and_email_states_fee_and_outline():
     assert "8:00 AM" not in html and "6:00 PM" not in html
     assert "Sep 12, 2026 – " in html                  # the multi-day Show row spans to its endDate
     assert "Design + programming" in html            # the scope note
-    assert "1 flat-rate engagement" in html          # header count line
+    assert "1 flat-rate position" in html          # header count line
     assert "/#/crew/" + req["token"] in html
 
 
-def test_mixed_request_counts_shifts_and_engagements():
+def test_mixed_request_counts_shifts_and_flat_positions():
     client, tok = _setup()
     r, captured = _with_fake_gmail(lambda: _send(client, tok, P_MIXED, C_LD))
     assert r.status_code == 200, r.text
     assert set(r.json()["positionIds"]) == {"pmx", "fp-mx"}
-    assert "1 shift + 1 flat-rate engagement" in captured["html_body"]
+    assert "1 shift + 1 flat-rate position" in captured["html_body"]
     proj = _project(client, tok, P_MIXED)
     assert _fixed(proj, "fp-mx")["status"] == "requested"
     sh_pos = proj["schedule"][0]["positions"][0]
@@ -361,7 +361,7 @@ def test_flat_request_survives_saves_and_withdraws_when_removed():
     rid = r.json()["id"]
     proj = _project(client, tok, P_INTEGRITY)
     # An ordinary save (a new schedule day added) must NOT withdraw the request:
-    # a flat engagement needs no date to stay live.
+    # a flat-rate position needs no date to stay live.
     proj["schedule"] = [_shift("new-day", "Load-in", "2026-09-10", [])]
     r2 = client.put(f"/api/projects/{P_INTEGRITY}", json=proj, cookies={"ltp_session": tok})
     assert r2.status_code == 200, r2.text
@@ -440,7 +440,7 @@ def test_derive_flat_pending_until_complete_and_dated_on_project_end():
     nodate = [{"id": 3, "name": "Undated", "schedule": [], "end_date": "",
                "fixed_positions": [_fp("z", C_LD, status="confirmed", work=_flat_work(5.0))]}]
     assert payouts.derive_payout_drafts(nodate, _CREW, "", "") == []
-    # Two engagements on one project stay one "flat" entry (same ledger key).
+    # Two flat-rate positions on one project stay one "flat" entry (same ledger key).
     two = [{"id": 4, "name": "Fair", "schedule": [], "end_date": "2026-09-20",
             "fixed_positions": [_fp("x", C_LD, status="confirmed", work=_flat_work(1000.0)),
                                 _fp("y", C_LD, status="confirmed", work=_flat_work(250.0, service=S_L1), service=S_L1)]}]
@@ -496,14 +496,14 @@ def test_paid_day_signature_covers_flat_fee_status_and_project_end():
     assert payouts.paid_day_signature([], base, "") == {}
 
 
-def test_put_refuses_fee_change_on_paid_flat_engagement_unless_overridden():
+def test_put_refuses_fee_change_on_paid_flat_position_unless_overridden():
     client, tok = _setup()
     proj = _project(client, tok, P_PAID)
-    # Unrelated edit passes: a note on the engagement doesn't change the money.
+    # Unrelated edit passes: a note on the position doesn't change the money.
     proj["fixedPositions"] = [dict(_fixed(proj, "fp-paid"), note="Bring the plot")]
     r = client.put(f"/api/projects/{P_PAID}", json=proj, cookies={"ltp_session": tok})
     assert r.status_code == 200, r.text
-    # Re-pricing the fee on the PAID engagement → 409 paid_day_conflict.
+    # Re-pricing the fee on the PAID flat-rate position → 409 paid_day_conflict.
     proj = _project(client, tok, P_PAID)
     proj["fixedPositions"] = [dict(_fixed(proj, "fp-paid"), fee=1750)]
     r = client.put(f"/api/projects/{P_PAID}", json=proj, cookies={"ltp_session": tok})

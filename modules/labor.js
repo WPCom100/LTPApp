@@ -12,7 +12,7 @@
 
   var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info } };
 
-  // "3 shifts" / "1 flat-rate engagement" / "3 shifts + 1 flat-rate engagement"
+  // "3 shifts" / "1 flat-rate position" / "3 shifts + 1 flat-rate position"
   // — the count line for a request, matching the server's email header
   // (backend/routes/crew.py::_ask_label). `list` is aggregatePositions rows.
   function askLabel(list) {
@@ -20,7 +20,7 @@
     (list || []).forEach(function(p) { if (p && p.flat) nFlat++; else nShift++; });
     var parts = [];
     if (nShift || !nFlat) parts.push(nShift + " shift" + (nShift === 1 ? "" : "s"));
-    if (nFlat) parts.push(nFlat + " flat-rate engagement" + (nFlat === 1 ? "" : "s"));
+    if (nFlat) parts.push(nFlat + " flat-rate position" + (nFlat === 1 ? "" : "s"));
     return parts.join(" + ");
   }
 
@@ -91,7 +91,7 @@
         });
       });
 
-      // Flat-rate engagements (proj.fixedPositions): hired for the whole
+      // Flat-rate positions (proj.fixedPositions): hired for the whole
       // project at a fixed fee, no date and no call times. They get their own
       // rows — `flat: true`, schedItemId null — so they can be assigned,
       // requested, confirmed and paid through the same flows as a shift. The
@@ -110,7 +110,7 @@
         var cm = p.crewId ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
         all.push({
           projectId: proj.id, projectName: proj.name, companyId: proj.companyId,
-          schedItemId: null, schedTitle: "Flat-rate engagement",
+          schedItemId: null, schedTitle: "Flat-rate position",
           date: "", callTime: "", endTime: "", dayCall: null, dayWrap: null,
           posId: p.id, role: p.role, serviceId: p.serviceId,
           slot: 1, dayRoleCount: 0,
@@ -134,7 +134,7 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
-        // A flat-rate engagement has no schedule item — it lives in fixedPositions.
+        // A flat-rate position has no schedule item — it lives in fixedPositions.
         if (schedItemId == null) {
           return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
             return pos.id !== posId ? pos : Object.assign({}, pos, patch);
@@ -160,7 +160,7 @@
     setProjects(function(prev) {
       return prev.map(function(p) {
         if (p.id !== projectId) return p;
-        if (schedItemId == null) {   // flat-rate engagement: its own scope note
+        if (schedItemId == null) {   // flat-rate position: its own scope note
           return Object.assign({}, p, { fixedPositions: (p.fixedPositions || []).map(function(pos) {
             return pos.id !== posId ? pos : Object.assign({}, pos, { note: note });
           }) });
@@ -304,7 +304,7 @@
           updated = Object.assign({}, updated, { schedule: window.LTP_stampPay(
             updated.schedule, o.contactId, svcsFor(o.services, o.clientRates, p), window.LTP_crewMinMap(o.contacts),
             lockedAt, Object.keys(confirmDates)) });
-          // A flat engagement locks the fee agreed at hire the same way a day
+          // A flat-rate position locks the fee agreed at hire the same way a day
           // locks its computed pay (LTP_stampFixedPay).
           if (confirmedFlat.length) {
             updated = Object.assign({}, updated, { fixedPositions: window.LTP_stampFixedPay(updated.fixedPositions, o.contactId, lockedAt, confirmedFlat) });
@@ -791,8 +791,8 @@
     function confirmedCrewForNote(pos, applyToDay, noteText) {
       var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
       if (pos.flat) {
-        // A flat engagement's note is its scope line; only its own (confirmed,
-        // emailable) holder is notified, as an engagement card.
+        // A flat-rate position's note is its scope line; only its own (confirmed,
+        // emailable) holder is notified, as a flat-rate position card.
         var fp = proj && (proj.fixedPositions || []).find(function(x) { return x.id === pos.posId; });
         if (!fp || fp.status !== "confirmed" || !fp.crewId) return [];
         var fc = (contacts || []).find(function(x) { return x.id === fp.crewId; });
@@ -1008,7 +1008,7 @@
       // Nothing emails inline.
       var template = window.LTP_removalTemplate(pos.status);
       var affectedIds = scopeIds ? scopeIds.slice() : [];
-      // A flat engagement is its own scope — there is no "same date" to sweep.
+      // A flat-rate position is its own scope — there is no "same date" to sweep.
       if (!scopeIds && pos.flat) { affectedIds = [pos.posId]; affectIds = {}; affectIds[pos.posId] = true; }
       if (!scopeIds && !pos.flat) {
         var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
@@ -1433,8 +1433,8 @@
                             pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
                               style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
                             pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept),
-                            // Flat-rate engagement: the fee (what the request states) and when it is paid.
-                            pos.flat && h("span", { title: "Flat-rate engagement for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " \u00b7 no project end date \u2014 set one so the fee can be paid") + " \u2014 edit in the Schedule Builder.",
+                            // Flat-rate position: the fee (what the request states) and when it is paid.
+                            pos.flat && h("span", { title: "Flat-rate position for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " \u00b7 no project end date \u2014 set one so the fee can be paid") + " \u2014 edit in the Schedule Builder.",
                               style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginLeft: 6, cursor: "help", whiteSpace: "nowrap" } },
                               "Flat $" + window.LTP_money(pos.fee))),
                           h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
@@ -1872,7 +1872,7 @@
     allPositions.forEach(function(p) {
       if (!p.crewId || !ACTIVE[p.status] || !scheduleMap[p.crewId]) return;
       if (p.flat) {
-        // A flat-rate engagement has no call: it is on for EVERY day of the
+        // A flat-rate position has no call: it is on for EVERY day of the
         // project's date range, so it lands in each of those cells this week
         // (a copy per day, dated so the cell/day lookups below just work).
         if (!p.projectStart || !p.projectEnd) return;
@@ -1927,7 +1927,7 @@
                   var sc = POS_STATUSES[r.pos.status] || POS_STATUSES.open;
                   var cname = r.crew.firstName + " " + r.crew.lastName;
                   return h("div", { key: ri, style: { background: B.surface, border: "1px solid " + B.border, borderLeft: "3px " + (r.pos.flat ? "dashed" : "solid") + " " + sc.color, borderRadius: 8, padding: "10px 12px", marginBottom: 8, display: "flex", alignItems: "center", gap: 10 },
-                      title: r.pos.flat ? "Flat-rate engagement — on for the whole project (" + fmt(r.pos.projectStart) + " – " + fmt(r.pos.projectEnd) + "), hours their own." : undefined },
+                      title: r.pos.flat ? "Flat-rate position — on for the whole project (" + fmt(r.pos.projectStart) + " – " + fmt(r.pos.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
                       h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
@@ -1964,7 +1964,7 @@
                 dayShifts.map(function(s, si) {
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
                   return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px " + (s.flat ? "dashed" : "solid") + " " + sc.color },
-                      title: s.flat ? "Flat-rate engagement — on for the whole project (" + fmt(s.projectStart) + " – " + fmt(s.projectEnd) + "), hours their own." : undefined },
+                      title: s.flat ? "Flat-rate position — on for the whole project (" + fmt(s.projectStart) + " – " + fmt(s.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { fontWeight: 600 } }, s.roleCode),
                     shiftTimes(s) && h("div", { style: { color: B.textSec, fontSize: "8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } }, shiftTimes(s)),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
@@ -2323,7 +2323,7 @@
     // The person's confirmed shifts on a row's day — the entries the adjust
     // modal edits and the no-show path marks.
     function dayShifts(row) {
-      if (row.kind === "flat") return [];   // no shifts behind a flat engagement
+      if (row.kind === "flat") return [];   // no shifts behind a flat-rate position
       var proj = projects.find(function(p) { return p.id === row.projectId; });
       var out = [];
       ((proj && proj.schedule) || []).forEach(function(s) {
@@ -2372,9 +2372,9 @@
 
     function markWorked(row) { signOff(row, {}, "worked as scheduled"); }
 
-    // ── Flat-rate engagements: "Mark complete" (the flat-rate sign-off) ──────
+    // ── Flat-rate positions: "Mark complete" (the flat-rate sign-off) ──────
     // Freezes the final fee as work.pay (LTP_completeFixedPosition) so the
-    // engagement becomes payable on its pay date. `amount` overrides the fee
+    // flat-rate position becomes payable on its pay date. `amount` overrides the fee
     // when the final figure differs from what was agreed; omitted = the fee as
     // it stands (a drift chip warns first, like a day's rate change would).
     var [completeDlg, setCompleteDlg] = useState(null);   // { row, amount }
@@ -2395,12 +2395,12 @@
           var updated = Object.assign({}, p, { fixedPositions: window.LTP_completeFixedPosition(p.fixedPositions || [], row.posId, amt, now, user) });
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
             type: "saved", user: user,
-            message: "Engagement completed: " + who + " \u2192 " + fmtMoney(total),
-            changes: [{ cat: "Engagement Completed", detail: who + " \u2192 " + fmtMoney(total) + " (" + when + ")" }] };
+            message: "Flat-rate position completed: " + who + " \u2192 " + fmtMoney(total),
+            changes: [{ cat: "Flat-rate Position Completed", detail: who + " \u2192 " + fmtMoney(total) + " (" + when + ")" }] };
           return Object.assign({}, updated, { scheduleActivity: (updated.scheduleActivity || []).concat([actEntry]) });
         });
       });
-      window.LTP_toast("Engagement completed", { message: who + " \u2192 " + fmtMoney(total) + ", " + when + ".", variant: "success" });
+      window.LTP_toast("Flat-rate position completed", { message: who + " \u2192 " + fmtMoney(total) + ", " + when + ".", variant: "success" });
     }
 
     function doNoShow(row) {
@@ -2569,7 +2569,7 @@
         data.driftCount > 0 && h(window.StatCard, { label: "Changed Since Lock", value: String(data.driftCount), accent: B.danger })),
 
       data.groups.length === 0
-        ? h(window.EmptyState, { text: "No confirmed crew shifts or flat-rate engagements paid between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
+        ? h(window.EmptyState, { text: "No confirmed crew shifts or flat-rate positions paid between " + fmt(range.start) + " and " + fmt(range.end) + ". Payouts show confirmed work only." })
         : data.groups.map(function(g) {
             return h("div", { key: g.crewId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
               h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
@@ -2586,7 +2586,7 @@
                   var minApplied = !!(src && (src.units || []).some(function(u) { return u.minApplied; }));
                   var allMargin = !!(src && (src.units || []).length > 0 && (src.units || []).every(function(u) { return u.fullMargin; }));
                   var isFlat = r.kind === "flat";
-                  // No signing off the future — except a flat engagement, which
+                  // No signing off the future — except a flat-rate position, which
                   // completes when the work is done, whenever its pay date falls.
                   var canSign = !r.signed && (isFlat || r.date <= todayISO());
                   var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" }, completed: { c: B.success, t: "✓ complete" } };
@@ -2600,7 +2600,7 @@
                     h("div", { style: { flex: 1, minWidth: 0, order: isMobile ? 1 : undefined } },
                       h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent, cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }, onClick: function() { nav("projects/" + r.projectId + "/schedule"); } }, r.projectName),
                       h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } },
-                        isFlat ? "Flat rate \u00b7 " + (r.roleLabel || "engagement") + " \u00b7 whole project" : tierLabel(src)),
+                        isFlat ? "Flat rate \u00b7 " + (r.roleLabel || "flat-rate position") + " \u00b7 whole project" : tierLabel(src)),
                       (r.adjustments || []).length > 0 && h("div", { style: { fontSize: "10px", color: B.info, marginTop: 1 } },
                         r.adjustments.map(function(a) { return (a.amount < 0 ? "−" : "+") + fmtMoney(Math.abs(a.amount)) + (a.label ? " " + a.label : ""); }).join(" · ")),
                       r.drift && h("div", { style: { fontSize: "10px", color: B.danger, marginTop: 2 } },
@@ -2608,7 +2608,7 @@
                     // Pay amount: pinned to the top row's right on mobile (order 2),
                     // trails the action buttons on desktop.
                     h("div", { style: { width: 84, flexShrink: 0, textAlign: "right", order: isMobile ? 2 : undefined, marginLeft: isMobile ? "auto" : undefined, fontSize: "12px", fontWeight: 700, color: r.signed ? B.text : B.textMut, fontStyle: r.signed ? "normal" : "italic" },
-                      title: r.signed ? (isFlat ? "Final fee — marked complete." : "Final signed-off pay.") : (isFlat ? "Fee — becomes payable once the engagement is marked complete." : "Estimate — becomes payable when the day is signed off.") },
+                      title: r.signed ? (isFlat ? "Final fee — marked complete." : "Final signed-off pay.") : (isFlat ? "Fee — becomes payable once the position is marked complete." : "Estimate — becomes payable when the day is signed off.") },
                       (r.signed ? "" : "est. ") + fmtMoney(r.payable != null ? r.payable : r.estimate)),
                     // Chips + sign-off buttons: a wrapped second line on mobile,
                     // inline on desktop (display:contents leaves the row unchanged).
@@ -2630,12 +2630,12 @@
                         ? h(React.Fragment, null,
                             chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
                               "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the engagement returns to pending." : "Undo the sign-off — the day returns to pending."))
+                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the position returns to pending." : "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
                             !r.locked && chip(B.warn, "not locked", isFlat ? "Confirmed without a locked fee — the figure shown is the fee as typed today." : "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
                             (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
                               style: { flexShrink: 0, background: r.drift ? B.danger : B.info, border: "none", borderRadius: "4px", padding: "3px 10px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, r.drift ? "Re-lock" : "Lock"),
-                            isFlat && canSign && sBtn("✓ Complete", function() { guardPaid(r, function() { completeFlat(r, null); }); }, B.success, "Mark the engagement complete at the fee — it becomes payable on its pay date."),
+                            isFlat && canSign && sBtn("✓ Complete", function() { guardPaid(r, function() { completeFlat(r, null); }); }, B.success, "Mark the position complete at the fee — it becomes payable on its pay date."),
                             isFlat && canSign && sBtn("Complete…", function() { guardPaid(r, function() { setCompleteDlg({ row: r, amount: String(r.current ? r.current.total : 0) }); }); }, null, "Mark complete at a different final amount."),
                             !isFlat && canSign && sBtn("✓ Worked", function() { guardPaid(r, function() { markWorked(r); }); }, B.success, "Sign off: worked as scheduled."),
                             !isFlat && canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
@@ -2707,7 +2707,7 @@
             h(window.Btn, { onClick: function() { setAdjPayDlg(null); } }, "Done")));
       })(),
 
-      // Flat-rate engagement: mark complete at a final amount (default = the fee).
+      // Flat-rate position: mark complete at a final amount (default = the fee).
       completeDlg && (function() {
         var d = completeDlg;
         var amt = parseFloat(d.amount);
@@ -2715,7 +2715,7 @@
         return h(window.LTPModal, { title: "Mark complete — " + crewLabel(d.row.crewId) + " · " + (d.row.roleLabel || "flat rate"), onClose: function() { setCompleteDlg(null); } },
           h("p", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
             "Freezes the final fee for " + d.row.projectName + ". It becomes payable on " + fmt(d.row.date) + " and is what the QuickBooks vendor bill posts." +
-            (d.row.fullMargin ? " This engagement is marked full margin, so it pays $0 regardless of the amount." : "")),
+            (d.row.fullMargin ? " This position is marked full margin, so it pays $0 regardless of the amount." : "")),
           h("div", { style: { width: 160, marginBottom: 14 } },
             h(window.LTPInput, { label: "Final amount ($)", value: d.amount, type: "number", onChange: function(v) { setCompleteDlg(Object.assign({}, d, { amount: v })); } })),
           h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },

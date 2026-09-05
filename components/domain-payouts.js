@@ -50,7 +50,7 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
   var byCrew = {};   // String(crewId) → { crewId, rows: [] }
   (projects || []).forEach(function(proj) {
-    // Flat-rate engagements (proj.fixedPositions): one row per confirmed
+    // Flat-rate positions (proj.fixedPositions): one row per confirmed
     // position, dated on the project's END date (LTP_fixedPayDate) — the pay
     // period that date falls into is where the fee is paid, on that period's
     // pay day. Same row shape as a day, plus `kind: "flat"`; `locked`
@@ -196,7 +196,7 @@ function _ppLen(lengthDays) {
   return (n >= 1 && n <= 31) ? n : 14;   // guard/default to bi-weekly
 }
 
-// The date a flat-rate engagement is billed on: the project's end date, or ""
+// The date a flat-rate position is billed on: the project's end date, or ""
 // when the project has none (not payable anywhere until it does; the Schedule
 // Builder flags the row). The payroll period containing that date is where the
 // fee lands and its pay day is when it is paid — with every other payout in
