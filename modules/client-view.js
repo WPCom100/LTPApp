@@ -24,6 +24,7 @@
   var useState = React.useState;
   var useEffect = React.useEffect;
   var useRef = React.useRef;
+  var useLayoutEffect = React.useLayoutEffect;
 
   // ── Palette (public client surface — explicit hexes, mirrors crew-view) ───
   var BG = "#233038";           // page field
@@ -65,6 +66,48 @@
     var v = Number(n);
     if (!isFinite(v)) return "0";
     return String(Math.round(v * 1e5) / 1e5);
+  }
+
+  // Phone name-fit. Each item keeps to one line: the whole document's item
+  // names share the largest size, at most `base` (11px), at which the widest
+  // name still fits its column — never below `floor` (9px); past that a name
+  // ends in an ellipsis, as it does on the PDF. `widths` are the names
+  // measured at `base`. A name that would not fit even at the floor gets its
+  // ellipsis whatever the size, so it is left out of the fit rather than
+  // dragging every other name down with it. 2px of slack keeps sub-pixel
+  // rounding off the edge.
+  window.LTP_fitNameFont = function(widths, colW, base, floor) {
+    base = base || 11; floor = floor || 9;
+    var room = colW - 2;
+    if (!(room > 0)) return base;
+    var longest = 0;
+    (widths || []).forEach(function(w) {
+      if (w > longest && w * floor / base <= room) longest = w;
+    });
+    if (!(longest > room)) return base;
+    return Math.max(floor, Math.floor(base * room / longest * 10) / 10);
+  };
+
+  // Every item name's width at the phone's base size, via the canvas text API
+  // in the same font stack the rows render in.
+  function nameWidthsPx(entity) {
+    var canvas = document.createElement("canvas");
+    var cx = canvas.getContext && canvas.getContext("2d");
+    if (!cx) return [];
+    var widths = [];
+    ((entity && entity.sections) || []).forEach(function(s) {
+      (s.items || []).forEach(function(it) {
+        if (it.type === "note") return;
+        cx.font = "600 11px " + FONT;
+        var w = cx.measureText(it.name || "").width;
+        if (it.rentalLabel && it.type === "equipment") {
+          cx.font = "400 10px " + FONT;
+          w += cx.measureText(" (" + it.rentalLabel + ")").width;
+        }
+        widths.push(w);
+      });
+    });
+    return widths;
   }
 
   // Deterministic date formatting (no toLocaleString) — "July 3rd, 2026".
@@ -245,7 +288,7 @@
 
   // ── Section rendering — the ruled line-item table ──────────────────────────
 
-  function renderSection(sec, idx, entity, project, compact) {
+  function renderSection(sec, idx, entity, project, compact, nameFont, itemColRef) {
     var allItems = sec.items || [];
     var lineItems = allItems.filter(function(it) { return it.type !== "note"; });
     var secTotal = 0;
@@ -260,8 +303,11 @@
     var secStart = sec.customDates ? sec.startDate : (entity.customStartDate || (project && project.startDate));
     var secEnd   = sec.customDates ? sec.endDate   : (entity.customEndDate   || (project && project.endDate));
 
-    var cols = compact ? "minmax(0,1fr) 50px 76px 80px" : "minmax(0,1fr) 104px 112px 112px";
-    var moneySize = compact ? "12px" : "13px";
+    // Phone: smaller type and tighter money columns so each item name gets one
+    // line — "PM — Production Manager" used to wrap at 13px in a 120px column.
+    var cols = compact ? "minmax(0,1fr) 48px 62px 68px" : "minmax(0,1fr) 104px 112px 112px";
+    var moneySize = compact ? "11px" : "13px";
+    var colGap = compact ? 6 : 12;
 
     // QTY reads as two aligned sub-columns, like the PDF: the number
     // right-aligned at a fixed edge (so digits line up down the page) and the
@@ -291,8 +337,8 @@
           h("div", { style: { textAlign: "right", marginRight: "-0.14em" } }, "Qty"),
           h("div"));
 
-    var headerRow = h("div", { style: { display: "grid", gridTemplateColumns: cols, columnGap: compact ? 8 : 12, padding: "10px 0", borderBottom: "1px solid " + HAIR, fontSize: "10px", fontWeight: 700, color: MUTE, letterSpacing: "0.14em", textTransform: "uppercase" } },
-      h("div", null, "Item"),
+    var headerRow = h("div", { style: { display: "grid", gridTemplateColumns: cols, columnGap: colGap, padding: "10px 0", borderBottom: "1px solid " + HAIR, fontSize: "10px", fontWeight: 700, color: MUTE, letterSpacing: "0.14em", textTransform: "uppercase" } },
+      h("div", { ref: idx === 0 ? itemColRef : undefined }, "Item"),
       qtyHeader,
       h("div", { style: { textAlign: "right" } }, compact ? "Unit" : "Unit Price"),
       h("div", { style: { textAlign: "right" } }, "Total"));
@@ -317,10 +363,16 @@
       var eff = ap != null ? Number(ap) : up;
       var lineTotal = eff * qty;
       var hasAdj = ap != null && Number(ap) !== up;
-      return h("div", { key: key, style: { display: "grid", gridTemplateColumns: cols, columnGap: compact ? 8 : 12, padding: "12px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, alignItems: "baseline" } },
-        h("div", { style: { fontSize: compact ? "13px" : "14px", fontWeight: 600, color: TEXT, lineHeight: 1.4, overflowWrap: "break-word" } },
+      // Phone: one line per item, no wrapping — the type sized to fit the
+      // document's widest name (LTP_fitNameFont); a name longer than that
+      // ends in an ellipsis, as it does on the PDF.
+      var nameStyle = compact
+        ? { fontSize: (nameFont || 11) + "px", fontWeight: 600, color: TEXT, lineHeight: 1.4, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }
+        : { fontSize: "14px", fontWeight: 600, color: TEXT, lineHeight: 1.4, overflowWrap: "break-word" };
+      return h("div", { key: key, style: { display: "grid", gridTemplateColumns: cols, columnGap: colGap, padding: "12px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, alignItems: "baseline" } },
+        h("div", { style: nameStyle },
           it.name || "",
-          (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")")),
+          (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: compact ? ((nameFont || 11) - 1) + "px" : "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")")),
         qtyCell(fmtQty(qty), it.qtyLabel),
         h("div", { style: { textAlign: "right", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } },
           hasAdj
@@ -442,6 +494,11 @@
     var fErrState = useState(null); var formErr = fErrState[0], setFormErr = fErrState[1];
     var mqState = useState(false); var isMobile = mqState[0], setIsMobile = mqState[1];
     var actionRef = useRef(null);
+    // Phone: the item-name size that keeps every line to one line (see
+    // LTP_fitNameFont). Measured against the real ITEM column before paint,
+    // and again when the web font lands or the viewport changes.
+    var nfState = useState(11); var nameFont = nfState[0], setNameFont = nfState[1];
+    var itemColRef = useRef(null);
     // A client can sit on a quote for an hour while it is re-priced underneath
     // them, and without this the first they would know is accepting terms they
     // never read. See LTP_useDocFreshness in components/domain-util.js.
@@ -501,6 +558,20 @@
       if (mq.addEventListener) { mq.addEventListener("change", apply); return function() { mq.removeEventListener("change", apply); }; }
       mq.addListener(apply); return function() { mq.removeListener(apply); };
     }, []);
+
+    useLayoutEffect(function() {
+      if (!isMobile || !data) return undefined;
+      var fit = function() {
+        var col = itemColRef.current;
+        if (!col) return;
+        setNameFont(window.LTP_fitNameFont(nameWidthsPx(data.entity), col.clientWidth));
+      };
+      fit();
+      window.addEventListener("resize", fit);
+      var fonts = document.fonts;
+      if (fonts && fonts.ready && fonts.ready.then) fonts.ready.then(fit, function() {});
+      return function() { window.removeEventListener("resize", fit); };
+    }, [isMobile, data]);
 
     // ── Loading ──────────────────────────────────────────────────────────────
     if (!data && !loadErr) {
@@ -881,7 +952,7 @@
         preparedFor,
 
         // Line-item sections — the ruled tables
-        (entity.sections || []).map(function(sec, i) { return renderSection(sec, i, entity, project, isMobile); }),
+        (entity.sections || []).map(function(sec, i) { return renderSection(sec, i, entity, project, isMobile, nameFont, itemColRef); }),
 
         // Totals
         renderTotals(entity, isMobile),
