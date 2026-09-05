@@ -430,10 +430,12 @@ def test_qb_tax_signature_is_internal():
 def test_line_items_are_allow_listed_not_drop_listed():
     item = _payload()["entity"]["sections"][0]["items"][0]
     assert set(item) <= {"id", "type", "name", "text", "qty", "unitPrice",
-                         "adjustedPrice", "rentalLabel"}
+                         "adjustedPrice", "rentalLabel", "qtyLabel"}
     for internal in ("cost", "deliveredQty", "invoicedQty", "notes", "taxable",
                      "rateType", "serviceId", "productVariantId"):
         assert internal not in item, f"line item leaked {internal}"
+    # qtyLabel is derived from the internal rateType, which itself stays out.
+    assert item["qtyLabel"] == "days"
 
 
 def test_note_line_text_survives_the_scrub():
