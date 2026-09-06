@@ -34,6 +34,8 @@
   // "8:00a" / "12:30p" — the compact clock used where one line lists several
   // shifts (LTP_formatTime's "8:00 AM" is the long form for headers).
   function ftc(t) { return ft(t).replace(/ AM$/, "a").replace(/ PM$/, "p"); }
+  // Schedule items in date order (a dateless one sorts first, as in aggregatePositions).
+  function byShiftDate(a, b) { var x = (a && a.date) || "", y = (b && b.date) || ""; return x < y ? -1 : (x > y ? 1 : 0); }
 
   // "just now" / "5m ago" / "3h ago" / "2d ago" — how long a request has waited.
   function timeAgo(iso) {
@@ -746,12 +748,16 @@
   // straight into Assignments, crew requests, and Payouts with no special-casing.
   function ManualShiftModal({ services, contacts, onSave, onClose, editProject }) {
     var isMobile = window.LTP_useIsMobile();
-    // Edit mode: prefill from an existing internal (manual-shift) project. Only
-    // the shift's times/date/name/location/notes are editable here — roles and
-    // crew are managed on the Assignments tab, so editShift.positions is left
-    // untouched (its ids/crew/status survive, and so do any crew requests).
+    // Edit mode: prefill from an existing internal (manual-shift) project. The
+    // shift's name, location, days (date + times) and breaks are editable here
+    // — roles and crew are managed on the Assignments tab, so positions are
+    // left untouched (their ids/crew/status survive, and so do crew requests).
     var editing = !!editProject;
-    var editShift = editing ? ((editProject.schedule && editProject.schedule[0]) || {}) : {};
+    // Every day of the shift, in date order; each keeps its schedule-item id so
+    // a save can tell an edited day from a new one.
+    var editDays = editing ? (editProject.schedule || []).slice().sort(byShiftDate) : [];
+    var liveById = {};
+    editDays.forEach(function(sh) { liveById[sh.id] = sh; });
     // Watch only the fields THIS modal owns. Roles and crew on the same internal
     // project are managed from the Assignments tab, and a crew member accepting
     // there must not look like someone editing this form's shift out from under
@@ -760,28 +766,39 @@
       { title: "This shift changed elsewhere",
         message: "Another window updated it while this form was open. Saving will replace the newer version." },
       function(p) {
-        var sh = (p.schedule && p.schedule[0]) || {};
-        return [p.name, p.startDate, p.venue, sh.title, sh.date, sh.time, sh.endTime, sh.notes];
+        return [p.name, p.startDate, p.endDate, p.venue, p.siteAddress].concat((p.schedule || []).map(function(sh) {
+          return [sh.id, sh.title, sh.date, sh.time, sh.endTime, sh.notes].join("|");
+        }));
       });
-    var [title, setTitle] = useState(editing ? (editProject.name || editShift.title || "") : "");
-    var [date, setDate] = useState(editing ? (editShift.date || editProject.startDate || "") : todayISO());
-    var [start, setStart] = useState(editing ? (editShift.time || "08:00") : "08:00");
-    var [end, setEnd] = useState(editing ? (editShift.endTime || "18:00") : "18:00");
+    var [title, setTitle] = useState(editing ? (editProject.name || (editDays[0] || {}).title || "") : "");
     var [location, setLocation] = useState(editing ? (editProject.siteAddress || "") : "");
+    // One row per day. `id` is the schedule item it edits (null = a new day);
+    // `key` is stable for React while the date is being typed.
+    var [days, setDays] = useState(function() {
+      if (editing && editDays.length) {
+        return editDays.map(function(sh) { return { key: sh.id, id: sh.id, date: sh.date || "", startTime: sh.time || "08:00", endTime: sh.endTime || "18:00" }; });
+      }
+      return [{ key: genId("day"), id: null, date: todayISO(), startTime: "08:00", endTime: "18:00" }];
+    });
     // Position rows — each is a role (rate-card Service) + optional crew member.
+    // Every day gets the same set.
     var [rows, setRows] = useState([{ serviceId: "", crewId: "" }]);
-    // Crew-wide meal breaks on the shift (same {id,startTime,endTime,type} shape
-    // the schedule editor uses). Editable in both create and edit modes — unpaid
-    // breaks are deducted from paid hours in Payouts. Prefilled when editing.
+    // Crew-wide meal breaks, laid onto every day (same {id,startTime,endTime,type}
+    // shape the schedule editor uses). Unpaid breaks are deducted from paid hours
+    // in Payouts. Prefilled from the first day when editing.
     var [breaks, setBreaks] = useState(editing
-      ? (editShift.breaks || []).map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime || "12:00", endTime: b.endTime || "13:00", type: b.type === "paid" ? "paid" : "unpaid" }; })
+      ? ((editDays[0] || {}).breaks || []).map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime || "12:00", endTime: b.endTime || "13:00", type: b.type === "paid" ? "paid" : "unpaid" }; })
       : []);
     var [err, setErr] = useState("");
-    // Crew already committed to this shift (edit mode) — a heads-up that saving a
-    // time/date change queues them to be re-notified.
-    var editCommitted = (editShift.positions || []).filter(function(p) {
-      return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
-    });
+    // Crew already committed (edit mode) — a heads-up that saving a time/date
+    // change queues them to be re-notified, and the reason a day can't be
+    // removed here while they hold it.
+    function committedOn(sh) {
+      return ((sh && sh.positions) || []).filter(function(p) {
+        return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
+      });
+    }
+    var editCommitted = editDays.reduce(function(n, sh) { return n + committedOn(sh).length; }, 0);
 
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; })
       .sort(function(a, b) { return ((a.firstName || "") + (a.lastName || "")).localeCompare((b.firstName || "") + (b.lastName || "")); });
@@ -790,6 +807,23 @@
     function updateRow(i, patch) { setRows(function(rs) { return rs.map(function(r, j) { return j === i ? Object.assign({}, r, patch) : r; }); }); }
     function addRow() { setRows(function(rs) { return rs.concat([{ serviceId: "", crewId: "" }]); }); }
     function removeRow(i) { setRows(function(rs) { return rs.length > 1 ? rs.filter(function(_, j) { return j !== i; }) : rs; }); }
+
+    // The day after an ISO date, built from its parts (never Date.parse) so a
+    // bare "2026-09-10" stays the calendar day it names in every timezone.
+    function nextDate(iso) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+      if (!m) return todayISO();
+      var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]) + 1);
+      return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+    function addDay() {
+      setDays(function(ds) {
+        var last = ds[ds.length - 1] || {};
+        return ds.concat([{ key: genId("day"), id: null, date: nextDate(last.date), startTime: last.startTime || "08:00", endTime: last.endTime || "18:00" }]);
+      });
+    }
+    function updateDay(i, patch) { setDays(function(ds) { return ds.map(function(d, j) { return j === i ? Object.assign({}, d, patch) : d; }); }); }
+    function removeDay(i) { setDays(function(ds) { return ds.length > 1 ? ds.filter(function(_, j) { return j !== i; }) : ds; }); }
 
     function addBreak() { setBreaks(function(bs) { return bs.concat([{ id: genId("brk"), startTime: "12:00", endTime: "13:00", type: "unpaid" }]); }); }
     function updateBreak(i, patch) { setBreaks(function(bs) { return bs.map(function(b, j) { return j === i ? Object.assign({}, b, patch) : b; }); }); }
@@ -809,15 +843,22 @@
 
     function handleSave() {
       if (!title.trim()) { setErr("Give the shift a name."); return; }
-      if (!date) { setErr("Pick a date for the shift."); return; }
-      if (!(end > start)) { setErr("End time must be after start time. For overnight shifts, use a project's schedule builder."); return; }
+      var seenDate = {};
+      for (var i = 0; i < days.length; i++) {
+        var d = days[i];
+        if (!d.date) { setErr("Pick a date for every day."); return; }
+        if (!(d.endTime > d.startTime)) { setErr("Each day's end time must be after its start time. For overnight shifts, use a project's schedule builder."); return; }
+        if (seenDate[d.date]) { setErr("Two days share the date " + fmt(d.date) + " — change one or remove it."); return; }
+        seenDate[d.date] = true;
+      }
       if (breaks.some(function(b) { return !(b.endTime > b.startTime); })) { setErr("Each break's end time must be after its start time."); return; }
       setErr("");
       var cleanBreaks = breaks.map(function(b) { return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" }; });
+      var cleanDays = days.map(function(d) { return { id: d.id || null, date: d.date, startTime: d.startTime, endTime: d.endTime }; })
+        .sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
       if (editing) {
-        // Roles/crew aren't touched here — only the shift's scalar fields + breaks.
-        onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-          location: location.trim(), breaks: cleanBreaks });
+        // Roles/crew aren't touched here — only the shift's days, name, location + breaks.
+        onSave({ title: title.trim(), location: location.trim(), breaks: cleanBreaks, days: cleanDays });
         return;
       }
       var positions = rows.filter(function(r) { return r.serviceId; }).map(function(r) {
@@ -828,35 +869,55 @@
         return { serviceId: Number(r.serviceId), role: sv ? sv.role : "", crewId: r.crewId ? Number(r.crewId) : null };
       });
       if (!positions.length) { setErr("Add at least one role."); return; }
-      onSave({ title: title.trim(), date: date, startTime: start, endTime: end,
-        location: location.trim(), breaks: cleanBreaks, positions: positions });
+      onSave({ title: title.trim(), location: location.trim(), breaks: cleanBreaks, days: cleanDays, positions: positions });
     }
 
-    var half = { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 };
+    var sectionLabel = { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" };
+    var firstPositions = (editDays[0] || {}).positions || [];
     return h(window.LTPModal, { title: editing ? "Edit Manual Shift" : "Add Manual Shift", onClose: onClose, wide: true, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
         h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.5 } },
           editing
-            ? "Adjust this one-off shift's date, time, or details. Roles and crew stay on the Assignments tab — any crew already committed are queued to be re-notified (in the notify tray) when you save a time or date change."
-            : "A one-off shift for labor not tied to a client project (e.g. warehouse work). It joins crew requests and payouts like any other shift — no schedule editor needed."),
-        h(window.LTPInput, { label: "Shift Name *", value: title, onChange: setTitle, placeholder: "e.g. Warehouse Load-out" }),
-        h("div", { style: half },
-          h(window.LTPInput, { label: "Date *", value: date, onChange: setDate, type: "date" }),
+            ? "Adjust this one-off shift's days, times, or details. Roles and crew stay on the Assignments tab — any crew already committed are queued to be re-notified (in the notify tray) when you save a time or date change."
+            : "A one-off shift for labor not tied to a client project (e.g. warehouse work). Give it as many days as it runs — every day gets the same roles and crew, and each person gets one request covering all their days. It joins crew requests and payouts like any other shift."),
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 } },
+          h(window.LTPInput, { label: "Shift Name *", value: title, onChange: setTitle, placeholder: "e.g. Warehouse Load-out" }),
           h(window.LTPInput, { label: "Location", value: location, onChange: setLocation, placeholder: "Job-site address (optional)" })
         ),
-        h("div", { style: half },
-          h(window.LTPInput, { label: "Start Time", value: start, onChange: setStart, type: "time" }),
-          h(window.LTPInput, { label: "End Time", value: end, onChange: setEnd, type: "time" })
-        ),
-        // Heads-up (edit mode) when crew are already committed to this shift.
-        editing && editCommitted.length > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "6px 8px", display: "flex", alignItems: "center", gap: 6 } },
-          h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
-          h("span", null, editCommitted.length + " committed crew member" + (editCommitted.length > 1 ? "s" : "") + " on this shift — changing the date or time will queue a re-notification when you save.")),
-        // Meal breaks — crew-wide, editable in both create and edit. Same
-        // {id,startTime,endTime,type} shape the schedule editor uses; unpaid
-        // breaks are deducted from paid hours in Payouts.
+        // Days — one row each: date + call/wrap. A day already holding
+        // requested/accepted/confirmed crew can't be removed here; cancel or
+        // withdraw them on the Assignments tab first (that's where the notices
+        // are queued), then the day can go.
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-          h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Meal Breaks"),
+          h("label", { style: sectionLabel }, "Days *"),
+          days.map(function(d, i) {
+            var committed = d.id ? committedOn(liveById[d.id]).length : 0;
+            var lockedMsg = committed + " committed crew member" + (committed !== 1 ? "s" : "") + " on this day — cancel or withdraw them on the Assignments tab before removing it";
+            return h("div", { key: d.key, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1.4fr 1fr 1fr auto", gap: 8, alignItems: "end" } },
+              h(window.LTPInput, { label: i === 0 ? "Date" : undefined, value: d.date, onChange: function(v) { updateDay(i, { date: v }); }, type: "date" }),
+              h(window.LTPInput, { label: i === 0 ? "Start Time" : undefined, value: d.startTime, onChange: function(v) { updateDay(i, { startTime: v }); }, type: "time" }),
+              h(window.LTPInput, { label: i === 0 ? "End Time" : undefined, value: d.endTime, onChange: function(v) { updateDay(i, { endTime: v }); }, type: "time" }),
+              h("div", { style: { display: "flex", alignItems: "center", gap: 6, paddingBottom: 3 } },
+                committed > 0 && h("span", { title: lockedMsg, style: { fontSize: "9px", color: B.warn, fontWeight: 700, whiteSpace: "nowrap", cursor: "help" } }, committed + " committed"),
+                h("button", { type: "button", onClick: function() { removeDay(i); }, disabled: days.length <= 1 || committed > 0, "aria-label": "Remove day",
+                  title: committed > 0 ? lockedMsg : (days.length <= 1 ? "A shift needs at least one day" : "Remove this day"),
+                  style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "8px", padding: "4px 11px", color: B.textSec, fontSize: "11px", fontWeight: 700, cursor: (days.length <= 1 || committed > 0) ? "not-allowed" : "pointer", fontFamily: "inherit", opacity: (days.length <= 1 || committed > 0) ? 0.4 : 1 } }, "✕")));
+          }),
+          h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+            h(window.Btn, { small: true, variant: "ghost", onClick: addDay }, "+ Add day"),
+            h("span", { style: { fontSize: "10px", color: B.textMut } },
+              editing
+                ? "A new day gets the first day's roles and crew as open positions, ready to send."
+                : "Two days of shop cleanup are one shift with two days — and one email per person."))),
+        // Heads-up (edit mode) when crew are already committed to this shift.
+        editing && editCommitted > 0 && h("div", { style: { fontSize: "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: "4px", padding: "6px 8px", display: "flex", alignItems: "center", gap: 6 } },
+          h("span", { style: { fontWeight: 700, flexShrink: 0 } }, "⚠"),
+          h("span", null, editCommitted + " committed crew position" + (editCommitted > 1 ? "s" : "") + " on this shift — changing a day's date or time will queue a re-notification when you save.")),
+        // Meal breaks — crew-wide, laid onto every day, editable in both create
+        // and edit. Same {id,startTime,endTime,type} shape the schedule editor
+        // uses; unpaid breaks are deducted from paid hours in Payouts.
+        h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+          h("label", { style: sectionLabel }, "Meal Breaks" + (days.length > 1 ? " (every day)" : "")),
           h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
             breaks.map(function(brk, i) {
               var isPaid = brk.type === "paid";
@@ -880,11 +941,11 @@
         // (crew are managed on the Assignments tab, so a time edit never disturbs them).
         editing
           ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-              h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles & Crew"),
-              (editShift.positions || []).length === 0
+              h("label", { style: sectionLabel }, "Roles & Crew" + (editDays.length > 1 ? " (first day)" : "")),
+              firstPositions.length === 0
                 ? h("div", { style: { fontSize: "11px", color: B.textMut } }, "No roles on this shift yet.")
                 : h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
-                    (editShift.positions || []).map(function(p, i) {
+                    firstPositions.map(function(p, i) {
                       var sv = svcs.find(function(s) { return s.id === Number(p.serviceId); });
                       var roleName = sv ? (sv.role + (sv.description ? " — " + sv.description : "")) : (p.role || "Role");
                       var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
@@ -895,10 +956,10 @@
                         p.status && p.status !== "open" && h("span", { style: { fontSize: "9px", color: B.textMut, textTransform: "capitalize" } }, "(" + p.status + ")"));
                     })
                   ),
-              h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Manage roles and crew on the Assignments tab.")
+              h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Manage roles and crew per day on the Assignments tab.")
             )
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
-              h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Roles *"),
+              h("label", { style: sectionLabel }, "Roles *" + (days.length > 1 ? " (every day)" : "")),
               svcs.length === 0 && h("div", { style: { fontSize: "11px", color: B.warn } }, "No labor rate-card roles exist yet — add roles under Quotes › Services first."),
               rows.map(function(r, i) {
                 return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr auto" : "1.2fr 1fr auto", gap: 8, alignItems: "end" } },
@@ -1030,47 +1091,81 @@
       var proj = window.LTP_manualShiftProject(Object.assign({ id: newId }, form));
       setProjects(function(prev) { return (prev || []).concat([proj]); });
       setShowManualShift(false);
-      var assigned = (proj.schedule[0].positions || []).filter(function(p) { return p.crewId; }).length;
+      var assigned = {};
+      (proj.schedule || []).forEach(function(s) { (s.positions || []).forEach(function(p) { if (p.crewId) assigned[p.crewId] = true; }); });
+      var nDays = (proj.schedule || []).length;
       window.LTP_toast("Manual shift created", {
         variant: "success",
-        message: assigned > 0
-          ? "Assigned crew are ready to send as requests below."
+        message: Object.keys(assigned).length > 0
+          ? "Assigned crew are ready to send as requests below" + (nDays > 1 ? " — one request per person covers all " + nDays + " days." : ".")
           : "Assign crew to its roles below, then send requests.",
       });
     }
 
-    // Edit an existing manual shift (an internal project) — times & details only.
-    // Only the shift's scalar fields change; schedule[0].positions is preserved
-    // verbatim, so position ids/crew/status (and any crew requests) survive. Crew
-    // committed to a moved time/date are parked in the notify tray, exactly like
-    // the Schedule Builder save path (window.LTP_diffChangedShifts).
+    // Edit an existing manual shift (an internal project) — days & details
+    // only. A day that already exists keeps its schedule item and every
+    // position on it (ids/crew/status — and any crew requests — survive); a
+    // day added in the form becomes a new item carrying the first day's roles
+    // and crew as fresh open positions; a day dropped from the form is removed
+    // unless crew have since been requested/accepted/confirmed on it (the
+    // form blocks that, but the live row can move on while it is open), in
+    // which case it is kept as it stands. Crew committed to a moved time/date
+    // are parked in the notify tray, exactly like the Schedule Builder save
+    // path (window.LTP_diffChangedShifts).
     function updateManualShift(form) {
       var proj = editManualProject;
       setEditManualProject(null);
       if (!proj) return;
+      var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+      function committed(sh) { return ((sh && sh.positions) || []).some(function(p) { return p.crewId && ACTIVE[p.status]; }); }
       // Build the new schedule from the LIVE row inside the updater, not from the
       // snapshot taken when the modal opened. This modal owns the shift's name,
-      // date, times and breaks — nothing else — but it used to rewrite the whole
+      // days, times and breaks — nothing else — but it used to rewrite the whole
       // schedule array from its stale copy, so a crew member who accepted while
       // it was open had their status silently reverted to "open". The record
       // watch could not warn either: its pick() covers exactly the fields the
       // modal owns, which are exactly the ones that had NOT changed.
-      var beforeRef = { schedule: proj.schedule || [] };
+      var beforeRef = { schedule: proj.schedule || [], kept: 0 };
       setProjects(function(prev) {
         return (prev || []).map(function(p) {
           if (p.id !== proj.id) return p;
           var live = p.schedule || [];
           beforeRef.schedule = live;         // diff against what is really there
-          var shift0 = live[0] || {};
-          var newShift0 = Object.assign({}, shift0, {
-            title: form.title, date: form.date, time: form.startTime,
-            endDate: form.date, endTime: form.endTime,
-            breaks: form.breaks || shift0.breaks || [],
+          var liveById = {};
+          live.forEach(function(sh) { liveById[sh.id] = sh; });
+          var formIds = {};
+          (form.days || []).forEach(function(d) { if (d.id) formIds[d.id] = true; });
+          var template = (live[0] || {}).positions || [];
+          var next = (form.days || []).map(function(d) {
+            var base = d.id ? liveById[d.id] : null;
+            var baseBreakIds = {};
+            ((base && base.breaks) || []).forEach(function(b) { if (b && b.id) baseBreakIds[b.id] = true; });
+            // The day the breaks were read from keeps their ids; any other day
+            // gets its own, as breaks are per shift.
+            var dayBreaks = (form.breaks || []).map(function(b) {
+              return { id: (b.id && baseBreakIds[b.id]) ? b.id : genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
+            });
+            if (base) {
+              return Object.assign({}, base, { title: form.title, date: d.date, time: d.startTime, endDate: d.date, endTime: d.endTime, breaks: dayBreaks });
+            }
+            return {
+              id: genId("sch"), title: form.title, date: d.date, time: d.startTime, endDate: d.date, endTime: d.endTime,
+              showOnCalendar: true, breaks: dayBreaks,
+              positions: template.map(function(tp) {
+                return { id: genId("pos"), role: tp.role || "", serviceId: tp.serviceId, crewId: tp.crewId || null, status: "open", fullMargin: false };
+              }),
+            };
           });
-          beforeRef.after = live.length ? [newShift0].concat(live.slice(1)) : [newShift0];
+          live.forEach(function(sh) {
+            if (formIds[sh.id]) return;
+            if (committed(sh)) { beforeRef.kept++; next.push(Object.assign({}, sh, { title: form.title })); }
+          });
+          next.sort(byShiftDate);
+          var dated = next.map(function(sh) { return sh.date; }).filter(Boolean).sort();
+          beforeRef.after = next;
           return Object.assign({}, p, {
-            name: form.title, startDate: form.date, endDate: form.date,
-            siteAddress: form.location, schedule: beforeRef.after,
+            name: form.title, startDate: dated[0] || "", endDate: dated.length ? dated[dated.length - 1] : "",
+            siteAddress: form.location, schedule: next,
           });
         });
       });
@@ -1080,12 +1175,18 @@
       changed.forEach(function(g) {
         window.LTP_outbox.add({ crewId: g.crewId, crewName: g.crewName, projectId: proj.id, projectName: form.title || proj.name || "", template: g.template, shifts: g.shifts });
       });
+      if (beforeRef.kept) {
+        window.LTP_toast("A day was kept", {
+          variant: "warn",
+          message: "Crew are committed on it — cancel or withdraw them on the Assignments tab before removing that day.",
+        });
+      }
       if (changed.length) {
         window.LTP_toast("Shift updated — crew to notify", {
           variant: "info",
           message: changed.length + " crew member" + (changed.length > 1 ? "s" : "") + " queued — review and send from the notify tray (bottom-left).",
         });
-      } else {
+      } else if (!beforeRef.kept) {
         window.LTP_toast("Manual shift updated", { variant: "success" });
       }
     }
@@ -1233,9 +1334,26 @@
       setStatusDlg(null);
     }
 
+    // Finished work is not assignment work: a completed or cancelled project
+    // stays off this screen — its picker, its queue and its send count — even
+    // when a slot was never filled. Its schedule is still reachable from the
+    // project itself.
+    var finished = {};
+    (projects || []).forEach(function(p) { if (p.status === "completed" || p.status === "cancelled") finished[p.id] = true; });
+    var livePositions = allPositions.filter(function(p) { return !finished[p.projectId]; });
+
+    // The project picker lists client projects only. A manual shift is on the
+    // queue like any other job, but it is not a project to search for here —
+    // it has its own section and its own editor.
+    var internalIds = {};
+    (projects || []).forEach(function(p) { if (p.internal) internalIds[p.id] = true; });
     var projOptions = [];
     var projSeen = {};
-    allPositions.forEach(function(p) { if (!projSeen[p.projectId]) { projSeen[p.projectId] = true; projOptions.push({ id: p.projectId, name: p.projectName }); } });
+    livePositions.forEach(function(p) {
+      if (projSeen[p.projectId] || internalIds[p.projectId]) return;
+      projSeen[p.projectId] = true;
+      projOptions.push({ id: p.projectId, name: p.projectName });
+    });
 
     // A project stays on this tab only while it still needs assignment work —
     // any position open (unfilled or reopened by a withdrawal) or declined.
@@ -1248,12 +1366,16 @@
     // narrow WITHIN it (rowMatches below), so their numbers are the rows they
     // show.
     var projNeeds = {};
-    allPositions.forEach(function(p) { if (p.status === "open" || p.status === "declined") projNeeds[p.projectId] = true; });
+    livePositions.forEach(function(p) { if (p.status === "open" || p.status === "declined") projNeeds[p.projectId] = true; });
     var defaultView = projFilter === "all";
-    var fullyRequestedCount = projOptions.filter(function(p) { return !projNeeds[p.id]; }).length;
+    var fullyRequestedCount = (function() {
+      var seen = {}, n = 0;
+      livePositions.forEach(function(p) { if (!seen[p.projectId]) { seen[p.projectId] = true; if (!projNeeds[p.projectId]) n++; } });
+      return n;
+    })();
 
     // Everything this screen holds, before the status tile narrows it.
-    var filtered = allPositions.filter(function(p) {
+    var filtered = livePositions.filter(function(p) {
       if (projFilter !== "all") return p.projectId === Number(projFilter);
       return !!projNeeds[p.projectId];
     });
@@ -1366,7 +1488,7 @@
       return Object.assign({}, pg, { dates: dates });
     }).filter(function(pg) { return pg.dates.length > 0; });
 
-    var pendingSend = allPositions.filter(function(p) { return p.crewId && p.status === "open"; });
+    var pendingSend = livePositions.filter(function(p) { return p.crewId && p.status === "open"; });
     // Count unique crew+PROJECT combos for the send button label — that's how
     // many requests will be created (one per crew member per project).
     var pendingSendUnique = (function() {

@@ -381,6 +381,28 @@ eq("MS18 empty title fallback", MS({ id: 1 }).name, "Manual Shift");
 eq("MS19 no positions -> empty array", MS({ id: 1, positions: [] }).schedule[0].positions.length, 0);
 ok("MS20 default times when omitted", (function () { var m = MS({ id: 2, date: "2026-08-01", positions: [{ serviceId: 1 }] }); return m.schedule[0].time === "08:00" && m.schedule[0].endTime === "18:00"; })());
 
+// Multi-day: one dated schedule item per `days` entry, each with its OWN copy
+// of the positions (fresh ids, same role + crew) so one request per person
+// bundles every day; the project spans first → last day; breaks land on
+// every day with their own ids.
+const _msMulti = MS({ id: 43, title: "Shop Cleanup", days: [
+  { date: "2026-08-12", startTime: "09:00", endTime: "17:00" },
+  { date: "2026-08-11", startTime: "08:00", endTime: "16:00" } ],
+  breaks: [{ startTime: "12:00", endTime: "12:30", type: "unpaid" }],
+  positions: [{ serviceId: 2, role: "L2", crewId: 7 }, { serviceId: 2, role: "L2", crewId: "" }] });
+eq("MS21 one schedule day per entry", _msMulti.schedule.length, 2);
+eq("MS22 days sorted by date", _msMulti.schedule.map((s) => s.date).join(","), "2026-08-11,2026-08-12");
+eq("MS23 each day keeps its own times", _msMulti.schedule.map((s) => s.time + "-" + s.endTime).join(","), "08:00-16:00,09:00-17:00");
+eq("MS24 project spans first → last day", _msMulti.startDate + "|" + _msMulti.endDate, "2026-08-11|2026-08-12");
+ok("MS25 every day carries the roles", _msMulti.schedule.every((s) => s.positions.length === 2));
+ok("MS26 crew copied onto every day", _msMulti.schedule.every((s) => s.positions[0].crewId === 7 && s.positions[1].crewId === null));
+ok("MS27 position ids unique across days", (function () { var ids = []; _msMulti.schedule.forEach((s) => s.positions.forEach((p) => ids.push(p.id))); return new Set(ids).size === ids.length; })());
+ok("MS28 breaks on every day, own ids", _msMulti.schedule.every((s) => s.breaks.length === 1) && _msMulti.schedule[0].breaks[0].id !== _msMulti.schedule[1].breaks[0].id);
+ok("MS29 every day titled after the shift", _msMulti.schedule.every((s) => s.title === "Shop Cleanup" && s.endDate === s.date));
+ok("MS30 schedule ids unique per day", _msMulti.schedule[0].id !== _msMulti.schedule[1].id);
+eq("MS31 single-day shorthand still one day", MS({ id: 3, date: "2026-08-01", positions: [{ serviceId: 1 }] }).schedule.length, 1);
+eq("MS32 empty days list falls back to shorthand", MS({ id: 4, days: [], date: "2026-08-03", positions: [{ serviceId: 1 }] }).schedule[0].date, "2026-08-03");
+
 // End-to-end: a confirmed position on a manual shift is payable — it flows into
 // the pay pipeline exactly like a client-project shift (LTP_payoutRows sees it).
 const _msPay = MS({ id: 99, title: "Prep Day", date: "2026-08-02", startTime: "08:00", endTime: "18:00",
