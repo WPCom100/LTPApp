@@ -232,7 +232,10 @@
 // columns; the stat cards double as the status filter; requests read as a
 // ledger (crew · positions · sent · status) with the shift list behind a
 // toggle and a "no reply yet" flag on stale asks. labor.js.
-var CACHE_VERSION = 'ltp-shell-v81';
+// v82: the Assignments counters count only the rows on that screen and the
+// status tiles narrow within it; the app-wide conflicts badge leaves the
+// Assignments and Crew Requests tabs. labor.js.
+var CACHE_VERSION = 'ltp-shell-v82';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
