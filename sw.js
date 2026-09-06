@@ -226,7 +226,13 @@
 // v80: the phone layout of that view keeps every item on one line — smaller
 // type, tighter money columns, an ellipsis for a name longer than its column
 // (as on the PDF); the unit still sits under the number. client-view.js.
-var CACHE_VERSION = 'ltp-shell-v80';
+// v81: Labor → Assignments and Crew Requests relaid for reading at a glance.
+// Each project is a folding section whose header carries client, dates, venue,
+// a fill meter and status counts; a project's days sit side by side as
+// columns; the stat cards double as the status filter; requests read as a
+// ledger (crew · positions · sent · status) with the shift list behind a
+// toggle and a "no reply yet" flag on stale asks. labor.js.
+var CACHE_VERSION = 'ltp-shell-v81';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
