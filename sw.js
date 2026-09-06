@@ -240,7 +240,13 @@
 // crew, so one crew request (one email) covers all of them; the Assignments
 // project picker and queue leave out completed and cancelled projects.
 // domain-crew.js, labor.js.
-var CACHE_VERSION = 'ltp-shell-v83';
+// v84: dates are picked on the app's own calendar on a desktop — a text field
+// (type or paste mm/dd/yyyy) with a month-grid popover that publishes only on
+// a clicked day, Today or Clear, so paging months no longer writes the 1st
+// into the field and re-sorts the schedule row under the picker. Phones keep
+// the native wheel. Every date input in the app routes through it. ui.js,
+// index.html, the rentals modules.
+var CACHE_VERSION = 'ltp-shell-v84';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

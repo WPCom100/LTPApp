@@ -91,7 +91,10 @@
                     <div style=5props>
                       <label style=9props>
                         Quote Expires
-                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/28/2026">
               <div style=5props>
                 <button key=7 onClick=fn style=8props>
                   7 days
@@ -435,14 +438,20 @@
                   <div style=5props>
                     <label style=9props>
                       Start Date
-                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+                <LTPDateField>
+                  <DesktopDateField>
+                    <Fragment>
+                      <input aria-expanded="false" aria-haspopup="dialog" aria-label="Start Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/29/2026">
             <anon>
               <div style=4props>
                 <anon>
                   <div style=5props>
                     <label style=9props>
                       End Date
-                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+                <LTPDateField>
+                  <DesktopDateField>
+                    <Fragment>
+                      <input aria-expanded="false" aria-haspopup="dialog" aria-label="End Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/29/2026">
           <div style=5props>
             <div style=1props>
               <anon>
@@ -451,7 +460,10 @@
                     <div style=5props>
                       <label style=9props>
                         Quote Expires
-                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/28/2026">
               <div style=5props>
                 <button key=7 onClick=fn style=8props>
                   7 days
@@ -675,7 +687,10 @@
                     <div style=5props>
                       <label style=9props>
                         Quote Expires
-                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-09">
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/09/2026">
               <div style=5props>
                 <button key=7 onClick=fn style=8props>
                   7 days
@@ -1030,7 +1045,10 @@
                       <div style=5props>
                         <label style=9props>
                           Invoice Date
-                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-05">
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Invoice Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/05/2026">
               <div style=1props>
                 <anon>
                   <div style=4props>
@@ -1038,7 +1056,10 @@
                       <div style=5props>
                         <label style=9props>
                           Due Date
-                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-04">
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Due Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/04/2026">
                 <div style=4props>
                   <button key="Today" onClick=fn style=8props>
                     Today
@@ -1342,7 +1363,10 @@
                       <div style=5props>
                         <label style=9props>
                           Invoice Date
-                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Invoice Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/29/2026">
               <div style=1props>
                 <anon>
                   <div style=4props>
@@ -1350,7 +1374,10 @@
                       <div style=5props>
                         <label style=9props>
                           Due Date
-                    <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-28">
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Due Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/28/2026">
                 <div style=4props>
                   <button key="Today" onClick=fn style=8props>
                     Today
@@ -2981,7 +3008,10 @@
                     <div style=5props>
                       <label style=9props>
                         Quote Expires
-                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-06-30">
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="06/30/2026">
               <div style=5props>
                 <button key=7 onClick=fn style=8props>
                   7 days
@@ -3335,7 +3365,10 @@
                     <div style=5props>
                       <label style=9props>
                         Quote Expires
-                  <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-09-09">
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/09/2026">
               <div style=5props>
                 <button key=7 onClick=fn style=8props>
                   7 days
@@ -3907,7 +3940,7 @@
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort31" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort31" key="sec2" style=3props>
       <div style=7props>
-  -- slot 10 (flag) opens an overlay (88 lines) --
+  -- slot 10 (flag) opens an overlay (91 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort32" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort32" data-ltp-zone="sec1" style=7props>
@@ -3946,7 +3979,10 @@
                   <div style=5props>
                     <label style=9props>
                       Payment Date
-                <input autoComplete=undefined enterKeyHint=undefined inputMode=undefined onBlur=fn onChange=fn onFocus=fn placeholder=undefined step=undefined style=12props type="date" value="2026-08-29">
+                <LTPDateField>
+                  <DesktopDateField>
+                    <Fragment>
+                      <input aria-expanded="false" aria-haspopup="dialog" aria-label="Payment Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/29/2026">
             <anon>
               <div style=4props>
                 <anon>

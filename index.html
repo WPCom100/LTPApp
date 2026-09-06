@@ -98,6 +98,12 @@
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
+    /* Calendar popover (components/ui.js LTPDateField): hover and keyboard
+       focus on the day cells and month arrows — inline styles can't express
+       :hover, and the selected day keeps its orange fill under the pointer. */
+    .ltp-cal-day:not([aria-pressed="true"]):hover { background: rgba(237,243,242,0.08) !important; }
+    .ltp-cal-nav:hover { border-color: #445866 !important; color: #EDF3F2 !important; }
+    .ltp-cal-day:focus-visible, .ltp-cal-nav:focus-visible { outline: 2px solid #EF5822; outline-offset: 1px; }
 
     /* ── Interactive reorder (components/sortable.js) ───────────────────────
        Used by the quote and invoice builders for line items and sections.
