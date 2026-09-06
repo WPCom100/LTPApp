@@ -216,54 +216,63 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
 // opts = {
 //   id,                       // caller-minted integer project id (required)
 //   title,                    // shift name, e.g. "Warehouse Load-out"
-//   date,                     // ISO YYYY-MM-DD — the single shift day
-//   startTime, endTime,       // "HH:MM" (default 08:00 → 18:00)
+//   days: [{ date, startTime, endTime }],  // one entry per day (see below)
+//   date, startTime, endTime, // single-day shorthand, read when `days` is absent
+//   breaks,                   // crew-wide meal breaks, laid onto every day
 //   location,                 // free-text job-site address (crew-facing)
 //   notes,                    // free-text, stored as scheduleNotes
 //   positions: [{ serviceId, role, crewId }]   // role = rate-card Service; crew optional
 // }
+// A manual shift can span several days (two days of shop cleanup, say). Each
+// day becomes its own dated schedule item with its OWN copy of the positions —
+// fresh ids, same role and crew — because everywhere else in the app a
+// position is one person on one dated shift (requests, pay, sign-off). The
+// crew-request send then bundles every day a person is on into ONE request
+// and one email, since requests are per person per project. Days sort by
+// date and the project runs from the first to the last.
 // Positions start `status:"open"` — the same state the schedule editor mints —
 // so an assigned crew member is immediately sendable as a crew request, and a
 // confirmed one flows into payouts once it carries a serviceId with rates.
 window.LTP_manualShiftProject = function(opts) {
   opts = opts || {};
   var genId = window.LTP_genId;
-  var date = opts.date || "";
   var title = (opts.title || "").trim() || "Manual Shift";
   // A manual-shift role is always a rate-card Service (serviceId); positions
   // without one carry no rate and can't be paid, so they're dropped here — the
   // builder stays the single source of truth for what a valid position is,
   // independent of the caller.
-  var positions = (opts.positions || []).filter(function(p) {
+  var roles = (opts.positions || []).filter(function(p) {
     return p && p.serviceId != null && p.serviceId !== "";
   }).map(function(p) {
-    return {
-      id: genId("pos"),
-      role: p.role || "",
-      serviceId: p.serviceId,
-      crewId: (p.crewId != null && p.crewId !== "") ? p.crewId : null,
-      status: "open",
-      fullMargin: false,
-    };
+    return { role: p.role || "", serviceId: p.serviceId, crewId: (p.crewId != null && p.crewId !== "") ? p.crewId : null };
   });
   // Crew-wide meal breaks — same shape the schedule editor uses. Drop any
   // without both endpoints; unpaid breaks are deducted from paid hours in pay.
-  var breaks = (opts.breaks || []).filter(function(b) {
-    return b && b.startTime && b.endTime;
-  }).map(function(b) {
-    return { id: b.id || genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
+  var breaksIn = (opts.breaks || []).filter(function(b) { return b && b.startTime && b.endTime; });
+  var days = (Array.isArray(opts.days) && opts.days.length ? opts.days : [{ date: opts.date, startTime: opts.startTime, endTime: opts.endTime }])
+    .filter(Boolean)
+    .map(function(d) { return { date: d.date || "", startTime: d.startTime || "08:00", endTime: d.endTime || "18:00" }; })
+    .sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0); });
+  var schedule = days.map(function(d, di) {
+    return {
+      id: genId("sch"),
+      title: title,
+      date: d.date,
+      time: d.startTime,
+      endDate: d.date,
+      endTime: d.endTime,
+      showOnCalendar: true,
+      // The first day keeps the ids the caller passed (an edit round-trips
+      // them); every further day gets its own, as breaks are per shift.
+      breaks: breaksIn.map(function(b) {
+        return { id: (di === 0 && b.id) ? b.id : genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
+      }),
+      positions: roles.map(function(p) {
+        return { id: genId("pos"), role: p.role, serviceId: p.serviceId, crewId: p.crewId, status: "open", fullMargin: false };
+      }),
+    };
   });
-  var shift = {
-    id: genId("sch"),
-    title: title,
-    date: date,
-    time: opts.startTime || "08:00",
-    endDate: date,
-    endTime: opts.endTime || "18:00",
-    showOnCalendar: true,
-    breaks: breaks,
-    positions: positions,
-  };
+  var dated = days.map(function(d) { return d.date; }).filter(Boolean);
   return {
     id: opts.id,
     name: title,
@@ -271,8 +280,8 @@ window.LTP_manualShiftProject = function(opts) {
     internal: true,
     category: "Labor",          // a real category so badge/color lookups resolve
     status: "in-progress",
-    startDate: date,
-    endDate: date,
+    startDate: dated[0] || "",
+    endDate: dated.length ? dated[dated.length - 1] : "",
     venue: "",
     siteAddress: opts.location || "",
     siteUseCompanyAddress: false,
@@ -281,7 +290,7 @@ window.LTP_manualShiftProject = function(opts) {
     notes: [],
     meetings: [],
     scheduleNotes: (opts.notes || ""),
-    schedule: [shift],
+    schedule: schedule,
   };
 };
 

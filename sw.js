@@ -226,7 +226,27 @@
 // v80: the phone layout of that view keeps every item on one line — smaller
 // type, tighter money columns, an ellipsis for a name longer than its column
 // (as on the PDF); the unit still sits under the number. client-view.js.
-var CACHE_VERSION = 'ltp-shell-v80';
+// v81: Labor → Assignments and Crew Requests relaid for reading at a glance.
+// Each project is a folding section whose header carries client, dates, venue,
+// a fill meter and status counts; a project's days sit side by side as
+// columns; the stat cards double as the status filter; requests read as a
+// ledger (crew · positions · sent · status) with the shift list behind a
+// toggle and a "no reply yet" flag on stale asks. labor.js.
+// v82: the Assignments counters count only the rows on that screen and the
+// status tiles narrow within it; the app-wide conflicts badge leaves the
+// Assignments and Crew Requests tabs. labor.js.
+// v83: a manual shift can run several days — the adder and editor take a
+// list of days, each its own dated schedule item carrying the same roles and
+// crew, so one crew request (one email) covers all of them; the Assignments
+// project picker and queue leave out completed and cancelled projects.
+// domain-crew.js, labor.js.
+// v84: dates are picked on the app's own calendar on a desktop — a text field
+// (type or paste mm/dd/yyyy) with a month-grid popover that publishes only on
+// a clicked day, Today or Clear, so paging months no longer writes the 1st
+// into the field and re-sorts the schedule row under the picker. Phones keep
+// the native wheel. Every date input in the app routes through it. ui.js,
+// index.html, the rentals modules.
+var CACHE_VERSION = 'ltp-shell-v84';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

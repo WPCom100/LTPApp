@@ -196,7 +196,7 @@
                 h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr 110px", gap: 8 } },
                   R.Field("Barcode / Asset #", h("input", { value: u.barcode || "", onChange: function(e) { setUnit(i, "barcode", e.target.value); }, placeholder: "LTP-CASE-001", style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Serial #",          h("input", { value: u.serial  || "", onChange: function(e) { setUnit(i, "serial",  e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
-                  R.Field("Purchase Date",     h("input", { type: "date", value: u.purchaseDate || "", onChange: function(e) { setUnit(i, "purchaseDate", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
+                  R.Field("Purchase Date",     h(window.LTPDateField, { value: u.purchaseDate || "", onChange: function(v) { setUnit(i, "purchaseDate", v); }, ariaLabel: "Purchase date", style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Cost ($)",          h("input", { type: "number", min: 0, step: "0.01", value: u.purchaseCost || "", onChange: function(e) { setUnit(i, "purchaseCost", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) })),
                   R.Field("Status",            h("select", { value: u.status || "available", onChange: function(e) { setUnit(i, "status", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%", fontSize: "11px", padding: "8px 4px" }) },
                     [["available","Available"],["under-maintenance","Under Maint."],["retired","Retired"]].map(function(s) { return h("option", { key: s[0], value: s[0] }, s[1]); })
