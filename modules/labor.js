@@ -1241,19 +1241,21 @@
     // any position open (unfilled or reopened by a withdrawal) or declined.
     // Once every position is requested-or-later the whole card disappears; the
     // Crew Requests tab manages it from there. While a project IS shown, ALL
-    // its positions show, so the full day picture stays visible. Explicit
-    // status/project filters bypass the rule (that's a search, not the queue).
+    // its positions show, so the full day picture stays visible. Choosing a
+    // project in the picker bypasses the rule (that's a search, not the
+    // queue) so a fully-booked job can still be opened here — to cancel a
+    // confirmed position, say. The status tiles never widen the screen: they
+    // narrow WITHIN it (rowMatches below), so their numbers are the rows they
+    // show.
     var projNeeds = {};
     allPositions.forEach(function(p) { if (p.status === "open" || p.status === "declined") projNeeds[p.projectId] = true; });
-    var defaultView = filter === "all" && projFilter === "all";
+    var defaultView = projFilter === "all";
     var fullyRequestedCount = projOptions.filter(function(p) { return !projNeeds[p.id]; }).length;
 
+    // Everything this screen holds, before the status tile narrows it.
     var filtered = allPositions.filter(function(p) {
-      if (filter === "conflicts") { return (crewConflicts || {})[p.posId]; }
-      if (filter !== "all" && p.status !== filter) return false;
-      if (projFilter !== "all" && p.projectId !== Number(projFilter)) return false;
-      if (defaultView && !projNeeds[p.projectId]) return false;
-      return true;
+      if (projFilter !== "all") return p.projectId === Number(projFilter);
+      return !!projNeeds[p.projectId];
     });
 
     // Group by project → date
@@ -1331,27 +1333,38 @@
       });
     });
 
-    // Count unique crew+day bookings for stats (not individual positions)
-    function countUnique(positions, filterFn) {
-      var seen = {};
-      var count = 0;
-      positions.forEach(function(p) {
-        if (filterFn && !filterFn(p)) return;
-        var key = (p.crewId || "none") + "|" + (p.date || "_") + "|" + p.projectId;
-        if (!seen[key]) { seen[key] = true; count++; }
-      });
-      return count;
+    // The counters up top describe THIS screen: one count per row on it,
+    // keyed by the status the row displays (a day booking's representative
+    // status). The status tiles then filter those same rows, so a tile's
+    // number is exactly how many rows it shows — never a count from a project
+    // this tab is hiding.
+    function rowMatches(bk) {
+      if (filter === "all") return true;
+      if (filter === "conflicts") return !!(crewConflicts || {})[bk.pos.posId];
+      return bk.pos.status === filter;
     }
-
-    var stats = {
-      total: countUnique(allPositions),
-      open: countUnique(allPositions, function(p) { return p.status === "open"; }),
-      requested: countUnique(allPositions, function(p) { return p.status === "requested"; }),
-      accepted: countUnique(allPositions, function(p) { return p.status === "accepted"; }),
-      confirmed: countUnique(allPositions, function(p) { return p.status === "confirmed"; }),
-      declined: countUnique(allPositions, function(p) { return p.status === "declined"; }),
-      conflicts: Object.keys(crewConflicts || {}).length,
-    };
+    var stats = { total: 0, open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0, conflicts: 0 };
+    projectGroups.forEach(function(pg) {
+      pg.dates.forEach(function(g) {
+        (g.dayBookings || []).forEach(function(bk) {
+          stats.total++;
+          if (stats[bk.pos.status] !== undefined) stats[bk.pos.status]++;
+          if ((crewConflicts || {})[bk.pos.posId]) stats.conflicts++;
+        });
+      });
+    });
+    // What the status tile leaves: the same groups with non-matching rows
+    // dropped, then any shift-set, day or project with none left.
+    var shownGroups = projectGroups.map(function(pg) {
+      var dates = pg.dates.map(function(g) {
+        var sets = (g.itemSetGroups || []).map(function(isg) {
+          return Object.assign({}, isg, { bookings: isg.bookings.filter(rowMatches) });
+        }).filter(function(isg) { return isg.bookings.length > 0; });
+        var rows = sets.reduce(function(n, isg) { return n + isg.bookings.length; }, 0);
+        return Object.assign({}, g, { itemSetGroups: sets, shownRows: rows });
+      }).filter(function(g) { return g.shownRows > 0; });
+      return Object.assign({}, pg, { dates: dates });
+    }).filter(function(pg) { return pg.dates.length > 0; });
 
     var pendingSend = allPositions.filter(function(p) { return p.crewId && p.status === "open"; });
     // Count unique crew+PROJECT combos for the send button label — that's how
@@ -1493,7 +1506,7 @@
     // whole job, not just the rows the status filter lets through.
     var posByProject = {};
     allPositions.forEach(function(p) { (posByProject[p.projectId] = posByProject[p.projectId] || []).push(p); });
-    var sectionIds = projectGroups.map(function(pg) { return pg.projectId; });
+    var sectionIds = shownGroups.map(function(pg) { return pg.projectId; });
 
     // One booking row: role + chips on the left, the crew picker and status
     // controls on the right. The controls wrap under the label when a day
@@ -1667,7 +1680,7 @@
           !g.date && h("span", { style: { fontSize: "9px", color: B.textMut, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "no call times — fee stated on the request"),
           h("span", { style: { flex: 1 } }),
           daySum.needsCrew > 0 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.warn, whiteSpace: "nowrap" } }, daySum.needsCrew + " need crew"),
-          h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, (g.dayBookings || []).length + " crew")),
+          h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, g.shownRows + " crew")),
         (g.itemSetGroups || []).map(function(isg, gi) {
           var caption = isg.items.map(function(t) { return t + (shiftTimes[t] ? "  " + shiftTimes[t] : ""); }).join("   ›   ");
           return h("div", { key: "isg-" + gi },
@@ -1678,7 +1691,7 @@
 
     var tileColor = { all: B.accent, open: B.warn, requested: B.warn, accepted: B.success, confirmed: B.info, declined: B.danger, conflicts: B.danger };
     var tileItems = [
-      { key: "all",       label: "All positions", value: stats.total },
+      { key: "all",       label: "All",           value: stats.total },
       { key: "open",      label: "Open",          value: stats.open },
       { key: "requested", label: "Requested",     value: stats.requested },
       { key: "accepted",  label: "Accepted",      value: stats.accepted },
@@ -1687,7 +1700,7 @@
       { key: "conflicts", label: "Conflicts",     value: stats.conflicts },
     ].map(function(t) {
       return Object.assign(t, { color: tileColor[t.key], dim: t.key !== "all" && !t.value, active: filter === t.key,
-        onClick: function() { setFilter(t.key); }, title: t.key === "all" ? "Show every position" : "Show only " + t.key + " positions" });
+        onClick: function() { setFilter(t.key); }, title: t.key === "all" ? "Every row on this screen" : t.key === "conflicts" ? "Only the double-booked rows on this screen" : "Only the " + t.key + " rows on this screen" });
     });
 
     return h("div", null,
@@ -1746,18 +1759,20 @@
       // times & details only; roles/crew stay on this tab.
       editManualProject && h(ManualShiftModal, { services: services, contacts: contacts, editProject: editManualProject, onSave: updateManualShift, onClose: function() { setEditManualProject(null); } }),
 
-      defaultView && fullyRequestedCount > 0 && projectGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },
-        fullyRequestedCount + " fully-requested project" + (fullyRequestedCount > 1 ? "s" : "") + " hidden — manage responses on the Crew Requests tab, or use the filters above."),
-      projectGroups.length === 0 && h(window.EmptyState, { text: allPositions.length === 0
+      defaultView && fullyRequestedCount > 0 && shownGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },
+        fullyRequestedCount + " fully-requested project" + (fullyRequestedCount > 1 ? "s" : "") + " hidden — manage responses on the Crew Requests tab, or pick the project above."),
+      shownGroups.length === 0 && h(window.EmptyState, { text: allPositions.length === 0
         ? "No positions found. Add positions to project schedules."
-        : defaultView
-          ? "All positions are requested or booked — manage responses on the Crew Requests tab. Withdrawn or declined shifts reopen here automatically."
-          : "No positions match this filter." }),
+        : filter !== "all"
+          ? "No " + (filter === "conflicts" ? "double-booked" : filter) + " rows on this screen."
+          : defaultView
+            ? "All positions are requested or booked — manage responses on the Crew Requests tab. Withdrawn or declined shifts reopen here automatically."
+            : "No positions on this project." }),
       // One collapsible section per project; inside it, the project's days sit
       // side by side (two or three columns on a desktop, one on a phone) so a
       // whole job fits on a screen instead of a scroll. Dated days lead; the
       // flat-rate bucket, when there is one, comes last.
-      projectGroups.map(function(pg) {
+      shownGroups.map(function(pg) {
         var pgProject = (projects || []).find(function(p) { return p.id === pg.projectId; });
         var isInternal = !!(pgProject && pgProject.internal);
         var cols = pg.dates.slice().sort(function(a, b) {
@@ -3509,7 +3524,11 @@
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0 } }, tabTitle),
-        conflictCount > 0 && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
+        // Every counter on the Assignments and Crew Requests screens describes
+        // that screen only: Assignments carries its own Conflicts tile, and
+        // Crew Requests shows nothing conflicts relate to, so the app-wide
+        // badge stays for the other Labor tabs.
+        conflictCount > 0 && tab !== "assignments" && tab !== "requests" && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
           conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
