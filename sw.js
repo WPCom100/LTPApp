@@ -235,7 +235,12 @@
 // v82: the Assignments counters count only the rows on that screen and the
 // status tiles narrow within it; the app-wide conflicts badge leaves the
 // Assignments and Crew Requests tabs. labor.js.
-var CACHE_VERSION = 'ltp-shell-v82';
+// v83: a manual shift can run several days — the adder and editor take a
+// list of days, each its own dated schedule item carrying the same roles and
+// crew, so one crew request (one email) covers all of them; the Assignments
+// project picker and queue leave out completed and cancelled projects.
+// domain-crew.js, labor.js.
+var CACHE_VERSION = 'ltp-shell-v83';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
