@@ -24,6 +24,173 @@
     return parts.join(" + ");
   }
 
+  // ── Layout helpers shared by the Assignments + Crew Requests tabs ─────────
+  // Both tabs read as a queue of projects. These give each project one
+  // collapsible section with a header that says what used to take a scroll to
+  // learn — who the client is, when and where, and how filled the job is —
+  // and give a day's positions a compact, column-friendly row.
+  var fmtShort = window.LTP_formatDateShort, fmtRange = window.LTP_formatDateRangeShort;
+
+  // "8:00a" / "12:30p" — the compact clock used where one line lists several
+  // shifts (LTP_formatTime's "8:00 AM" is the long form for headers).
+  function ftc(t) { return ft(t).replace(/ AM$/, "a").replace(/ PM$/, "p"); }
+
+  // "just now" / "5m ago" / "3h ago" / "2d ago" — how long a request has waited.
+  function timeAgo(iso) {
+    if (!iso) return "";
+    var t = new Date(iso).getTime();
+    if (isNaN(t)) return "";
+    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return "just now";
+    var m = Math.round(s / 60); if (m < 60) return m + "m ago";
+    var hh = Math.round(m / 60); if (hh < 24) return hh + "h ago";
+    var d = Math.round(hh / 24); if (d < 14) return d + "d ago";
+    var w = Math.round(d / 7); if (w < 9) return w + "w ago";
+    return Math.round(d / 30) + "mo ago";
+  }
+  function daysSince(iso) {
+    if (!iso) return 0;
+    var t = new Date(iso).getTime();
+    return isNaN(t) ? 0 : (Date.now() - t) / 86400000;
+  }
+
+  // "First United Methodist Church · Sep 12 – Sep 13 · FUMC Sanctuary" — the
+  // line under a section title, so two similarly named jobs can be told apart
+  // without opening either.
+  function projectMeta(proj, companies) {
+    if (!proj) return "";
+    var parts = [];
+    if (proj.internal) parts.push("Manual shift");
+    else {
+      var co = (companies || []).find(function(c) { return c.id === proj.companyId; });
+      if (co) parts.push(co.name);
+    }
+    var range = fmtRange(proj.startDate, proj.endDate);
+    if (range) parts.push(range);
+    var where = (proj.venue || "").trim() || (proj.internal ? (proj.siteAddress || "").trim() : "");
+    if (where) parts.push(where);
+    return parts.join(" · ");
+  }
+
+  // Which project sections are folded, remembered per tab across visits
+  // (localStorage) so a job you closed stays closed until you open it again.
+  function useCollapsedSet(storageKey) {
+    var pair = useState(function() {
+      try {
+        var raw = localStorage.getItem(storageKey);
+        var o = raw ? JSON.parse(raw) : null;
+        return (o && typeof o === "object") ? o : {};
+      } catch (e) { return {}; }
+    });
+    var set = pair[0], setSet = pair[1];
+    function write(next) {
+      setSet(next);
+      try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch (e) { /* private mode etc. */ }
+    }
+    return {
+      isCollapsed: function(id) { return !!set[id]; },
+      toggle: function(id) { var n = Object.assign({}, set); if (n[id]) delete n[id]; else n[id] = true; write(n); },
+      setAll: function(ids, collapsed) { var n = {}; if (collapsed) ids.forEach(function(id) { n[id] = true; }); write(n); },
+    };
+  }
+
+  // Position roll-up for a project or a day: settled, waiting, unsent, empty.
+  // Feeds the meter + chips on section headers. Order = pipeline order.
+  var SUMMARY_KEYS = [
+    { key: "confirmed", label: "confirmed", color: B.info, check: "✓ " },
+    { key: "accepted",  label: "accepted",  color: B.success },
+    { key: "requested", label: "requested", color: B.warn },
+    { key: "toSend",    label: "to send",   color: B.accent },
+    { key: "declined",  label: "declined",  color: B.danger },
+    { key: "needsCrew", label: "need crew", color: B.textMut },
+  ];
+  function summarizePositions(list) {
+    var s = { total: 0, confirmed: 0, accepted: 0, requested: 0, toSend: 0, declined: 0, needsCrew: 0 };
+    (list || []).forEach(function(p) {
+      s.total++;
+      if (p.status === "confirmed") s.confirmed++;
+      else if (p.status === "accepted") s.accepted++;
+      else if (p.status === "requested") s.requested++;
+      else if (p.status === "declined") s.declined++;
+      else if (p.crewId) s.toSend++;
+      else s.needsCrew++;
+    });
+    s.filled = s.confirmed + s.accepted + s.requested + s.toSend;
+    return s;
+  }
+  // Slim segmented bar — the fill of a project at a glance. Empty slots stay
+  // the track colour, so the gap at the end IS the work left.
+  function StatusMeter({ summary, width }) {
+    if (!summary || !summary.total) return null;
+    return h("div", { title: summary.filled + " of " + summary.total + " positions have crew",
+      style: { display: "flex", width: width || 110, height: 5, borderRadius: 3, overflow: "hidden", background: B.border, flexShrink: 0 } },
+      SUMMARY_KEYS.map(function(k) {
+        var n = summary[k.key];
+        if (!n || k.key === "needsCrew") return null;
+        return h("div", { key: k.key, style: { flex: n + " 0 0", background: k.key === "toSend" ? k.color + "99" : k.color } });
+      }));
+  }
+  function SummaryChips({ summary }) {
+    if (!summary || !summary.total) return null;
+    return h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" } },
+      SUMMARY_KEYS.map(function(k) {
+        var n = summary[k.key];
+        if (!n) return null;
+        return h("span", { key: k.key, style: { fontSize: "9px", fontWeight: 700, color: k.color, background: k.color + "14", border: "1px solid " + k.color + "3a", borderRadius: "3px", padding: "1px 6px", whiteSpace: "nowrap" } },
+          (k.check || "") + n + " " + k.label);
+      }));
+  }
+
+  // One collapsible project block, shared by both tabs. Click anywhere on the
+  // header to fold it; the title still opens the Schedule Builder (or the
+  // manual-shift editor). The body is not rendered while folded.
+  function ProjectSection({ title, onTitleClick, meta, summary, chips, right, collapsed, onToggle, isMobile, children }) {
+    var chevron = h("button", { onClick: function(e) { e.stopPropagation(); onToggle(); }, "aria-expanded": collapsed ? "false" : "true", title: collapsed ? "Expand" : "Collapse",
+      style: { background: "transparent", border: "none", color: B.accent, fontSize: "13px", width: 22, height: 22, borderRadius: "4px", cursor: "pointer", padding: 0, flexShrink: 0, fontFamily: "inherit", lineHeight: 1 } },
+      collapsed ? "▸" : "▾");
+    var titleEl = h("span", { onClick: function(e) { if (!onTitleClick) return; e.stopPropagation(); onTitleClick(); },
+      style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: onTitleClick ? "pointer" : "default", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0, maxWidth: "100%" } }, title);
+    var metaEl = meta ? h("span", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 } }, meta) : null;
+    var summaryEl = h("div", { onClick: function(e) { e.stopPropagation(); },
+      style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: isMobile ? "flex-start" : "flex-end", flexShrink: 0 } },
+      chips || (summary ? h(SummaryChips, { summary: summary }) : null),
+      summary && !isMobile ? h(StatusMeter, { summary: summary }) : null,
+      right || null);
+    return h("div", { style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 10, overflow: "hidden" } },
+      h("div", { onClick: onToggle, className: "ltp-tap",
+        style: { background: B.accent + "12", padding: isMobile ? "8px 10px 8px 6px" : "7px 12px 7px 6px", borderBottom: collapsed ? "none" : "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent, display: "flex", flexDirection: "column", gap: 5, cursor: "pointer", userSelect: "none" } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 } },
+          chevron,
+          h("div", { style: { display: "flex", alignItems: "baseline", gap: 10, minWidth: 0, flex: 1 } }, titleEl, !isMobile && metaEl),
+          !isMobile && summaryEl),
+        isMobile && metaEl && h("div", { style: { paddingLeft: 30 } }, metaEl),
+        isMobile && h("div", { style: { paddingLeft: 30 } }, summaryEl)),
+      !collapsed && children);
+  }
+
+  // Stat tiles that ARE the status filter: one row does the job the stat
+  // cards and the chip row used to share. The active tile is underlined in
+  // its own colour; a zero reads muted so the eye lands on live numbers.
+  function FilterTiles({ items }) {
+    var list = (items || []).filter(Boolean);
+    return h("div", { style: { display: "grid", gridTemplateColumns: "repeat(" + list.length + ", minmax(0, 1fr))", background: B.surface, border: "1px solid " + B.border, borderRadius: "10px", overflow: "hidden", marginBottom: 12 } },
+      list.map(function(it, i) {
+        var c = it.color || B.text;
+        return h("button", { key: it.key, onClick: it.onClick, title: it.title, "aria-pressed": it.active ? "true" : "false", className: "ltp-tap",
+          style: { background: it.active ? c + "16" : "transparent", border: "none", borderLeft: i ? "1px solid " + B.border : "none", borderBottom: "2px solid " + (it.active ? c : "transparent"), padding: "9px 14px 7px", textAlign: "left", cursor: "pointer", fontFamily: "inherit", minWidth: 0, transition: "background .12s ease" } },
+          h("div", { style: { fontSize: "9px", fontWeight: 700, color: it.active ? c : B.textMut, textTransform: "uppercase", letterSpacing: "0.1em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, it.label),
+          h("div", { style: { fontSize: "20px", fontWeight: 700, color: it.dim ? B.textMut : c, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", lineHeight: 1.15, marginTop: 2 } }, it.value));
+      }));
+  }
+  // "▸ Collapse all" / "▾ Expand all" for a tab's project sections.
+  function FoldAllButton({ ids, collapsed, style: sx }) {
+    if (!ids || ids.length < 2) return null;
+    var anyCollapsed = ids.some(collapsed.isCollapsed);
+    return h("button", { onClick: function() { collapsed.setAll(ids, !anyCollapsed); }, title: anyCollapsed ? "Expand every project" : "Collapse every project", className: "ltp-btn-quiet",
+      style: Object.assign({ background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, sx) },
+      anyCollapsed ? "▾ Expand all" : "▸ Collapse all");
+  }
+
   // ── Aggregate positions from all project schedules ─────────────────────
   // THE rate card for ONE project — the catalog with that project's client's
   // negotiated overrides folded in (theme.js::LTP_servicesForClient). Every pay
@@ -766,7 +933,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ASSIGNMENTS TAB — positions from project schedules
   // ═══════════════════════════════════════════════════════════════════════════
-  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests, clientRates }) {
+  function AssignmentsTab({ allPositions, contacts, services, projects, setProjects, crewConflicts, settings, reloadCrewRequests, crewRequests, clientRates, companies }) {
     var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [projFilter, setProjFilter] = useState("all");
@@ -778,6 +945,7 @@
     var [showManualShift, setShowManualShift] = useState(false);
     var [editManualProject, setEditManualProject] = useState(null);
     var [noteDlg, setNoteDlg] = useState(null);   // { pos, text, applyToDay, dayCount }
+    var collapsed = useCollapsedSet("ltp.labor.assignments.collapsed");
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
     // Open the shift-note editor for a booking's representative position. dayCount
@@ -1181,6 +1349,7 @@
       requested: countUnique(allPositions, function(p) { return p.status === "requested"; }),
       accepted: countUnique(allPositions, function(p) { return p.status === "accepted"; }),
       confirmed: countUnique(allPositions, function(p) { return p.status === "confirmed"; }),
+      declined: countUnique(allPositions, function(p) { return p.status === "declined"; }),
       conflicts: Object.keys(crewConflicts || {}).length,
     };
 
@@ -1320,9 +1489,210 @@
       handleStatusChange(pos, "open", posIds);
     }
 
+    // Every position of each shown project, for the header roll-up — the
+    // whole job, not just the rows the status filter lets through.
+    var posByProject = {};
+    allPositions.forEach(function(p) { (posByProject[p.projectId] = posByProject[p.projectId] || []).push(p); });
+    var sectionIds = projectGroups.map(function(pg) { return pg.projectId; });
+
+    // One booking row: role + chips on the left, the crew picker and status
+    // controls on the right. The controls wrap under the label when a day
+    // column is narrow, and stay a single line when it is wide.
+    function renderBooking(booking, bi) {
+      var pos = booking.pos;
+      // The positions this booking represents — status actions act on exactly
+      // these (a conflicting shift is its own booking, so it isn't swept up
+      // with the one you click).
+      var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
+      var conflicts = (crewConflicts || {})[pos.posId];
+      var hasConflict = conflicts && conflicts.length > 0;
+      // Two-tier crew list for this position's role — shared with the schedule
+      // editor and the manual-shift form.
+      //
+      // The filter resolves through the LINKED SERVICE, not the denormalized
+      // pos.role, for the same reason the weekly grid does: a stale or
+      // free-text role would match nobody and silently push the whole roster
+      // behind "Other crew". pos.roleCode is unusable here — it degrades to
+      // the display placeholder "Crew" when there's no service, and that
+      // matches nobody either. No service linked means no role is being
+      // filled, so offer everyone.
+      var posSvc = pos.serviceId ? (services || []).find(function(sv) { return sv.id === pos.serviceId; }) : null;
+      var crewOpts = window.LTP_crewSelectOptions({
+        crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
+        allContacts: contacts, leading: [{ value: "", label: "Assign crew…" }],
+      });
+      var needsCrew = pos.status === "open" && !pos.crewId;
+      var ctlBtn = { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
+      var pill = function(color, text, title) {
+        return h("span", { title: title, style: { fontSize: "9px", color: color, fontWeight: 700, background: color + "18", border: "1px solid " + color + "33", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, text);
+      };
+      return h("div", { key: pos.posId + "-" + bi,
+        style: { padding: isMobile ? "8px 10px" : "5px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: bi > 0 ? "1px solid " + B.border : "none",
+                 background: hasConflict ? B.danger + "08" : "transparent",
+                 // Empty slots are the work on this tab — a warm rule marks them.
+                 boxShadow: needsCrew ? "inset 3px 0 0 " + B.warn + "80" : "none" } },
+        hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
+          style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
+          h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
+        h("div", { style: { flex: isMobile ? "1 1 100%" : "1 1 170px", minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } },
+          h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.text } }, pos.svcName),
+          // Person # within the role for this day (same numbering as the
+          // schedule editor) — shown when a role has 2+ people so the right
+          // person goes into the right slot.
+          pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
+            style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", cursor: "help" } }, "#" + pos.slot),
+          pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600 } }, pos.dept),
+          // Flat-rate position: the fee (what the request states) and when it is paid.
+          pos.flat && h("span", { title: "Flat-rate position for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " · paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " · no project end date — set one so the fee can be paid") + " — edit in the Schedule Builder.",
+            style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, cursor: "help", whiteSpace: "nowrap" } },
+            "Flat $" + window.LTP_money(pos.fee))),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: isMobile ? 0 : "auto", flexWrap: isMobile ? "wrap" : "nowrap", flex: isMobile ? "1 1 100%" : "0 0 auto", justifyContent: isMobile ? "flex-start" : "flex-end", minWidth: 0 } },
+          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
+            var cid = (v === "" || v == null) ? null : Number(v);
+            if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
+            function doAssign() {
+              // Check for conflicts before assigning
+              if (cid && pos.date) {
+                var otherBookings = [];
+                // Same-project duplicates
+                (projects || []).forEach(function(pr) {
+                  if (pr.id !== pos.projectId) return;
+                  (pr.schedule || []).forEach(function(sc) {
+                    if (sc.date !== pos.date) return;
+                    (sc.positions || []).forEach(function(ps) {
+                      if (ps.crewId === cid && ps.id !== pos.posId) {
+                        var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
+                        otherBookings.push("Already assigned as " + (svc ? svc.role + " — " + svc.description : ps.role || "?") + " on " + sc.title);
+                      }
+                    });
+                  });
+                });
+                // Cross-project conflicts
+                (projects || []).forEach(function(pr) {
+                  if (pr.id === pos.projectId) return;
+                  (pr.schedule || []).forEach(function(sc) {
+                    if (sc.date !== pos.date) return;
+                    (sc.positions || []).forEach(function(ps) {
+                      if (ps.crewId === cid && ps.status !== "declined") {
+                        otherBookings.push(pr.name + " (" + sc.title + ")");
+                      }
+                    });
+                  });
+                });
+                if (otherBookings.length > 0) {
+                  var cm = contacts.find(function(c) { return c.id === cid; });
+                  var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
+                  setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
+                    onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
+                  return;
+                }
+              }
+              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
+            }
+            // Swapping an active booking (requested/accepted/confirmed) to a
+            // DIFFERENT person releases the current one — confirm it like
+            // un-assigning does, instead of silently resetting the shift out
+            // from under a live request. The outgoing person is parked in the
+            // notify tray with the notice typed by their prior status.
+            if (cid && pos.crewId && cid !== pos.crewId && (SEVERITY[pos.status] || 0) >= 2) {
+              var newCm = contacts.find(function(c) { return c.id === cid; });
+              var newName = newCm ? (newCm.firstName + " " + newCm.lastName).trim() : "another crew member";
+              var oldName = pos.crewName || "The current crew member";
+              var swapContext = pos.projectName + " — " + pos.schedTitle + (pos.date ? " (" + fmt(pos.date) + ")" : "");
+              var stateVerb = { requested: "has already been requested for", accepted: "already accepted", confirmed: "is confirmed on" };
+              setStatusDlg({
+                title: "Reassign to " + newName + "?",
+                message: oldName + " " + (stateVerb[pos.status] || "holds") + " " + swapContext + ". Reassigning hands the shift to " + newName + " as a fresh request (Ready to send), and " + oldName + " is added to the notify tray (bottom-left), where you can email them — or decline — when ready.",
+                actionLabel: "Reassign",
+                onConfirm: function() {
+                  parkRemoval(pos.crewId, pos.projectId, window.LTP_removalTemplate(pos.status), bkPosIds);
+                  window.LTP_toast("Crew reassigned", { message: (pos.crewName || "Crew") + " released and queued in the notify tray.", variant: "success" });
+                  doAssign();
+                }
+              });
+              return;
+            }
+            doAssign();
+          },
+            // Only crew tagged with this role are listed; the rest sit behind a
+            // deliberate "Other crew" click. Crew is PICKED from the roster
+            // here, never authored — this field has no inline-create, by design.
+            options: crewOpts.options, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
+            searchPlaceholder: "Search crew…",
+            style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, minWidth: 0 },
+            triggerStyle: { borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", fontSize: "10px", minHeight: 0 },
+            panelMinWidth: 260,
+          }),
+          needsCrew && h("span", { style: { fontSize: "9px", color: B.warn, fontStyle: "italic", whiteSpace: "nowrap" } }, "Needs crew"),
+          pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.accent, fontWeight: 700, whiteSpace: "nowrap" } }, "Ready to send"),
+          pos.status === "requested" && pill(B.warn, "Awaiting…"),
+          pos.status === "accepted" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+            pill(B.success, "Accepted", "Confirm this position from the Crew Requests tab"),
+            h("button", { onClick: function() { releasePosition(pos, bkPosIds); }, style: ctlBtn }, "Release")),
+          pos.status === "confirmed" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+            pill(B.info, "✓ Confirmed"),
+            h("button", { onClick: function() { handleStatusChange(pos, "open", bkPosIds); }, title: "Cancel this confirmed position",
+              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "9px", padding: "2px 4px", fontFamily: "inherit" } }, "cancel")),
+          pos.status === "declined" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
+            pill(B.danger, "Declined"),
+            h("button", { onClick: function() {
+              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
+            }, style: ctlBtn }, "Reassign")),
+          // Per-shift note — the crew see it under this call on the web call
+          // sheet and in the request email. Highlighted once set.
+          h("button", { onClick: function() { openNoteDlg(pos); }, title: pos.note ? "Edit shift note" : "Add a shift note (parking, gate code, wardrobe…)",
+            style: Object.assign({}, ctlBtn, { background: pos.note ? B.accent + "1c" : "transparent", border: "1px solid " + (pos.note ? B.accent + "66" : B.border), color: pos.note ? B.accent : B.textMut }) },
+            pos.note ? "✎ Note" : "+ Note"),
+          // Mobile: tap-to-call the assigned crew member straight from the
+          // booking row (field leads confirming a shift on-site).
+          isMobile && pos.crewId && (function() {
+            var acm = contacts.find(function(c) { return c.id === pos.crewId; });
+            return acm ? h(window.LTPCallBtn, { phone: acm.phone, name: acm.firstName + " " + acm.lastName, size: 36 }) : null;
+          })()));
+    }
+
+    // One day of a project as a column: date + call/wrap up top, then each
+    // shift-set as a caption line (title + times) over its booking rows. The
+    // flat-rate bucket is a column too, without the caption.
+    function renderDayColumn(pg, g) {
+      var daySum = summarizePositions(g.positions);
+      var shiftTimes = {};
+      g.positions.forEach(function(p) {
+        if (p.schedTitle && !shiftTimes[p.schedTitle] && p.callTime) shiftTimes[p.schedTitle] = ftc(p.callTime) + (p.endTime ? "–" + ftc(p.endTime) : "");
+      });
+      return h("div", { key: pg.projectId + "|" + (g.date || "_"), style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", overflow: "hidden", minWidth: 0, alignSelf: "start" } },
+        h("div", { style: { padding: "6px 10px", display: "flex", gap: 8, alignItems: "center", borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + (daySum.needsCrew ? B.warn : B.info), background: B.raised, minWidth: 0 } },
+          h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text, whiteSpace: "nowrap" } }, g.date ? fmtShort(g.date) : "Flat-rate — whole project"),
+          g.dayCall && h("span", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap" } }, ft(g.dayCall) + " → " + ft(g.dayWrap)),
+          !g.date && h("span", { style: { fontSize: "9px", color: B.textMut, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "no call times — fee stated on the request"),
+          h("span", { style: { flex: 1 } }),
+          daySum.needsCrew > 0 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.warn, whiteSpace: "nowrap" } }, daySum.needsCrew + " need crew"),
+          h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, (g.dayBookings || []).length + " crew")),
+        (g.itemSetGroups || []).map(function(isg, gi) {
+          var caption = isg.items.map(function(t) { return t + (shiftTimes[t] ? "  " + shiftTimes[t] : ""); }).join("   ›   ");
+          return h("div", { key: "isg-" + gi },
+            g.date && h("div", { title: caption, style: { padding: "3px 10px", background: B.bg, borderTop: gi > 0 ? "1px solid " + B.border : "none", borderBottom: "1px solid " + B.border, fontSize: "9px", fontWeight: 700, color: B.textMut, letterSpacing: "0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, caption),
+            isg.bookings.map(function(booking, bi) { return renderBooking(booking, bi); }));
+        }));
+    }
+
+    var tileColor = { all: B.accent, open: B.warn, requested: B.warn, accepted: B.success, confirmed: B.info, declined: B.danger, conflicts: B.danger };
+    var tileItems = [
+      { key: "all",       label: "All positions", value: stats.total },
+      { key: "open",      label: "Open",          value: stats.open },
+      { key: "requested", label: "Requested",     value: stats.requested },
+      { key: "accepted",  label: "Accepted",      value: stats.accepted },
+      { key: "confirmed", label: "Confirmed",     value: stats.confirmed },
+      { key: "declined",  label: "Declined",      value: stats.declined },
+      { key: "conflicts", label: "Conflicts",     value: stats.conflicts },
+    ].map(function(t) {
+      return Object.assign(t, { color: tileColor[t.key], dim: t.key !== "all" && !t.value, active: filter === t.key,
+        onClick: function() { setFilter(t.key); }, title: t.key === "all" ? "Show every position" : "Show only " + t.key + " positions" });
+    });
+
     return h("div", null,
       // Stats — phone: one compact strip (five stacked 180px cards were a
-      // whole screen); desktop: the StatCard row.
+      // whole screen); desktop: the tiles double as the status filter.
       isMobile
         ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
             { label: "Total", value: stats.total },
@@ -1331,19 +1701,12 @@
             { label: "Accepted", value: stats.accepted, color: stats.accepted > 0 ? B.success : B.textMut },
             { label: "Confirmed", value: stats.confirmed, color: B.success },
             stats.conflicts > 0 && { label: "Conflicts", value: stats.conflicts, color: B.danger } ] })
-        : h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 } },
-            h(window.StatCard, { label: "Total Positions", value: stats.total }),
-            h(window.StatCard, { label: "Open", value: stats.open, accent: stats.open > 0 ? B.warn : B.textMut }),
-            h(window.StatCard, { label: "Requested", value: stats.requested, accent: B.warn }),
-            h(window.StatCard, { label: "Accepted", value: stats.accepted, accent: stats.accepted > 0 ? B.success : B.textMut }),
-            h(window.StatCard, { label: "Confirmed", value: stats.confirmed, accent: B.success }),
-            stats.conflicts > 0 && h(window.StatCard, { label: "Conflicts", value: stats.conflicts, accent: B.danger })
-          ),
-      // Filters + Batch Actions. Phone: the status chips scroll in one strip,
-      // then project picker · + Manual Shift (· Send) share a 36px row —
-      // instead of nine controls wrapping over four lines.
+        : h(FilterTiles, { items: tileItems }),
+      // Toolbar. Phone: the status chips scroll in one strip, then project
+      // picker · + Manual Shift (· Send) share a 36px row. Desktop: the tiles
+      // above carry the status filter, so this row is project · fold · actions.
       (function() {
-        var chipMobile = isMobile ? { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" } : null;
+        var chipMobile = { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" };
         var chips = ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
@@ -1357,32 +1720,32 @@
           // it shouldn't be held in the list while you search for a project.
           options: [{ value: "all", label: "All Projects", sentinel: true }].concat(
             projOptions.map(function(p) { return { value: String(p.id), label: p.name }; })),
-          searchPlaceholder: "Search projects\u2026",
-          style: isMobile ? { flex: "1 1 160px", minWidth: 0 } : { width: 190, flexShrink: 0 },
+          searchPlaceholder: "Search projects…",
+          style: isMobile ? { flex: "1 1 160px", minWidth: 0 } : { width: 200, flexShrink: 0 },
           triggerStyle: isMobile ? { background: B.raised, borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: 36 }
                                  : { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
           panelMinWidth: 240,
         });
         var actMobile = isMobile ? { borderRadius: "8px", padding: "0 12px", height: 36, fontSize: "12px", whiteSpace: "nowrap", fontFamily: "inherit", flexShrink: 0 } : null;
+        var foldBtn = h(FoldAllButton, { ids: sectionIds, collapsed: collapsed, style: isMobile ? { height: 36, borderRadius: "8px", fontSize: "12px", padding: "0 12px" } : null });
         var manualBtn = h("button", { onClick: function() { setShowManualShift(true); }, title: "Add a one-off shift not tied to a client project (e.g. warehouse labor)",
           style: Object.assign({ background: B.accent, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile) }, "+ Manual Shift");
         var sendBtn = pendingSendUnique > 0 && h("button", { onClick: openSendPanel,
-          style: Object.assign({ background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile, isMobile ? { flex: "1 1 auto" } : null) }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " \u25b8");
+          style: Object.assign({ background: B.success, border: "none", borderRadius: "4px", padding: "5px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, cursor: "pointer" }, actMobile, isMobile ? { flex: "1 1 auto" } : null) }, "Send " + pendingSendUnique + " Request" + (pendingSendUnique > 1 ? "s" : "") + " ▸");
         if (isMobile) return [
           h(window.LTPScrollStrip, { key: "chips", isMobile: true, wrapStyle: { marginBottom: 8 },
             mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips),
-          h("div", { key: "row", style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, manualBtn, sendBtn)
+          h("div", { key: "row", style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, foldBtn, manualBtn, sendBtn)
         ];
-        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-          chips, projSelect, h("div", { style: { flex: 1 } }), manualBtn, sendBtn);
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } },
+          projSelect, foldBtn, h("div", { style: { flex: 1 } }), manualBtn, sendBtn);
       })(),
-      // One-off manual-shift adder (warehouse labor etc. \u2014 see ManualShiftModal).
+      // One-off manual-shift adder (warehouse labor etc. — see ManualShiftModal).
       showManualShift && h(ManualShiftModal, { services: services, contacts: contacts, onSave: createManualShift, onClose: function() { setShowManualShift(false); } }),
-      // Lightweight editor for an existing manual shift (internal project) \u2014
+      // Lightweight editor for an existing manual shift (internal project) —
       // times & details only; roles/crew stay on this tab.
       editManualProject && h(ManualShiftModal, { services: services, contacts: contacts, editProject: editManualProject, onSave: updateManualShift, onClose: function() { setEditManualProject(null); } }),
 
-      // Grouped by project
       defaultView && fullyRequestedCount > 0 && projectGroups.length > 0 && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10, fontStyle: "italic" } },
         fullyRequestedCount + " fully-requested project" + (fullyRequestedCount > 1 ? "s" : "") + " hidden — manage responses on the Crew Requests tab, or use the filters above."),
       projectGroups.length === 0 && h(window.EmptyState, { text: allPositions.length === 0
@@ -1390,194 +1753,28 @@
         : defaultView
           ? "All positions are requested or booked — manage responses on the Crew Requests tab. Withdrawn or declined shifts reopen here automatically."
           : "No positions match this filter." }),
+      // One collapsible section per project; inside it, the project's days sit
+      // side by side (two or three columns on a desktop, one on a phone) so a
+      // whole job fits on a screen instead of a scroll. Dated days lead; the
+      // flat-rate bucket, when there is one, comes last.
       projectGroups.map(function(pg) {
-        var totalBookings = pg.dates.reduce(function(s, d) { return s + (d.dayBookings || []).length; }, 0);
         var pgProject = (projects || []).find(function(p) { return p.id === pg.projectId; });
         var isInternal = !!(pgProject && pgProject.internal);
-        return h("div", { key: pg.projectId, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
-          // Project header — a manual shift (internal project) opens the
-          // lightweight editor; a real project opens its Schedule Builder.
-          h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
-            h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: "pointer" }, onClick: function() { if (isInternal && pgProject) { setEditManualProject(pgProject); } else { nav("projects/" + pg.projectId + "/schedule"); } } }, pg.projectName),
-            h("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
-              isInternal && pgProject && h("button", { onClick: function() { setEditManualProject(pgProject); }, title: "Edit this manual shift's date, time, or details",
-                style: { background: "transparent", border: "1px solid " + B.accent + "55", borderRadius: "4px", padding: "2px 8px", color: B.accent, fontSize: "10px", fontWeight: 700, cursor: "pointer" } }, "✎ Edit"),
-              h("span", { style: { fontSize: "10px", color: B.textMut } }, totalBookings + " crew booking" + (totalBookings !== 1 ? "s" : "")))),
-          // Date groups
-          pg.dates.map(function(g) {
-            return h("div", { key: pg.projectId + "|" + (g.date || "_") },
-              h("div", { style: { padding: "8px 14px", display: "flex", gap: 10, alignItems: "center", background: B.raised, borderBottom: "1px solid " + B.border, borderLeft: "3px solid " + B.info } },
-                h("span", { style: { fontSize: "11px", fontWeight: 700, color: B.text } }, g.date ? fmt(g.date) : "Flat-rate \u2014 whole project"),
-                !g.date && h("span", { style: { fontSize: "9px", color: B.textMut } }, "no call times \u2014 fee stated on the request"),
-                g.dayCall && h("span", { style: { fontSize: "10px", color: B.textMut } }, ft(g.dayCall) + " \u2192 " + ft(g.dayWrap)),
-                h("span", { style: { fontSize: "9px", color: B.textMut } }, (g.dayBookings || []).length + " crew")),
-              // Crew rows grouped by matching schedule items
-              h("div", { style: { padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 } },
-                (g.itemSetGroups || []).map(function(isg, gi) {
-                  return h("div", { key: "isg-" + gi, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", overflow: "hidden" } },
-                    // Item set header
-                    h("div", { style: { padding: "5px 10px", background: B.bg, borderBottom: "1px solid " + B.border, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-                      isg.items.map(function(item, ii) {
-                        return h("span", { key: ii, style: { fontSize: "10px", color: B.textMut, display: "flex", alignItems: "center", gap: 4 } },
-                          ii > 0 && h("span", { style: { color: B.textMut, margin: "0 2px" } }, "\u203a"),
-                          item);
-                      })
-                    ),
-                    // Crew rows under this item set
-                    h("div", { style: { display: "flex", flexDirection: "column" } },
-                      isg.bookings.map(function(booking, bi) {
-                        var pos = booking.pos;
-                        // The positions this booking represents — status actions
-                        // act on exactly these (a conflicting shift is its own
-                        // booking, so it isn't swept up with the one you click).
-                        var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
-                        var conflicts = (crewConflicts || {})[pos.posId];
-                        var hasConflict = conflicts && conflicts.length > 0;
-                        // Two-tier crew list for this position's role — shared with
-                        // the schedule editor and the manual-shift form.
-                        //
-                        // The filter resolves through the LINKED SERVICE, not the
-                        // denormalized pos.role, for the same reason the weekly
-                        // grid does: a stale or free-text role would match nobody
-                        // and silently push the whole roster behind "Other crew".
-                        // pos.roleCode is unusable here — it degrades to the
-                        // display placeholder "Crew" when there's no service, and
-                        // that matches nobody either. No service linked means no
-                        // role is being filled, so offer everyone.
-                        var posSvc = pos.serviceId ? (services || []).find(function(sv) { return sv.id === pos.serviceId; }) : null;
-                        var crewOpts = window.LTP_crewSelectOptions({
-                          crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
-                          allContacts: contacts, leading: [{ value: "", label: "Assign crew\u2026" }],
-                        });
-                        return h("div", { key: pos.posId + "-" + bi, style: { padding: isMobile ? "8px 10px" : "6px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap", borderTop: bi > 0 ? "1px solid " + B.border : "none", background: hasConflict ? B.danger + "08" : "transparent" } },
-                          hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
-                            style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
-                            h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
-                          h("div", { style: { flex: isMobile ? "1 1 100%" : 1, minWidth: 0 } },
-                            h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.text } }, pos.svcName),
-                            // Person # within the role for this day (same numbering
-                            // as the schedule editor) — shown when a role has 2+
-                            // people so the right person goes into the right slot.
-                            pos.dayRoleCount > 1 && h("span", { title: "Person #" + pos.slot + " of " + pos.dayRoleCount + " for this role on this day — matches the # in the schedule editor.",
-                              style: { fontSize: "9px", fontWeight: 700, color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", marginLeft: 6, cursor: "help" } }, "#" + pos.slot),
-                            pos.dept && h("span", { style: { fontSize: "9px", color: window.LTP_deptColor(pos.dept), background: window.LTP_deptColor(pos.dept) + "22", border: "1px solid " + window.LTP_deptColor(pos.dept) + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 600, marginLeft: 6 } }, pos.dept),
-                            // Flat-rate position: the fee (what the request states) and when it is paid.
-                            pos.flat && h("span", { title: "Flat-rate position for the whole project. Fee $" + window.LTP_money(pos.fee) + (pos.payDate ? " \u00b7 paid with the payroll period of " + fmt(pos.payDate) + " (project end)" : " \u00b7 no project end date \u2014 set one so the fee can be paid") + " \u2014 edit in the Schedule Builder.",
-                              style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, marginLeft: 6, cursor: "help", whiteSpace: "nowrap" } },
-                              "Flat $" + window.LTP_money(pos.fee))),
-                          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
-                            var cid = (v === "" || v == null) ? null : Number(v);
-                            if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
-                            function doAssign() {
-                              // Check for conflicts before assigning
-                              if (cid && pos.date) {
-                                var otherBookings = [];
-                                // Same-project duplicates
-                                (projects || []).forEach(function(pr) {
-                                  if (pr.id !== pos.projectId) return;
-                                  (pr.schedule || []).forEach(function(sc) {
-                                    if (sc.date !== pos.date) return;
-                                    (sc.positions || []).forEach(function(ps) {
-                                      if (ps.crewId === cid && ps.id !== pos.posId) {
-                                        var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
-                                        otherBookings.push("Already assigned as " + (svc ? svc.role + " \u2014 " + svc.description : ps.role || "?") + " on " + sc.title);
-                                      }
-                                    });
-                                  });
-                                });
-                                // Cross-project conflicts
-                                (projects || []).forEach(function(pr) {
-                                  if (pr.id === pos.projectId) return;
-                                  (pr.schedule || []).forEach(function(sc) {
-                                    if (sc.date !== pos.date) return;
-                                    (sc.positions || []).forEach(function(ps) {
-                                      if (ps.crewId === cid && ps.status !== "declined") {
-                                        otherBookings.push(pr.name + " (" + sc.title + ")");
-                                      }
-                                    });
-                                  });
-                                });
-                                if (otherBookings.length > 0) {
-                                  var cm = contacts.find(function(c) { return c.id === cid; });
-                                  var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
-                                  setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
-                                    onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
-                                  return;
-                                }
-                              }
-                              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
-                            }
-                            // Swapping an active booking (requested/accepted/confirmed) to a
-                            // DIFFERENT person releases the current one \u2014 confirm it like
-                            // un-assigning does, instead of silently resetting the shift out
-                            // from under a live request. The outgoing person is parked in the
-                            // notify tray with the notice typed by their prior status.
-                            if (cid && pos.crewId && cid !== pos.crewId && (SEVERITY[pos.status] || 0) >= 2) {
-                              var newCm = contacts.find(function(c) { return c.id === cid; });
-                              var newName = newCm ? (newCm.firstName + " " + newCm.lastName).trim() : "another crew member";
-                              var oldName = pos.crewName || "The current crew member";
-                              var swapContext = pos.projectName + " \u2014 " + pos.schedTitle + (pos.date ? " (" + fmt(pos.date) + ")" : "");
-                              var stateVerb = { requested: "has already been requested for", accepted: "already accepted", confirmed: "is confirmed on" };
-                              setStatusDlg({
-                                title: "Reassign to " + newName + "?",
-                                message: oldName + " " + (stateVerb[pos.status] || "holds") + " " + swapContext + ". Reassigning hands the shift to " + newName + " as a fresh request (Ready to send), and " + oldName + " is added to the notify tray (bottom-left), where you can email them \u2014 or decline \u2014 when ready.",
-                                actionLabel: "Reassign",
-                                onConfirm: function() {
-                                  parkRemoval(pos.crewId, pos.projectId, window.LTP_removalTemplate(pos.status), bkPosIds);
-                                  window.LTP_toast("Crew reassigned", { message: (pos.crewName || "Crew") + " released and queued in the notify tray.", variant: "success" });
-                                  doAssign();
-                                }
-                              });
-                              return;
-                            }
-                            doAssign();
-                          },
-                            // Only crew tagged with this role are listed; the rest
-                            // sit behind a deliberate "Other crew" click. Crew is
-                            // PICKED from the roster here, never authored — this
-                            // field has no inline-create, by design.
-                            options: crewOpts.options, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
-                            searchPlaceholder: "Search crew\u2026",
-                            style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, minWidth: 0 },
-                            triggerStyle: { borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", fontSize: "10px", minHeight: 0 },
-                            panelMinWidth: 260,
-                          }),
-                          pos.status === "open" && !pos.crewId && h("span", { style: { fontSize: "9px", color: B.textMut, fontStyle: "italic" } }, "Needs crew"),
-                          pos.status === "open" && pos.crewId && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600 } }, "Ready to send"),
-                          pos.status === "requested" && h("span", { style: { fontSize: "9px", color: B.warn, fontWeight: 600, background: B.warn + "18", border: "1px solid " + B.warn + "33", borderRadius: "3px", padding: "2px 8px" } }, "Awaiting\u2026"),
-                          pos.status === "accepted" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
-                            h("span", { title: "Confirm this position from the Crew Requests tab", style: { fontSize: "9px", color: B.success, fontWeight: 700, background: B.success + "18", border: "1px solid " + B.success + "33", borderRadius: "3px", padding: "2px 8px" } }, "Accepted"),
-                            h("button", { onClick: function() { releasePosition(pos, bkPosIds); },
-                              style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Release")),
-                          pos.status === "confirmed" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
-                            h("span", { style: { fontSize: "9px", color: B.info, fontWeight: 700, background: B.info + "18", border: "1px solid " + B.info + "33", borderRadius: "3px", padding: "2px 8px" } }, "\u2713 Confirmed"),
-                            h("button", { onClick: function() { handleStatusChange(pos, "open", bkPosIds); },
-                              style: { background: "transparent", border: "none", color: B.border, cursor: "pointer", fontSize: "9px", padding: "2px 4px" } }, "cancel")),
-                          pos.status === "declined" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
-                            h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 600, background: B.danger + "18", border: "1px solid " + B.danger + "33", borderRadius: "3px", padding: "2px 8px" } }, "Declined"),
-                            h("button", { onClick: function() {
-                              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { status: "open", crewId: null }); });
-                            }, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer" } }, "Reassign")),
-                          // Per-shift note — the crew see it under this call on the web
-                          // call sheet and in the request email. Highlighted once set.
-                          h("button", { onClick: function() { openNoteDlg(pos); }, title: pos.note ? "Edit shift note" : "Add a shift note (parking, gate code, wardrobe…)",
-                            style: { background: pos.note ? B.accent + "1c" : "transparent", border: "1px solid " + (pos.note ? B.accent + "66" : B.border), borderRadius: "3px", padding: "3px 8px", color: pos.note ? B.accent : B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
-                            pos.note ? "✎ Note" : "+ Note"),
-                          // Mobile: tap-to-call the assigned crew member straight from
-                          // the booking row (field leads confirming a shift on-site).
-                          isMobile && pos.crewId && (function() {
-                            var acm = contacts.find(function(c) { return c.id === pos.crewId; });
-                            return acm ? h(window.LTPCallBtn, { phone: acm.phone, name: acm.firstName + " " + acm.lastName, size: 36 }) : null;
-                          })()
-                        );
-                      })
-                    )
-                  );
-                })
-              )
-            );
-          })
-        );
+        var cols = pg.dates.slice().sort(function(a, b) {
+          if (!a.date) return 1;
+          if (!b.date) return -1;
+          return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+        });
+        var editBtn = isInternal && pgProject && h("button", { onClick: function() { setEditManualProject(pgProject); }, title: "Edit this manual shift's date, time, or details",
+          style: { background: "transparent", border: "1px solid " + B.accent + "55", borderRadius: "4px", padding: "2px 8px", color: B.accent, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, "✎ Edit");
+        return h(ProjectSection, { key: pg.projectId, title: pg.projectName, meta: projectMeta(pgProject, companies),
+          summary: summarizePositions(posByProject[pg.projectId]), right: editBtn || null,
+          collapsed: collapsed.isCollapsed(pg.projectId), onToggle: function() { collapsed.toggle(pg.projectId); }, isMobile: isMobile,
+          // A manual shift (internal project) opens the lightweight editor; a
+          // real project opens its Schedule Builder.
+          onTitleClick: function() { if (isInternal && pgProject) { setEditManualProject(pgProject); } else { nav("projects/" + pg.projectId + "/schedule"); } } },
+          h("div", { style: { padding: isMobile ? 6 : 8, display: "grid", gap: 8, gridTemplateColumns: (isMobile || cols.length === 1) ? "minmax(0, 1fr)" : "repeat(auto-fill, minmax(500px, 1fr))" } },
+            cols.map(function(g) { return renderDayColumn(pg, g); })));
       }),
 
       // Conflict warning dialog
@@ -2869,6 +3066,8 @@
     // the crew member, or accepted and awaiting confirm). Fully-confirmed and
     // declined requests are done; the pills opt them back in.
     var [filter, setFilter] = useState("open");
+    var collapsed = useCollapsedSet("ltp.labor.requests.collapsed");
+    var [detailOpen, setDetailOpen] = useState({});   // request id → per-shift list expanded (desktop ledger)
 
     // Refresh on open so a crew member's response since last load shows up here
     // (and reconciles into the Assignments view).
@@ -2971,7 +3170,7 @@
       var positions = [];
       if (proj) (proj.schedule || []).forEach(function(s) {
         (s.positions || []).forEach(function(p) {
-          if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date });
+          if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date, title: s.title || "", time: s.time || "", endTime: s.endTime || "" });
         });
       });
       if (proj) (proj.fixedPositions || []).forEach(function(p) {
@@ -3059,12 +3258,132 @@
         label + (count != null ? " (" + count + ")" : ""));
     };
 
+    // "A1 — Audio Engineer · 3 shifts · Sep 12 – Sep 13" — the one-line read
+    // of what a request asks for. The per-shift list sits behind a toggle.
+    function positionsSummary(r, info) {
+      if (!info.known) return null;
+      if (!info.positions.length) {
+        var n = (r.positionIds || []).length;
+        return n + " shift" + (n !== 1 ? "s" : "");
+      }
+      var labels = [], seen = {};
+      info.positions.forEach(function(p) { if (!seen[p.roleLabel]) { seen[p.roleLabel] = true; labels.push(p.roleLabel); } });
+      var roles = labels.length === 1 ? labels[0] : labels.map(function(l) { return l.split(" — ")[0]; }).join(" + ");
+      var dates = info.positions.map(function(p) { return p.date; }).filter(Boolean).sort();
+      var when = dates.length ? fmtRange(dates[0], dates[dates.length - 1]) : "";
+      var flatOnly = info.positions.every(function(p) { return p.flat; });
+      return roles + "  ·  " + askLabel(info.positions) + (flatOnly ? "  ·  whole project" : (when ? "  ·  " + when : ""));
+    }
+    // Per-shift lines. The desktop ledger keeps each to one line (the cell is
+    // wide); a phone card lets them wrap rather than lose the role to "…".
+    function positionLines(info) {
+      var list = info.positions.slice().sort(function(a, b) { return (a.date || "￿") < (b.date || "￿") ? -1 : 1; });
+      var oneLine = isMobile ? null : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+      return list.map(function(p, pi) {
+        var done = p.status === "confirmed";
+        var text = p.flat
+          ? p.roleLabel + "  ·  flat rate $" + window.LTP_money(p.fee) + "  ·  whole project"
+          : [p.date ? fmtShort(p.date) : "", p.title || "", p.time ? ftc(p.time) + (p.endTime ? "–" + ftc(p.endTime) : "") : "", p.roleLabel].filter(Boolean).join("  ·  ");
+        return h("div", { key: pi, style: Object.assign({ fontSize: "10px", color: done ? B.info : B.textSec, lineHeight: 1.6 }, oneLine) }, (done ? "✓ " : "• ") + text);
+      });
+    }
+    // When it went out, and — once answered — when the answer came back. A
+    // pending ask that has sat unanswered for days turns amber: that is the
+    // one to chase or withdraw.
+    function sentCell(r, ds) {
+      if (r.silent) return h("div", { style: { fontSize: "10px", color: B.textMut } }, "Booked directly", r.respondedAt && h("div", { style: { fontSize: "9px" } }, timeAgo(r.respondedAt)));
+      if (!r.sentAt) return h("div", { style: { fontSize: "10px", color: B.textMut } }, "—");
+      var stale = r.status === "pending" && daysSince(r.sentAt) >= 3;
+      return h("div", { title: new Date(r.sentAt).toLocaleString() },
+        h("div", { style: { fontSize: "10px", color: stale ? B.warn : B.textSec, fontWeight: stale ? 700 : 500 } }, timeAgo(r.sentAt)),
+        stale && h("div", { style: { fontSize: "9px", color: B.warn } }, "no reply yet"),
+        r.respondedAt && r.status !== "pending" && h("div", { style: { fontSize: "9px", color: B.textMut } }, (r.status === "declined" ? "declined " : "accepted ") + timeAgo(r.respondedAt)));
+    }
+    function actionButtons(r, ds) {
+      return [
+        ds.confirm && h("button", { key: "confirm", onClick: function() { setConfirmDlg(r); },
+          style: Object.assign({ flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "✓ Confirm"),
+        ds.resend && h("button", { key: "resend", onClick: function() { resendRequest(r); },
+          style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Resend"),
+        ds.withdraw && h("button", { key: "withdraw", onClick: function() { setWithdrawDlg(r); },
+          style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Withdraw")
+      ].filter(Boolean);
+    }
+    function badge(ds) {
+      return h("span", { style: { display: "inline-block", fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label);
+    }
+    function toggleDetail(id) { setDetailOpen(function(prev) { var n = Object.assign({}, prev); n[id] = !n[id]; return n; }); }
+
+    // Desktop: one ledger per project — Crew · Positions · Sent · Status ·
+    // actions — so a project's asks scan as a table instead of a stack of
+    // half-empty cards. The positions cell expands to the per-shift list.
+    var GRID = "minmax(140px, 1.1fr) minmax(240px, 2.6fr) 104px 118px minmax(160px, auto)";
+    function renderLedger(rows) {
+      return h("div", { style: { background: B.surface } },
+        h("div", { style: { display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "4px 12px", fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.08em", borderBottom: "1px solid " + B.border, background: B.bg } },
+          h("span", null, "Crew"), h("span", null, "Positions"), h("span", null, "Sent"), h("span", null, "Status"), h("span", null, "")),
+        rows.map(function(x, i) {
+          var r = x.r, info = x.info, ds = x.ds;
+          var cm = contacts.find(function(c) { return c.id === r.contactId; });
+          var open = !!detailOpen[r.id];
+          var summary = positionsSummary(r, info);
+          return h("div", { key: r.id, style: { display: "grid", gridTemplateColumns: GRID, gap: 12, padding: "8px 12px", alignItems: "start", borderTop: i > 0 ? "1px solid " + B.border : "none" } },
+            h("div", { style: { minWidth: 0 } },
+              h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, crewLabel(r.contactId)),
+              cm && (cm.email || cm.phone) && h("div", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, cm.email || window.LTP_formatPhone(cm.phone))),
+            h("div", { style: { minWidth: 0 } },
+              !info.known
+                // Distinct from "no positions": we are missing the project, not
+                // the shifts. Actions stay hidden until it lands so a Confirm
+                // click can't quietly no-op.
+                ? h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Waiting for this shift’s details to sync…")
+                : h("button", { onClick: function() { toggleDetail(r.id); }, "aria-expanded": open ? "true" : "false", disabled: !info.positions.length,
+                    title: info.positions.length ? (open ? "Hide the shift list" : "Show each shift") : undefined,
+                    style: { display: "flex", alignItems: "center", gap: 6, background: "transparent", border: "none", padding: 0, margin: 0, color: B.text, fontSize: "11px", fontWeight: 600, cursor: info.positions.length ? "pointer" : "default", fontFamily: "inherit", textAlign: "left", maxWidth: "100%", minWidth: 0 } },
+                    h("span", { style: { color: B.textMut, fontSize: "10px", width: 10, flexShrink: 0 } }, info.positions.length ? (open ? "▾" : "▸") : ""),
+                    h("span", { style: { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, summary)),
+              open && info.positions.length > 0 && h("div", { style: { marginTop: 3, paddingLeft: 16 } }, positionLines(info)),
+              // Direct book — no ask was ever sent, so there's no crew note to
+              // show and none is coming.
+              r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
+              // Note the crew member left when they accepted/declined.
+              r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”")),
+            sentCell(r, ds),
+            h("div", null, badge(ds)),
+            h("div", { style: { display: "flex", gap: 6, justifyContent: "flex-end", flexWrap: "wrap" } }, actionButtons(r, ds)));
+        }));
+    }
+    // Phone: one card per request — name + badge, the shift list, the sent
+    // line, then full-width action buttons.
+    function renderCards(rows) {
+      return h("div", { style: { padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 } },
+        rows.map(function(x) {
+          var r = x.r, info = x.info, ds = x.ds;
+          var contentEl = h("div", { style: { flex: 1, minWidth: 0 } },
+            h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
+            info.positions.length > 0
+              ? h("div", { style: { marginTop: 3 } }, positionLines(info))
+              : !info.known
+                ? h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, "Waiting for this shift’s details to sync…")
+                : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
+            r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
+            r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”"));
+          var acts = actionButtons(r, ds);
+          return h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 } },
+            h("div", { style: { display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between" } }, contentEl,
+              h("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 } }, badge(ds), !r.silent && sentCell(r, ds))),
+            acts.length > 0 && h("div", { style: { display: "flex", gap: 6 } }, acts));
+        }));
+    }
+
     return h("div", null,
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } },
+      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
         filterPill("open", "Open", catCounts.open),
         filterPill("confirmed", "Confirmed", catCounts.confirmed),
         filterPill("declined", "Declined", catCounts.declined),
-        filterPill("all", "All", active.length)),
+        filterPill("all", "All", active.length),
+        h("div", { style: { flex: 1 } }),
+        h(FoldAllButton, { ids: order, collapsed: collapsed })),
       shown.length === 0
         ? h(window.EmptyState, { text: active.length === 0
             ? "No crew requests yet. Select positions in the Assignments tab and send requests to crew."
@@ -3072,56 +3391,24 @@
               ? "No open requests — everything is confirmed or answered. Use the filters above to see the rest."
               : "No " + filter + " requests in this view." })
         : order.map(function(pid) {
-            var reqs = byProject[pid];
-            return h("div", { key: pid, style: { background: B.raised, borderRadius: "8px", border: "1px solid " + B.border, marginBottom: 12, overflow: "hidden" } },
-              // Project header (matches the Assignments project card)
-              h("div", { style: { background: B.accent + "12", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "2px solid " + B.accent + "44", borderLeft: "3px solid " + B.accent } },
-                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, cursor: "pointer" }, onClick: function() { nav("projects/" + pid + "/schedule"); } }, projLabel(pid)),
-                h("span", { style: { fontSize: "10px", color: B.textMut } }, reqs.length + " crew member" + (reqs.length !== 1 ? "s" : ""))),
-              // Crew under this project
-              h("div", { style: { padding: "6px 8px", display: "flex", flexDirection: "column", gap: 6 } },
-                reqs.map(function(r) {
-                  var info = reqInfo(r);
-                  var ds = displayState(r, info);
-                  var contentEl = h("div", { style: { flex: 1, minWidth: 0 } },
-                      h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, crewLabel(r.contactId)),
-                      info.positions.length > 0
-                        ? h("div", { style: { marginTop: 3, display: "flex", flexDirection: "column", gap: 1 } },
-                            info.positions.map(function(p, pi) {
-                              return h("div", { key: pi, style: { fontSize: "10px", color: p.status === "confirmed" ? B.info : B.textMut } },
-                                (p.status === "confirmed" ? "✓ " : "") + p.roleLabel
-                                  + (p.flat ? "  ·  flat rate $" + window.LTP_money(p.fee) + " · whole project" : (p.date ? "  ·  " + fmt(p.date) : "")));
-                            }))
-                        : !info.known
-                          // Distinct from "no positions": we are missing the
-                          // project, not the shifts. Actions stay hidden until
-                          // it lands so a Confirm click can't quietly no-op.
-                          ? h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
-                              "Waiting for this shift\u2019s details to sync\u2026")
-                          : h("div", { style: { fontSize: "10px", color: B.textMut } }, (r.positionIds || []).length + " shift" + ((r.positionIds || []).length !== 1 ? "s" : "")),
-                      // Direct book — no ask was ever sent, so there's no crew
-                      // note to show and none is coming.
-                      r.silent && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", marginTop: 3 } }, "Booked directly — this crew member was not emailed"),
-                      // Note the crew member left when they accepted/declined.
-                      r.comment && h("div", { style: { fontSize: "10px", color: B.textSec, fontStyle: "italic", marginTop: 3, whiteSpace: "pre-wrap" } }, "“" + r.comment + "”"));
-                  var badgeEl = h("span", { key: "badge", style: { flexShrink: 0, marginTop: 1, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: ds.color, background: ds.color + "18", border: "1px solid " + ds.color + "44", borderRadius: "3px", padding: "2px 8px", whiteSpace: "nowrap" } }, ds.label);
-                  var actionEls = [
-                    ds.confirm && h("button", { key: "confirm", onClick: function() { setConfirmDlg(r); },
-                      style: Object.assign({ flexShrink: 0, background: B.info, border: "none", borderRadius: "4px", padding: "3px 12px", color: B.btnInk, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "✓ Confirm"),
-                    ds.resend && h("button", { key: "resend", onClick: function() { resendRequest(r); },
-                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textSec, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Resend"),
-                    ds.withdraw && h("button", { key: "withdraw", onClick: function() { setWithdrawDlg(r); },
-                      style: Object.assign({ flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: B.textMut, fontSize: "10px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }, isMobile ? { flex: 1, padding: "8px 14px", fontSize: "12px" } : null) }, "Withdraw")
-                  ].filter(Boolean);
-                  return isMobile
-                    ? h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 8 } },
-                        h("div", { style: { display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between" } }, contentEl, badgeEl),
-                        actionEls.length > 0 && h("div", { style: { display: "flex", gap: 6 } }, actionEls))
-                    : h("div", { key: r.id, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", display: "flex", gap: 10, alignItems: "flex-start" } },
-                        contentEl, badgeEl, actionEls);
-                })
-              )
-            );
+            var rows = byProject[pid].map(function(r) { var info = reqInfo(r); return { r: r, info: info, ds: displayState(r, info) }; });
+            var proj = (projects || []).find(function(p) { return p.id === pid; });
+            // Header chips: how this project's asks stand, by badge.
+            var labelCounts = {}, labelColor = {}, labelOrder = [];
+            rows.forEach(function(x) {
+              if (!labelCounts[x.ds.label]) { labelCounts[x.ds.label] = 0; labelColor[x.ds.label] = x.ds.color; labelOrder.push(x.ds.label); }
+              labelCounts[x.ds.label]++;
+            });
+            var chips = h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" } },
+              labelOrder.map(function(l) {
+                var c = labelColor[l];
+                return h("span", { key: l, style: { fontSize: "9px", fontWeight: 700, color: c, background: c + "14", border: "1px solid " + c + "3a", borderRadius: "3px", padding: "1px 6px", whiteSpace: "nowrap" } }, labelCounts[l] + " " + l.toLowerCase());
+              }));
+            return h(ProjectSection, { key: pid, title: projLabel(pid), meta: projectMeta(proj, companies), chips: chips,
+              right: h("span", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap" } }, rows.length + " crew member" + (rows.length !== 1 ? "s" : "")),
+              collapsed: collapsed.isCollapsed(pid), onToggle: function() { collapsed.toggle(pid); }, isMobile: isMobile,
+              onTitleClick: proj ? function() { nav("projects/" + pid + "/schedule"); } : null },
+              isMobile ? renderCards(rows) : renderLedger(rows));
           }),
 
       // Withdraw confirmation. Withdrawing reopens the shifts and parks a
@@ -3226,7 +3513,7 @@
           conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
-      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests, clientRates: clientRates }),
+      tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests, clientRates: clientRates, companies: companies }),
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, clientRates: clientRates, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),
       tab === "schedule" && h(WeeklySchedule, { allPositions: allPositions, contacts: contacts }),
