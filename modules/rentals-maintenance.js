@@ -98,7 +98,7 @@
 
     return h(window.LTPModal, { title: "Log Issue" + (unitLabel ? " — " + unitLabel : ""), onClose: onClose, disableBackdrop: true },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
-        R.Field("Date", h("input", { type: "date", value: date, onChange: function(e) { setDate(e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }, mobileInp) })),
+        R.Field("Date", h(window.LTPDateField, { value: date, onChange: function(v) { setDate(v); }, ariaLabel: "Date", style: Object.assign({}, R.INP, { width: "100%" }, mobileInp) })),
         R.Field("Issue Description", h("textarea", { value: issue, onChange: function(e) { setIssue(e.target.value); }, rows: 3, placeholder: "Describe the issue...", style: Object.assign({}, R.INP, { width: "100%", resize: "vertical" }, mobileInp) })),
 
         // Qty input - non-serialized only. Hidden when no availableQty

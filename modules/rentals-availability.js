@@ -41,10 +41,10 @@
       h("div", { style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "14px 18px", marginBottom: 16, display: "flex", gap: isMobile ? 10 : 16, alignItems: "flex-end", flexWrap: "wrap" } },
         h("div", { style: dateColStyle },
           h("label", { style: R.LBL }, "From"),
-          h("input", { type: "date", value: startDate, onChange: function(e) { setStartDate(e.target.value); }, style: dateInpStyle })),
+          h(window.LTPDateField, { value: startDate, onChange: function(v) { setStartDate(v); }, ariaLabel: "Start date", style: dateInpStyle })),
         h("div", { style: dateColStyle },
           h("label", { style: R.LBL }, "To"),
-          h("input", { type: "date", value: endDate, onChange: function(e) { setEndDate(e.target.value); }, style: dateInpStyle })),
+          h(window.LTPDateField, { value: endDate, onChange: function(v) { setEndDate(v); }, ariaLabel: "End date", style: dateInpStyle })),
         h("div", { style: { display: "flex", gap: 6, flexWrap: isMobile ? "nowrap" : "wrap", alignItems: "flex-end", flexBasis: isMobile ? "100%" : undefined } },
           datePresets.map(function(p) {
             return h("button", { key: p.l, onClick: function() { var s = R.today(); setStartDate(s); setEndDate(R.addDays(s, p.d)); },

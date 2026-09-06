@@ -179,7 +179,10 @@
     var shownPlaceholder = (isNum && (placeholder == null || placeholder === "")) ? "0" : placeholder;
     return h("div", { style: Object.assign({ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }, sx) },
       label && h(window.LTPFieldLabel, { label: label, color: error ? B.danger : B.textMut }),
-      textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: Object.assign({}, fs, { resize: "vertical" }) })
+      // A date is the shared calendar field (LTPDateField) — the same control
+      // and the same commit rules everywhere a date is picked in the app.
+      type === "date" ? h(window.LTPDateField, { value: value || "", onChange: onChange, placeholder: placeholder, ariaLabel: label, onFocus: handleFocus, onBlur: handleBlur, style: fs })
+      : textarea ? h("textarea", { value: value, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: placeholder, rows: 3, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: Object.assign({}, fs, { resize: "vertical" }) })
                : h("input", { type: type || "text", value: shownValue, onChange: function(e) { onChange(e.target.value); }, onFocus: handleFocus, onBlur: handleBlur, placeholder: shownPlaceholder, inputMode: inputMode, step: step, enterKeyHint: enterKeyHint, autoComplete: autoComplete, style: fs }),
       error && h("div", { style: { fontSize: "9px", color: B.danger, marginTop: 1 } }, error)
     );
@@ -210,7 +213,7 @@
   // yyyy-mm-dd for a date, 24-hour hh:mm for a time — or "". onChange fires
   // with the new string only when it actually differs from `value`.
   function deferredTemporalField(inputType) {
-    return function({ value, onChange, style: sx, title, disabled, ariaLabel, step }) {
+    return function({ value, onChange, style: sx, title, disabled, ariaLabel, step, onFocus, onBlur }) {
       // null = not editing (mirror the prop); a string = a buffered edit.
       var [buf, setBuf] = useState(null);
       var typingRef = useRef(false);
@@ -241,13 +244,252 @@
           if (typingRef.current) { setBuf(e.target.value); return; }
           commit(e.target.value);   // popup pick → publish right away
         },
-        onBlur: function(e) { commit(e.target.value); },
+        onFocus: onFocus,
+        onBlur: function(e) { commit(e.target.value); if (onBlur) onBlur(e); },
         style: sx,
       });
     };
   }
-  window.LTPDateField = deferredTemporalField("date");
+  var NativeDateField = deferredTemporalField("date");
   window.LTPTimeField = deferredTemporalField("time");
+
+  // ── Date field ─────────────────────────────────────────────────────────────
+  // On a phone the field is the native <input type="date"> above: iOS's wheel
+  // is the right control there, and the picker-chip pattern (LTP_pickerChip)
+  // stretches that input over a formatted chip. On a desktop it is the app's
+  // own calendar — a text field showing mm/dd/yyyy and a popover with the
+  // month grid.
+  //
+  // WHY NOT THE BROWSER'S CALENDAR
+  //   Chrome's popup rewrites the input's value while you page through months
+  //   (an empty field becomes the 1st of whichever month is showing) and
+  //   fires a change for each rewrite, with no keystroke behind it. The
+  //   deferred field could only read that as a pick and publish it — so the
+  //   schedule editor re-sorted the row and the popup closed before a day was
+  //   ever chosen. This calendar publishes on exactly three things: a day
+  //   clicked, Today, or Clear. Paging months changes what is shown, nothing
+  //   else.
+  //
+  // TYPING
+  //   The text field takes "9/12/2026", "9/12/26", "9/12" (this year) or ISO
+  //   "2026-09-12". Typed text is buffered and published on Enter or blur when
+  //   it parses; otherwise the field reverts. Escape reverts too. While the
+  //   calendar is open, ↑/↓ move the highlighted day by a week, ←/→ by a day
+  //   (when nothing has been typed), PageUp/PageDown page the month, and Enter
+  //   picks the highlighted day.
+  //
+  // Props: { value, onChange, style, title, disabled, ariaLabel, placeholder,
+  //          onFocus, onBlur }. `value` is ISO yyyy-mm-dd or ""; onChange fires
+  // with the new string only when it differs.
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  // Local calendar arithmetic from parts — never Date.parse, so a bare
+  // "2026-09-10" stays the day it names in every timezone. Out-of-range parts
+  // roll over the way Date does (Feb 30 → Mar 2).
+  window.LTP_isoFromParts = function(y, m, d) {
+    var dt = new Date(y, m, d);
+    return dt.getFullYear() + "-" + pad2(dt.getMonth() + 1) + "-" + pad2(dt.getDate());
+  };
+  function isoParts(iso) {
+    var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+    if (!m) return null;
+    var y = +m[1], mo = +m[2] - 1, d = +m[3];
+    var dt = new Date(y, mo, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo || dt.getDate() !== d) return null;
+    return { y: y, m: mo, d: d };
+  }
+  window.LTP_isoAddDays = function(iso, n) { var p = isoParts(iso); return p ? window.LTP_isoFromParts(p.y, p.m, p.d + n) : ""; };
+  window.LTP_formatDateUS = function(iso) { var p = isoParts(iso); return p ? pad2(p.m + 1) + "/" + pad2(p.d) + "/" + p.y : ""; };
+  // Typed text → ISO; "" for an emptied field (a deliberate clear); null when
+  // it is not a date. Two-digit years are 20xx; month/day alone is `refYear`
+  // (this year when omitted). A day the month does not have (2/30) is
+  // rejected rather than rolled.
+  window.LTP_parseTypedDate = function(text, refYear) {
+    var t = String(text == null ? "" : text).trim();
+    if (!t) return "";
+    var y, mo, d;
+    var m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t);
+    if (m) { y = +m[1]; mo = +m[2]; d = +m[3]; }
+    else {
+      m = /^(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2}|\d{4}))?$/.exec(t);
+      if (!m) return null;
+      mo = +m[1]; d = +m[2];
+      y = m[3] == null ? (refYear || new Date().getFullYear()) : (m[3].length === 2 ? 2000 + (+m[3]) : +m[3]);
+    }
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || y < 1900 || y > 2200) return null;
+    var iso = window.LTP_isoFromParts(y, mo - 1, d);
+    return iso.slice(0, 7) === y + "-" + pad2(mo) ? iso : null;
+  };
+  // The 6×7 grid of a month, Sunday first: [{ iso, day, inMonth }] × 42.
+  window.LTP_calendarGrid = function(y, m) {
+    var start = 1 - new Date(y, m, 1).getDay();
+    var cells = [];
+    for (var i = 0; i < 42; i++) {
+      var dt = new Date(y, m, start + i);
+      cells.push({ iso: window.LTP_isoFromParts(dt.getFullYear(), dt.getMonth(), dt.getDate()), day: dt.getDate(), inMonth: dt.getMonth() === m });
+    }
+    return cells;
+  };
+  function localTodayIso() { var n = new Date(); return window.LTP_isoFromParts(n.getFullYear(), n.getMonth(), n.getDate()); }
+  function monthLabel(y, m) { return new Date(y, m, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" }); }
+  function dayAria(iso) { var p = isoParts(iso); return p ? new Date(p.y, p.m, p.d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : iso; }
+
+  function DesktopDateField(props) {
+    var value = props.value || "";
+    var openPair = useState(false), open = openPair[0], setOpen = openPair[1];
+    var draftPair = useState(null), draft = draftPair[0], setDraft = draftPair[1];       // typed text; null = showing the value
+    var viewPair = useState(null), view = viewPair[0], setView = viewPair[1];           // { y, m } month on show
+    var cursorPair = useState(null), cursor = cursorPair[0], setCursor = cursorPair[1]; // keyboard-highlighted day
+    var rectPair = useState(null), rect = rectPair[0], setRect = rectPair[1];
+    var inputRef = useRef(null), panelRef = useRef(null);
+    var todayIso = localTodayIso();
+
+    function publish(next) { next = next || ""; if (next !== value) props.onChange(next); }
+    // Fixed coords measured from the field; the panel flips above it when
+    // the space below is short. Re-measured on scroll (capture, so inner
+    // scrollers count) and resize while open.
+    function measure() {
+      var el = inputRef.current;
+      if (!el || !el.getBoundingClientRect) return;
+      var r = el.getBoundingClientRect();
+      var below = (window.innerHeight || 0) - r.bottom;
+      setRect({ left: r.left, top: r.bottom, bottomGap: (window.innerHeight || 0) - r.top, up: below < 330 && r.top > below });
+    }
+    function openCal() {
+      if (props.disabled || open) return;
+      var p = isoParts(value) || isoParts(todayIso);
+      setView({ y: p.y, m: p.m });
+      setCursor(isoParts(value) ? value : null);
+      measure();
+      setOpen(true);
+    }
+    function close() { setOpen(false); setCursor(null); }
+    function pick(iso) { setDraft(null); close(); publish(iso); }
+    // Typed text publishes when it parses and reverts when it does not.
+    function commitDraft() {
+      if (draft === null) return;
+      var parsed = window.LTP_parseTypedDate(draft, view ? view.y : undefined);
+      setDraft(null);
+      if (parsed !== null) publish(parsed);
+    }
+    function shiftView(delta) {
+      setView(function(v) { var b = v || isoParts(todayIso); var dt = new Date(b.y, b.m + delta, 1); return { y: dt.getFullYear(), m: dt.getMonth() }; });
+    }
+    function moveCursor(days) {
+      var next = window.LTP_isoAddDays(cursor || value || todayIso, days);
+      var p = isoParts(next);
+      if (!p) return;
+      setCursor(next);
+      setView({ y: p.y, m: p.m });
+    }
+    function onKeyDown(e) {
+      var typed = draft !== null && draft !== "";
+      if (e.key === "Escape") { if (e.preventDefault) e.preventDefault(); setDraft(null); close(); return; }
+      if (e.key === "Enter") {
+        if (e.preventDefault) e.preventDefault();
+        if (draft !== null) { commitDraft(); close(); return; }
+        if (open && cursor) { pick(cursor); return; }
+        if (!open) openCal();
+        return;
+      }
+      if (!open) {
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") { if (e.preventDefault) e.preventDefault(); openCal(); }
+        return;
+      }
+      var handled = true;
+      if (e.key === "ArrowDown") moveCursor(7);
+      else if (e.key === "ArrowUp") moveCursor(-7);
+      else if (e.key === "ArrowRight" && !typed) moveCursor(1);
+      else if (e.key === "ArrowLeft" && !typed) moveCursor(-1);
+      else if (e.key === "PageDown") shiftView(1);
+      else if (e.key === "PageUp") shiftView(-1);
+      else handled = false;
+      if (handled && e.preventDefault) e.preventDefault();
+    }
+    function onBlur(e) { commitDraft(); close(); if (props.onBlur) props.onBlur(e); }
+
+    React.useEffect(function() {
+      if (!open || typeof document === "undefined" || !document) return undefined;
+      function onDoc(e) {
+        var inInput = inputRef.current && inputRef.current === e.target;
+        var inPanel = panelRef.current && panelRef.current.contains && panelRef.current.contains(e.target);
+        if (!inInput && !inPanel) close();
+      }
+      function onMove() { measure(); }
+      document.addEventListener("mousedown", onDoc);
+      window.addEventListener("scroll", onMove, true);
+      window.addEventListener("resize", onMove);
+      return function() {
+        document.removeEventListener("mousedown", onDoc);
+        window.removeEventListener("scroll", onMove, true);
+        window.removeEventListener("resize", onMove);
+      };
+    }, [open]);
+
+    var panel = null;
+    if (open && view) {
+      var cells = window.LTP_calendarGrid(view.y, view.m);
+      var navBtn = function(delta, glyph, label) {
+        return h("button", { type: "button", "aria-label": label, title: label, className: "ltp-cal-nav", onClick: function() { shiftView(delta); },
+          style: { width: 26, height: 26, border: "1px solid " + B.border, borderRadius: "6px", background: "transparent", color: B.textSec, cursor: "pointer", fontSize: "14px", fontFamily: "inherit", lineHeight: 1, padding: 0 } }, glyph);
+      };
+      var footBtn = function(label, onClick, title) {
+        return h("button", { type: "button", onClick: onClick, title: title, className: "ltp-btn-quiet",
+          style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "3px 9px", color: B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit" } }, label);
+      };
+      var pos = rect ? (rect.up ? { left: rect.left, bottom: rect.bottomGap + 4 } : { left: rect.left, top: rect.top + 4 }) : { left: 0, top: 0 };
+      if (rect && typeof window.innerWidth === "number") pos.left = Math.max(8, Math.min(pos.left, window.innerWidth - 240));
+      panel = h("div", { ref: panelRef, "data-ltp-cal": "1", role: "dialog", "aria-label": "Choose a date",
+        // Keep focus in the text field: a press in here must not blur it (a
+        // blur commits typed text and closes the calendar). Clicks still fire.
+        onMouseDown: function(e) { e.preventDefault(); },
+        style: Object.assign({ position: "fixed", zIndex: 3000, width: 232, padding: 8, boxSizing: "border-box", background: B.surface, border: "1px solid " + B.border, borderRadius: "10px",
+                               boxShadow: "0 12px 32px rgba(0,0,0,0.45)", fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", userSelect: "none" }, pos) },
+        h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 } },
+          navBtn(-1, "‹", "Previous month"),
+          h("span", { "data-cal-month": "1", style: { fontSize: "12px", fontWeight: 700, color: B.text } }, monthLabel(view.y, view.m)),
+          navBtn(1, "›", "Next month")),
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 } },
+          ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map(function(d) {
+            return h("div", { key: d, style: { textAlign: "center", fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", padding: "2px 0" } }, d);
+          })),
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1 } },
+          cells.map(function(c) {
+            var isSel = c.iso === value, isToday = c.iso === todayIso, isCur = c.iso === cursor;
+            return h("button", { key: c.iso, type: "button", "data-day": c.iso, "aria-label": dayAria(c.iso), "aria-pressed": isSel ? "true" : "false", className: "ltp-cal-day",
+              onClick: function() { pick(c.iso); },
+              style: { height: 28, border: "1px solid " + (isSel ? B.accent : isToday ? B.accent + "88" : "transparent"), borderRadius: "6px", cursor: "pointer", fontFamily: "inherit",
+                       fontSize: "11px", fontWeight: (isSel || isToday) ? 700 : 500, padding: 0, lineHeight: 1,
+                       background: isSel ? B.accent : isCur ? B.raised : "transparent",
+                       color: isSel ? B.btnInk : c.inMonth ? B.text : B.textMut, opacity: (c.inMonth || isSel) ? 1 : 0.55 } }, String(c.day));
+          })),
+        h("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 8 } },
+          footBtn("Today", function() { pick(todayIso); }, "Pick today"),
+          footBtn("Clear", function() { pick(""); }, "Leave the date empty")));
+      // Portaled to <body>: the field sits inside overflow:hidden cards and
+      // inside LTPModal (z 1000); this paints above both, like the dropdowns.
+      if (typeof ReactDOM !== "undefined" && ReactDOM.createPortal && typeof document !== "undefined" && document && document.body) {
+        panel = ReactDOM.createPortal(panel, document.body);
+      }
+    }
+
+    var shown = draft !== null ? draft : window.LTP_formatDateUS(value);
+    var input = h("input", {
+      ref: inputRef, type: "text", inputMode: "numeric", autoComplete: "off", spellCheck: false,
+      value: shown, disabled: props.disabled, title: props.title, "aria-label": props.ariaLabel,
+      placeholder: props.placeholder || "mm/dd/yyyy",
+      "aria-haspopup": "dialog", "aria-expanded": open ? "true" : "false",
+      onClick: function() { openCal(); },
+      onFocus: props.onFocus,
+      onChange: function(e) { setDraft(e.target.value); },
+      onKeyDown: onKeyDown,
+      onBlur: onBlur,
+      style: Object.assign({}, props.style, open ? { borderColor: B.accent } : null),
+    });
+    return h(React.Fragment, null, input, panel);
+  }
+  window.LTPDateField = function LTPDateField(props) {
+    return window.LTP_useIsMobile() ? h(NativeDateField, props) : h(DesktopDateField, props);
+  };
 
   // ── Phone density kit ──────────────────────────────────────────────────────
   // On a phone every input renders at 16px whether we like it or not
