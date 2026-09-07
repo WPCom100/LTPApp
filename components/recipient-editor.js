@@ -43,6 +43,9 @@
     var v = props.value || { to: [], cc: [] };
     var queryPair = useState(""); var query = queryPair[0], setQuery = queryPair[1];
     var openPair = useState(false); var open = openPair[0], setOpen = openPair[1];
+    // Phone: the chips, their → To / ✕ controls and the add field all grow to
+    // finger size (the desktop sizes are tuned for a mouse in a 480px pane).
+    var isMobile = window.LTP_useIsMobile();
 
     function contactByEmail(email) {
       var e = (email || "").toLowerCase();
@@ -75,23 +78,43 @@
 
     var chipWrap = { display: "inline-flex", alignItems: "center", gap: 6, background: B.raised, border: "1px solid " + B.border, borderRadius: "5px", padding: "3px 6px 3px 8px", maxWidth: "100%" };
     var xBtn = { background: "transparent", border: "none", color: B.textMut, fontSize: "11px", lineHeight: 1, cursor: "pointer", padding: "0 2px", fontFamily: "inherit", flexShrink: 0 };
+    var toBtn = { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, fontSize: "9px", cursor: "pointer", padding: "1px 5px", fontFamily: "inherit", flexShrink: 0 };
+    var chipName = { fontSize: "11px", color: B.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+    var chipMail = { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap" };
+    // Phone: one full-width chip per line with the name over the address,
+    // both allowed to wrap, so neither is ever cut short — a name-and-email
+    // chip squeezed onto one 300px line was ellipsised after a few letters.
+    if (isMobile) {
+      Object.assign(chipWrap, { display: "flex", width: "100%", borderRadius: "8px", padding: "4px 2px 4px 10px", minHeight: 36, boxSizing: "border-box" });
+      Object.assign(xBtn, { fontSize: "14px", padding: "6px 8px", minHeight: 28 });
+      Object.assign(toBtn, { fontSize: "11px", padding: "4px 8px", minHeight: 28, borderRadius: "6px" });
+      Object.assign(chipName, { fontSize: "12px", whiteSpace: "normal", overflow: "visible", lineHeight: 1.25 });
+      Object.assign(chipMail, { fontSize: "11px", whiteSpace: "normal", wordBreak: "break-all", lineHeight: 1.25 });
+    }
 
     function chip(email, primary) {
       var nm = nameFor(email);
+      var toB = !primary && h("button", { onClick: function() { makePrimary(email); }, title: "Move to To (make primary)", className: "ltp-tap", style: toBtn }, "→ To");
+      var xB = h("button", { onClick: function() { removeEmail(email); }, title: "Remove", "aria-label": "Remove " + email, className: "ltp-tap", style: xBtn }, "✕");
+      if (isMobile) {
+        return h("span", { key: (primary ? "to:" : "cc:") + email, style: chipWrap, title: email },
+          h("span", { style: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 } },
+            h("span", { style: chipName }, nm || email),
+            nm && h("span", { style: chipMail }, email)),
+          toB, xB);
+      }
       return h("span", { key: (primary ? "to:" : "cc:") + email, style: chipWrap, title: email },
-        h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, nm || email),
-        nm && h("span", { style: { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap" } }, email),
-        !primary && h("button", { onClick: function() { makePrimary(email); }, title: "Move to To (make primary)",
-          style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, fontSize: "9px", cursor: "pointer", padding: "1px 5px", fontFamily: "inherit", flexShrink: 0 } }, "→ To"),
-        h("button", { onClick: function() { removeEmail(email); }, title: "Remove", "aria-label": "Remove " + email, style: xBtn }, "✕"));
+        h("span", { style: chipName }, nm || email),
+        nm && h("span", { style: chipMail }, email),
+        toB, xB);
     }
 
     function row(label, emails, primary) {
-      return h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 } },
-        h("span", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", width: 24, flexShrink: 0, paddingTop: 5 } }, label),
+      return h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8, marginBottom: isMobile ? 6 : 8 } },
+        h("span", { style: { fontSize: isMobile ? "11px" : "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", width: isMobile ? 28 : 24, flexShrink: 0, paddingTop: isMobile ? 11 : 5 } }, label),
         h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, flex: 1, minWidth: 0 } },
           emails.length ? emails.map(function(e) { return chip(e, primary); })
-            : h("span", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic", paddingTop: 4 } }, primary ? "no primary recipient" : "none")));
+            : h("span", { style: { fontSize: isMobile ? "12px" : "11px", color: B.textMut, fontStyle: "italic", paddingTop: isMobile ? 9 : 4 } }, primary ? "no primary recipient" : "none")));
     }
 
     var q = query.trim().toLowerCase();
@@ -111,16 +134,18 @@
           onFocus: function() { setOpen(true); },
           onBlur: function() { setTimeout(function() { setOpen(false); }, 150); },
           onKeyDown: function(e) { if (e.key === "Enter" && canCustom) { e.preventDefault(); addEmail(query.trim()); } },
-          style: { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "5px", padding: "6px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" } }),
+          style: isMobile
+            ? { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 10px", height: window.LTP_CTL, color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" }
+            : { width: "100%", background: B.bg, border: "1px solid " + B.border, borderRadius: "5px", padding: "6px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", boxSizing: "border-box" } }),
         open && (matches.length > 0 || canCustom) && h("div", { style: { position: "absolute", top: "calc(100% + 2px)", left: 0, right: 0, background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", boxShadow: "0 6px 18px rgba(0,0,0,0.4)", zIndex: 50, maxHeight: 220, overflowY: "auto" } },
           matches.map(function(c) {
             var sub = (c.role || "") + (c.role && c.email ? " · " : "") + c.email;
-            return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); addEmail(c.email); },
-              style: { padding: "7px 10px", cursor: "pointer", borderBottom: "1px solid " + B.border } },
-              h("div", { style: { fontSize: "12px", color: B.text, fontWeight: 600 } }, (c.firstName + " " + c.lastName).trim()),
-              h("div", { style: { fontSize: "10px", color: B.textMut } }, sub));
+            return h("div", { key: c.id, onMouseDown: function(e) { e.preventDefault(); addEmail(c.email); }, className: "ltp-row-click",
+              style: { padding: isMobile ? "10px 12px" : "7px 10px", cursor: "pointer", borderBottom: "1px solid " + B.border } },
+              h("div", { style: { fontSize: isMobile ? "14px" : "12px", color: B.text, fontWeight: 600 } }, (c.firstName + " " + c.lastName).trim()),
+              h("div", { style: { fontSize: isMobile ? "11px" : "10px", color: B.textMut } }, sub));
           }),
-          canCustom && h("div", { onMouseDown: function(e) { e.preventDefault(); addEmail(query.trim()); },
-            style: { padding: "7px 10px", cursor: "pointer", fontSize: "12px", color: B.accent, fontWeight: 600 } }, "Add “" + query.trim() + "”"))));
+          canCustom && h("div", { onMouseDown: function(e) { e.preventDefault(); addEmail(query.trim()); }, className: "ltp-row-click",
+            style: { padding: isMobile ? "10px 12px" : "7px 10px", cursor: "pointer", fontSize: isMobile ? "14px" : "12px", color: B.accent, fontWeight: 600 } }, "Add “" + query.trim() + "”"))));
   };
 })();

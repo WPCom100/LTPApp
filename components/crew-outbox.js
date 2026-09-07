@@ -80,6 +80,7 @@
     var B = window.LTP_THEME || {};
     var setTick = useState(0)[1];
     var sendingPair = useState(false); var sending = sendingPair[0], setSending = sendingPair[1];
+    var isMobile = window.LTP_useIsMobile();
 
     useEffect(function() {
       function onChange() { setTick(function(n) { return n + 1; }); }
@@ -125,9 +126,15 @@
     }
 
     var accent = B.warn || "#d29922";
-    return h("div", { style: { position: "fixed", left: 16, bottom: 16, zIndex: 3000, width: 340, maxWidth: "calc(100vw - 32px)",
+    // Phone: sit above the bottom tab bar, clear of the list FAB on the right,
+    // and BELOW the modal layer (1000) so a full-screen sheet — whose pinned
+    // action row this would otherwise cover — paints over it.
+    var place = isMobile
+      ? { left: 12, right: 84, bottom: "calc(78px + env(safe-area-inset-bottom))", zIndex: 950 }
+      : { left: 16, bottom: 16, zIndex: 3000, width: 340, maxWidth: "calc(100vw - 32px)" };
+    return h("div", { style: Object.assign({ position: "fixed",
         background: B.warnBg || "#2e2208", border: "1px solid " + accent, borderRadius: "8px", boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-        fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text || "#fff", overflow: "hidden" } },
+        fontFamily: "'DM Sans', 'Segoe UI', system-ui, sans-serif", color: B.text || "#fff", overflow: "hidden" }, place) },
       h("div", { style: { padding: "10px 12px", borderBottom: "1px solid " + accent + "55", display: "flex", alignItems: "center", gap: 8 } },
         h("div", { style: { flex: 1, minWidth: 0 } },
           h("div", { style: { fontSize: "12px", fontWeight: 700 } }, "Crew to notify (" + items.length + ")"),

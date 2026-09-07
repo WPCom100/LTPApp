@@ -461,6 +461,47 @@ Labor → Crew Roster (search row + chip strip) and Weekly Schedule (short week
 label). Desktop rendering is untouched everywhere — the phone styles are merged
 in only under `LTP_useIsMobile()`.
 
+### Send modals on a phone
+
+The email send modals — **Send / Resend Quote**, **Send / Resend Invoice**,
+**Send Payment Receipt** and **Send Crew Requests** — are laid out for the
+full-screen sheet a phone turns every `LTPModal` into. On desktop they are
+unchanged: the document preview (or the recipient list) sits in a column beside
+the email, and the action row is under the whole thing.
+
+- **The preview folds.** The 260px preview column left the email about fifty
+  pixels wide on a phone, so there it collapses into one line above the
+  compose pane — reference · name and the amount — that opens on a tap to show
+  the breakdown. The email, the thing being written, gets the whole width
+  (`window.LTPSendModalBody` in `components/doc-email-pane.js`, shared by the
+  three document modals).
+- **The action row is pinned.** `LTPModal` takes a `footer`; on a phone the
+  sheet becomes a column, the body scrolls in the middle and the footer sits
+  above the home indicator, so **Send** is reachable without scrolling past
+  the email. The primary button fills the row at 44px (`window.LTP_SHEET_BTN`).
+  Desktop draws the same footer under the children behind the usual hairline.
+  Modals that pass no footer are laid out exactly as before.
+- **Nothing is cut short.** Recipient chips take a full line each with the
+  name over the address, the subject is a textarea that grows to show all of
+  itself (Enter is swallowed, so it stays one line), and the folded preview
+  puts the name and company on their own line under the reference.
+- **The email reads at 13px.** iOS zooms the page on focusing any editable
+  element under 16px, `contenteditable` included, and the 16px rule in
+  index.html only reaches `input`/`select`/`textarea` — but it decides from
+  the focused element's own size, not its children's. So the editor's root
+  stays 16px while its paragraphs render at 13px (the `.ltp-email-editor > p`
+  rule in the phone CSS layer), and the auto-managed header card and
+  signature block show at 80%. Display only: both blocks are swapped back to
+  their placeholders whenever the body is read out of the editor. A phone
+  sheet also gets 16px side gutters instead of the floating card's 24px.
+- **Finger-sized controls.** The `→ To` / `✕` on a chip, the add field, the
+  subject and the crew-request checkboxes all grow to the phone kit's sizes.
+- **Crew requests stack** — recipients above the request summary — and the
+  footer reads count / Cancel · Book Without Emailing / a full-width Send.
+- The **crew notify tray** (`components/crew-outbox.js`) sits above the bottom
+  tab bar on a phone, clear of the list FAB, and below the modal layer so a
+  sheet's pinned footer is never covered by it.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that
