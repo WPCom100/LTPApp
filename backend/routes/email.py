@@ -51,11 +51,25 @@ Lifecycle
    the user could retry without rotating tokens).
 8. Build MIME, call `backend.gmail.send`.
 9. On success: stamp `email_sent` activity entry on the entity, mark each
-   email_recipients row with the returned gmail_message_id, return 200.
+   email_recipients row with the returned gmail_message_id, and — in the SAME
+   transaction — mark the document sent (`_mark_sent`): a draft becomes
+   `sent` with today's sentDate (and, for a quote, its frozen expiryDate),
+   and the recipients are remembered for the next send. Return 200 with the
+   row as it now stands.
+   This used to be the browser's job, as a separate PUT after the response.
+   Anything that stopped that PUT — the tab closed on a phone, a lost
+   connection, a refused stale write — left the customer holding an email
+   for a document the app still called a draft. The send and the status
+   change are now one write, so that state cannot exist.
 10. On `GmailReconnectRequired`: roll back recipient rows, stamp no
-    activity, return 409 {reason: "reconnect"}.
+    activity, return 409 {detail: {reason: "reconnect"}}.
 11. On `GmailSendError`: roll back recipient rows, stamp `email_failed`
     activity, return 502 with the error summary.
+    Both failures are RETURNED as JSON, not raised: an HTTPException makes
+    get_db roll the transaction back, which discarded the email_failed stamp
+    (and gmail.py's clearing of a dead refresh token) — so Settings → Error
+    Log never showed a failed send. The body keeps the {"detail": {...}}
+    shape the frontend reads (components/domain-docs.js::LTP_sendFailure).
 """
 import asyncio
 import io
@@ -64,6 +78,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,7 +92,7 @@ from backend.email_compose import (
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_validate import RecipientError, parse_recipients, validate_subject
-from backend.pdf_generator import doc_ref, generate_pdf
+from backend.pdf_generator import doc_ref, generate_pdf, quote_expiry_from_sent
 from backend.routes._shared import (
     doc_project_ids, invoice_dict, load_project_names, load_related, load_settings,
     safe_pdf_filename as _pdf_filename,
@@ -186,6 +201,35 @@ def _stamp_email_failed(
             {"cat": "Subject", "detail": subject},
         ],
     )
+
+
+def _mark_sent(entity, entity_type: str, to: list[str], cc: list[str], now: datetime, settings_data: dict) -> dict:
+    """Move the document to `sent` as part of the send itself.
+
+    A draft becomes `sent` dated today; a recalled draft (status draft with an
+    old sentDate) is re-dated, because it is going out again today. A resend
+    of a document that is already sent / accepted / paid leaves status and
+    date alone — the same rule the builders applied client-side. A quote
+    freezes its expiry the first time it goes out (sentDate + the workspace
+    validity) so a later change to that setting cannot move a deadline the
+    client has already been told. The recipients are remembered on the row so
+    the next send is pre-addressed.
+
+    Dates are UTC calendar days, matching the app's LTP_todayISO. Returns the
+    fields that changed (camelCase) for the response and the tests."""
+    changed: dict = {}
+    today = now.strftime("%Y-%m-%d")
+    if (entity.status or "draft") == "draft":
+        entity.status = "sent"
+        entity.sent_date = today
+        changed["status"] = "sent"
+        changed["sentDate"] = today
+        if entity_type == "quote" and not (entity.expiry_date or "").strip():
+            entity.expiry_date = quote_expiry_from_sent(today, settings_data)
+            changed["expiryDate"] = entity.expiry_date
+    entity.send_recipients = {"to": list(to), "cc": list(cc)}
+    changed["sendRecipients"] = entity.send_recipients
+    return changed
 
 
 # ── Endpoint ───────────────────────────────────────────────────────────────
@@ -348,21 +392,32 @@ async def send_email(
         await db.flush()
         # Don't stamp any activity entry — the send simply didn't happen.
         # The frontend's reconnect banner surfaces the actionable signal.
-        raise HTTPException(status_code=409, detail={"reason": "reconnect", "error": str(e)})
+        # Returned, not raised, so gmail.py's clearing of the dead refresh
+        # token commits and /auth/me reports the reconnect from now on.
+        return JSONResponse(status_code=409, content={"detail": {"reason": "reconnect", "error": str(e)}})
     except gmail.GmailSendError as e:
-        # Stamp an `email_failed` activity entry so the LTP user sees why.
-        # Roll back recipient rows for the same reason as reconnect.
+        # Stamp an `email_failed` activity entry so the LTP user sees why —
+        # on the document and in Settings → Error Log. Roll back recipient
+        # rows for the same reason as reconnect. Returned, not raised: raising
+        # rolled the stamp back with the rest of the transaction, and the
+        # failure was never recorded anywhere the app shows.
         for r in recipient_rows:
             await db.delete(r)
         _stamp_email_failed(entity, user, to_list, cc_list, subject, str(e), now)
         await db.flush()
-        raise HTTPException(status_code=502, detail={"reason": "gmail_error", "error": str(e)})
+        livesync.mark_dirty(db, "invoices" if body.entityType == "invoice" else "quotes")
+        return JSONResponse(status_code=502, content={"detail": {"reason": "gmail_error", "error": str(e)}})
 
     # 7. Success — record gmail_message_id on each recipient row + stamp activity
     gmail_message_id = gmail_resp.get("id") if isinstance(gmail_resp, dict) else None
     for r in recipient_rows:
         r.gmail_message_id = gmail_message_id
     entry = _stamp_email_sent(entity, user, to_list, cc_list, subject, gmail_message_id, now)
+    # The document becomes `sent` HERE, in the same transaction as the email
+    # itself, never as a later write from the browser (see the module
+    # docstring, step 9). A receipt is mail about a paid invoice, not a send
+    # of the document, so it leaves status alone.
+    marked = {} if body.receipt else _mark_sent(entity, body.entityType, to_list, cc_list, now, settings_data)
     # A manual "Send Receipt" claims the receipt slot so the QuickBooks poller
     # won't email a second receipt. Server-authoritative (the column is in
     # _READONLY_COLS) — set here, on the real send, not from client state.
@@ -379,6 +434,10 @@ async def send_email(
         "ok": True,
         "gmailMessageId": gmail_message_id,
         "activityId": entry["id"],
+        # What the send itself changed on the document (status / sentDate /
+        # expiryDate / sendRecipients) — informational; the row below is the
+        # authoritative copy.
+        "marked": marked,
         "recipients": [
             {"email": r.recipient_email, "role": r.recipient_role}
             for r in recipient_rows

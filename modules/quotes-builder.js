@@ -1602,23 +1602,26 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
-            var sentOn = isResend ? baseDraft.sentDate : today;
-            // Adopt the stamped row the send handed back and mark it sent on
-            // THAT copy — see the invoice builder's sendInvoiceEmail for why.
+            // The send moved the row to `sent` itself (backend/routes/email.py,
+            // lifecycle step 9): status, sentDate, the frozen expiryDate and the
+            // remembered recipients arrive on the row it hands back, stamped in
+            // the same transaction as the email — so a closed tab or a refused
+            // PUT can no longer leave the client holding a quote the app still
+            // calls a draft. Adopt that as server state and build on it; the
+            // fallbacks below only matter against an older server.
             var sentBase = window.LTP_adoptServerRow("quotes", resp.body && resp.body.row) || baseDraft;
+            var wasDraft = sentBase.status === "draft";
+            var sentOn = wasDraft ? today : (sentBase.sentDate || today);
             var updated = Object.assign({}, sentBase, {
-              status: isResend ? baseDraft.status : "sent",
+              status: wasDraft ? "sent" : sentBase.status,
               sentDate: sentOn,
-              // Freeze the shelf life at send time. Until now this was implicit
-              // — "30 days" resolved fresh out of the workspace setting every
-              // time anything rendered it — so changing that setting silently
-              // moved the deadline on quotes already in a client's inbox.
-              // Stamping the date the client was actually told keeps the two
-              // copies agreeing. A resend counts from the ORIGINAL send: it's
-              // the same offer going out again, not a new one.
-              expiryDate: baseDraft.expiryDate
-                || window.LTP_quoteExpiry(Object.assign({}, baseDraft, { sentDate: sentOn }), today),
-              sendRecipients: sendRecipients,  // remember who this went to
+              // The shelf life is frozen at send time — the date the client was
+              // actually told — so a later change to the validity setting
+              // cannot move a deadline already in someone's inbox. A resend
+              // counts from the ORIGINAL send: the same offer going out again.
+              expiryDate: sentBase.expiryDate
+                || window.LTP_quoteExpiry(Object.assign({}, sentBase, { sentDate: sentOn }), today),
+              sendRecipients: sentBase.sendRecipients || sendRecipients,  // remembered for the next send
             });
             setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
@@ -2562,7 +2565,7 @@
             onClick: executeSendQuote,
             disabled: sending || !window.LTP_GMAIL_CONNECTED,
             style: isMobile ? Object.assign({ flex: 1 }, window.LTP_SHEET_BTN) : null,
-          }, sending ? "Sending\u2026" : (draft.status === "draft" ? "Send Quote" : "Resend"))) },
+          }, sending ? (calcTax ? "Calculating tax\u2026" : "Sending\u2026") : (draft.status === "draft" ? "Send Quote" : "Resend"))) },
         h(window.LTPSendModalBody, {
           previewTitle: "Quote Preview",
           refLabel: refDisplay, name: displayName, company: selectedCompany ? selectedCompany.name : null,

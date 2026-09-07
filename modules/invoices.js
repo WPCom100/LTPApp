@@ -748,6 +748,7 @@
     // modal opens; edited via the RecipientEditor; serialized to to/cc on send.
     var [sendRecipients, setSendRecipients] = useState({ to: [], cc: [] });
     var [sending, setSending] = useState(false);
+    var [sendPhase, setSendPhase] = useState("");   // "qbo" while the QuickBooks export runs, "email" while the send does
     var [qboSyncing, setQboSyncing] = useState(false);
     var [showReceiptModal, setShowReceiptModal] = useState(false);
     var [sendSubject, setSendSubject] = useState("");
@@ -1014,21 +1015,27 @@
         showAlert("Gmail Not Connected", "Sign out and back in with Google to grant the gmail.send permission, then try again.");
         return;
       }
-      // Sales tax is QuickBooks-authoritative, and the PDF the customer receives
-      // is rendered server-side from the SAVED row (backend/routes/email.py) —
-      // so the push that computes the tax has to land BEFORE the email goes out.
-      // This used to run in the send's success handler, which mailed a
-      // tax-exclusive PDF and only then learned the tax, leaving the customer's
-      // copy permanently disagreeing with the app. Quotes already work this way
-      // (modules/quotes-builder.js::executeSendQuote).
+      // Everything QuickBooks has to do happens BEFORE the email, and the email
+      // is the last step: an export that fails stops the send, with the invoice
+      // still a draft and the reason on record — never an email in a customer's
+      // inbox for an invoice the books don't have.
+      //
+      // Two things ride on the push landing first. Sales tax is
+      // QuickBooks-authoritative and the PDF the customer receives is rendered
+      // server-side from the SAVED row (backend/routes/email.py), so the tax has
+      // to be on that row before the email is built. And the export used to run
+      // in the send's success handler for tax-exempt customers: when QuickBooks
+      // was slow or down the customer already had the email while the invoice
+      // sat in "QB sync error" — the "sent but held up at QuickBooks" state this
+      // ordering rules out.
       var party = billingParty();
       var taxable = draft.clientType === "contact" ? !!party : !!(party && party.taxable);
       // `invoice.status` reaches the QuickBooks payload in exactly one place: a
       // draft that carries a sentDate is a RECALL, which prepends a warning line
       // to the QB invoice (backend/qbo_sync.py::build_invoice_payload). Pushing
       // BEFORE the send means that push still sees "draft", so a recalled invoice
-      // has to be pushed again afterwards — once it is "sent" — to clear the
-      // line. For every other invoice the second push is a no-op we can skip.
+      // is pushed once more after the send — once it is "sent" — to clear the
+      // line. For every other invoice there is nothing left to push afterwards.
       var isRecalledDraft = draft.status === "draft" && !!String(draft.sentDate || "").trim();
       // A taxable invoice whose tax nobody can compute must not go out quietly
       // under-billed: without QuickBooks there is no tax figure at all, and the
@@ -1043,38 +1050,46 @@
           + "or untick “Customer is taxable” if no tax applies.");
         return;
       }
-      if (isAdmin && qbConnected && taxable) {
-        setSending(true);
+      if (isAdmin && qbConnected) {
+        setSending(true); setSendPhase("qbo");
         persistAndPushQbo(draft, { quiet: true }).then(function(res) {
           if (!res || !res.ok) {
             setSending(false);
-            // A taxable invoice must not go out with an unknown tax figure.
-            showAlert("Sales Tax Unavailable",
-              "QuickBooks calculates the sales tax on this invoice, and it could not be reached: "
-              + ((res && res.error) || "unknown error")
-              + "\n\nThe invoice was NOT sent. Fix the QuickBooks connection and send again, "
-              + "or untick “Customer is taxable” if no tax applies.");
+            // The export did not land, so nothing goes out. The route recorded
+            // the failure on the invoice (qbo_sync_failed), so it is in the
+            // invoice's activity and under Settings → Error Log, not just here.
+            var why = (res && res.error) || "unknown error";
+            showAlert(taxable ? "Sales Tax Unavailable" : "QuickBooks Export Failed",
+              (taxable
+                ? "QuickBooks calculates the sales tax on this invoice, and it could not be reached: " + why
+                : "This invoice could not be exported to QuickBooks: " + why)
+              + "\n\nThe invoice was NOT sent and is still a draft. Fix the QuickBooks problem and send again"
+              + (taxable ? ", or untick “Customer is taxable” if no tax applies." : " — the export has to succeed before the email goes out.")
+              + "\n\nThe failure is recorded on the invoice and under Settings → Error Log.");
             return;
           }
           // Hand the send what it needs to undo this push if the email fails.
-          sendInvoiceEmail(res.invoice, !isRecalledDraft,
+          sendInvoiceEmail(res.invoice, isRecalledDraft,
             res.action === "created" ? res.qbInvoiceId : null);
         });
         return;
       }
+      // No export is possible from here (not an admin, or QuickBooks is not
+      // connected): the invoice goes out and an admin exports it later.
       sendInvoiceEmail(draft, false);
     }
 
     // Build + POST the invoice email for `baseDraft` (the freshest invoice,
     // which carries the just-pushed qbTaxTotal). Kept separate from executeSend
-    // so the QuickBooks push can resolve first. `alreadyPushed` suppresses the
-    // redundant post-send export for invoices we pushed on the way in.
+    // so the QuickBooks push can resolve first. `repushAfterSend` is set for a
+    // recalled draft only: its pre-send push still saw status "draft" and wrote
+    // the RECALLED line, which a second push clears once the row is "sent".
     // `unwindableQbId` is the QB invoice this send CREATED moments ago — passed
     // only for a create, and used to delete it again if the send fails, so a
     // failure leaves nothing stranded in QuickBooks (see unwindQboPush).
-    function sendInvoiceEmail(baseDraft, alreadyPushed, unwindableQbId) {
+    function sendInvoiceEmail(baseDraft, repushAfterSend, unwindableQbId) {
       var isResend = baseDraft.status !== "draft";
-      setSending(true);
+      setSending(true); setSendPhase("email");
       // Expand {{header}} into rendered HTML JUST before send. See
       // quotes-builder.js for the full rationale on this split.
       // "invoice" selects the View & Download CTA label.
@@ -1110,24 +1125,26 @@
           setSending(false);
           if (resp.status === 200) {
             var today = todayISO();
-            // The send stamped an email_sent entry on the row. Adopt the row it
-            // handed back and mark it sent ON THAT COPY, so this edit carries
-            // the entry and goes out under the post-send token. Built on
-            // baseDraft, it went out under the pre-send token, was refused as
-            // a stale write, and the invoice stayed a draft while the email and
-            // the QuickBooks invoice both existed.
+            // The send moved the row to `sent` itself (backend/routes/email.py,
+            // lifecycle step 9): status, sentDate and the remembered recipients
+            // arrive on the row it hands back, stamped in the same transaction
+            // as the email. Adopt that as server state and build on it — the
+            // status used to be a separate PUT from here, and anything that
+            // stopped it (a closed tab, a lost connection, a refused stale
+            // write) left the email out and the invoice a draft. The fallbacks
+            // below only matter against an older server.
             var sentBase = window.LTP_adoptServerRow("invoices", resp.body && resp.body.row) || baseDraft;
             var updated = Object.assign({}, sentBase, {
-              status: isResend ? baseDraft.status : "sent",
-              sentDate: isResend ? baseDraft.sentDate : today,
-              sendRecipients: sendRecipients,  // remember who this went to
+              status: sentBase.status === "draft" ? "sent" : sentBase.status,
+              sentDate: sentBase.status === "draft" ? today : (sentBase.sentDate || today),
+              sendRecipients: sentBase.sendRecipients || sendRecipients,  // remembered for the next send
             });
             setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
             setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false);
-            // Auto-export to QuickBooks on every send (first time + resends).
-            // Skipped when we already pushed on the way in to price the tax —
-            // that export is done and re-pushing would be a wasted round-trip.
-            if (isAdmin && qbConnected && !alreadyPushed) { persistAndPushQbo(updated); }
+            // A recalled draft was exported while still "draft" (see executeSend):
+            // push once more now that it is sent, so the RECALLED line clears.
+            // Every other invoice was exported before the email; nothing is left.
+            if (isAdmin && qbConnected && repushAfterSend) { persistAndPushQbo(updated); }
             setShowSendModal(false);
             window.LTP_toast(isResend ? "Invoice Resent" : "Invoice Sent", { message: "Invoice " + (isResend ? "resent" : "sent") + " to " + (sendRecipients.to || []).join(", ") + ((sendRecipients.cc || []).length ? " (+" + (sendRecipients.cc || []).length + " cc)" : "") + ".", variant: "success" });
             return;
@@ -1342,11 +1359,11 @@
             // it would destroy a record the customer may already hold.
             return { ok: true, invoice: withQb, action: outcome.action, qbInvoiceId: outcome.qbInvoiceId };
           }
-          // This path's wording differs from the manual-sync button's on
-          // purpose and is kept verbatim: here the invoice DID send and only
-          // the sync failed, and `error` below is quoted back to the user
-          // inside a sentence by the caller at :1042 rather than shown as a
-          // toast, so it reads "…could not be reached: <error>".
+          // `error` below is quoted back to the user inside a sentence by
+          // executeSend ("…could not be reached: <error>") when the pre-send
+          // export fails and the send is refused. The non-quiet toasts cover
+          // the recalled-draft re-push, where the email HAS gone out and only
+          // the follow-up sync failed — hence their wording.
           var d = resp.body || {};
           if (outcome.reason === "reconnect") {
             if (!opts.quiet) window.LTP_toast("QuickBooks needs reconnect", { message: "The invoice sent, but couldn't sync to QuickBooks — reconnect it in Settings.", variant: "error" });
@@ -2368,7 +2385,7 @@
               onClick: executeSend,
               disabled: sending || !window.LTP_GMAIL_CONNECTED,
               style: isMobile ? Object.assign({ flex: 1 }, window.LTP_SHEET_BTN) : null,
-            }, sending ? "Sending\u2026" : (isDraft ? "Send Invoice" : "Resend")));
+            }, sending ? (sendPhase === "qbo" ? "Syncing QuickBooks\u2026" : "Sending\u2026") : (isDraft ? "Send Invoice" : "Resend")));
           // Phone: the checkbox gets its own line above the buttons; desktop
           // keeps it at the left end of the action row.
           return isMobile

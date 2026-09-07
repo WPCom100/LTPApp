@@ -5,9 +5,12 @@ debounce after any state change (components/data-state.js), and explicitly from
 modules/invoices.js::persistAndPushQbo. Its `activity` array is a snapshot taken
 before any SERVER-side stamp landed:
 
-  - `email_sent`        routes/email.py, on a successful send
+  - `email_sent`        routes/email.py, on a successful send (which now also
+                        moves the document to `sent` in the same transaction —
+                        tests/test_send_settles_first.py)
   - `qbo_synced`        qbo_sync.py::push_invoice
   - `qbo_estimate_tax`  qbo_sync.py::get_quote_estimate_tax
+  - `pdf_generated`     routes/pdf.py, on a PDF download
 
 Writing that snapshot back erased them. A document's own history therefore never
 recorded that it had been emailed — the frontend stamps no send entry of its
@@ -145,30 +148,36 @@ def test_a_stale_client_put_no_longer_erases_the_send_record():
     after_send = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
     _check("server stamped email_sent", "email_sent" in _types(after_send), str(_types(after_send)))
 
-    # The window's own "mark it sent" write goes through the persisted-state
-    # hook, which sends If-Match. Under the PRE-send token it used to be
-    # refused as a stale write, and the hook then adopted the server's copy:
-    # email out, invoice still a draft. That was the report. Two things now
-    # stop it: the send hands back the stamped row for the window to build
-    # on, and the guard recognises a token stale ONLY by the server's own
-    # appended entry (see test_a_token_stale_only_by_a_server_stamp…).
+    # The document used to become "sent" through the window's own follow-up
+    # PUT. Under the PRE-send token that PUT was refused as stale, the hook
+    # adopted the server's copy, and the invoice stayed a draft with the email
+    # out. That was the report. The send now moves the row to `sent` ITSELF,
+    # in the same transaction as the stamp (tests/test_send_settles_first.py),
+    # and hands the stamped row back for the window to build on.
+    _check("the send itself marked it sent", after_send.get("status") == "sent", str(after_send.get("status")))
     row = r.json().get("row")
     _check("send hands back the stamped row", isinstance(row, dict) and "_rev" in row, str(r.json())[:200])
     _check("with the same _rev a GET now returns", row and row["_rev"] == after_send["_rev"])
+    _check("and that row is already sent", row and row.get("status") == "sent")
+    # A window still holding the pre-send DRAFT is stale for a real reason now
+    # (the status moved), so its write under the pre-send token is refused —
+    # and the 409 carries the sent row for it to adopt, so nothing is lost:
+    # its intent (mark it sent) is already the server's state.
     pre_send_edit = dict(created, status="sent", sentDate="2026-08-19")
-    tolerated = client.put(f"/api/invoices/{created['id']}", json=pre_send_edit,
-                           headers={"If-Match": created["_rev"]}, cookies=_cookies())
-    _check("marking it sent on the pre-send copy is tolerated (stale only by the stamp)",
-           tolerated.status_code == 200, f"{tolerated.status_code}: {tolerated.text[:120]}")
-    _check("and keeps the send record", "email_sent" in _types(tolerated.json()), str(_types(tolerated.json())))
-    # Built on the returned row, under its token, the same edit lands too.
+    refused = client.put(f"/api/invoices/{created['id']}", json=pre_send_edit,
+                         headers={"If-Match": created["_rev"]}, cookies=_cookies())
+    _check("a pre-send copy under the pre-send token is refused as stale",
+           refused.status_code == 409, f"{refused.status_code}: {refused.text[:120]}")
+    carried = ((refused.json().get("detail") or {}).get("row") or {})
+    _check("carrying the sent row to adopt", carried.get("status") == "sent", str(carried.get("status")))
+    # Built on the returned row, under its token, a real edit lands.
     row = client.get(f"/api/invoices/{created['id']}", cookies=_cookies()).json()
     on_row = {k: v for k, v in row.items() if k != "_rev"}
-    on_row.update(status="sent", sentDate="2026-08-19")
+    on_row.update(notes="typed after the send")
     landed = client.put(f"/api/invoices/{created['id']}", json=on_row,
                         headers={"If-Match": row["_rev"]}, cookies=_cookies())
-    _check("marking it sent on the returned row lands", landed.status_code == 200, landed.text[:200])
-    _check("as sent", landed.json().get("status") == "sent")
+    _check("an edit on the returned row lands", landed.status_code == 200, landed.text[:200])
+    _check("still sent", landed.json().get("status") == "sent")
     _check("keeping the send record", "email_sent" in _types(landed.json()), str(_types(landed.json())))
 
     # `created` is the copy the frontend has been holding since before the send —
@@ -183,15 +192,17 @@ def test_a_stale_client_put_no_longer_erases_the_send_record():
 
 
 def test_a_token_stale_only_by_a_server_stamp_still_lands_a_real_edit():
-    """Every send, PDF download, QuickBooks push and share-link open appends
-    an activity entry server-side, moving the row's _rev. A window that then
+    """Every PDF download, QuickBooks push and share-link open appends an
+    activity entry server-side, moving the row's _rev. A window that then
     saves a REAL edit built on its pre-stamp copy carries the pre-stamp token.
     The update path unions activity anyway, so nothing is lost by accepting
     that write — refusing it threw the producer's edit away and blamed
-    "another window". Any other divergence is still refused."""
+    "another window". Any other divergence is still refused — including,
+    now, a SEND: it moves the document to `sent` besides stamping it, so a
+    window still holding the draft is stale for a real reason (see
+    test_a_stale_client_put_no_longer_erases_the_send_record)."""
     client, _ = _setup()
-    from backend import gmail
-    from backend.routes import email as email_route
+    from backend.routes import pdf as pdf_route
 
     created = client.post("/api/invoices", json={
         "clientType": "company", "status": "draft", "notes": "before",
@@ -199,33 +210,26 @@ def test_a_token_stale_only_by_a_server_stamp_still_lands_a_real_edit():
                       "items": [{"id": "i1", "type": "service", "unitPrice": 100, "qty": 1}]}],
     }, cookies=_cookies()).json()
 
-    real_pdf, real_send = email_route.generate_pdf, gmail.send
-    email_route.generate_pdf = lambda buf, *a, **k: buf.write(b"%PDF-1.4 test\n")
-
-    async def _fake_send(*a, **k):
-        return {"id": "fake-msg-id"}
-
-    gmail.send = _fake_send
+    # A PDF download is the pure stamp: it appends pdf_generated and changes
+    # nothing else on the row.
+    real_pdf = pdf_route.generate_pdf
+    pdf_route.generate_pdf = lambda buf, *a, **k: buf.write(b"%PDF-1.4 test\n")
     try:
-        r = client.post("/api/email/send", json={
-            "entityType": "invoice", "entityId": created["id"],
-            "to": "client@example.com", "subject": "Your invoice",
-            "bodyHtml": "<p>Attached.</p>", "attachPdf": True,
-        }, cookies=_cookies())
+        r = client.post(f"/api/invoices/{created['id']}/pdf", cookies=_cookies())
     finally:
-        email_route.generate_pdf, gmail.send = real_pdf, real_send
-    _check("send succeeded", r.status_code == 200, r.text[:200])
+        pdf_route.generate_pdf = real_pdf
+    _check("pdf generated (the server stamp landed)", r.status_code == 200, r.text[:200])
 
-    # The window's real edit, built on the pre-send copy, under the pre-send token.
+    # The window's real edit, built on the pre-stamp copy, under the pre-stamp token.
     edit = {k: v for k, v in created.items() if k != "_rev"}
-    edit["notes"] = "after — typed while the send was in flight"
+    edit["notes"] = "after — typed while the PDF was being made"
     put = client.put(f"/api/invoices/{created['id']}", json=edit,
                      headers={"If-Match": created["_rev"]}, cookies=_cookies())
     _check("accepted: the token is stale only by the server's stamp", put.status_code == 200,
            f"{put.status_code}: {put.text[:160]}")
     final = put.json()
     _check("the edit landed", final.get("notes", "").startswith("after"), final.get("notes"))
-    _check("and the server's send record survived", "email_sent" in _types(final), str(_types(final)))
+    _check("and the server's stamp survived", "pdf_generated" in _types(final), str(_types(final)))
 
     # Control: the same stale token with the row ALSO changed elsewhere is
     # still a conflict — another window renamed it in between.
