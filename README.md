@@ -595,9 +595,26 @@ on the Playground — always use the app's button.)
 
 ### How invoices sync
 
-- **Export is tied to sending.** An invoice reaches QuickBooks only once it has
-  been **sent**. Sending it — the first time and every resend — **auto-exports**
-  it; there's no separate manual push in the normal flow.
+- **Export is tied to sending, and comes first.** An invoice reaches QuickBooks
+  when it is **sent**: sending it — the first time and every resend —
+  **auto-exports** it, and there's no separate manual push in the normal flow.
+  The export runs **before** the email, for every customer (not only taxable
+  ones, whose sales tax QuickBooks has to compute first). If QuickBooks is slow,
+  down or refuses the invoice, **nothing is sent**: the invoice stays a draft,
+  the send button explains why, and the failure is on the invoice's activity
+  and under **Settings → Error Log**. The email is the last step, so a customer
+  can never be holding an invoice the books don't have. (Send modals used to
+  export tax-exempt invoices *after* the email — "sent, but held up at
+  QuickBooks".) If the email then fails, the QuickBooks invoice the send just
+  created is deleted again (`unwind-send`).
+- **The send marks the document sent.** `POST /api/email/send` moves a draft to
+  `sent` — status, sent date, a quote's frozen expiry, the remembered
+  recipients — in the same transaction as the email, and hands the row back.
+  This used to be a separate save the browser made afterwards; a tab closed on
+  a phone, a lost connection or a refused stale write left the email out and
+  the document a draft. That state can no longer exist. A window still holding
+  the pre-send draft is now refused as stale (409, with the sent row to adopt)
+  rather than allowed to put the document back to draft.
 - **Out-of-sync detection.** Once an invoice is in QB, the **QuickBooks** card on
   the invoice (above the summary) shows its status and a **View in QuickBooks ↗**
   deep link. It surfaces an **Update QuickBooks** button only when something
@@ -635,6 +652,22 @@ change. Re-pointing only affects **future** postings — QuickBooks does not
 reclassify existing transactions — but note that re-pushing an *old* invoice
 re-posts its lines at the item's *current* account, which shifts that
 invoice's P&L to the new account as of its transaction date.
+
+### Error Log (Settings)
+
+**Settings → Error Log** lists email delivery faults and QuickBooks faults
+gathered from the documents' own activity logs, so they survive the toast that
+first reported them. Every failure path records itself there:
+
+- a Gmail failure stamps `email_failed` on the quote or invoice (the route
+  returns the error as JSON rather than raising it, which used to roll the
+  stamp back with the transaction, so the log stayed empty);
+- every kind of QuickBooks push failure — a fault, an unreachable Intuit, a
+  connection that needs reconnecting, an invoice that cannot be synced — stamps
+  `qbo_sync_failed` on the invoice and sets its sync status to error, with the
+  reason on the invoice card and an **Update QuickBooks** retry;
+- every kind of quote tax-calculation failure stamps `qbo_sync_failed` on the
+  quote (previously nothing was recorded for quotes at all).
 
 ### Sales tax
 

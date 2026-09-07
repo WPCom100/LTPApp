@@ -40,6 +40,30 @@ from backend.quickbooks import (  # noqa: E402
 from backend.routes.api import _dict_to_row  # noqa: E402
 from backend.routes import qbo as qbo_routes  # noqa: E402
 
+try:  # pytest is a test-only dependency; the file also runs as a plain script
+    import pytest  # noqa: E402
+
+    @pytest.fixture(scope="module", autouse=True)
+    def _restore_patched_modules():
+        """The tests below swap qbo_sync helpers — and functions on the
+        backend.quickbooks module it imports (`qbo_sync.quickbooks IS
+        backend.quickbooks`) — for mocks by plain assignment, module-wide, and
+        never put them back. Under one pytest process that leaked into every
+        module collected after this one: qbo_sync._stamp stayed a MagicMock, so
+        tests/test_send_settles_first.py saw QuickBooks failures that recorded
+        nothing. Snapshot both module namespaces here and restore whatever this
+        module changed once it is done."""
+        before = (dict(vars(qbo_sync)), dict(vars(quickbooks)))
+        yield
+        for mod, saved in zip((qbo_sync, quickbooks), before):
+            for name, value in saved.items():
+                if vars(mod).get(name) is not value:
+                    setattr(mod, name, value)
+            for name in [n for n in vars(mod) if n not in saved]:
+                delattr(mod, name)
+except ImportError:  # pragma: no cover - script mode without pytest
+    pass
+
 
 # Real function objects, captured BEFORE any test monkeypatches the module
 # attributes (several tests overwrite e.g. qbo_sync._resolve_line_item_id

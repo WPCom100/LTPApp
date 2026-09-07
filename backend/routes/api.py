@@ -204,12 +204,20 @@ def _stale_only_by_server_activity(current: dict, mapped: dict | None, token: st
     """Is the caller's token stale ONLY because the server appended activity
     entries since the caller read the row?
 
-    Every send, PDF download, QuickBooks push and share-link open stamps an
-    entry onto `activity` server-side, and each stamp moves the row's `_rev`.
-    A window that then saves a real edit (built on the copy it read before the
+    Every PDF download, QuickBooks push and share-link open stamps an entry
+    onto `activity` server-side, and each stamp moves the row's `_rev`. A
+    window that then saves a real edit (built on the copy it read before the
     stamp) carries the pre-stamp token and would be refused — and the refusal
     threw its edit away — even though the update path already unions activity
     (_merge_activity), so nothing at all would be lost by accepting it.
+
+    A SEND is deliberately not in that list any more. Besides its stamp,
+    POST /api/email/send moves the document to `sent` (status, sentDate, a
+    quote's expiryDate, the remembered recipients) in the same transaction —
+    so a window still holding the draft is stale for a real reason, and its
+    write is refused rather than allowed to put the document back to draft
+    under a customer who already has the email. The 409 carries the sent row
+    for it to adopt.
 
     Nothing in the app removes an activity entry, so the entries the caller
     sends are a superset of what it read. Rebuild what it read: the stored row

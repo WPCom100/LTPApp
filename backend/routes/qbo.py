@@ -22,7 +22,12 @@ Security notes:
     complete a half-finished flow, and validates realmId is present.
   - /status returns booleans + masked metadata only — never tokens.
   - the push endpoint RETURNS error responses (rather than raising) so the
-    failure activity stamp commits with the request transaction.
+    failure activity stamp commits with the request transaction. EVERY kind
+    of failure — a QuickBooks fault, an unreachable Intuit, a connection that
+    needs reconnecting, a document that cannot be synced — is recorded on the
+    document (qbo_sync_failed activity; qb_sync_status/qb_last_error on an
+    invoice), which is what Settings → Error Log reads. A failure that only
+    ever reached a toast was gone the moment it was dismissed.
 """
 import os
 import traceback
@@ -333,6 +338,27 @@ def _unexpected_failure(where: str, e: Exception) -> JSONResponse:
     })
 
 
+def _record_invoice_failure(db: AsyncSession, invoice: models.Invoice, admin: models.User, error: str) -> None:
+    """Put a failed push on the record: the invoice's own sync block (so its
+    card shows the reason and offers a retry) plus a qbo_sync_failed activity
+    entry (what Settings → Error Log lists). Callers RETURN afterwards so the
+    stamp commits with the request."""
+    invoice.qb_sync_status = "error"
+    invoice.qb_last_error = (error or "QuickBooks sync failed")[:300]
+    qbo_sync._stamp(invoice, admin, "qbo_sync_failed", "QuickBooks sync failed",
+                    [{"cat": "Error", "detail": invoice.qb_last_error}])
+    livesync.mark_dirty(db, "invoices")
+
+
+def _record_quote_failure(db: AsyncSession, quote: models.Quote, admin: models.User, error: str) -> None:
+    """The quote counterpart: a failed sales-tax calculation is stamped on the
+    quote as qbo_sync_failed so it reaches Settings → Error Log. A quote has
+    no sync block — the entry is the whole record."""
+    qbo_sync._stamp(quote, admin, "qbo_sync_failed", "QuickBooks tax calculation failed",
+                    [{"cat": "Error", "detail": (error or "QuickBooks tax calculation failed")[:300]}])
+    livesync.mark_dirty(db, "quotes")
+
+
 @qbo_router.post("/invoices/{invoice_id}/push")
 async def push_invoice_route(
     invoice_id: int,
@@ -367,23 +393,21 @@ async def push_invoice_route(
         push_result["invoice"] = _row_to_dict(invoice)
         return push_result
     except quickbooks.QboNotConnected:
-        return JSONResponse(status_code=409, content={"reason": "not_connected",
-                            "error": "QuickBooks is not connected. Connect it in Settings."})
+        msg = "QuickBooks is not connected. Connect it in Settings."
+        _record_invoice_failure(db, invoice, admin, msg)
+        return JSONResponse(status_code=409, content={"reason": "not_connected", "error": msg})
     except quickbooks.QboReconnectRequired:
-        return JSONResponse(status_code=409, content={"reason": "reconnect",
-                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+        msg = "QuickBooks connection expired. Reconnect it in Settings."
+        _record_invoice_failure(db, invoice, admin, msg)
+        return JSONResponse(status_code=409, content={"reason": "reconnect", "error": msg})
     except qbo_sync.InvoiceNotSyncable as e:
+        _record_invoice_failure(db, invoice, admin, str(e))
         return JSONResponse(status_code=400, content={"reason": "not_syncable", "error": str(e)})
     except quickbooks.QboApiError as e:
         # Record the failure on the invoice + stamp activity, then RETURN (so
         # get_db commits the stamp). qbo_sync flushed partial find-or-create
         # progress already; that's fine to keep.
-        invoice.qb_sync_status = "error"
-        invoice.qb_last_error = e.safe_message[:300]
-        livesync.mark_dirty(db, "invoices")
-        qbo_sync._stamp(invoice, admin, "qbo_sync_failed",
-                        "QuickBooks sync failed",
-                        [{"cat": "Error", "detail": e.safe_message[:300]}])
+        _record_invoice_failure(db, invoice, admin, e.safe_message)
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
     except Exception as e:  # noqa: BLE001 — the whole point: nothing escapes as plain text
         resp = _unexpected_failure(f"push invoice {invoice_id}", e)
@@ -391,12 +415,7 @@ async def push_invoice_route(
         # why it is not in QuickBooks. Best-effort: the session may be the
         # thing that broke.
         try:
-            invoice.qb_sync_status = "error"
-            invoice.qb_last_error = f"{type(e).__name__}: {str(e)[:250]}"
-            qbo_sync._stamp(invoice, admin, "qbo_sync_failed",
-                            "QuickBooks sync failed",
-                            [{"cat": "Error", "detail": invoice.qb_last_error[:300]}])
-            livesync.mark_dirty(db, "invoices")
+            _record_invoice_failure(db, invoice, admin, f"{type(e).__name__}: {str(e)[:250]}")
         except Exception as stamp_err:  # noqa: BLE001
             print(f"[LTP] qbo: could not record the failure on invoice {invoice_id}: {stamp_err}", flush=True)
         return resp
@@ -965,15 +984,27 @@ async def estimate_quote_tax_route(
             livesync.mark_dirty(db, "quotes")
             calc["qbTaxSignature"] = body.signature
         return calc
+    # Every failure below is stamped on the quote (_record_quote_failure) and
+    # RETURNED so the stamp commits — the send that was waiting on this tax
+    # figure is refused by the browser, and the reason is on record.
     except quickbooks.QboNotConnected:
-        return JSONResponse(status_code=409, content={"reason": "not_connected",
-                            "error": "QuickBooks is not connected. Connect it in Settings."})
+        msg = "QuickBooks is not connected. Connect it in Settings."
+        _record_quote_failure(db, quote, admin, msg)
+        return JSONResponse(status_code=409, content={"reason": "not_connected", "error": msg})
     except quickbooks.QboReconnectRequired:
-        return JSONResponse(status_code=409, content={"reason": "reconnect",
-                            "error": "QuickBooks connection expired. Reconnect it in Settings."})
+        msg = "QuickBooks connection expired. Reconnect it in Settings."
+        _record_quote_failure(db, quote, admin, msg)
+        return JSONResponse(status_code=409, content={"reason": "reconnect", "error": msg})
     except qbo_sync.InvoiceNotSyncable as e:
+        _record_quote_failure(db, quote, admin, str(e))
         return JSONResponse(status_code=400, content={"reason": "not_syncable", "error": str(e)})
     except quickbooks.QboApiError as e:
+        _record_quote_failure(db, quote, admin, e.safe_message)
         return JSONResponse(status_code=502, content={"reason": "qbo_error", "error": e.safe_message})
     except Exception as e:  # noqa: BLE001 — same reasoning as push_invoice_route
-        return _unexpected_failure(f"estimate tax for quote {quote_id}", e)
+        resp = _unexpected_failure(f"estimate tax for quote {quote_id}", e)
+        try:
+            _record_quote_failure(db, quote, admin, f"{type(e).__name__}: {str(e)[:250]}")
+        except Exception as stamp_err:  # noqa: BLE001
+            print(f"[LTP] qbo: could not record the failure on quote {quote_id}: {stamp_err}", flush=True)
+        return resp

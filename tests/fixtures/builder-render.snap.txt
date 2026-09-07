@@ -4131,13 +4131,13 @@
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec2" style=3props>
-  -- slot 14 (flag) opens an overlay (5 lines) --
+  -- slot 15 (flag) opens an overlay (5 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec2" style=3props>
-  -- slot 15 (flag) opens an overlay (76 lines) --
+  -- slot 16 (flag) opens an overlay (76 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
@@ -4214,7 +4214,7 @@
             <anon>
               <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                 Send Receipt
-  -- slot 20 (flag) opens an overlay (7 lines) --
+  -- slot 21 (flag) opens an overlay (7 lines) --
       <button disabled=true onClick=fn style=12props>
         Generating…
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort37" key="sec1" style=3props>
@@ -4306,13 +4306,13 @@
           <div style=3props>
           <div style=5props>
             No detailed changes recorded.
-  -- slot 18 (object) opens an overlay (5 lines) --
+  -- slot 19 (object) opens an overlay (5 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort41" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort41" key="sec2" style=3props>
-  -- slot 28 (object) opens an overlay (5 lines) --
+  -- slot 29 (object) opens an overlay (5 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort42" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort42" data-ltp-zone="sec1" style=7props>
