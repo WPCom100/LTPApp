@@ -775,11 +775,11 @@
     );
   };
 
-  // Phone-sized button for a pinned modal footer: a 44px tap target with a
+  // Phone-sized button for a pinned modal footer: a 42px tap target with a
   // readable label, in place of the desktop Btn's 12px / 8px-padding compact
   // size. Callers merge it into Btn's `style` under LTP_useIsMobile() and add
   // `flex: 1` on the button that should fill the row (the primary action).
-  window.LTP_SHEET_BTN = { minHeight: 44, padding: "10px 16px", fontSize: "14px", borderRadius: "10px" };
+  window.LTP_SHEET_BTN = { minHeight: 42, padding: "9px 14px", fontSize: "13px", borderRadius: "10px" };
 
   // Overflow "⋯" menu — collapses a pile of secondary actions behind one
   // kebab button so a cramped header (e.g. the quote/invoice builders) stays a

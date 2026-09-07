@@ -81,26 +81,37 @@
     var toBtn = { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", color: B.textSec, fontSize: "9px", cursor: "pointer", padding: "1px 5px", fontFamily: "inherit", flexShrink: 0 };
     var chipName = { fontSize: "11px", color: B.text, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
     var chipMail = { fontSize: "10px", color: B.textMut, whiteSpace: "nowrap" };
+    // Phone: one full-width chip per line with the name over the address,
+    // both allowed to wrap, so neither is ever cut short — a name-and-email
+    // chip squeezed onto one 300px line was ellipsised after a few letters.
     if (isMobile) {
-      Object.assign(chipWrap, { borderRadius: "8px", padding: "4px 4px 4px 10px", minHeight: 36, boxSizing: "border-box" });
+      Object.assign(chipWrap, { display: "flex", width: "100%", borderRadius: "8px", padding: "4px 2px 4px 10px", minHeight: 36, boxSizing: "border-box" });
       Object.assign(xBtn, { fontSize: "14px", padding: "6px 8px", minHeight: 28 });
       Object.assign(toBtn, { fontSize: "11px", padding: "4px 8px", minHeight: 28, borderRadius: "6px" });
-      Object.assign(chipName, { fontSize: "13px" });
-      Object.assign(chipMail, { fontSize: "11px", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 });
+      Object.assign(chipName, { fontSize: "12px", whiteSpace: "normal", overflow: "visible", lineHeight: 1.25 });
+      Object.assign(chipMail, { fontSize: "11px", whiteSpace: "normal", wordBreak: "break-all", lineHeight: 1.25 });
     }
 
     function chip(email, primary) {
       var nm = nameFor(email);
+      var toB = !primary && h("button", { onClick: function() { makePrimary(email); }, title: "Move to To (make primary)", className: "ltp-tap", style: toBtn }, "→ To");
+      var xB = h("button", { onClick: function() { removeEmail(email); }, title: "Remove", "aria-label": "Remove " + email, className: "ltp-tap", style: xBtn }, "✕");
+      if (isMobile) {
+        return h("span", { key: (primary ? "to:" : "cc:") + email, style: chipWrap, title: email },
+          h("span", { style: { display: "flex", flexDirection: "column", flex: 1, minWidth: 0 } },
+            h("span", { style: chipName }, nm || email),
+            nm && h("span", { style: chipMail }, email)),
+          toB, xB);
+      }
       return h("span", { key: (primary ? "to:" : "cc:") + email, style: chipWrap, title: email },
         h("span", { style: chipName }, nm || email),
         nm && h("span", { style: chipMail }, email),
-        !primary && h("button", { onClick: function() { makePrimary(email); }, title: "Move to To (make primary)", className: "ltp-tap", style: toBtn }, "→ To"),
-        h("button", { onClick: function() { removeEmail(email); }, title: "Remove", "aria-label": "Remove " + email, className: "ltp-tap", style: xBtn }, "✕"));
+        toB, xB);
     }
 
     function row(label, emails, primary) {
-      return h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 } },
-        h("span", { style: { fontSize: isMobile ? "11px" : "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", width: isMobile ? 28 : 24, flexShrink: 0, paddingTop: isMobile ? 10 : 5 } }, label),
+      return h("div", { style: { display: "flex", alignItems: "flex-start", gap: 8, marginBottom: isMobile ? 6 : 8 } },
+        h("span", { style: { fontSize: isMobile ? "11px" : "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.05em", width: isMobile ? 28 : 24, flexShrink: 0, paddingTop: isMobile ? 11 : 5 } }, label),
         h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, flex: 1, minWidth: 0 } },
           emails.length ? emails.map(function(e) { return chip(e, primary); })
             : h("span", { style: { fontSize: isMobile ? "12px" : "11px", color: B.textMut, fontStyle: "italic", paddingTop: isMobile ? 9 : 4 } }, primary ? "no primary recipient" : "none")));

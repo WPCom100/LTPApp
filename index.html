@@ -222,7 +222,24 @@
         border-radius: 0 !important;
         padding-top: calc(20px + env(safe-area-inset-top)) !important;
         padding-bottom: calc(24px + env(safe-area-inset-bottom)) !important;
+        /* A full-screen sheet gets the phone's 16px gutters, not the floating
+           card's 24px — on a 390px screen that is 16px more for the content. */
+        padding-left: 16px !important;
+        padding-right: 16px !important;
       }
+
+      /* Send-modal email editor (components/email-body-editor.js) on a phone.
+         The editable ROOT stays 16px — iOS decides whether to zoom the page on
+         focus from the focused element's own font size, not its children's —
+         while the paragraphs the user actually reads and types render at 13px,
+         so a normal-length email fits the screen instead of running two
+         screens deep. The auto-managed header card and signature block are
+         shown at 80%: display only — both are swapped back to their
+         {{header}} / {{signature}} placeholders whenever the body is read out
+         of the editor, so nothing here reaches the sent mail. */
+      .ltp-email-editor > p, .ltp-email-editor > div, .ltp-email-editor > ul,
+      .ltp-email-editor > ol, .ltp-email-editor > blockquote { font-size: 13px; }
+      .ltp-email-editor > .ltp-header-block, .ltp-email-editor > .ltp-sig-block { zoom: 0.8; }
     }
   </style>
 </head>

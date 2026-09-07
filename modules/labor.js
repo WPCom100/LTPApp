@@ -2000,7 +2000,7 @@
           // Phone sizes: a value per surface, desktop first.
           var f = function(d, m) { return isMobile ? m : d; };
           var miniBtn = isMobile ? { fontSize: "11px", padding: "6px 12px", borderRadius: "6px", minHeight: 32 } : null;
-          var chk = f(16, 22);
+          var chk = f(16, 20);
 
           // Left: crew+project selection list
           var list = h("div", { style: isMobile ? { display: "flex", flexDirection: "column" } : { flex: "0 0 300px", display: "flex", flexDirection: "column" } },
@@ -2027,8 +2027,8 @@
                     h("div", { style: { width: chk, height: chk, borderRadius: f("3px", "5px"), border: "2px solid " + (isSelected ? B.success : B.border), background: isSelected ? B.success : "transparent", display: "flex", alignItems: "center", justifyContent: "center" } },
                       isSelected && h("span", { style: { color: B.btnInk, fontSize: f("10px", "13px"), fontWeight: 700 } }, "\u2713"))),
                   h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0, padding: f(0, "4px 0") } },
-                    h("div", { style: { fontSize: f("11px", "13px"), fontWeight: 600, color: B.text } }, name),
-                    h("div", { style: { fontSize: f("9px", "11px"), color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
+                    h("div", { style: { fontSize: f("11px", "12px"), fontWeight: 600, color: B.text } }, name),
+                    h("div", { style: { fontSize: f("9px", "10px"), color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
                   // No email on file — the request can't be sent, but the
                   // person can still be booked directly (that path never
                   // needed an address).
@@ -2042,31 +2042,31 @@
           // rather than render a drift-prone client copy.
           var metaLabel = { fontSize: f("10px", "11px"), color: B.textMut, width: f(35, 42), flexShrink: 0 };
           var summary = h("div", { style: { flex: 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
+            h("div", { style: { padding: f("10px 14px", "8px 10px"), borderBottom: "1px solid " + B.border, background: B.surface } },
               h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Request Summary"),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
                 h("span", { style: metaLabel }, "To:"),
-                h("span", { style: { fontSize: f("11px", "13px"), color: B.text, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, previewTo)),
+                h("span", { style: { fontSize: f("11px", "12px"), color: B.text, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, previewTo)),
               h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
                 h("span", { style: metaLabel }, "Subj:"),
-                h("span", { style: { fontSize: f("11px", "13px"), color: B.text, fontWeight: 600, minWidth: 0 } }, previewSubject))),
-            h("div", { style: { flex: 1, padding: "14px", overflowY: "auto" } },
-              h("div", { style: { fontSize: f("11px", "13px"), color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+                h("span", { style: { fontSize: f("11px", "12px"), color: B.text, fontWeight: 600, minWidth: 0 } }, previewSubject))),
+            h("div", { style: { flex: 1, padding: f("14px", "10px"), overflowY: "auto" } },
+              h("div", { style: { fontSize: f("11px", "12px"), color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
                 "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
                 " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
                 " private page will be sent. They can accept or decline and leave a note."),
               h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "In this request: " + askLabel(peShifts)),
               peShifts.length === 0
-                ? h("div", { style: { fontSize: f("11px", "13px"), color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
+                ? h("div", { style: { fontSize: f("11px", "12px"), color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
                 : peShifts.map(function(sp, i) {
-                    return h("div", { key: i, style: { fontSize: f("11px", "13px"), color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
+                    return h("div", { key: i, style: { fontSize: f("11px", "12px"), color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
                       h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
                       h("span", { style: { color: B.textMut } }, sp.flat
                         ? "  \u00b7  Flat rate $" + window.LTP_money(sp.fee) + "  \u00b7  whole project (date outline, no times)"
                         : "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
                   })));
 
-          var countLine = h("div", { style: { fontSize: f("11px", "12px"), color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length);
+          var countLine = h("div", { style: { fontSize: "11px", color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length);
           var cancelBtn = h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); }, style: isMobile ? window.LTP_SHEET_BTN : null }, "Cancel");
           // Direct book — for crew already agreed with off-platform.
           // Deliberately the quiet, secondary action: emailing the ask is
