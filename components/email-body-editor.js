@@ -55,6 +55,11 @@
 
     var ref = useRef(null);
     var initializedRef = useRef(false);
+    // Phone: 16px, like every other field on a phone — iOS zooms the page on
+    // focusing ANY editable element under 16px, contenteditable included, and
+    // index.html's 16px rule only reaches input/select/textarea. Display size
+    // only: the body's paragraph styling (PARA_STYLE) carries no font size.
+    var isMobile = window.LTP_useIsMobile();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init-once for contentEditable; see header
     useEffect(function() {
@@ -123,9 +128,9 @@
         border: "none",
         borderTop: "1px solid " + B.border,
         color: B.text,
-        fontSize: "12px",
+        fontSize: isMobile ? "16px" : "12px",
         fontFamily: "inherit",
-        padding: "14px 18px",
+        padding: isMobile ? "12px 14px" : "14px 18px",
         outline: "none",
         overflowY: "auto",
         lineHeight: 1,

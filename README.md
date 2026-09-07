@@ -461,6 +461,37 @@ Labor → Crew Roster (search row + chip strip) and Weekly Schedule (short week
 label). Desktop rendering is untouched everywhere — the phone styles are merged
 in only under `LTP_useIsMobile()`.
 
+### Send modals on a phone
+
+The email send modals — **Send / Resend Quote**, **Send / Resend Invoice**,
+**Send Payment Receipt** and **Send Crew Requests** — are laid out for the
+full-screen sheet a phone turns every `LTPModal` into. On desktop they are
+unchanged: the document preview (or the recipient list) sits in a column beside
+the email, and the action row is under the whole thing.
+
+- **The preview folds.** The 260px preview column left the email about fifty
+  pixels wide on a phone, so there it collapses into one line above the
+  compose pane — reference · name and the amount — that opens on a tap to show
+  the breakdown. The email, the thing being written, gets the whole width
+  (`window.LTPSendModalBody` in `components/doc-email-pane.js`, shared by the
+  three document modals).
+- **The action row is pinned.** `LTPModal` takes a `footer`; on a phone the
+  sheet becomes a column, the body scrolls in the middle and the footer sits
+  above the home indicator, so **Send** is reachable without scrolling past
+  the email. The primary button fills the row at 44px (`window.LTP_SHEET_BTN`).
+  Desktop draws the same footer under the children behind the usual hairline.
+  Modals that pass no footer are laid out exactly as before.
+- **Finger-sized controls.** Recipient chips, their `→ To` / `✕`, the add
+  field, the subject and the crew-request checkboxes all grow to the phone
+  kit's sizes, and the body editor renders at 16px — iOS zooms the page on
+  focusing any editable element under that, `contenteditable` included, and
+  the 16px rule in index.html only reaches `input`/`select`/`textarea`.
+- **Crew requests stack** — recipients above the request summary — and the
+  footer reads count / Cancel · Book Without Emailing / a full-width Send.
+- The **crew notify tray** (`components/crew-outbox.js`) sits above the bottom
+  tab bar on a phone, clear of the list FAB, and below the modal layer so a
+  sheet's pinned footer is never covered by it.
+
 ## Email feature deploy notes
 
 The Gmail-send feature ships in stages. Before the first deploy that

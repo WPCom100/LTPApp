@@ -1964,9 +1964,11 @@
             h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(); } }, statusDlg.actionLabel)))
       ),
 
-      // Send Requests review panel with email preview
-      showSendPanel && h(window.LTPModal, { title: "Send Crew Requests", onClose: function() { setShowSendPanel(false); }, wide: true },
-        function() {
+      // Send Requests review panel with email preview. On a phone the
+      // recipient list stacks above the request summary (side by side, the
+      // 300px list left the summary a sliver) and the action row is the
+      // modal's pinned footer, so Send never scrolls out of reach.
+      showSendPanel && (function() {
           var selectedCount = Object.keys(sendSelection).filter(function(k) { return k !== "_previewIdx" && sendSelection[k]; }).length;
           // One entry per crew+project (the chosen default): all of a person's
           // open shifts on a project collapse into a single tokenized request.
@@ -1995,84 +1997,99 @@
             previewTo = pcm ? (pcm.email || "(no email on file)") : "?";
             peShifts = pe.shifts.slice().sort(function(a, b) { return (a.date + (a.callTime || "")) > (b.date + (b.callTime || "")) ? 1 : -1; });
           }
-          return h("div", null,
-            h("div", { style: { display: "flex", gap: 16, minHeight: 360 } },
-              // Left: crew+project selection list
-              h("div", { style: { flex: "0 0 300px", display: "flex", flexDirection: "column" } },
-                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
-                  h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Recipients (" + allEntries.length + ")"),
-                  h("div", { style: { display: "flex", gap: 6 } },
-                    h("button", { onClick: function() { selectAllSend(true); },
-                      style: { background: "transparent", border: "1px solid " + B.accent, borderRadius: "3px", padding: "2px 8px", color: B.accent, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, "All"),
-                    h("button", { onClick: function() { selectAllSend(false); },
-                      style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } }, "None"))),
-                h("div", { style: { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
-                  allEntries.map(function(entry, ei) {
-                    var isSelected = sendSelection[entry.key];
-                    var isPreviewed = ei === previewIdx;
-                    var cm = contacts.find(function(c) { return c.id === entry.crewId; });
-                    return h("div", { key: entry.key, style: { display: "flex", gap: 8, alignItems: "center", padding: "6px 8px",
-                      background: isPreviewed ? B.accent + "18" : (isSelected ? B.success + "0a" : B.surface),
-                      border: "1px solid " + (isPreviewed ? B.accent + "55" : isSelected ? B.success + "33" : B.border), borderRadius: "4px", cursor: "pointer", userSelect: "none" } },
-                      h("div", { onClick: function(e) { e.stopPropagation(); toggleSendSelection(entry.key); },
-                        style: { width: 16, height: 16, borderRadius: "3px", border: "2px solid " + (isSelected ? B.success : B.border), background: isSelected ? B.success : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
-                        isSelected && h("span", { style: { color: B.btnInk, fontSize: "10px", fontWeight: 700 } }, "\u2713")),
-                      h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0 } },
-                        h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.text } }, cm ? cm.firstName + " " + cm.lastName : "Unknown"),
-                        h("div", { style: { fontSize: "9px", color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
-                      // No email on file — the request can't be sent, but the
-                      // person can still be booked directly (that path never
-                      // needed an address).
-                      !cm || !cm.email ? h("span", { title: "No email on file — this one can only be booked without emailing", style: { fontSize: "8px", color: B.warn, fontWeight: 700 } }, "no email") : null
-                    );
-                  }))
-              ),
-              // Right: what-will-be-sent summary. The email itself is composed
-              // server-side from the crewRequest template (Accept/Decline buttons
-              // linking to each crew member's private page), so we summarize
-              // rather than render a drift-prone client copy.
-              h("div", { style: { flex: 1, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
-                h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
-                  h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Request Summary"),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
-                    h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "To:"),
-                    h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, previewTo)),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                    h("span", { style: { fontSize: "10px", color: B.textMut, width: 35 } }, "Subj:"),
-                    h("span", { style: { fontSize: "11px", color: B.text, fontWeight: 600 } }, previewSubject))),
-                h("div", { style: { flex: 1, padding: "14px", overflowY: "auto" } },
-                  h("div", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
-                    "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
-                    " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
-                    " private page will be sent. They can accept or decline and leave a note."),
-                  h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "In this request: " + askLabel(peShifts)),
-                  peShifts.length === 0
-                    ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
-                    : peShifts.map(function(sp, i) {
-                        return h("div", { key: i, style: { fontSize: "11px", color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
-                          h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
-                          h("span", { style: { color: B.textMut } }, sp.flat
-                            ? "  \u00b7  Flat rate $" + window.LTP_money(sp.fee) + "  \u00b7  whole project (date outline, no times)"
-                            : "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
-                      }))
-              )
-            ),
-            h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 14, marginTop: 14, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 } },
-              h("div", { style: { fontSize: "11px", color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length),
-              h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
-                h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); } }, "Cancel"),
-                // Direct book — for crew already agreed with off-platform.
-                // Deliberately the quiet, secondary action: emailing the ask is
-                // what this panel is for, and this one skips it for good.
-                h(window.Btn, { variant: "ghost", disabled: selectedCount === 0,
-                  onClick: function() { setBookDlg(selectedGroups()); },
-                  style: { borderColor: B.warn + "66", color: B.warn } },
-                  "Book Without Emailing"),
-                h(window.Btn, { disabled: selectedCount === 0, onClick: function() { sendSelected(false); } },
-                  "Send " + selectedCount + " Request" + (selectedCount !== 1 ? "s" : ""))))
-          );
-        }()
-      ),
+          // Phone sizes: a value per surface, desktop first.
+          var f = function(d, m) { return isMobile ? m : d; };
+          var miniBtn = isMobile ? { fontSize: "11px", padding: "6px 12px", borderRadius: "6px", minHeight: 32 } : null;
+          var chk = f(16, 22);
+
+          // Left: crew+project selection list
+          var list = h("div", { style: isMobile ? { display: "flex", flexDirection: "column" } : { flex: "0 0 300px", display: "flex", flexDirection: "column" } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
+              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Recipients (" + allEntries.length + ")"),
+              h("div", { style: { display: "flex", gap: 6 } },
+                h("button", { onClick: function() { selectAllSend(true); }, className: "ltp-tap",
+                  style: Object.assign({ background: "transparent", border: "1px solid " + B.accent, borderRadius: "3px", padding: "2px 8px", color: B.accent, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, miniBtn) }, "All"),
+                h("button", { onClick: function() { selectAllSend(false); }, className: "ltp-tap",
+                  style: Object.assign({ background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }, miniBtn) }, "None"))),
+            h("div", { style: isMobile ? { display: "flex", flexDirection: "column", gap: 6 } : { flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
+              allEntries.map(function(entry, ei) {
+                var isSelected = sendSelection[entry.key];
+                var isPreviewed = ei === previewIdx;
+                var cm = contacts.find(function(c) { return c.id === entry.crewId; });
+                var name = cm ? cm.firstName + " " + cm.lastName : "Unknown";
+                return h("div", { key: entry.key, style: { display: "flex", gap: f(8, 10), alignItems: "center", padding: f("6px 8px", "6px 10px"),
+                  background: isPreviewed ? B.accent + "18" : (isSelected ? B.success + "0a" : B.surface),
+                  border: "1px solid " + (isPreviewed ? B.accent + "55" : isSelected ? B.success + "33" : B.border), borderRadius: f("4px", "8px"), cursor: "pointer", userSelect: "none" } },
+                  // The checkbox: on a phone the 16px glyph sits in a 36px hit box.
+                  h("div", { onClick: function(e) { e.stopPropagation(); toggleSendSelection(entry.key); }, className: "ltp-tap",
+                    role: "checkbox", "aria-checked": !!isSelected, "aria-label": "Include " + name,
+                    style: isMobile ? { width: 36, height: 36, marginLeft: -7, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } : { flexShrink: 0 } },
+                    h("div", { style: { width: chk, height: chk, borderRadius: f("3px", "5px"), border: "2px solid " + (isSelected ? B.success : B.border), background: isSelected ? B.success : "transparent", display: "flex", alignItems: "center", justifyContent: "center" } },
+                      isSelected && h("span", { style: { color: B.btnInk, fontSize: f("10px", "13px"), fontWeight: 700 } }, "\u2713"))),
+                  h("div", { onClick: function() { setSendSelection(function(prev) { return Object.assign({}, prev, { _previewIdx: ei }); }); }, style: { flex: 1, minWidth: 0, padding: f(0, "4px 0") } },
+                    h("div", { style: { fontSize: f("11px", "13px"), fontWeight: 600, color: B.text } }, name),
+                    h("div", { style: { fontSize: f("9px", "11px"), color: B.textMut } }, entry.projectName + " \u00b7 " + askLabel(entry.shifts))),
+                  // No email on file — the request can't be sent, but the
+                  // person can still be booked directly (that path never
+                  // needed an address).
+                  !cm || !cm.email ? h("span", { title: "No email on file — this one can only be booked without emailing", style: { fontSize: f("8px", "10px"), color: B.warn, fontWeight: 700, flexShrink: 0 } }, "no email") : null
+                );
+              })));
+
+          // Right: what-will-be-sent summary. The email itself is composed
+          // server-side from the crewRequest template (Accept/Decline buttons
+          // linking to each crew member's private page), so we summarize
+          // rather than render a drift-prone client copy.
+          var metaLabel = { fontSize: f("10px", "11px"), color: B.textMut, width: f(35, 42), flexShrink: 0 };
+          var summary = h("div", { style: { flex: 1, minWidth: 0, background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", display: "flex", flexDirection: "column", overflow: "hidden" } },
+            h("div", { style: { padding: "10px 14px", borderBottom: "1px solid " + B.border, background: B.surface } },
+              h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Request Summary"),
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 4 } },
+                h("span", { style: metaLabel }, "To:"),
+                h("span", { style: { fontSize: f("11px", "13px"), color: B.text, fontWeight: 600, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, previewTo)),
+              h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                h("span", { style: metaLabel }, "Subj:"),
+                h("span", { style: { fontSize: f("11px", "13px"), color: B.text, fontWeight: 600, minWidth: 0 } }, previewSubject))),
+            h("div", { style: { flex: 1, padding: "14px", overflowY: "auto" } },
+              h("div", { style: { fontSize: f("11px", "13px"), color: B.textSec, lineHeight: 1.5, marginBottom: 12 } },
+                "An email with ", h("strong", { style: { color: B.success } }, "Accept"), " / ", h("strong", { style: { color: B.danger } }, "Decline"),
+                " buttons linking to ", (pe ? (pe.shifts.length === 1 ? "this person's" : (contacts.find(function(c) { return c.id === pe.crewId; }) || {}).firstName || "their") + "'s" : "their"),
+                " private page will be sent. They can accept or decline and leave a note."),
+              h("div", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 } }, "In this request: " + askLabel(peShifts)),
+              peShifts.length === 0
+                ? h("div", { style: { fontSize: f("11px", "13px"), color: B.textMut, fontStyle: "italic" } }, "No open shifts.")
+                : peShifts.map(function(sp, i) {
+                    return h("div", { key: i, style: { fontSize: f("11px", "13px"), color: B.text, padding: "5px 0", borderBottom: i < peShifts.length - 1 ? "1px solid " + B.border : "none" } },
+                      h("span", { style: { fontWeight: 600 } }, (sp.svcName || sp.role || "Crew") + (sp.dayRoleCount > 1 ? " #" + sp.slot : "")),
+                      h("span", { style: { color: B.textMut } }, sp.flat
+                        ? "  \u00b7  Flat rate $" + window.LTP_money(sp.fee) + "  \u00b7  whole project (date outline, no times)"
+                        : "  \u00b7  " + (sp.date ? fmt(sp.date) : "TBD") + (sp.schedTitle ? "  \u00b7  " + sp.schedTitle : "")));
+                  })));
+
+          var countLine = h("div", { style: { fontSize: f("11px", "12px"), color: B.textMut } }, selectedCount + " request" + (selectedCount !== 1 ? "s" : "") + " of " + allEntries.length);
+          var cancelBtn = h(window.Btn, { variant: "ghost", onClick: function() { setShowSendPanel(false); }, style: isMobile ? window.LTP_SHEET_BTN : null }, "Cancel");
+          // Direct book — for crew already agreed with off-platform.
+          // Deliberately the quiet, secondary action: emailing the ask is
+          // what this panel is for, and this one skips it for good.
+          var bookBtn = h(window.Btn, { variant: "ghost", disabled: selectedCount === 0,
+            onClick: function() { setBookDlg(selectedGroups()); },
+            style: Object.assign({ borderColor: B.warn + "66", color: B.warn }, isMobile ? { flex: 1 } : null, isMobile ? window.LTP_SHEET_BTN : null) },
+            "Book Without Emailing");
+          var sendBtn = h(window.Btn, { disabled: selectedCount === 0, onClick: function() { sendSelected(false); },
+            style: isMobile ? Object.assign({ width: "100%" }, window.LTP_SHEET_BTN) : null },
+            "Send " + selectedCount + " Request" + (selectedCount !== 1 ? "s" : ""));
+          var footer = isMobile
+            ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
+                countLine,
+                h("div", { style: { display: "flex", gap: 8 } }, cancelBtn, bookBtn),
+                sendBtn)
+            : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 } },
+                countLine,
+                h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } }, cancelBtn, bookBtn, sendBtn));
+
+          return h(window.LTPModal, { title: "Send Crew Requests", onClose: function() { setShowSendPanel(false); }, wide: true, footer: footer },
+            h("div", { style: isMobile ? { display: "flex", flexDirection: "column", gap: 14 } : { display: "flex", gap: 16, minHeight: 360 } }, list, summary));
+      })(),
 
       // Direct-book confirmation. Sits ABOVE the send panel (higher zIndex) so
       // cancelling drops the producer back into their selection instead of
@@ -3572,7 +3589,8 @@
             " for ", h("strong", { style: { color: B.text } }, projLabel(confirmDlg.projectId)),
             "? Their accepted positions move to confirmed."),
           site && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 16 } }, site),
-          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
+          // Three actions: let them wrap on a phone rather than run off the sheet.
+          h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
             h(window.Btn, { variant: "ghost", onClick: function() { setConfirmDlg(null); } }, "Cancel"),
             h(window.Btn, { variant: "ghost", onClick: function() { doConfirm(confirmDlg, false); } }, "Confirm Quietly"),
             h(window.Btn, { onClick: function() { doConfirm(confirmDlg, true); } }, "Confirm & Notify")));
