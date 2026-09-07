@@ -3670,7 +3670,7 @@
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
                   <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort18" data-ltp-zone="sec1" style=7props>
           <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort18" style=4props>
-  -- slot 16 (flag) opens an overlay (79 lines) --
+  -- slot 16 (flag) opens an overlay (81 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort19" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
                 <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort19" data-ltp-zone="sec1" style=7props>
@@ -3682,74 +3682,76 @@
         <div style=4props>
           <h3 style=5props>
             Send Quote
-          <button onClick=fn style=5props>
+          <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
             ✕
-        <div style=3props>
-          <div style=8props>
-            <div style=6props>
-              Quote Preview
-            <div style=4props>
-              Q-2026-001
-            <div style=3props>
-              Spring Shoot
-            <div style=3props>
-              Acme Co
-            <div style=3props>
-              <div key="sec1" style=4props>
-                <span style=1props>
-                  Audio (2)
-                <span style=1props>
-                  $1,900.00
-              <div key="sec2" style=4props>
-                <span style=1props>
-                  Grip (0)
-                <span style=1props>
-                  $0.00
-              <div style=7props>
-                <span style=1props>
-                  Total
-                <span style=1props>
-                  $1,710.00
-          <LTPEmailComposePane>
-            <div style=7props>
+        <LTPSendModalBody>
+          <div style=3props>
+            <div style=8props>
+              <div style=6props>
+                Quote Preview
+              <div style=4props>
+                Q-2026-001
               <div style=3props>
-                <div style=6props>
-                  Email Preview
-                <div style=4props>
-                  <span style=3props>
-                    From:
-                  <span style=2props>
-                    Sender <s@example.com>
-                <div style=1props>
-                  <anon>
-                    <div>
-                      <div style=4props>
-                        <span style=8props>
-                          To
-                        <div style=5props>
-                          <span style=4props>
-                            no primary recipient
-                      <div style=4props>
-                        <span style=8props>
-                          Cc
-                        <div style=5props>
-                          <span style=4props>
-                            none
-                      <div style=2props>
-                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                Spring Shoot
+              <div style=3props>
+                Acme Co
+              <div style=3props>
+                <div key="sec1" style=4props>
+                  <span style=1props>
+                    Audio (2)
+                  <span style=1props>
+                    $1,900.00
+                <div key="sec2" style=4props>
+                  <span style=1props>
+                    Grip (0)
+                  <span style=1props>
+                    $0.00
+                <div style=7props>
+                  <span style=1props>
+                    Total
+                  <span style=1props>
+                    $1,710.00
+            <LTPEmailComposePane>
+              <div style=8props>
                 <div style=3props>
-                  <span style=3props>
-                    Subj:
-                  <input onChange=fn style=10props value="">
-              <anon>
-                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
-        <div style=6props>
-          <anon>
-            <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
-              Cancel
-          <anon>
-            <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
-              Send Quote
+                  <div style=6props>
+                    Email Preview
+                  <div style=4props>
+                    <span style=4props>
+                      From:
+                    <span style=6props>
+                      Sender <s@example.com>
+                  <div style=1props>
+                    <anon>
+                      <div>
+                        <div style=4props>
+                          <span style=8props>
+                            To
+                          <div style=5props>
+                            <span style=4props>
+                              no primary recipient
+                        <div style=4props>
+                          <span style=8props>
+                            Cc
+                          <div style=5props>
+                            <span style=4props>
+                              none
+                        <div style=2props>
+                          <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                  <div style=3props>
+                    <span style=4props>
+                      Subj:
+                    <input onChange=fn style=11props value="">
+                <anon>
+                  <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=3props>
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Cancel
+            <anon>
+              <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+                Send Quote
   -- slot 21 (flag) opens an overlay (5 lines) --
           <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort20" style=4props>
                 <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort20" data-ltp-zone="sec1" style=7props>
@@ -3777,7 +3779,7 @@
           <div style=4props>
             <h3 style=5props>
               Add to ""
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=4props>
             <button key="equipment" onClick=fn style=8props>
@@ -3829,7 +3831,7 @@
           <div style=4props>
             <h3 style=5props>
               Seed
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=4props>
             Seed
@@ -3853,7 +3855,7 @@
           <div style=4props>
             <h3 style=5props>
               Seed
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=3props>
              · 
@@ -3872,7 +3874,7 @@
         <div style=4props>
           <h3 style=5props>
             Send to Invoice
-          <button onClick=fn style=5props>
+          <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
             ✕
         <p style=3props>
           Add these items to one of this client’s draft invoices — they arrive as new sections, leaving what’s already there untouched — or create a new invoice.
@@ -3953,7 +3955,7 @@
           <div style=4props>
             <h3 style=5props>
               Record Payment
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=1props>
             <div style=7props>
@@ -4032,7 +4034,7 @@
             <anon>
               <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                 Record Payment
-  -- slot 11 (flag) opens an overlay (88 lines) --
+  -- slot 11 (flag) opens an overlay (90 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort33" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort33" data-ltp-zone="sec1" style=7props>
@@ -4044,83 +4046,85 @@
         <div style=4props>
           <h3 style=5props>
             Send Invoice
-          <button onClick=fn style=5props>
+          <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
             ✕
-        <div style=3props>
-          <div style=8props>
-            <div style=6props>
-              Invoice Preview
-            <div style=4props>
-              INV-2026-007
-            <div style=3props>
-              Spring Shoot
-            <div style=3props>
-              Acme Co
-            <div style=3props>
+        <LTPSendModalBody>
+          <div style=3props>
+            <div style=8props>
+              <div style=6props>
+                Invoice Preview
               <div style=4props>
-                <span style=1props>
-                  Invoice Date
-                <span style=1props>
-                  August 5th, 2026
-              <div style=4props>
-                <span style=1props>
-                  Due Date
-                <span style=1props>
-                  September 4th, 2026
-              <div style=4props>
-                <span style=1props>
-                  Line Items
-                <span style=1props>
-                  2
-              <div style=7props>
-                <span style=1props>
-                  Total
-                <span style=1props>
-                  $1,710.00
-          <LTPEmailComposePane>
-            <div style=7props>
+                INV-2026-007
               <div style=3props>
-                <div style=6props>
-                  Email Preview
+                Spring Shoot
+              <div style=3props>
+                Acme Co
+              <div style=3props>
                 <div style=4props>
-                  <span style=3props>
-                    From:
-                  <span style=2props>
-                    Sender <s@example.com>
-                <div style=1props>
-                  <anon>
-                    <div>
-                      <div style=4props>
-                        <span style=8props>
-                          To
-                        <div style=5props>
-                          <span style=4props>
-                            no primary recipient
-                      <div style=4props>
-                        <span style=8props>
-                          Cc
-                        <div style=5props>
-                          <span style=4props>
-                            none
-                      <div style=2props>
-                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                  <span style=1props>
+                    Invoice Date
+                  <span style=1props>
+                    August 5th, 2026
+                <div style=4props>
+                  <span style=1props>
+                    Due Date
+                  <span style=1props>
+                    September 4th, 2026
+                <div style=4props>
+                  <span style=1props>
+                    Line Items
+                  <span style=1props>
+                    2
+                <div style=7props>
+                  <span style=1props>
+                    Total
+                  <span style=1props>
+                    $1,710.00
+            <LTPEmailComposePane>
+              <div style=8props>
                 <div style=3props>
-                  <span style=3props>
-                    Subj:
-                  <input onChange=fn style=10props value="">
+                  <div style=6props>
+                    Email Preview
+                  <div style=4props>
+                    <span style=4props>
+                      From:
+                    <span style=6props>
+                      Sender <s@example.com>
+                  <div style=1props>
+                    <anon>
+                      <div>
+                        <div style=4props>
+                          <span style=8props>
+                            To
+                          <div style=5props>
+                            <span style=4props>
+                              no primary recipient
+                        <div style=4props>
+                          <span style=8props>
+                            Cc
+                          <div style=5props>
+                            <span style=4props>
+                              none
+                        <div style=2props>
+                          <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                  <div style=3props>
+                    <span style=4props>
+                      Subj:
+                    <input onChange=fn style=11props value="">
+                <anon>
+                  <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=3props>
+          <div style=4props>
+            <label style=8props>
+              <input checked=true onChange=fn style=2props type="checkbox">
+              Attach invoice PDF
+            <div style=2props>
               <anon>
-                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
-        <div style=7props>
-          <label style=7props>
-            <input checked=true onChange=fn style=2props type="checkbox">
-            Attach invoice PDF
-          <div style=2props>
-            <anon>
-              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
-                Cancel
-            <anon>
-              <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
-                Send Invoice
+                <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                  Cancel
+              <anon>
+                <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+                  Send Invoice
   -- slot 13 (flag) opens an overlay (5 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort34" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort34" data-ltp-zone="sec1" style=7props>
@@ -4133,7 +4137,7 @@
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
               <div data-ltp-id="i3" data-ltp-sort="item" data-ltp-sort-inst="sort35" data-ltp-zone="sec1" style=7props>
       <div data-ltp-id="sec2" data-ltp-sort="section" data-ltp-sort-inst="sort35" key="sec2" style=3props>
-  -- slot 15 (flag) opens an overlay (74 lines) --
+  -- slot 15 (flag) opens an overlay (76 lines) --
       <div data-ltp-id="sec1" data-ltp-sort="section" data-ltp-sort-inst="sort36" key="sec1" style=3props>
             <div data-ltp-id="i1" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
             <div data-ltp-id="i2" data-ltp-sort="item" data-ltp-sort-inst="sort36" data-ltp-zone="sec1" style=7props>
@@ -4145,69 +4149,71 @@
         <div style=4props>
           <h3 style=5props>
             Send Payment Receipt
-          <button onClick=fn style=5props>
+          <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
             ✕
-        <div style=3props>
-          <div style=8props>
-            <div style=6props>
-              Receipt Preview
-            <div style=4props>
-              INV-2026-007
-            <div style=3props>
-              Spring Shoot
-            <div style=3props>
+        <LTPSendModalBody>
+          <div style=3props>
+            <div style=8props>
+              <div style=6props>
+                Receipt Preview
               <div style=4props>
-                <span style=1props>
-                  Invoice Total
-                <span style=1props>
-                  $1,710.00
-              <div style=4props>
-                Payments
-              <div style=7props>
-                <span style=1props>
-                  Paid in Full
-                <span style=1props>
-                  $0.00
-          <LTPEmailComposePane>
-            <div style=7props>
+                INV-2026-007
               <div style=3props>
-                <div style=6props>
-                  Email Preview
+                Spring Shoot
+              <div style=3props>
                 <div style=4props>
-                  <span style=3props>
-                    From:
-                  <span style=2props>
-                    Sender <s@example.com>
-                <div style=1props>
-                  <anon>
-                    <div>
-                      <div style=4props>
-                        <span style=8props>
-                          To
-                        <div style=5props>
-                          <span style=4props>
-                            no primary recipient
-                      <div style=4props>
-                        <span style=8props>
-                          Cc
-                        <div style=5props>
-                          <span style=4props>
-                            none
-                      <div style=2props>
-                        <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                  <span style=1props>
+                    Invoice Total
+                  <span style=1props>
+                    $1,710.00
+                <div style=4props>
+                  Payments
+                <div style=7props>
+                  <span style=1props>
+                    Paid in Full
+                  <span style=1props>
+                    $0.00
+            <LTPEmailComposePane>
+              <div style=8props>
                 <div style=3props>
-                  <span style=3props>
-                    Subj:
-                  <input onChange=fn style=10props value="">
-              <anon>
-                <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
-        <div style=6props>
-          <anon>
-            <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
-              Skip
-          <anon>
-            <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
-              Send Receipt
+                  <div style=6props>
+                    Email Preview
+                  <div style=4props>
+                    <span style=4props>
+                      From:
+                    <span style=6props>
+                      Sender <s@example.com>
+                  <div style=1props>
+                    <anon>
+                      <div>
+                        <div style=4props>
+                          <span style=8props>
+                            To
+                          <div style=5props>
+                            <span style=4props>
+                              no primary recipient
+                        <div style=4props>
+                          <span style=8props>
+                            Cc
+                          <div style=5props>
+                            <span style=4props>
+                              none
+                        <div style=2props>
+                          <input onBlur=fn onChange=fn onFocus=fn onKeyDown=fn placeholder="Add a contact or type an email…" style=10props type="text" value="">
+                  <div style=3props>
+                    <span style=4props>
+                      Subj:
+                    <input onChange=fn style=11props value="">
+                <anon>
+                  <div className="ltp-email-editor" contentEditable=true onInput=fn ref={"current":null} style=12props suppressContentEditableWarning=true>
+        <div style=3props>
+          <div style=3props>
+            <anon>
+              <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+                Skip
+            <anon>
+              <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
+                Send Receipt
   -- slot 20 (flag) opens an overlay (7 lines) --
       <button disabled=true onClick=fn style=12props>
         Generating…
@@ -4229,7 +4235,7 @@
           <div style=4props>
             <h3 style=5props>
               Seed
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=4props>
             Seed
@@ -4253,7 +4259,7 @@
           <div style=4props>
             <h3 style=5props>
               Add Item
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <anon>
             <div style=2props>
@@ -4293,7 +4299,7 @@
           <div style=4props>
             <h3 style=5props>
               Seed
-            <button onClick=fn style=5props>
+            <button aria-label="Close" className="ltp-tap" onClick=fn style=5props>
               ✕
           <div style=3props>
              · 

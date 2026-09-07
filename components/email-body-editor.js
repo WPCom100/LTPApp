@@ -55,6 +55,14 @@
 
     var ref = useRef(null);
     var initializedRef = useRef(false);
+    // Phone: the editable ROOT is 16px — iOS zooms the page on focusing any
+    // editable element under 16px, contenteditable included, and it reads the
+    // focused element's own size, not its children's. The paragraphs inside
+    // render at 13px via the index.html phone layer (.ltp-email-editor > p),
+    // so the email reads at the phone kit's text size without the zoom.
+    // Display only: the body's paragraph styling (PARA_STYLE) carries no font
+    // size, so nothing here reaches the sent mail.
+    var isMobile = window.LTP_useIsMobile();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init-once for contentEditable; see header
     useEffect(function() {
@@ -123,9 +131,9 @@
         border: "none",
         borderTop: "1px solid " + B.border,
         color: B.text,
-        fontSize: "12px",
+        fontSize: isMobile ? "16px" : "12px",
         fontFamily: "inherit",
-        padding: "14px 18px",
+        padding: isMobile ? "10px 12px" : "14px 18px",
         outline: "none",
         overflowY: "auto",
         lineHeight: 1,

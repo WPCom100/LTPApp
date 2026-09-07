@@ -2351,98 +2351,106 @@
         onAlert: showAlert,
       }),
 
-      // Send Invoice modal
-      showSendModal && h(window.LTPModal, { title: isDraft ? "Send Invoice" : "Resend Invoice", onClose: function() { setShowSendModal(false); }, wide: true },
-        h("div", { style: { display: "flex", gap: 16, minHeight: 380 } },
-          // Left: Invoice preview
-          h("div", { style: { width: 260, flexShrink: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: 16, display: "flex", flexDirection: "column" } },
-            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 } }, "Invoice Preview"),
-            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent, marginBottom: 4 } }, refDisplay),
-            h("div", { style: { fontSize: "11px", color: B.textSec, marginBottom: 2 } }, displayName),
-            selectedCompany && h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 10 } }, selectedCompany.name),
-            h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 8, flex: 1 } },
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
-                h("span", { style: { color: B.textMut } }, "Invoice Date"),
-                h("span", { style: { color: B.text } }, draft.invoiceDate ? fmt(draft.invoiceDate) : "\u2014")),
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
-                h("span", { style: { color: B.textMut } }, "Due Date"),
-                h("span", { style: { color: B.text } }, draft.dueDate ? fmt(draft.dueDate) : "\u2014")),
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
-                h("span", { style: { color: B.textMut } }, "Line Items"),
-                h("span", { style: { color: B.text } }, draft.sections.reduce(function(n, s) { return n + s.items.filter(function(i) { return i.type !== "note"; }).length; }, 0))),
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 4 } },
-                h("span", { style: { color: B.text } }, "Total"),
-                h("span", { style: { color: B.accent } }, fmtT(t.total))),
-              t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: 4 } },
-                h("span", { style: { color: B.success } }, "Paid"),
-                h("span", { style: { color: B.success } }, fmtT(t.paid))),
-              t.balance > 0 && t.balance !== t.total && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 700, marginTop: 4 } },
-                h("span", { style: { color: B.warn } }, "Balance"),
-                h("span", { style: { color: B.warn } }, fmtT(t.balance)))
-            )
-          ),
+      // Send Invoice modal. Same shape as the quote's: the action row is the
+      // modal's `footer` (pinned above the home indicator on a phone) and the
+      // body is the shared preview + compose layout, which folds the preview
+      // into a summary line on a phone (components/doc-email-pane.js).
+      showSendModal && h(window.LTPModal, { title: isDraft ? "Send Invoice" : "Resend Invoice", onClose: function() { setShowSendModal(false); }, wide: true,
+        footer: (function() {
+          // Attach the invoice PDF (default on). Invoice + reminder sends only;
+          // the backend generates it fresh and attaches it to the email.
+          var attach = h("label", { style: { display: "flex", alignItems: "center", gap: isMobile ? 10 : 6, fontSize: isMobile ? "14px" : "11px", color: B.textSec, cursor: "pointer", userSelect: "none", minHeight: isMobile ? 28 : 0 } },
+            h("input", { type: "checkbox", checked: attachPdf, onChange: function(e) { setAttachPdf(e.target.checked); }, style: isMobile ? { cursor: "pointer", accentColor: B.accent, width: 20, height: 20, margin: 0 } : { cursor: "pointer", accentColor: B.accent } }),
+            "Attach invoice PDF");
+          var buttons = h("div", { style: { display: "flex", gap: 8 } },
+            h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); }, style: isMobile ? window.LTP_SHEET_BTN : null }, "Cancel"),
+            h(window.Btn, {
+              onClick: executeSend,
+              disabled: sending || !window.LTP_GMAIL_CONNECTED,
+              style: isMobile ? Object.assign({ flex: 1 }, window.LTP_SHEET_BTN) : null,
+            }, sending ? "Sending\u2026" : (isDraft ? "Send Invoice" : "Resend")));
+          // Phone: the checkbox gets its own line above the buttons; desktop
+          // keeps it at the left end of the action row.
+          return isMobile
+            ? h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, attach, buttons)
+            : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, attach, buttons);
+        })() },
+        h(window.LTPSendModalBody, {
+          previewTitle: "Invoice Preview",
+          refLabel: refDisplay, name: displayName, company: selectedCompany ? selectedCompany.name : null,
+          amount: fmtT(t.total),
           // Right: Email preview
           // Shared with the other send modals — components/doc-email-pane.js.
-          h(window.LTPEmailComposePane, {
+          compose: h(window.LTPEmailComposePane, {
             recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
             subject: sendSubject, onSubjectChange: setSendSubject,
             body: sendMessage, onBodyChange: setSendMessage,
             headerKind: "invoice", headerVars: sendHeaderVars, settings: settings,
-          })
-        ),
-        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
-          // Attach the invoice PDF (default on). Invoice + reminder sends only;
-          // the backend generates it fresh and attaches it to the email.
-          h("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: "11px", color: B.textSec, cursor: "pointer", userSelect: "none" } },
-            h("input", { type: "checkbox", checked: attachPdf, onChange: function(e) { setAttachPdf(e.target.checked); }, style: { cursor: "pointer", accentColor: B.accent } }),
-            "Attach invoice PDF"),
-          h("div", { style: { display: "flex", gap: 8 } },
-            h(window.Btn, { variant: "ghost", onClick: function() { setShowSendModal(false); } }, "Cancel"),
-            h(window.Btn, {
-              onClick: executeSend,
-              disabled: sending || !window.LTP_GMAIL_CONNECTED,
-            }, sending ? "Sending\u2026" : (isDraft ? "Send Invoice" : "Resend"))))
+          }),
+        },
+          // Left: Invoice preview — dates, line count, totals
+          h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 8, flex: 1 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
+              h("span", { style: { color: B.textMut } }, "Invoice Date"),
+              h("span", { style: { color: B.text } }, draft.invoiceDate ? fmt(draft.invoiceDate) : "\u2014")),
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
+              h("span", { style: { color: B.textMut } }, "Due Date"),
+              h("span", { style: { color: B.text } }, draft.dueDate ? fmt(draft.dueDate) : "\u2014")),
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 4 } },
+              h("span", { style: { color: B.textMut } }, "Line Items"),
+              h("span", { style: { color: B.text } }, draft.sections.reduce(function(n, s) { return n + s.items.filter(function(i) { return i.type !== "note"; }).length; }, 0))),
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "14px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 4 } },
+              h("span", { style: { color: B.text } }, "Total"),
+              h("span", { style: { color: B.accent } }, fmtT(t.total))),
+            t.paid > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginTop: 4 } },
+              h("span", { style: { color: B.success } }, "Paid"),
+              h("span", { style: { color: B.success } }, fmtT(t.paid))),
+            t.balance > 0 && t.balance !== t.total && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", fontWeight: 700, marginTop: 4 } },
+              h("span", { style: { color: B.warn } }, "Balance"),
+              h("span", { style: { color: B.warn } }, fmtT(t.balance)))
+          )
+        )
       ),
 
-      // Payment Receipt modal
-      showReceiptModal && h(window.LTPModal, { title: "Send Payment Receipt", onClose: function() { setShowReceiptModal(false); }, wide: true },
-        h("div", { style: { display: "flex", gap: 16, minHeight: 380 } },
-          // Left: Receipt preview
-          h("div", { style: { width: 260, flexShrink: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: 16, display: "flex", flexDirection: "column" } },
-            h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 } }, "Receipt Preview"),
-            h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent, marginBottom: 4 } }, refDisplay),
-            h("div", { style: { fontSize: "11px", color: B.textSec, marginBottom: 10 } }, displayName),
-            h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 8, flex: 1 } },
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 6 } },
-                h("span", { style: { color: B.textMut } }, "Invoice Total"),
-                h("span", { style: { color: B.text } }, "$" + window.LTP_money(t.total))),
-              h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Payments"),
-              (draft.payments || []).map(function(p) {
-                var ml = { check: "Check", ach: "ACH", credit_card: "CC", cash: "Cash", wire: "Wire", other: "Other" };
-                return h("div", { key: p.id, style: { display: "flex", justifyContent: "space-between", fontSize: "10px", padding: "2px 0" } },
-                  h("span", { style: { color: B.textMut } }, fmt(p.date) + " \u00b7 " + (ml[p.method] || p.method)),
-                  h("span", { style: { color: B.success } }, "$" + window.LTP_money(p.amount)));
-              }),
-              h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 6 } },
-                h("span", { style: { color: B.success } }, "Paid in Full"),
-                h("span", { style: { color: B.success } }, "$" + window.LTP_money(t.paid)))
-            )
-          ),
+      // Payment Receipt modal — same shared layout and pinned footer.
+      showReceiptModal && h(window.LTPModal, { title: "Send Payment Receipt", onClose: function() { setShowReceiptModal(false); }, wide: true,
+        footer: h("div", { style: isMobile ? { display: "flex", gap: 8 } : { display: "flex", justifyContent: "flex-end", gap: 8 } },
+          h(window.Btn, { variant: "ghost", onClick: function() { setShowReceiptModal(false); }, style: isMobile ? window.LTP_SHEET_BTN : null }, "Skip"),
+          h(window.Btn, {
+            onClick: sendReceipt,
+            disabled: sending || !window.LTP_GMAIL_CONNECTED,
+            style: isMobile ? Object.assign({ flex: 1 }, window.LTP_SHEET_BTN) : null,
+          }, sending ? "Sending\u2026" : "Send Receipt")) },
+        h(window.LTPSendModalBody, {
+          previewTitle: "Receipt Preview",
+          refLabel: refDisplay, name: displayName,
+          amount: "$" + window.LTP_money(t.paid), amountColor: B.success,
           // Right: Email preview
           // Shared with the other send modals — components/doc-email-pane.js.
-          h(window.LTPEmailComposePane, {
+          compose: h(window.LTPEmailComposePane, {
             recipients: sendRecipients, onRecipientsChange: onRecipientsChange, contacts: contacts,
             subject: sendSubject, onSubjectChange: setSendSubject,
             body: sendMessage, onBodyChange: setSendMessage,
             headerKind: "receipt", headerVars: sendHeaderVars, settings: settings,
-          })
-        ),
-        h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } },
-          h(window.Btn, { variant: "ghost", onClick: function() { setShowReceiptModal(false); } }, "Skip"),
-          h(window.Btn, {
-            onClick: sendReceipt,
-            disabled: sending || !window.LTP_GMAIL_CONNECTED,
-          }, sending ? "Sending\u2026" : "Send Receipt"))
+          }),
+        },
+          // Left: Receipt preview — the payments that settled the invoice
+          h("div", { style: { borderTop: "1px solid " + B.border, paddingTop: 8, flex: 1 } },
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "11px", marginBottom: 6 } },
+              h("span", { style: { color: B.textMut } }, "Invoice Total"),
+              h("span", { style: { color: B.text } }, "$" + window.LTP_money(t.total))),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 4, fontWeight: 600 } }, "Payments"),
+            (draft.payments || []).map(function(p) {
+              var ml = { check: "Check", ach: "ACH", credit_card: "CC", cash: "Cash", wire: "Wire", other: "Other" };
+              return h("div", { key: p.id, style: { display: "flex", justifyContent: "space-between", fontSize: "10px", padding: "2px 0" } },
+                h("span", { style: { color: B.textMut } }, fmt(p.date) + " \u00b7 " + (ml[p.method] || p.method)),
+                h("span", { style: { color: B.success } }, "$" + window.LTP_money(p.amount)));
+            }),
+            h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "13px", fontWeight: 700, paddingTop: 8, borderTop: "1px solid " + B.border, marginTop: 6 } },
+              h("span", { style: { color: B.success } }, "Paid in Full"),
+              h("span", { style: { color: B.success } }, "$" + window.LTP_money(t.paid)))
+          )
+        )
       )
     );
   }

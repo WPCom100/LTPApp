@@ -743,16 +743,43 @@
   // zIndex lifts a modal above the default 1000 layer. Used by the inline
   // entity add/edit stack (components/entity-quick-form.js), where a form can
   // be opened from inside another modal and must render above it.
-  window.LTPModal = function({ title, onClose, children, wide, disableBackdrop, zIndex }) {
+  //
+  // `footer` is the modal's action row (Cancel / Send…). On desktop it renders
+  // under the children behind the same hairline the callers used to draw
+  // themselves. On a phone it is PINNED: the panel becomes a column, the
+  // children scroll in the middle, and the footer sits above the home
+  // indicator — so on the send modals, whose body is an email that runs off
+  // the screen, Send is reachable without scrolling to the bottom of it.
+  // Modals that pass no footer are laid out exactly as before.
+  window.LTPModal = function({ title, onClose, children, wide, disableBackdrop, zIndex, footer }) {
+    var isMobile = window.LTP_useIsMobile();
+    var pinned = !!footer && isMobile;
+    var panelStyle = { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" };
+    if (pinned) Object.assign(panelStyle, { display: "flex", flexDirection: "column", overflowY: "hidden" });
+    // The ✕ is an 18px glyph; on a phone give it a finger-sized hit area
+    // without moving it (the negative margin absorbs the padding).
+    var closeStyle = { background: "none", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer" };
+    if (isMobile) Object.assign(closeStyle, { padding: "8px 10px", margin: "-8px -10px", lineHeight: 1 });
     return h("div", { className: "ltp-modal-backdrop", style: { position: "fixed", inset: 0, background: "rgba(15,21,25,0.72)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: zIndex || 1000 },
       onClick: disableBackdrop ? null : onClose },
-      h("div", { className: "ltp-modal-panel", onClick: function(e) { e.stopPropagation(); }, style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "14px", padding: "24px", width: wide ? "90%" : "480px", maxWidth: wide ? 900 : 480, maxHeight: "85vh", overflowY: "auto", overflowX: "visible", position: "relative", boxShadow: "0 24px 64px rgba(0,0,0,0.45)" } },
-        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
+      h("div", { className: "ltp-modal-panel", onClick: function(e) { e.stopPropagation(); }, style: panelStyle },
+        h("div", { style: pinned ? { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, flexShrink: 0 }
+                                 : { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 } },
           h("h3", { style: { margin: 0, fontSize: "16px", fontWeight: 700, color: B.text, letterSpacing: "-0.01em" } }, title),
-          h("button", { onClick: onClose, style: { background: "none", border: "none", color: B.textMut, fontSize: "18px", cursor: "pointer" } }, "\u2715")
-        ), children)
+          h("button", { onClick: onClose, "aria-label": "Close", className: "ltp-tap", style: closeStyle }, "\u2715")
+        ),
+        pinned ? h("div", { style: { flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch" } }, children) : children,
+        footer && h("div", { style: pinned
+            ? { flexShrink: 0, marginTop: 12, paddingTop: 12, borderTop: "1px solid " + B.border }
+            : { marginTop: 14, paddingTop: 14, borderTop: "1px solid " + B.border } }, footer))
     );
   };
+
+  // Phone-sized button for a pinned modal footer: a 42px tap target with a
+  // readable label, in place of the desktop Btn's 12px / 8px-padding compact
+  // size. Callers merge it into Btn's `style` under LTP_useIsMobile() and add
+  // `flex: 1` on the button that should fill the row (the primary action).
+  window.LTP_SHEET_BTN = { minHeight: 42, padding: "9px 14px", fontSize: "13px", borderRadius: "10px" };
 
   // Overflow "⋯" menu — collapses a pile of secondary actions behind one
   // kebab button so a cramped header (e.g. the quote/invoice builders) stays a
