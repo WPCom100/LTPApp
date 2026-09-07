@@ -246,7 +246,15 @@
 // into the field and re-sorts the schedule row under the picker. Phones keep
 // the native wheel. Every date input in the app routes through it. ui.js,
 // index.html, the rentals modules.
-var CACHE_VERSION = 'ltp-shell-v84';
+// v85: the email send modals (Send Quote / Invoice / Payment Receipt, Send
+// Crew Requests) are laid out for a phone — the preview folds into a summary
+// line above the email, the action row is pinned above the home indicator
+// (LTPModal `footer`), chips and the subject wrap instead of truncating, the
+// email reads at 13px under a 16px root so iOS never zooms on focus, and the
+// notify tray sits above the tab bar. ui.js, doc-email-pane.js,
+// recipient-editor.js, email-body-editor.js, crew-outbox.js, quotes-builder.js,
+// invoices.js, labor.js, index.html.
+var CACHE_VERSION = 'ltp-shell-v85';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
