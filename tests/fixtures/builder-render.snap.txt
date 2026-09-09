@@ -1730,7 +1730,7 @@
         Hide Paid
     <anon>
       <anon>
-        <div className="ltp-list" style=7props>
+        <div className="ltp-list" style=4props>
           <div style=6props>
             <button aria-sort="none" className="ltp-th" key="ref" onClick=fn style=18props type="button">
               Ref

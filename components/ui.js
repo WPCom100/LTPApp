@@ -66,17 +66,31 @@
   };
 
   // ── Ruled list — the customer views' call-sheet / ledger treatment ───────
-  // Replaces the stack-of-rounded-cards look on list screens: one flat panel
-  // a step above the page field, bounded by brand-orange rules, with rows
-  // separated by hairlines. Hairline + hover rules live in index.html
-  // (.ltp-list / .ltp-row) so the last row drops its hairline automatically
-  // and hover never needs JS handlers.
+  // Replaces the stack-of-rounded-cards look on list screens: one panel a step
+  // above the page field, with rows separated by hairlines. Hairline + hover
+  // rules live in index.html (.ltp-list / .ltp-row) so the last row drops its
+  // hairline automatically and hover never needs JS handlers.
+  //
+  // The panel is a rounded box on the same 12px radius as the stat tiles it
+  // sits under (StatCard) — a list reads as a card in the same family as
+  // everything else on the page, not as a slab cut out of it.
+  //
+  // overflow:hidden is what makes the radius hold: the corners have to clip
+  // what the rows paint, or the fills square themselves off again. It catches
+  // the hover wash on the last row, a table header's raised fill, and the
+  // category rule down the left edge of a Projects row — which it curves into
+  // the bottom-left corner instead of letting it spear past. Nothing inside any
+  // list needs to escape the panel (no row anywhere opens a popover; the
+  // pickers that do are modals), so clipping costs nothing.
   //
   //   h(window.LTPList, null, items.map(function(it) {
   //     return h(window.LTPRow, { key: it.id, onClick: ..., style: {...} }, ...);
   //   }))
   window.LTPList = function({ children, style: sx }) {
-    return h("div", { className: "ltp-list", style: Object.assign({ background: B.surface, borderTop: "1px solid " + B.border, borderBottom: "1px solid " + B.border }, sx) }, children);
+    return h("div", { className: "ltp-list", style: Object.assign({
+      background: B.surface, border: "1px solid " + B.border,
+      borderRadius: 12, overflow: "hidden",
+    }, sx) }, children);
   };
   window.LTPRow = function({ onClick, style: sx, children }) {
     return h("div", {
@@ -193,19 +207,10 @@
       }));
     });
 
-    // The table reads as a panel rather than a slab of the page: LTPList rules
-    // only its top and bottom, so the sides are closed here and the box is
-    // rounded to match the stat tiles it sits under (StatCard, 12px).
-    //
-    // overflow:hidden is what makes the radius hold. Three things inside square
-    // themselves off at the corners without it — the header's raised fill, the
-    // hover wash on the last row, and the category rule down the left edge of a
-    // Projects row. Clipping them to the panel is also what curves that rule
-    // into the bottom-left corner instead of letting it spear past it.
-    return h(window.LTPList, { style: Object.assign({
-      borderLeft: "1px solid " + B.border, borderRight: "1px solid " + B.border,
-      borderRadius: 12, overflow: "hidden",
-    }, sx) }, header,
+    // The rounded, clipped panel comes from LTPList — see the note there for
+    // why the corners have to clip (this table's header fill is one of the
+    // things that would otherwise square itself off again).
+    return h(window.LTPList, { style: sx }, header,
       body.length ? body : h("div", { style: { padding: "30px 16px", textAlign: "center",
         color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, empty || "Nothing to show."));
   };

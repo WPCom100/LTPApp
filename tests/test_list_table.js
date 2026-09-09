@@ -217,18 +217,22 @@ ok("a column with no declared width falls back to a flexible track",
    headerRow.props.style.gridTemplateColumns.indexOf("minmax(0,1fr)") !== -1,
    headerRow.props.style.gridTemplateColumns);
 
-// The panel is a rounded box, not a slab: LTPList rules only top and bottom, so
-// the table closes the sides itself. overflow:hidden is load-bearing — without
-// it the header fill, the last row's hover wash and a Projects category rule all
-// square themselves off at the corners.
+// The panel is a rounded box, not a slab, and the radius comes from LTPList so
+// every list in the app carries it — the table just renders through it.
+// overflow:hidden is load-bearing: without it the header fill, the last row's
+// hover wash and a Projects category rule all square themselves off again.
 const panel = walk(tree).find((e) => e.props && e.props.className === "ltp-list");
 ok("the table renders an ltp-list panel", !!panel);
 eq("the panel is rounded", panel.props.style.borderRadius, 12);
 ok("and clips its children to that radius", panel.props.style.overflow === "hidden");
-ok("the sides are closed so the corners have something to curve",
-   !!panel.props.style.borderLeft && !!panel.props.style.borderRight);
-ok("top and bottom rules still come from LTPList",
-   !!panel.props.style.borderTop && !!panel.props.style.borderBottom);
+ok("the box is closed on all four sides, so every corner has something to curve",
+   /^1px solid /.test(panel.props.style.border || ""), panel.props.style.border);
+// The radius is LTPList's, not the table's — a plain card list is rounded too.
+const plainList = expand(window.LTPList({ children: "x" }));
+eq("a plain LTPList is rounded the same way", plainList.props.style.borderRadius, 12);
+eq("and clips the same way", plainList.props.style.overflow, "hidden");
+eq("the table adds no panel styling of its own",
+   panel.props.style.borderRadius, plainList.props.style.borderRadius);
 // A caller passing its own style must still be able to override the panel.
 eq("a caller's own panel style wins",
    walk(render({ columns: COLS, sort: { key: "name", dir: "asc" }, rows: mkRows(people), style: { borderRadius: 0 } }))
