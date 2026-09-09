@@ -237,6 +237,22 @@ window.LTP_useRecordWatch = function(collection, id, notice, pick) {
 };
 
 
+// Do these two snapshot JSON strings agree once `keys` are dropped from both?
+// Used to tell "the row gained an activity entry" from "a field this editor
+// owns moved". Both strings come from the same snapshot function, so their key
+// order matches and re-stringifying is a stable comparison. Anything that will
+// not parse as an object (the "\u0000deleted" sentinel) answers false, which
+// keeps the warning.
+function _sameApartFrom(aJson, bJson, keys) {
+  var a, b;
+  try { a = JSON.parse(aJson); b = JSON.parse(bJson); }
+  catch (e) { return false; }
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  keys.forEach(function(k) { delete a[k]; delete b[k]; });
+  try { return JSON.stringify(a) === JSON.stringify(b); }
+  catch (e) { return false; }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 //   A RECORD CHANGING WHILE AN EDITOR HAS IT OPEN
 // ═══════════════════════════════════════════════════════════════════════════
@@ -268,7 +284,23 @@ window.LTP_useRecordWatch = function(collection, id, notice, pick) {
 //   onAdopt   called with a fresh snapshot when it is safe to swap it in.
 //   notice    { title, message } shown in the dirty case.
 //   resetKey  changing it forgets everything — the editor switched records.
-window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey, collection) {
+//   quietKeys top-level keys of the snapshot that are APPEND-ONLY LOGS the
+//             server unions on write (`activity`, `scheduleActivity`). A change
+//             confined to them is not a conflict and must not be announced as
+//             one: the notice promises "saving will replace the newer version",
+//             which is precisely what does NOT happen to these — the update
+//             path merges them by entry id (backend/routes/api.py
+//             ::_merge_activity), so nothing is lost either way. They stay in
+//             the compare so a CLEAN editor still adopts the new entries and
+//             its activity panel keeps up; they are only excluded from the
+//             decision to warn a DIRTY one.
+//
+//             Without this, every server-side stamp — a send, a QuickBooks
+//             sync failure, the client opening the share link, someone else's
+//             PDF download — told whoever had the document open mid-edit that
+//             it had "changed elsewhere" and their work was at risk. It never
+//             was.
+window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice, resetKey, collection, quietKeys) {
   var seenRef = React.useRef(null);
   var warnedRef = React.useRef(false);
   // The remote epoch as of the last time we looked at this record.
@@ -313,6 +345,7 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
       return;
     }
     if (incoming === seenRef.current) { epochRef.current = epochNow; return; }
+    var previous = seenRef.current;
     seenRef.current = incoming;
 
     // Ours, not theirs. Re-baseline and say nothing — but DO clear the
@@ -337,6 +370,11 @@ window.LTP_useRemoteEdits = function(record, snapshot, isDirty, onAdopt, notice,
       return;
     }
     if (warnedRef.current) return;
+    // Only an append-only log moved (see quietKeys): the row is newer, but
+    // nothing this editor could overwrite has changed, so there is nothing to
+    // warn about. The baseline above has already moved, so the next change
+    // that IS material still lands here.
+    if (quietKeys && quietKeys.length && _sameApartFrom(previous, incoming, quietKeys)) return;
     warnedRef.current = true;
     if (window.LTP_toast) {
       window.LTP_toast((notice && notice.title) || "Changed elsewhere", {

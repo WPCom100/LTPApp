@@ -396,15 +396,18 @@ ok("domain-util exports LTP_useRemoteEdits", typeof window.LTP_useRemoteEdits ==
 ok("domain-util exports LTP_useRecordWatch", typeof window.LTP_useRecordWatch === "function");
 ok("domain-util exports LTP_useUnsavedGuard", typeof window.LTP_useUnsavedGuard === "function");
 
-function scenario() {
+function scenario(quietKeys) {
   const state = { adopted: [], toasts: [], dirty: false };
   window.LTP_toast = (title, o) => state.toasts.push(title + " :: " + (o && o.message));
-  const snap = (r) => ({ id: r.id, body: r.body });
+  // Shape follows the record: the pre-existing cases below assert on the whole
+  // adopted object, so a record with no log keeps the two-field shape.
+  const snap = (r) => (r.activity ? { id: r.id, body: r.body, activity: r.activity }
+                                  : { id: r.id, body: r.body });
   const render = mountHook((record, resetKey) => {
     window.LTP_useRemoteEdits(record, snap, state.dirty,
       (fresh) => state.adopted.push(fresh),
       { title: "Changed elsewhere", message: "unsaved changes are kept" },
-      resetKey);
+      resetKey, null, quietKeys);
   });
   return { state, render };
 }
@@ -415,6 +418,38 @@ function scenario() {
   eq("H1 the first render only seeds", [state.adopted.length, state.toasts.length], [0, 0]);
   render({ id: 1, body: "a" }, 1);          // new identity, same content
   eq("H2 a refetch that changed nothing does nothing", [state.adopted.length, state.toasts.length], [0, 0]);
+}
+
+// ── An append-only log moving is not a conflict ────────────────────────────
+// Every send, QuickBooks sync, PDF download and client share-link open stamps
+// an activity entry server-side. The update path unions those by entry id, so
+// saving over them loses nothing — yet each one told whoever had the document
+// open mid-edit that it had "changed elsewhere" and that saving would replace
+// the newer version. Neither half of that was true.
+{
+  const { state, render } = scenario(["activity"]);
+  state.dirty = true;
+  render({ id: 1, body: "a", activity: [{ id: "e1" }] }, 1);
+  render({ id: 1, body: "a", activity: [{ id: "e1" }, { id: "e2" }] }, 1);
+  eq("H2a an entry appended while editing says nothing", state.toasts.length, 0);
+  render({ id: 1, body: "MOVED", activity: [{ id: "e1" }, { id: "e2" }] }, 1);
+  eq("H2b but a real field moving still warns", state.toasts.length, 1);
+}
+{
+  // Clean editor: the entries are still adopted, so the activity panel keeps up.
+  const { state, render } = scenario(["activity"]);
+  render({ id: 1, body: "a", activity: [{ id: "e1" }] }, 1);
+  render({ id: 1, body: "a", activity: [{ id: "e1" }, { id: "e2" }] }, 1);
+  eq("H2c a clean editor adopts the new entries silently",
+     [state.adopted.length, state.adopted[0] && state.adopted[0].activity.length, state.toasts.length], [1, 2, 0]);
+}
+{
+  // Without the declaration nothing changes for editors that did not opt in.
+  const { state, render } = scenario();
+  state.dirty = true;
+  render({ id: 1, body: "a", activity: [{ id: "e1" }] }, 1);
+  render({ id: 1, body: "a", activity: [{ id: "e1" }, { id: "e2" }] }, 1);
+  eq("H2d an editor that declares no log still warns on any change", state.toasts.length, 1);
 }
 
 {
