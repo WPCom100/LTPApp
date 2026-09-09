@@ -16,6 +16,10 @@
 //   PUT, its _rev the token for the next real edit. That lives inside the hook,
 //   so this suite runs the hook for real on a minimal React stand-in.
 //
+//   Section G covers the other half of the same idea: such a row is this
+//   window's own doing however it travelled, so it must not read as a remote
+//   change to an editor watching the row (LTP_DATA_REMOTE_EPOCH).
+//
 // Pure Node, zero deps.
 //   Run:  node tests/test_data_state_adopt.js
 "use strict";
@@ -242,6 +246,37 @@ function withStatus(rows, status) { return rows.map((r) => r.id !== P ? r : flip
        [true, [23, 99]]);
     await wait(SETTLE);
     eq("F6 and, being server state, is not POSTed", calls.filter((c) => c.method === "POST").length, 0);
+  }
+
+  // ── G. A row we asked for is not "another window" ────────────────────────
+  // LTP_useRemoteEdits (components/domain-util.js) separates "someone else
+  // changed this row" from "I just changed it" by watching
+  // LTP_DATA_REMOTE_EPOCH: a bump means the state layer installed rows the
+  // server sent of its own accord. adoptRow installs rows off the wire too,
+  // but always as the answer to something this window just did — so bumping
+  // there made the builder tell the person who had pressed Send that another
+  // window had changed their invoice, with no other window open. It surfaced
+  // when sending began moving the row to `sent` server-side: until then the
+  // adopted row differed only in fields no editor was watching.
+  {
+    boot([row("open", { _rev: "r1" })]);
+    const h = mountHook(S.usePersistentState, ["projects", []]);
+    await wait(20);
+    const asked = window.LTP_DATA_REMOTE_EPOCH.projects;
+    S.adoptRow("projects", row("requested", { _rev: "r2" }));
+    await wait(0);
+    eq("G1 the adopted row is shown", statusOf(h.value()), "requested");
+    eq("G2 and the remote epoch has NOT moved — this window asked for it",
+       window.LTP_DATA_REMOTE_EPOCH.projects, asked);
+
+    // The same row moving underneath us without being asked still counts.
+    serverRows = [row("confirmed", { _rev: "r3" })];
+    live.bump("projects");
+    await wait(SETTLE);
+    eq("G3 a live refresh shows the other window's move", statusOf(h.value()), "confirmed");
+    ok("G4 and DOES move the epoch — that one really is elsewhere",
+       window.LTP_DATA_REMOTE_EPOCH.projects > asked,
+       "epoch " + window.LTP_DATA_REMOTE_EPOCH.projects + " vs " + asked);
   }
 
   console.log("\nadopt-row suite — PASS: " + pass + "   FAIL: " + fail);

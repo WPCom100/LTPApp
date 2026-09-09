@@ -1156,7 +1156,7 @@
       },
       { title: "This quote changed elsewhere",
         message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
-      String(quoteId) + ":" + String(isNew), "quotes");
+      String(quoteId) + ":" + String(isNew), "quotes", ["activity"]);
 
     var [pickerForSection, setPickerForSection] = useState(null);
     var [dlg, setDlg] = useState(null);

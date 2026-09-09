@@ -261,7 +261,12 @@
 // rather than by a later save from the browser; the Send button says which
 // step it is on; and every QuickBooks or Gmail failure is recorded on the
 // document so Settings → Error Log shows it. invoices.js, quotes-builder.js.
-var CACHE_VERSION = 'ltp-shell-v86';
+// v87: sending no longer tells the sender their own send came from another
+// window. A row the server hands back in answer to something this window did
+// is installed without counting as a remote change, and an append-only
+// activity log moving is no longer treated as a conflict — it cannot be lost
+// by saving. data-state.js, domain-util.js, the three big editors.
+var CACHE_VERSION = 'ltp-shell-v87';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
