@@ -86,6 +86,151 @@
     }, children);
   };
 
+  // ── Columnar list — the ruled ledger, laid out in aligned columns ────────
+  // The record lists (invoices, quotes, projects, …) used to stack three or
+  // four lines per row against the left edge and park a price + badge at the
+  // right, leaving the whole middle of a desktop row empty. LTPTable spends
+  // that space instead: one scannable line per record, columns aligned down
+  // the list, and column headers that sort.
+  //
+  // The visual language is the customer document table (modules/client-view.js
+  // headerRow/lineRow): uppercase micro-cap headers over hairline-ruled rows,
+  // money right-aligned in tabular figures.
+  //
+  // DESKTOP ONLY — every caller keeps its existing mobile card branch and picks
+  // between them on window.LTP_useIsMobile(), so phones render exactly what they
+  // rendered before. Nothing here is reachable at phone widths.
+  //
+  //   var COLS = [
+  //     { key: "ref",   label: "Ref",   w: "128px", sort: function(i) { return ref(i); } },
+  //     { key: "job",   label: "Job",   w: "minmax(0,2fr)", sort: function(i) { return i.name; } },
+  //     { key: "total", label: "Total", w: "104px", align: "right", mono: true,
+  //       dir: "desc", sort: function(i) { return total(i); } },
+  //   ];
+  //   var ordered = window.LTP_sortRows(filtered, COLS, sort);
+  //   h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort,
+  //     empty: "No invoices found.",
+  //     rows: ordered.map(function(i) {
+  //       return { key: i.id, onClick: function() { nav(...); }, cells: [refNode, nameNode, totalNode] };
+  //     }) })
+  //
+  // Column fields:
+  //   key    identifies the column in sort state; also the React key.
+  //   label  header text (rendered uppercase).
+  //   w      grid track — "128px", "minmax(0,2fr)", … Defaults to minmax(0,1fr).
+  //   sort   accessor returning the comparable value. A column is sortable
+  //          exactly when it carries one; columns without it render as inert
+  //          headers (a badge column nobody would order by, say).
+  //   dir    the direction the column's FIRST click uses. "desc" suits money and
+  //          dates, where the big/recent end is the one you're looking for;
+  //          names and refs want the "asc" default.
+  //   align  "right" for money, "center" where it reads better. Applies to the
+  //          header and the cells together, so they can never drift apart.
+  //   mono   tabular figures — money and quantities line up digit-for-digit.
+  //   wrap   let the cell wrap onto a second line instead of truncating.
+  //   flex   lay the cell's children out in a row instead of treating them as
+  //          one run of text. This is how a cell carries a primary value plus a
+  //          trailing scrap — a kit name with its ARCHIVED badge, a company with
+  //          its contact — and still truncates the primary half only. Give the
+  //          primary child { flex: 1, minWidth: 0 } + ellipsis and the trailing
+  //          one { flexShrink: 0 }, so the name shortens and the badge survives.
+  //
+  // `cells` is positional: cells[i] renders under columns[i]. A falsy entry
+  // renders an empty cell, so a column can be blank on some rows.
+  window.LTPTable = function({ columns, rows, sort, onSort, empty, style: sx }) {
+    var cols = (columns || []).filter(Boolean);
+    var template = cols.map(function(c) { return c.w || "minmax(0,1fr)"; }).join(" ");
+    // One gap and one horizontal padding shared by the header and every row —
+    // the columns line up because they are laid out from the same three values.
+    var GAP = 18, PADX = 16;
+
+    var header = h("div", {
+      style: { display: "grid", gridTemplateColumns: template, columnGap: GAP,
+               padding: "9px " + PADX + "px", background: B.raised,
+               borderBottom: "1px solid " + B.border },
+    }, cols.map(function(c) {
+      var active = !!(sort && sort.key === c.key);
+      var sortable = typeof c.sort === "function";
+      var base = { fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em",
+                   textTransform: "uppercase", textAlign: c.align || "left",
+                   color: active ? B.accent : B.textMut,
+                   minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
+      if (!sortable) return h("div", { key: c.key, style: base }, c.label || "");
+      return h("button", {
+        key: c.key, type: "button", className: "ltp-th",
+        onClick: function() { if (onSort) onSort(window.LTP_nextSort(cols, sort, c.key)); },
+        // aria-sort tells a screen reader which column orders the list, and
+        // doubles as the hover-brightening hook in index.html (inline colors
+        // beat a plain :hover rule, so the CSS keys off "none").
+        "aria-sort": active ? (sort.dir === "desc" ? "descending" : "ascending") : "none",
+        style: Object.assign({}, base, { display: "block", width: "100%",
+                                         background: "none", border: "none",
+                                         padding: 0, margin: 0,
+                                         fontFamily: "inherit", cursor: "pointer" }),
+      }, c.label || "", active && h("span", { style: { marginLeft: 4 } },
+        sort.dir === "desc" ? "▼" : "▲"));
+    }));
+
+    var body = (rows || []).map(function(r) {
+      return h(window.LTPRow, {
+        key: r.key, onClick: r.onClick,
+        style: Object.assign({ display: "grid", gridTemplateColumns: template,
+                               columnGap: GAP, alignItems: "center" }, r.style),
+      }, cols.map(function(c, i) {
+        var cs = { minWidth: 0, textAlign: c.align || "left" };
+        if (c.mono) { cs.fontFamily = B.mono; cs.fontVariantNumeric = "tabular-nums"; }
+        if (c.flex) {
+          // The children lay themselves out and each owns its own truncation —
+          // see the `flex` note in the column fields above.
+          cs.display = "flex"; cs.alignItems = "center"; cs.gap = 6;
+          if (c.align === "right") cs.justifyContent = "flex-end";
+        } else if (!c.wrap) {
+          // Truncation is what keeps the columns aligned: a long job name ends
+          // in an ellipsis rather than pushing the rest of the row out of line.
+          cs.whiteSpace = "nowrap"; cs.overflow = "hidden"; cs.textOverflow = "ellipsis";
+        }
+        return h("div", { key: c.key, style: cs }, (r.cells || [])[i] || null);
+      }));
+    });
+
+    return h(window.LTPList, { style: sx }, header,
+      body.length ? body : h("div", { style: { padding: "30px 16px", textAlign: "center",
+        color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, empty || "Nothing to show."));
+  };
+
+  // Order a list by the active column's accessor.
+  //
+  // Strings compare case-insensitively and NUMERICALLY, so "INV-2026-9" sorts
+  // before "INV-2026-10" rather than after it the way a plain string compare
+  // would. Blank values always sink to the bottom in BOTH directions — flipping
+  // a column should reorder the records you can see, not float a wall of empty
+  // cells to the top of the list.
+  window.LTP_sortRows = function(list, columns, sort) {
+    var col = null;
+    (columns || []).forEach(function(c) { if (c && c.key === (sort && sort.key)) col = c; });
+    if (!col || typeof col.sort !== "function") return (list || []).slice();
+    var mul = (sort.dir === "desc") ? -1 : 1;
+    return (list || []).slice().sort(function(a, b) {
+      var av = col.sort(a), bv = col.sort(b);
+      var ae = (av === null || av === undefined || av === ""),
+          be = (bv === null || bv === undefined || bv === "");
+      if (ae && be) return 0;
+      if (ae) return 1;
+      if (be) return -1;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * mul;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: "base" }) * mul;
+    });
+  };
+
+  // The sort state one click on `key` produces: flip direction if it is already
+  // the active column, otherwise adopt that column's opening direction.
+  window.LTP_nextSort = function(columns, sort, key) {
+    if (sort && sort.key === key) return { key: key, dir: sort.dir === "desc" ? "asc" : "desc" };
+    var col = null;
+    (columns || []).forEach(function(c) { if (c && c.key === key) col = c; });
+    return { key: key, dir: (col && col.dir) || "asc" };
+  };
+
   // ── Loading — the orange shimmer bar from the customer-facing pages ──────
   // LTPLoadingBar: inline shimmer + optional quiet label underneath.
   // LTPLoadingScreen: full-height centered version for app-level gates.

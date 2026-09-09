@@ -7,6 +7,11 @@
   var useState = React.useState, useRef = React.useRef, useMemo = React.useMemo, useEffect = React.useEffect;
   var nav = window.LTPRouter.navigate;
   var fmt = window.LTP_formatDate;
+  // Date-column format for the desktop table: "Mar 4", carrying the year only
+  // when it isn't the current one. The weekday the phone rows show is dropped —
+  // two date columns per row leave no width for it, and the table is read down
+  // the column, where the day name is noise.
+  function fmtS(d) { return window.LTP_formatDateShort(d, { weekday: false }); }
   // Pure section/line-item transforms, shared with modules/quotes-builder.js.
   // See components/domain-docs.js — every invoice-specific rule (draft-only
   // edits, linkedQty clamping, rollback bookkeeping, the last-section guard)
@@ -76,17 +81,57 @@
     var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter] = useState("all");
     var [search, setSearch] = useState("");
-    var [sortMode, setSortMode] = useState("date-desc");
+    // ONE sort state for both viewports — { key, dir } naming a column in COLS
+    // below. The phone's Newest / Oldest / Ref chips set the same state the
+    // desktop column headers do, and both order through the same accessors, so
+    // the two viewports can never disagree about what "Newest" means.
+    var [sort, setSort] = useState({ key: "date", dir: "desc" });
     var [hidePaid, setHidePaid] = useState(false);
     var statuses = ["all", "draft", "sent", "partial", "paid", "overdue"];
-    var sorts = [{ k: "date-desc", l: "Newest" }, { k: "date-asc", l: "Oldest" }, { k: "ref", l: "Ref #" }];
+    var sorts = [{ l: "Newest", s: { key: "date", dir: "desc" } },
+                 { l: "Oldest", s: { key: "date", dir: "asc"  } },
+                 { l: "Ref #",  s: { key: "ref",  dir: "asc"  } }];
 
     // The primary contact on the invoice, shown next to the company name.
     function contactName(inv) {
       var c = (contacts || []).find(function(x) { return x.id === inv.clientContactId; });
       return c ? (c.firstName + " " + c.lastName).trim() : null;
     }
+    function companyName(inv) {
+      return inv.companyId ? ((companies.find(function(c) { return c.id === inv.companyId; }) || {}).name || "") : "";
+    }
+    // A project-less invoice is named by its customName (the same label the
+    // builder's displayName and the PDF use), so name and customName are one
+    // field for searching, sorting and display alike.
+    function jobName(inv) {
+      return inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
+    }
+    function quoteRef(inv) {
+      if (!inv.quoteId) return "";
+      var q = quotes.find(function(q2) { return q2.id === inv.quoteId; });
+      return q ? window.LTP_QUOTE_REF(q) : "";
+    }
     function invDate(inv) { return inv.invoiceDate || inv.createdDate || ""; }
+
+    // The desktop columns, and the ordering accessors behind every sort in this
+    // view. Money and dates open on their descending end — the newest invoice
+    // and the biggest number are what you came to look at; the ref and the text
+    // columns open A→Z.
+    var COLS = [
+      { key: "ref",    label: "Ref",    w: "132px",
+        sort: function(inv) { return window.LTP_INVOICE_REF(inv); } },
+      { key: "job",    label: "Job",    w: "minmax(0,2fr)", flex: true,
+        sort: jobName },
+      { key: "client", label: "Client", w: "minmax(0,1.5fr)", flex: true,
+        sort: companyName },
+      { key: "date",   label: "Date",   w: "104px", dir: "desc", sort: invDate },
+      { key: "due",    label: "Due",    w: "104px", dir: "desc",
+        sort: function(inv) { return inv.dueDate || ""; } },
+      { key: "total",  label: "Total",  w: "150px", align: "right", mono: true, dir: "desc",
+        sort: function(inv) { return window.LTP_INVOICE_TOTALS(inv).total || 0; } },
+      { key: "status", label: "Status", w: "104px",
+        sort: function(inv) { return window.LTP_displayStatus(inv); } },
+    ];
 
     var filtered = invoices.filter(function(inv) {
       // "Hide Paid" (off by default) drops fully-paid invoices from the list.
@@ -98,19 +143,12 @@
       }
       if (search) {
         var q = search.toLowerCase();
-        var ref = window.LTP_INVOICE_REF(inv).toLowerCase();
-        var comp = inv.companyId ? ((companies.find(function(c) { return c.id === inv.companyId; }) || {}).name || "") : "";
-        // A project-less invoice is named by its customName — search that too,
-        // so it's findable by the same label it shows in the row.
-        var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
-        if ((ref + " " + comp + " " + proj).toLowerCase().indexOf(q) === -1) return false;
+        var hay = window.LTP_INVOICE_REF(inv) + " " + companyName(inv) + " " + jobName(inv);
+        if (hay.toLowerCase().indexOf(q) === -1) return false;
       }
       return true;
-    }).sort(function(a, b) {
-      if (sortMode === "date-asc")  return invDate(a) > invDate(b) ? 1 : -1;
-      if (sortMode === "date-desc") return invDate(b) > invDate(a) ? 1 : -1;
-      return window.LTP_INVOICE_REF(a).localeCompare(window.LTP_INVOICE_REF(b));
     });
+    var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
     var totalPaid = invoices.filter(function(i) { return i.status === "paid"; }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).total || 0); }, 0);
     var totalPending = invoices.filter(function(i) { return i.status === "sent" || i.status === "partial"; }).reduce(function(s, i) { return s + (window.LTP_INVOICE_TOTALS(i).balance || 0); }, 0);
@@ -122,10 +160,12 @@
       style: { flexShrink: 0, background: hidePaid ? B.accent : B.raised, color: hidePaid ? B.btnInk : B.textMut, border: "1px solid " + (hidePaid ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
       hidePaid ? "✓ Hiding Paid" : "Hide Paid");
 
+    // Sort chips — PHONE ONLY. On desktop the column headers carry the sort, so
+    // a chip row there would be a second control driving the same state.
     var sortBtnsEl = h("div", { style: { display: "flex", gap: 4 } },
       sorts.map(function(s) {
-        var active = sortMode === s.k;
-        return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
+        var active = sort.key === s.s.key && sort.dir === s.s.dir;
+        return h("button", { key: s.l, onClick: function() { setSort(s.s); },
           style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
       }));
 
@@ -151,38 +191,65 @@
               style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
           })),
         hidePaidBtn),
-      // Sort row (Newest / Oldest / Ref #), matching the Quotes list.
-      h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtnsEl),
-      h(window.LTPList, null,
-        filtered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
-        filtered.map(function(inv) {
-          var ref = window.LTP_INVOICE_REF(inv);
-          var t = window.LTP_INVOICE_TOTALS(inv);
-          var comp = inv.companyId ? ((companies.find(function(c) { return c.id === inv.companyId; }) || {}).name || "") : "";
-          // Row label: the linked project's name, or the typed customName for a
-          // project-less invoice (matches the builder's displayName + the PDF).
-          var proj = inv.projectId ? ((projects.find(function(p) { return p.id === inv.projectId; }) || {}).name || "") : (inv.customName || "");
-          var qRef = inv.quoteId ? (function() { var q = quotes.find(function(q2) { return q2.id === inv.quoteId; }); return q ? window.LTP_QUOTE_REF(q) : ""; })() : "";
-          var contact = contactName(inv);
-          var clientLine = [comp, contact].filter(Boolean).join(" \u00b7 ");
-          // Row top-aligned so the price + status chip sit in line with the ref.
-          return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
-            style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
-            h("div", { style: { flex: 1, minWidth: 0 } },
-              h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, ref),
-              proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 1 } }, proj),
-              clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
-              (qRef || inv.dueDate) && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } },
-                (qRef ? "from " + qRef : "") + (qRef && inv.dueDate ? " \u00b7 " : "") + (inv.dueDate ? "Due: " + fmt(inv.dueDate) : ""))),
-            h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 } },
-              h("div", { style: { textAlign: "right" } },
-                h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + window.LTP_money(t.total)),
-                t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + window.LTP_money(t.balance))),
-              h("div", { style: { display: "flex", gap: 4 } },
+      // Sort row (Newest / Oldest / Ref #) \u2014 phone only; the table sorts itself.
+      isMobile && h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtnsEl),
+
+      isMobile
+        // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ? h(window.LTPList, null,
+            ordered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
+            ordered.map(function(inv) {
+              var ref = window.LTP_INVOICE_REF(inv);
+              var t = window.LTP_INVOICE_TOTALS(inv);
+              var qRef = quoteRef(inv);
+              var contact = contactName(inv);
+              var clientLine = [companyName(inv), contact].filter(Boolean).join(" \u00b7 ");
+              var proj = jobName(inv);
+              // Row top-aligned so the price + status chip sit in line with the ref.
+              return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
+                style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, ref),
+                  proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 1 } }, proj),
+                  clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
+                  (qRef || inv.dueDate) && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } },
+                    (qRef ? "from " + qRef : "") + (qRef && inv.dueDate ? " \u00b7 " : "") + (inv.dueDate ? "Due: " + fmt(inv.dueDate) : ""))),
+                h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 } },
+                  h("div", { style: { textAlign: "right" } },
+                    h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + window.LTP_money(t.total)),
+                    t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + window.LTP_money(t.balance))),
+                  h("div", { style: { display: "flex", gap: 4 } },
+                    h(window.Badge, { status: window.LTP_displayStatus(inv) }),
+                    t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(inv) && h(window.Badge, { status: "overdue" })))
+              );
+            }))
+        // \u2500\u2500 Desktop: one line per invoice, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort, empty: "No invoices found.",
+            rows: ordered.map(function(inv) {
+              var t = window.LTP_INVOICE_TOTALS(inv);
+              var overdue = window.LTP_isOverdue(inv);
+              var qRef = quoteRef(inv), contact = contactName(inv);
+              var job = jobName(inv), comp = companyName(inv);
+              var grow = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+              return { key: inv.id, onClick: function() { nav("invoices/" + inv.id); }, cells: [
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, window.LTP_INVOICE_REF(inv)),
+                // The job name gives up width first; the quote this was raised
+                // from stays legible beside it.
+                [h("span", { key: "j", style: Object.assign({ fontSize: "13px", fontWeight: 600, color: B.text }, grow) }, job || "\u2014"),
+                 qRef && h("span", { key: "q", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, qRef)],
+                [h("span", { key: "c", style: Object.assign({ fontSize: "12px", color: B.textSec }, grow) }, comp || "\u2014"),
+                 contact && h("span", { key: "p", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, contact)],
+                h("span", { style: { fontSize: "11px", color: B.textSec } }, fmtS(invDate(inv))),
+                // An overdue invoice says so on the due date itself. That covers
+                // the partially-paid case too, where LTP_displayStatus reports
+                // "partial" and the status column can no longer say "overdue".
+                h("span", { style: { fontSize: "11px", color: overdue ? B.danger : B.textSec, fontWeight: overdue ? 700 : 400 } },
+                  fmtS(inv.dueDate)),
+                [h("span", { key: "t", style: { fontSize: "13px", fontWeight: 700, color: overdue ? B.danger : B.accent } }, "$" + window.LTP_money(t.total)),
+                 t.paid > 0 && t.balance > 0 && h("span", { key: "b", style: { fontSize: "9px", color: B.textMut, marginLeft: 5 } }, "bal $" + window.LTP_money(t.balance))],
                 h(window.Badge, { status: window.LTP_displayStatus(inv) }),
-                t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(inv) && h(window.Badge, { status: "overdue" })))
-          );
-        }))
+              ] };
+            }) })
     );
   }
 

@@ -484,19 +484,44 @@
     var isMobile = window.LTP_useIsMobile();
     var [typeFilter, setTypeFilter] = useState("all");
     var [search,     setSearch]     = useState("");
-    var [sortMode,   setSortMode]   = useState("az");
+    // ONE sort state for both viewports — { key, dir } naming a column in COLS
+    // below. The phone chips and the desktop column headers set the same state.
+    var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
 
     var types = ["all"].concat(Array.from(new Set((containers || []).map(function(c) { return c.type; }))));
     var q = search.toLowerCase();
+
+    function unitQty(c) { return c.serialized ? (c.units || []).length : (c.qty || 0); }
+    function maintQty(c) {
+      return c.serialized
+        ? (c.units || []).filter(function(u) { return u.status === "under-maintenance"; }).length
+        : (c.status === "under-maintenance" ? unitQty(c) : 0);
+    }
+    function issueCount(c) { return (c.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length; }
+    function defaultFor(c) { return equipment.filter(function(eq) { return c.defaultForEquipment.includes(eq.id); }); }
+
+    var COLS = [
+      { key: "name",   label: "Container",    w: "minmax(0,1.5fr)", flex: true,
+        sort: function(c) { return c.name || ""; } },
+      { key: "type",   label: "Type",         w: "minmax(0,0.9fr)",
+        sort: function(c) { return c.type || ""; } },
+      { key: "mfr",    label: "Manufacturer", w: "minmax(0,1.1fr)",
+        sort: function(c) { return [c.manufacturer, c.model].filter(Boolean).join(" "); } },
+      { key: "for",    label: "Default For",  w: "minmax(0,1.3fr)",
+        sort: function(c) { var l = defaultFor(c); return l.length ? l[0].name : ""; } },
+      { key: "units",  label: "Units",  w: "72px", align: "right", mono: true, dir: "desc", sort: unitQty },
+      { key: "maint",  label: "Maint.", w: "76px", align: "right", mono: true, dir: "desc", sort: maintQty },
+      { key: "issues", label: "Issues", w: "72px", align: "right", mono: true, dir: "desc", sort: issueCount },
+      { key: "rate",   label: "3-Day",  w: "92px", align: "right", mono: true, dir: "desc",
+        sort: function(c) { return Number(c.rentalRate) || 0; } },
+    ];
 
     var filtered = (containers || []).filter(function(c) {
       if (typeFilter !== "all" && c.type !== typeFilter) return false;
       if (q && c.name.toLowerCase().indexOf(q) === -1 && (c.manufacturer || "").toLowerCase().indexOf(q) === -1) return false;
       return true;
-    }).slice().sort(function(a, b) {
-      if (sortMode === "za") return b.name.localeCompare(a.name);
-      return a.name.localeCompare(b.name);
     });
+    var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
     return h("div", null,
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
@@ -508,22 +533,23 @@
         ),
         h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
           h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 180 }, isMobile ? { borderRadius: "8px", padding: "9px 12px" } : {}) }),
-          [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }].map(function(o) {
-            return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-              style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+          // Sort chips \u2014 PHONE ONLY; the desktop table sorts from its headers.
+          isMobile && [{ l: "A\u2192Z", d: "asc" }, { l: "Z\u2192A", d: "desc" }].map(function(o) {
+            var active = sort.key === "name" && sort.dir === o.d;
+            return h("button", { key: o.l, onClick: function() { setSort({ key: "name", dir: o.d }); },
+              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
           })
         )
       ),
 
-      filtered.length === 0 ? h(window.EmptyState, { text: "No containers match your search." }) :
-      h(window.LTPList, null,
-        filtered.map(function(c) {
-          var rawQty   = c.serialized ? (c.units || []).length : (c.qty || 0);
-          var maintQty = c.serialized
-            ? (c.units || []).filter(function(u) { return u.status === "under-maintenance"; }).length
-            : (c.status === "under-maintenance" ? rawQty : 0);
-          var openLogs = (c.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
-          var linkedEq = equipment.filter(function(eq) { return c.defaultForEquipment.includes(eq.id); });
+      ordered.length === 0 ? h(window.EmptyState, { text: "No containers match your search." }) :
+      isMobile
+        // ── Phone: the stacked card rows, unchanged ────────────────────────
+        ? h(window.LTPList, null,
+        ordered.map(function(c) {
+          var rawQty   = unitQty(c);
+          var openLogs = issueCount(c);
+          var linkedEq = defaultFor(c);
 
           return h(window.LTPRow, { key: c.id, onClick: function() { onOpenContainer(c.id); },
             style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
@@ -543,11 +569,30 @@
               c.rentalRate && h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + c.rentalRate + "/3-day"),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "12px", color: B.textMut } }, rawQty + " units"),
-                maintQty > 0 && h("div", { style: { fontSize: "10px", color: B.danger, fontWeight: 600 } }, maintQty + " under maint."))
+                maintQty(c) > 0 && h("div", { style: { fontSize: "10px", color: B.danger, fontWeight: 600 } }, maintQty(c) + " under maint."))
             )
           );
         })
       )
+        // ── Desktop: one line per container. "Default for" was a tail on the
+        //    muted spec line, where a long equipment list swamped the row; as
+        //    its own column it truncates and sorts. ────────────────────────
+        : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort,
+            rows: ordered.map(function(c) {
+              var mq = maintQty(c), issues = issueCount(c);
+              var forList = defaultFor(c).map(function(e) { return e.name; }).join(", ");
+              return { key: c.id, onClick: function() { onOpenContainer(c.id); }, cells: [
+                [h("span", { key: "n", style: { fontSize: "13px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name),
+                 c.optional && h("span", { key: "o", style: { fontSize: "9px", fontWeight: 700, color: B.info, background: B.infoBg, border: "1px solid " + B.infoBd, padding: "1px 6px", borderRadius: 3, textTransform: "uppercase", flexShrink: 0 } }, "Optional")],
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, c.type || "—"),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, [c.manufacturer, c.model].filter(Boolean).join(" ") || "—"),
+                h("span", { style: { fontSize: "11px", color: B.textMut } }, forList || "—"),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, unitQty(c) || "—"),
+                h("span", { style: { fontSize: "12px", color: mq > 0 ? B.danger : B.textMut, fontWeight: mq > 0 ? 700 : 400 } }, mq || "—"),
+                h("span", { style: { fontSize: "12px", color: issues > 0 ? B.danger : B.textMut, fontWeight: issues > 0 ? 700 : 400 } }, issues || "—"),
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: c.rentalRate ? B.accent : B.textMut } }, c.rentalRate ? "$" + c.rentalRate : "—"),
+              ] };
+            }) })
     );
   };
 })();

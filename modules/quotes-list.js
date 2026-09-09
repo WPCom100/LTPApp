@@ -4,6 +4,9 @@
   var B = window.LTP_THEME;
   var nav = window.LTPRouter.navigate;
   var fmt = window.LTP_formatDate;
+  // Date-column format for the desktop table: "Mar 4", with the year only when
+  // it isn't the current one (see components/domain-util.js).
+  function fmtS(d) { return window.LTP_formatDateShort(d, { weekday: false }); }
 
   // Quote totals — the canonical, QB-tax-aware helper (single source of truth).
   var computeTotals = window.LTP_QUOTE_TOTALS;
@@ -18,7 +21,10 @@
     var isMobile = window.LTP_useIsMobile();
     var [filter, setFilter]     = useState("all");
     var [search, setSearch]     = useState("");
-    var [sortMode, setSortMode] = useState("date-desc");
+    // ONE sort state for both viewports — { key, dir } naming a column in COLS
+    // below. The phone chips and the desktop column headers set the same state
+    // and order through the same accessors, so they cannot disagree.
+    var [sort, setSort] = useState({ key: "created", dir: "desc" });
     var [showConverted, setShowConverted] = useState(false);
 
     // Resolve the client label — either a company or a contact's full name.
@@ -37,6 +43,31 @@
       return c ? (c.firstName + " " + c.lastName).trim() : null;
     }
 
+    // The quote's job name — the linked project, or the typed customName for a
+    // project-less quote. One field for searching, sorting and display alike.
+    function jobName(qt) {
+      var proj = projects.find(function(p) { return p.id === qt.projectId; });
+      return proj ? proj.name : (qt.customName || "");
+    }
+    // Only a SENT quote carries a shelf life: a draft was never promised to
+    // anyone, and accepted/declined/converted are settled. The blank for every
+    // other status sinks to the bottom of the Expires column in both
+    // directions, so sorting by it surfaces the live quotes and nothing else.
+    function expiryOf(qt) { return qt.status === "sent" ? window.LTP_quoteExpiry(qt) : ""; }
+
+    // The desktop columns, and the ordering accessors behind every sort here.
+    var COLS = [
+      { key: "ref",     label: "Ref",     w: "126px", sort: displayRef },
+      { key: "job",     label: "Job",     w: "minmax(0,2fr)", flex: true, sort: jobName },
+      { key: "client",  label: "Client",  w: "minmax(0,1.5fr)", flex: true, sort: clientLabel },
+      { key: "created", label: "Created", w: "104px", dir: "desc",
+        sort: function(qt) { return qt.createdDate || ""; } },
+      { key: "expires", label: "Expires", w: "104px", dir: "desc", sort: expiryOf },
+      { key: "total",   label: "Total",   w: "118px", align: "right", mono: true, dir: "desc",
+        sort: function(qt) { return computeTotals(qt).total || 0; } },
+      { key: "status",  label: "Status",  w: "104px", sort: function(qt) { return qt.status || ""; } },
+    ];
+
     var q = search.trim().toLowerCase();
     var filtered = quotes.filter(function(qt) {
       // Converted quotes are hidden by default (they've become invoices) — the
@@ -44,20 +75,17 @@
       if (!showConverted && qt.status === "converted") return false;
       if (filter !== "all" && qt.status !== filter) return false;
       if (q) {
-        var proj = projects.find(function(p) { return p.id === qt.projectId; });
-        var name = proj ? proj.name : (qt.customName || "");
-        var hay  = (displayRef(qt) + " " + clientLabel(qt) + " " + name).toLowerCase();
+        var hay = (displayRef(qt) + " " + clientLabel(qt) + " " + jobName(qt)).toLowerCase();
         if (hay.indexOf(q) === -1) return false;
       }
       return true;
-    }).sort(function(a, b) {
-      if (sortMode === "date-asc")  return (a.createdDate || "") > (b.createdDate || "") ? 1 : -1;
-      if (sortMode === "date-desc") return (b.createdDate || "") > (a.createdDate || "") ? 1 : -1;
-      return displayRef(a).localeCompare(displayRef(b));
     });
+    var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
     var filters = ["all", "draft", "sent", "accepted", "declined"];
-    var sorts = [{ k: "date-desc", l: "Newest" }, { k: "date-asc", l: "Oldest" }, { k: "ref", l: "Ref #" }];
+    var sorts = [{ l: "Newest", s: { key: "created", dir: "desc" } },
+                 { l: "Oldest", s: { key: "created", dir: "asc"  } },
+                 { l: "Ref #",  s: { key: "ref",     dir: "asc"  } }];
 
     // Show/Hide converted toggle — rides the filter row at the right (chip
     // height on mobile), mirroring the Projects "Show Completed" control.
@@ -65,10 +93,12 @@
       style: { flexShrink: 0, background: showConverted ? B.accent : B.raised, color: showConverted ? B.btnInk : B.textMut, border: "1px solid " + (showConverted ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
       showConverted ? "✓ Converted" : "Show Converted");
 
+    // Sort chips — PHONE ONLY. On desktop the column headers carry the sort, so
+    // a chip row there would be a second control driving the same state.
     var sortBtnsEl = h("div", { style: { display: "flex", gap: 4 } },
       sorts.map(function(s) {
-        var active = sortMode === s.k;
-        return h("button", { key: s.k, onClick: function() { setSortMode(s.k); },
+        var active = sort.key === s.s.key && sort.dir === s.s.dir;
+        return h("button", { key: s.l, onClick: function() { setSort(s.s); },
           style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
                    border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px",
                    padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
@@ -99,28 +129,26 @@
             style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote"))
       ),
 
-      // Sort row. Desktop pairs it with the search; on mobile search moved up top.
+      // Sort row. The phone gets the chips; desktop keeps only the search here,
+      // because its column headers do the sorting.
       isMobile
         ? h("div", { style: { display: "flex", marginBottom: 10 } }, sortBtnsEl)
         : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
             h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
-              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } }),
-            sortBtnsEl),
+              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } })),
 
-      // List — ruled ledger panel (see components/ui.js LTPList)
-      h(window.LTPList, null,
-        filtered.length === 0 && h("div", { style: { padding: "32px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, "No quotes match your search."),
-        filtered.map(function(qt) {
-          var proj = projects.find(function(p) { return p.id === qt.projectId; });
-          var name = proj ? proj.name : (qt.customName || "Untitled Quote");
+      isMobile
+        // ── Phone: the stacked ledger rows, unchanged ──────────────────────
+        ? h(window.LTPList, null,
+        ordered.length === 0 && h("div", { style: { padding: "32px", textAlign: "center", color: B.textMut, fontSize: "13px", fontStyle: "italic" } }, "No quotes match your search."),
+        ordered.map(function(qt) {
+          var name = jobName(qt) || "Untitled Quote";
           var tot  = computeTotals(qt);
           var contact = (qt.clientType !== "contact" && qt.companyId) ? contactName(qt) : null;
           // A sent quote's shelf life, on the row so the list can be scanned for
           // the ones that have gone stale — those need their pricing re-checked
           // (and their expiry pushed out in the builder) before they're honoured.
-          // Only "sent" carries one: a draft was never promised to anyone, and
-          // accepted/declined/converted are settled.
-          var expiry = qt.status === "sent" ? window.LTP_quoteExpiry(qt) : "";
+          var expiry = expiryOf(qt);
           var expired = window.LTP_isQuoteExpired(qt);
           return h(window.LTPRow, { key: qt.id, onClick: function() { nav("quotes/" + qt.id); } },
             // Ref (left) + price/status (right) stay on the top row.
@@ -140,6 +168,29 @@
           );
         })
       )
+        // \u2500\u2500 Desktop: one line per quote, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort, empty: "No quotes match your search.",
+            rows: ordered.map(function(qt) {
+              var tot = computeTotals(qt);
+              var contact = (qt.clientType !== "contact" && qt.companyId) ? contactName(qt) : null;
+              var expiry = expiryOf(qt);
+              // A stale quote needs its pricing re-checked (and its expiry
+              // pushed out in the builder) before it is honoured, so the Expires
+              // column shouts once the date has passed.
+              var expired = window.LTP_isQuoteExpired(qt);
+              var grow = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+              return { key: qt.id, onClick: function() { nav("quotes/" + qt.id); }, cells: [
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em" } }, displayRef(qt)),
+                h("span", { style: Object.assign({ fontSize: "13px", fontWeight: 600, color: B.text }, grow) }, jobName(qt) || "Untitled Quote"),
+                [h("span", { key: "c", style: Object.assign({ fontSize: "12px", color: B.textSec }, grow) }, clientLabel(qt)),
+                 contact && h("span", { key: "p", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, contact)],
+                h("span", { style: { fontSize: "11px", color: B.textSec } }, fmtS(qt.createdDate)),
+                h("span", { style: { fontSize: "11px", color: expired ? B.danger : B.textSec, fontWeight: expired ? 700 : 400 } },
+                  expiry ? fmtS(expiry) : "\u2014"),
+                h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(tot.total)),
+                h(window.Badge, { status: qt.status }),
+              ] };
+            }) })
     );
   };
 

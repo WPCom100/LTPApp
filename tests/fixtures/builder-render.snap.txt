@@ -1728,32 +1728,48 @@
             overdue
       <button className="ltp-tap" onClick=fn style=11props>
         Hide Paid
-    <div style=2props>
-      <div style=2props>
-        <button key="date-desc" onClick=fn style=8props>
-          Newest
-        <button key="date-asc" onClick=fn style=8props>
-          Oldest
-        <button key="ref" onClick=fn style=8props>
-          Ref #
     <anon>
-      <div className="ltp-list" style=3props>
-        <anon>
-          <div className="ltp-row ltp-row-click" onClick=fn style=6props>
-            <div style=2props>
-              <div style=3props>
-                INV-2026-007
-              <div style=4props>
-                Spring Shoot
-              <div style=3props>
-                Acme Co
-              <div style=3props>
-                Due: September 4th, 2026
-            <div style=4props>
-              <div style=1props>
-                <div style=3props>
+      <anon>
+        <div className="ltp-list" style=3props>
+          <div style=6props>
+            <button aria-sort="none" className="ltp-th" key="ref" onClick=fn style=18props type="button">
+              Ref
+            <button aria-sort="none" className="ltp-th" key="job" onClick=fn style=18props type="button">
+              Job
+            <button aria-sort="none" className="ltp-th" key="client" onClick=fn style=18props type="button">
+              Client
+            <button aria-sort="descending" className="ltp-th" key="date" onClick=fn style=18props type="button">
+              Date
+              <span style=1props>
+                ▼
+            <button aria-sort="none" className="ltp-th" key="due" onClick=fn style=18props type="button">
+              Due
+            <button aria-sort="none" className="ltp-th" key="total" onClick=fn style=18props type="button">
+              Total
+            <button aria-sort="none" className="ltp-th" key="status" onClick=fn style=18props type="button">
+              Status
+          <anon>
+            <div className="ltp-row ltp-row-click" onClick=fn style=6props>
+              <div key="ref" style=5props>
+                <span style=3props>
+                  INV-2026-007
+              <div key="job" style=5props>
+                <span key="j" style=8props>
+                  Spring Shoot
+                
+              <div key="client" style=5props>
+                <span key="c" style=7props>
+                  Acme Co
+              <div key="date" style=5props>
+                <span style=2props>
+                  Aug 5
+              <div key="due" style=5props>
+                <span style=3props>
+                  Sep 4
+              <div key="total" style=7props>
+                <span key="t" style=3props>
                   $1,710.00
-              <div style=2props>
+              <div key="status" style=5props>
                 <anon>
                   <span style=10props>
                     draft
