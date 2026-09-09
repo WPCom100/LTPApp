@@ -193,7 +193,19 @@
       }));
     });
 
-    return h(window.LTPList, { style: sx }, header,
+    // The table reads as a panel rather than a slab of the page: LTPList rules
+    // only its top and bottom, so the sides are closed here and the box is
+    // rounded to match the stat tiles it sits under (StatCard, 12px).
+    //
+    // overflow:hidden is what makes the radius hold. Three things inside square
+    // themselves off at the corners without it — the header's raised fill, the
+    // hover wash on the last row, and the category rule down the left edge of a
+    // Projects row. Clipping them to the panel is also what curves that rule
+    // into the bottom-left corner instead of letting it spear past it.
+    return h(window.LTPList, { style: Object.assign({
+      borderLeft: "1px solid " + B.border, borderRight: "1px solid " + B.border,
+      borderRadius: 12, overflow: "hidden",
+    }, sx) }, header,
       body.length ? body : h("div", { style: { padding: "30px 16px", textAlign: "center",
         color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, empty || "Nothing to show."));
   };

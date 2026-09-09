@@ -217,6 +217,23 @@ ok("a column with no declared width falls back to a flexible track",
    headerRow.props.style.gridTemplateColumns.indexOf("minmax(0,1fr)") !== -1,
    headerRow.props.style.gridTemplateColumns);
 
+// The panel is a rounded box, not a slab: LTPList rules only top and bottom, so
+// the table closes the sides itself. overflow:hidden is load-bearing — without
+// it the header fill, the last row's hover wash and a Projects category rule all
+// square themselves off at the corners.
+const panel = walk(tree).find((e) => e.props && e.props.className === "ltp-list");
+ok("the table renders an ltp-list panel", !!panel);
+eq("the panel is rounded", panel.props.style.borderRadius, 12);
+ok("and clips its children to that radius", panel.props.style.overflow === "hidden");
+ok("the sides are closed so the corners have something to curve",
+   !!panel.props.style.borderLeft && !!panel.props.style.borderRight);
+ok("top and bottom rules still come from LTPList",
+   !!panel.props.style.borderTop && !!panel.props.style.borderBottom);
+// A caller passing its own style must still be able to override the panel.
+eq("a caller's own panel style wins",
+   walk(render({ columns: COLS, sort: { key: "name", dir: "asc" }, rows: mkRows(people), style: { borderRadius: 0 } }))
+     .find((e) => e.props && e.props.className === "ltp-list").props.style.borderRadius, 0);
+
 // Row extras the list screens depend on: the click target, and the per-row
 // style that carries the Projects category rule / the archived-kit dimming.
 ok("rows carry their onClick", typeof firstRow.props.onClick === "function");
