@@ -254,7 +254,14 @@
 // notify tray sits above the tab bar. ui.js, doc-email-pane.js,
 // recipient-editor.js, email-body-editor.js, crew-outbox.js, quotes-builder.js,
 // invoices.js, labor.js, index.html.
-var CACHE_VERSION = 'ltp-shell-v85';
+// v86: sending settles everything before the email goes out. An invoice is
+// exported to QuickBooks BEFORE the email for every customer (not only taxable
+// ones) and a failed export stops the send with the invoice still a draft; the
+// document becomes "sent" inside the send itself (server-side, with the email)
+// rather than by a later save from the browser; the Send button says which
+// step it is on; and every QuickBooks or Gmail failure is recorded on the
+// document so Settings → Error Log shows it. invoices.js, quotes-builder.js.
+var CACHE_VERSION = 'ltp-shell-v86';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

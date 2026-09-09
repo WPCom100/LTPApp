@@ -195,6 +195,14 @@ def _quote_expiry(entity, settings):
     return d.strftime("%Y-%m-%d")
 
 
+def quote_expiry_from_sent(sent_iso: str, settings) -> str:
+    """The expiry a quote acquires when it is SENT on `sent_iso`: that date plus
+    the workspace validity. routes/email.py stamps it onto the row in the same
+    transaction as the send, so the deadline the client was told is frozen on
+    the quote — the same rule the PDF and the client's view already apply."""
+    return _quote_expiry({"sentDate": sent_iso}, settings)
+
+
 # ── Terms & conditions ──────────────────────────────────────────────────────
 # Python twin of window.LTP_docTerms in theme.js. The rule lives in both
 # languages because the app, this PDF and the client's browser all print the
