@@ -929,8 +929,22 @@ editor notice covers the window where it has. Discarding someone's typing to win
 a race is the wrong trade at this size, so in both cases the local edit survives
 and the person is told.
 
+**What does NOT count as "elsewhere".** The notice promises that saving will
+replace a newer version, so it only fires when that is true:
+
+- **A row this window asked the server to change** — a send, a QuickBooks push,
+  a crew request — comes back through `LTP_STATE.adoptRow`, which installs it
+  without moving the remote epoch the hooks read. Otherwise pressing Send told
+  the sender that another window had changed their invoice.
+- **An append-only log moving** (`activity`, `scheduleActivity`). The update
+  path unions those by entry id, so a save cannot lose them. Editors declare
+  theirs as the hook's `quietKeys`; the entries are still adopted by a clean
+  editor, they just never warn a dirty one. Otherwise every share-link open,
+  PDF download and sync failure interrupted whoever was mid-edit.
+
 Adding a new editor? Call one of the two hooks. A form that stays mounted after
-saving needs the dirty-flag variant, or it will warn about its own write.
+saving needs the dirty-flag variant, or it will warn about its own write, and
+pass `quietKeys` for any append-only log in its snapshot.
 
 Not every read is in the feed. `/api/qbo/status`, `/api/users` and
 `/api/qbo/payouts/day-status` are backed by tables outside `livesync.COLLECTIONS`

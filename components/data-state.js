@@ -609,7 +609,8 @@
     // next diff would try to re-create or re-delete them.
     var baselineEpochRef = useRef(0);
     // Bumped immediately before every setValue that installs rows THE SERVER
-    // sent, and published at render time beside LTP_DATA_LIVE.
+    // sent OF ITS OWN ACCORD, and published at render time beside
+    // LTP_DATA_LIVE.
     //
     // This is how a watching form tells "someone else changed this row" from
     // "I just saved this row". Nothing else can: by the time the row reaches
@@ -618,6 +619,13 @@
     // the saving that their own write had come from another window. Being
     // wrong here is expensive twice over: the notice is alarming, and a warning
     // people learn to wave away stops working on the day it is right.
+    //
+    // "Of its own accord" is the whole distinction, and it is why adoptRow is
+    // excluded (it passes `ours`). Those rows come off the wire too, but always
+    // as the answer to something THIS window just did — a send, a QuickBooks
+    // push, a crew request — so they are this window's own doing however they
+    // travelled. Bumping there told the person who had just pressed Send that
+    // another window had changed their invoice.
     //
     // Bump it ONLY where a setValue actually follows, so the epoch this render
     // publishes always matches the value it publishes.
@@ -630,7 +638,11 @@
     // did not resolve in favour of a local edit. Shared by the live-sync
     // refresh (rows = the whole collection, refetched) and adoptRow below
     // (rows = the baseline with one row the server just handed us swapped in).
-    function installServerRows(rows, revs) {
+    //
+    // `ours` marks the adoptRow case: same wire, different meaning — this
+    // window asked for the change, so it must not read as "elsewhere" to a
+    // watching editor. See remoteEpochRef above.
+    function installServerRows(rows, revs, ours) {
       var removed = [], keptLocal = [];
       var next = mergeRemote(prevSyncedRef.current, latestValueRef.current,
                              rows, removed, keptLocal);
@@ -670,7 +682,7 @@
       if (same(next, latestValueRef.current)) return;   // nothing to re-render
       // Deliberately NOT skipping the next sync: if the merge kept a
       // local edit, it still has to reach the server.
-      remoteEpochRef.current += 1;
+      if (!ours) remoteEpochRef.current += 1;
       setValue(next);   // eager: a second install in the same tick sees this one
     }
 
@@ -688,6 +700,14 @@
     // book stamping pay, a send mirroring open → requested — went out with the
     // PRE-response token, was refused as a stale write, and the window adopted
     // the server row over its own: the pay stamp was thrown away with it.
+    //
+    // It is also NOT a remote change (the `ours` argument below). The row
+    // arrives from the server, but only because this window asked for it, so
+    // an editor watching the row has nothing to be told: it already knows, and
+    // its own follow-up state is what the caller sets next. Counting these as
+    // remote is what made sending an invoice — which now moves the row to
+    // `sent` server-side — announce "This invoice changed elsewhere" to the
+    // person who had just pressed Send, with no other window open.
     function adoptRow(row) {
       if (!row || typeof row !== "object" || row.id == null) return false;
       if (!hydratedRef.current || classify(key) !== "entity") return false;
@@ -698,7 +718,7 @@
       if (at >= 0) rows[at] = stripped; else rows.push(stripped);
       var revs = {};
       if (row._rev != null) revs[row.id] = row._rev;
-      installServerRows(rows, revs);
+      installServerRows(rows, revs, true);   // ours: asked for, not "elsewhere"
       return true;
     }
 
