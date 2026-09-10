@@ -266,7 +266,14 @@
 // is installed without counting as a remote change, and an append-only
 // activity log moving is no longer treated as a conflict — it cannot be lost
 // by saving. data-state.js, domain-util.js, the three big editors.
-var CACHE_VERSION = 'ltp-shell-v87';
+// v88: the record lists read as tables on desktop. Ref, job, client, dates,
+// total and status each get a column instead of stacking against the left edge,
+// and the column headers sort — including fields that never had a sort, like a
+// company's project count or the crew roster. Every list panel is rounded. On
+// the phone the rows no longer crush their own titles against a chip cluster
+// that could not shrink. ui.js, index.html, invoices.js, quotes-list.js,
+// projects.js, crm-shell.js, labor.js, the three rentals lists.
+var CACHE_VERSION = 'ltp-shell-v88';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
