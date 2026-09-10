@@ -31,7 +31,11 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   var [companyFilter,  setCompanyFilter]  = useState("all");
   var [typeFilter,     setTypeFilter]     = useState("all");
   var [searchQuery,    setSearchQuery]    = useState("");
-  var [sortMode,       setSortMode]       = useState("az");
+  // A sort per tab — { key, dir } naming a column in COMPANY_COLS / CONTACT_COLS
+  // below. The two tabs share no columns, so they cannot share a sort: ordering
+  // companies by project count says nothing about how to order contacts.
+  var [compSort,       setCompSort]       = useState({ key: "name", dir: "asc" });
+  var [contSort,       setContSort]       = useState({ key: "name", dir: "asc" });
   var [deleteConfirm,  setDeleteConfirm]  = useState(null);
   var [deleteWizard,   setDeleteWizard]   = useState(null);
 
@@ -123,35 +127,68 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     setDeleteWizard(null);
   }
 
-  function switchTab(t) { nav("crm/" + t); setSearchQuery(""); setSortMode("az"); }
+  function switchTab(t) {
+    nav("crm/" + t); setSearchQuery("");
+    setCompSort({ key: "name", dir: "asc" }); setContSort({ key: "name", dir: "asc" });
+  }
 
   var q = searchQuery.toLowerCase();
 
-  var fc = companies.filter(function(c) {
+  // Per-company tallies. The old row fused these into one sentence ("… · 4
+  // contacts · 2 projects"); as columns they line up down the list and can be
+  // ordered by, which is how you find your busiest client.
+  function contactCount(c) { return contacts.filter(function(ct) { return ct.companyIds.includes(c.id); }).length; }
+  function projectCount(c) { return projects.filter(function(p) { return p.companyId === c.id; }).length; }
+  function typeLabel(c) { return [c.isClient ? "Client" : "", c.isVendor ? "Vendor" : ""].filter(Boolean).join(" "); }
+  // Contacts file under last name, the way a directory reads.
+  function contactSortName(c) { return (c.lastName || "") + " " + (c.firstName || ""); }
+  function contactCompanies(c) { return companies.filter(function(co) { return c.companyIds.includes(co.id); }); }
+
+  var COMPANY_COLS = [
+    { key: "name",     label: "Company",  w: "minmax(0,1.8fr)", flex: true,
+      sort: function(c) { return c.name || ""; } },
+    { key: "location", label: "Location", w: "minmax(0,1.5fr)",
+      sort: function(c) { return window.LTP_formatAddress(c) || ""; } },
+    { key: "contacts", label: "Contacts", w: "96px", align: "right", mono: true, dir: "desc", sort: contactCount },
+    { key: "projects", label: "Projects", w: "96px", align: "right", mono: true, dir: "desc", sort: projectCount },
+    { key: "type",     label: "Type",     w: "136px", flex: true, sort: typeLabel },
+    { key: "status",   label: "Status",   w: "104px", sort: function(c) { return c.status || ""; } },
+  ];
+
+  var CONTACT_COLS = [
+    { key: "name",      label: "Name",      w: "minmax(0,1.3fr)", sort: contactSortName },
+    { key: "role",      label: "Role",      w: "minmax(0,1fr)",   sort: function(c) { return c.role || ""; } },
+    { key: "email",     label: "Email",     w: "minmax(0,1.6fr)", sort: function(c) { return c.email || ""; } },
+    { key: "phone",     label: "Phone",     w: "136px",           sort: function(c) { return c.phone || ""; } },
+    { key: "companies", label: "Companies", w: "minmax(0,1.4fr)", flex: true,
+      sort: function(c) { var l = contactCompanies(c); return l.length ? l[0].name : ""; } },
+  ];
+
+  var fc = window.LTP_sortRows(companies.filter(function(c) {
     if (companyFilter !== "all" && c.status !== companyFilter) return false;
     if (typeFilter === "client" && !c.isClient) return false;
     if (typeFilter === "vendor" && !c.isVendor) return false;
     if (typeFilter === "both"   && !(c.isClient && c.isVendor)) return false;
     if (q && c.name.toLowerCase().indexOf(q) === -1) return false;
     return true;
-  }).sort(function(a, b) { return sortMode === "za" ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name); });
+  }), COMPANY_COLS, compSort);
 
-  var fcon = contacts.filter(function(c) {
+  var fcon = window.LTP_sortRows(contacts.filter(function(c) {
     if (q && (c.firstName + " " + c.lastName).toLowerCase().indexOf(q) === -1) return false;
     return true;
-  }).sort(function(a, b) {
-    var an = a.lastName + a.firstName, bn = b.lastName + b.firstName;
-    return sortMode === "za" ? bn.localeCompare(an) : an.localeCompare(bn);
-  });
+  }), CONTACT_COLS, contSort);
 
   var searchBar = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search...",
     style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 180 } });
 
-  function sortBtns() {
+  // Sort chips \u2014 PHONE ONLY; on desktop the column headers carry the sort. Each
+  // tab passes its own state pair, since the two sort independently.
+  function sortBtns(sort, setSort) {
     return h("div", { style: { display: "flex", gap: 4 } },
-      [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }].map(function(o) {
-        return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-          style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      [{ l: "A\u2192Z", d: "asc" }, { l: "Z\u2192A", d: "desc" }].map(function(o) {
+        var active = sort.key === "name" && sort.dir === o.d;
+        return h("button", { key: o.l, onClick: function() { setSort({ key: "name", dir: o.d }); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
       }));
   }
 
@@ -180,22 +217,55 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
       h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginBottom: 10, gap: 8 } },
         isMobile ? h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search companies...",
           style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }) : searchBar,
-        sortBtns()),
-      h(window.LTPList, null,
-        fc.length === 0 && h(window.EmptyState, { text: "No companies match your search." }),
-        fc.map(function(c) {
-          var cc = contacts.filter(function(ct) { return ct.companyIds.includes(c.id); }).length;
-          var pp = projects.filter(function(p)  { return p.companyId === c.id; }).length;
-          return h(window.LTPRow, { key: c.id, onClick: function() { setSelectedCompanyId(c.id); },
-            style: { display: "flex", alignItems: "center", gap: 12 } },
-            h(window.CompanyLogo, { src: c.logo, size: 32 }),
-            h("div", { style: { flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" } },
-              h("div", null,
-                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, c.name),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, (window.LTP_formatAddress(c) ? window.LTP_formatAddress(c) + " \u00b7 " : "") + cc + " contacts \u00b7 " + pp + " projects")),
-              h("div", { style: { display: "flex", gap: 6 } }, compTypeBadges(c), h(window.Badge, { status: c.status }))));
-        })
-      )
+        isMobile && sortBtns(compSort, setCompSort)),
+      isMobile
+        // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ? h(window.LTPList, null,
+            fc.length === 0 && h(window.EmptyState, { text: "No companies match your search." }),
+            fc.map(function(c) {
+              var cc = contactCount(c), pp = projectCount(c);
+              var meta = [window.LTP_formatAddress(c),
+                          cc + (cc === 1 ? " contact" : " contacts"),
+                          pp + (pp === 1 ? " project" : " projects")].filter(Boolean).join(" \u00b7 ");
+              return h(window.LTPRow, { key: c.id, onClick: function() { setSelectedCompanyId(c.id); },
+                style: { display: "flex", alignItems: "flex-start", gap: 12 } },
+                h(window.CompanyLogo, { src: c.logo, size: 32 }),
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  // The name owns its line. It used to sit beside the badges,
+                  // and a company that is both client and vendor carries three
+                  // of them — enough to wrap an ordinary company name in two.
+                  h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, c.name),
+                  // The badges share the meta line, which is short. flexWrap is
+                  // the safety valve: on the rare three-badge row they drop to
+                  // their own line rather than squeezing the text beside them.
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 } },
+                    // "1 1 auto", not "1": flex:1 sets a ZERO basis, so this div
+                    // reports no width, the badges always "fit" beside it, and
+                    // the text ends up shrunk and broken mid-phrase instead. A
+                    // content basis is what lets the row decide to wrap at all.
+                    h("div", { style: { fontSize: "11px", color: B.textMut, flex: "1 1 auto", minWidth: 0 } }, meta),
+                    // The badges wrap as ONE unit. Left as loose flex items they
+                    // each compete with the meta text, which then shrinks and
+                    // breaks mid-phrase on a client+vendor row; grouped, they
+                    // drop to their own line together and the text stays whole.
+                    h("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+                      compTypeBadges(c), h(window.Badge, { status: c.status })))));
+            })
+          )
+        // \u2500\u2500 Desktop: one line per company, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        : h(window.LTPTable, { columns: COMPANY_COLS, sort: compSort, onSort: setCompSort,
+            empty: "No companies match your search.",
+            rows: fc.map(function(c) {
+              return { key: c.id, onClick: function() { setSelectedCompanyId(c.id); }, cells: [
+                [h(window.CompanyLogo, { key: "l", src: c.logo, size: 24 }),
+                 h("span", { key: "n", style: { fontSize: "13px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.name)],
+                h("span", { style: { fontSize: "11px", color: B.textMut } }, window.LTP_formatAddress(c) || "\u2014"),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, contactCount(c)),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, projectCount(c)),
+                compTypeBadges(c),
+                h(window.Badge, { status: c.status }),
+              ] };
+            }) })
     ),
 
     // ── Contacts ──────────────────────────────────────────────────────────────
@@ -204,36 +274,45 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         ? h("div", { style: { display: "flex", flexDirection: "column", marginBottom: 10, gap: 8 } },
             h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search contacts...",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
-            sortBtns())
+            sortBtns(contSort, setContSort))
         : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar, sortBtns()),
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar),
             h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact")
           ),
       isMobile && h(window.LTPFab, { label: "Add contact", onClick: function() { nav("crm/contacts/new"); } }),
-      h(window.LTPList, null,
-        fcon.length === 0 && h(window.EmptyState, { text: "No contacts match your search." }),
-        fcon.map(function(c) {
-          var lk = companies.filter(function(co) { return c.companyIds.includes(co.id); });
-          var cname = c.firstName + " " + c.lastName;
-          return h(window.LTPRow, { key: c.id, onClick: function() { setEditContactId(c.id); } },
-            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 } },
-              h("div", { style: { minWidth: 0 } },
-                h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, cname),
-                h("div", { style: { fontSize: "11px", color: B.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: isMobile ? "nowrap" : "normal" } }, c.role + " \u00b7 " + c.email + " \u00b7 " + c.phone)),
-              // On mobile the right cluster is tap-to-call / tap-to-email; on
-              // desktop it stays the linked-company chips (contacts detail still
-              // lists companies either way).
-              isMobile
-                ? h("div", { style: { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" } },
+      isMobile
+        // \u2500\u2500 Phone: the stacked rows with tap-to-call / tap-to-email \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ? h(window.LTPList, null,
+            fcon.length === 0 && h(window.EmptyState, { text: "No contacts match your search." }),
+            fcon.map(function(c) {
+              var cname = c.firstName + " " + c.lastName;
+              return h(window.LTPRow, { key: c.id, onClick: function() { setEditContactId(c.id); } },
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 } },
+                  h("div", { style: { minWidth: 0 } },
+                    h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, cname),
+                    h("div", { style: { fontSize: "11px", color: B.textMut, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.role + " \u00b7 " + c.email + " \u00b7 " + c.phone)),
+                  h("div", { style: { display: "flex", gap: 8, flexShrink: 0, alignItems: "center" } },
                     h(window.LTPCallBtn, { phone: c.phone, name: cname }),
-                    h(window.LTPMailBtn, { email: c.email, name: cname }))
-                : h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                    lk.map(function(co) {
-                      return h("span", { key: co.id, onClick: function(e) { e.stopPropagation(); setSelectedCompanyId(co.id); },
-                        style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
-                    }))));
-        })
-      )
+                    h(window.LTPMailBtn, { email: c.email, name: cname }))));
+            })
+          )
+        // \u2500\u2500 Desktop: role, email and phone were one fused muted sentence;
+        //    as columns they line up and each one sorts. The linked-company
+        //    chips keep their own click-through to the company. \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        : h(window.LTPTable, { columns: CONTACT_COLS, sort: contSort, onSort: setContSort,
+            empty: "No contacts match your search.",
+            rows: fcon.map(function(c) {
+              return { key: c.id, onClick: function() { setEditContactId(c.id); }, cells: [
+                h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, c.role || "\u2014"),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, c.email || "\u2014"),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, window.LTP_formatPhone(c.phone) || "\u2014"),
+                contactCompanies(c).map(function(co) {
+                  return h("span", { key: co.id, onClick: function(e) { e.stopPropagation(); setSelectedCompanyId(co.id); },
+                    style: { background: B.accentMuted, color: B.accent, fontSize: "10px", padding: "2px 8px", borderRadius: "3px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44", whiteSpace: "nowrap" } }, co.name);
+                }),
+              ] };
+            }) })
     ),
 
     // ── Modals ────────────────────────────────────────────────────────────────

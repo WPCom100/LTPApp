@@ -285,31 +285,50 @@
     var isMobile = window.LTP_useIsMobile();
     var [catFilter,  setCatFilter]  = useState("all");
     var [search,     setSearch]     = useState("");
-    var [sortMode,   setSortMode]   = useState("az");
+    // ONE sort state for both viewports \u2014 { key, dir } naming a column in COLS
+    // below. The phone chips and the desktop column headers set the same state.
+    var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
     var [showArchived, setShowArchived] = useState(false);
 
     var cats = ["all"].concat(Array.from(new Set((kits || []).map(function(k) { return k.category; }))));
     var q = search.toLowerCase();
+
+    // A kit's 3-day rate: computed from its contents when it is on auto, else
+    // the rate typed on the kit. 0 when neither \u2014 those sort to the bottom.
+    function kitRate(k) {
+      return k.autoRate ? calcRates(k.items, equipment).threeDay : ((k.rates && k.rates.threeDay) || 0);
+    }
+    function itemCount(k) { return (k.items || []).length; }
+
+    var COLS = [
+      { key: "name",     label: "Kit",         w: "minmax(0,1.6fr)", flex: true,
+        sort: function(k) { return k.name || ""; } },
+      { key: "category", label: "Category",    w: "minmax(0,1fr)",
+        sort: function(k) { return k.category || ""; } },
+      { key: "items",    label: "Items",       w: "72px", align: "right", mono: true, dir: "desc", sort: itemCount },
+      { key: "desc",     label: "Description", w: "minmax(0,2fr)",
+        sort: function(k) { return k.description || ""; } },
+      { key: "rate",     label: "3-Day",       w: "128px", align: "right", mono: true, dir: "desc", flex: true,
+        sort: kitRate },
+    ];
 
     var filtered = (kits || []).filter(function(k) {
       if (!showArchived && k.status === "archived") return false;
       if (catFilter !== "all" && k.category !== catFilter) return false;
       if (q && k.name.toLowerCase().indexOf(q) === -1 && (k.description || "").toLowerCase().indexOf(q) === -1) return false;
       return true;
-    }).slice().sort(function(a, b) {
-      if (sortMode === "za") return b.name.localeCompare(a.name);
-      if (sortMode === "price-asc" || sortMode === "price-desc") {
-        var ar = a.autoRate ? calcRates(a.items, equipment).threeDay : (a.rates && a.rates.threeDay || 0);
-        var br = b.autoRate ? calcRates(b.items, equipment).threeDay : (b.rates && b.rates.threeDay || 0);
-        return sortMode === "price-asc" ? ar - br : br - ar;
-      }
-      return a.name.localeCompare(b.name);
     });
+    var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
+    // Sort chips \u2014 PHONE ONLY; the desktop table sorts from its headers.
     var sortBtnsEl = h("div", { style: { display: "flex", gap: 6 } },
-      [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "price-asc", l: "$ \u2191" }, { k: "price-desc", l: "$ \u2193" }].map(function(o) {
-        return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-          style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      [{ l: "A\u2192Z", s: { key: "name", dir: "asc" } },
+       { l: "Z\u2192A", s: { key: "name", dir: "desc" } },
+       { l: "$ \u2191", s: { key: "rate", dir: "asc" } },
+       { l: "$ \u2193", s: { key: "rate", dir: "desc" } }].map(function(o) {
+        var active = sort.key === o.s.key && sort.dir === o.s.dir;
+        return h("button", { key: o.l, onClick: function() { setSort(o.s); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
       }));
 
     // Show Archived \u2014 a filter chip like the categories, but tinted GREEN when
@@ -339,17 +358,18 @@
           ? showArchivedBtn
           : h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
               h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026", style: Object.assign({}, R.INP, { width: 180 }) }),
-              sortBtnsEl,
               showArchivedBtn)
       ),
 
       // Mobile: sort row sits below the filters.
       isMobile && h("div", { style: { display: "flex", marginBottom: 12 } }, sortBtnsEl),
 
-      filtered.length === 0
+      ordered.length === 0
         ? h(window.EmptyState, { text: "No kits match your search." })
-        : h(window.LTPList, null,
-            filtered.map(function(kit) {
+        : isMobile
+        // ── Phone: the stacked card rows, unchanged ────────────────────────
+        ? h(window.LTPList, null,
+            ordered.map(function(kit) {
               var calc    = calcRates(kit.items || [], equipment);
               var rate3   = kit.autoRate ? calc.threeDay : (kit.rates && kit.rates.threeDay);
               var itemCt  = (kit.items || []).length;
@@ -374,6 +394,25 @@
               );
             })
           )
+        // \u2500\u2500 Desktop: one line per kit. The description was a wrapped third
+        //    line under the name; as a column it earns the middle of the row.
+        : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort,
+            rows: ordered.map(function(kit) {
+              var rate3 = kitRate(kit);
+              var archived = kit.status === "archived";
+              return { key: kit.id, onClick: function() { onOpenKit(kit.id); },
+                // Archived kits stay dimmed, as they are on the phone.
+                style: { opacity: archived ? 0.6 : 1 },
+                cells: [
+                  [h("span", { key: "n", style: { fontSize: "13px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, kit.name),
+                   archived && h("span", { key: "a", style: { fontSize: "9px", fontWeight: 700, color: B.textMut, background: B.raised, border: "1px solid " + B.border, padding: "1px 6px", borderRadius: 3, textTransform: "uppercase", flexShrink: 0 } }, "Archived")],
+                  h("span", { style: { fontSize: "12px", color: B.textSec } }, kit.category || "\u2014"),
+                  h("span", { style: { fontSize: "12px", color: B.textSec } }, itemCount(kit)),
+                  h("span", { style: { fontSize: "12px", color: B.textMut } }, kit.description || "\u2014"),
+                  [h("span", { key: "r", style: { fontSize: "13px", fontWeight: 700, color: rate3 ? B.accent : B.textMut } }, rate3 ? "$" + rate3.toLocaleString() : "\u2014"),
+                   rate3 && kit.autoRate && h("span", { key: "x", style: { fontSize: "9px", color: B.textMut, flexShrink: 0 } }, "auto")],
+                ] };
+            }) })
     );
   };
 })();

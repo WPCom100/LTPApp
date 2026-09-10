@@ -539,6 +539,10 @@
     var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
+    // Desktop column sort — { key, dir } naming a column in COLS below. This
+    // list had no ordering control at all before; it came out in whatever order
+    // the contacts array happened to be in.
+    var [sort, setSort] = useState({ key: "name", dir: "asc" });
     var [editingCrew, setEditingCrew] = useState(null);
     var [crewDlg, setCrewDlg] = useState(null);
     // editingCrew is a COPY of the contact, taken when the editor opened. If the
@@ -567,6 +571,27 @@
       var today = todayISO();
       return allPositions.filter(function(p) { return p.crewId === crewId && p.date >= today && (p.status === "accepted" || p.status === "confirmed"); }).length;
     }
+
+    // The desktop columns. Roles, upcoming-shift count and the day-rate floor
+    // were all crammed into one muted line under the name; as columns each one
+    // sorts — "who is busiest" and "who costs most" are now one click each.
+    var COLS = [
+      { key: "name",   label: "Name",        w: "minmax(0,1.2fr)",
+        sort: function(c) { return (c.lastName || "") + " " + (c.firstName || ""); } },
+      { key: "roles",  label: "Roles",       w: "minmax(0,1.4fr)",
+        sort: function(c) { return (c.crewRoles || []).join(", "); } },
+      { key: "depts",  label: "Departments", w: "minmax(0,1.1fr)", flex: true,
+        sort: function(c) { return (c.crewDepartments || [])[0] || ""; } },
+      { key: "upcoming", label: "Upcoming",  w: "88px", align: "right", mono: true, dir: "desc",
+        sort: function(c) { return upcomingShifts(c.id); } },
+      { key: "min",    label: "Min Rate",    w: "92px", align: "right", mono: true, dir: "desc",
+        sort: function(c) { return Number(c.minDayCost) || 0; } },
+      { key: "notes",  label: "Notes",       w: "minmax(0,1.3fr)",
+        sort: function(c) { return c.crewNotes || ""; } },
+      { key: "status", label: "Status",      w: "100px",
+        sort: function(c) { return c.crewStatus || "active"; } },
+    ];
+    var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
     if (editingCrew) {
       var isNew = !editingCrew.id;
@@ -710,30 +735,43 @@
           h(window.LTPScrollStrip, { isMobile: true, mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips));
         return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } }, chips, searchInput);
       })(),
-      h(window.LTPList, null,
-        filtered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
-        filtered.map(function(c) {
-          var shifts = upcomingShifts(c.id);
-          return h(window.LTPRow, { key: c.id, onClick: function() { setCustomRole(""); setEditingCrew(Object.assign({}, c)); },
-            style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
-            h("div", null,
-              h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
-              h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-                (c.crewRoles || []).join(", ") + (!isMobile && shifts > 0 ? " \u00b7 " + shifts + " upcoming" : "") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
-              h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } },
-                c.crewNotes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.crewNotes))),
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
-              // Mobile swaps the department chips for tap-to-call / tap-to-email
-              // (the chips are visible when the row is tapped open to edit).
-              isMobile
-                ? [ h(window.LTPCallBtn, { key: "call", phone: c.phone, name: c.firstName + " " + c.lastName }),
-                    h(window.LTPMailBtn, { key: "mail", email: c.email, name: c.firstName + " " + c.lastName }) ]
-                : (c.crewDepartments || []).map(function(d) {
-                    return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600 } }, d);
-                  }),
-              h(window.Badge, { status: c.crewStatus || "active" }))
-          );
-        }))
+      isMobile
+        // \u2500\u2500 Phone: the stacked rows with tap-to-call / tap-to-email \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ? h(window.LTPList, null,
+            ordered.length === 0 && h(window.EmptyState, { text: "No crew members found." }),
+            ordered.map(function(c) {
+              return h(window.LTPRow, { key: c.id, onClick: function() { setCustomRole(""); setEditingCrew(Object.assign({}, c)); },
+                style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
+                  h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
+                    (c.crewRoles || []).join(", ") + (c.minDayCost > 0 ? " \u00b7 min $" + Math.round(c.minDayCost) : "")),
+                  h("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } },
+                    c.crewNotes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, c.crewNotes))),
+                h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
+                  // Mobile swaps the department chips for tap-to-call / tap-to-email
+                  // (the chips are visible when the row is tapped open to edit).
+                  h(window.LTPCallBtn, { key: "call", phone: c.phone, name: c.firstName + " " + c.lastName }),
+                  h(window.LTPMailBtn, { key: "mail", email: c.email, name: c.firstName + " " + c.lastName }),
+                  h(window.Badge, { status: c.crewStatus || "active" }))
+              );
+            }))
+        // \u2500\u2500 Desktop: one line per crew member, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort, empty: "No crew members found.",
+            rows: ordered.map(function(c) {
+              var shifts = upcomingShifts(c.id);
+              return { key: c.id, onClick: function() { setCustomRole(""); setEditingCrew(Object.assign({}, c)); }, cells: [
+                h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, (c.crewRoles || []).join(", ") || "\u2014"),
+                (c.crewDepartments || []).map(function(d) {
+                  return h("span", { key: d, style: { fontSize: "10px", color: window.LTP_deptColor(d), background: window.LTP_deptColor(d) + "22", border: "1px solid " + window.LTP_deptColor(d) + "44", padding: "2px 6px", borderRadius: "3px", fontWeight: 600, whiteSpace: "nowrap" } }, d);
+                }),
+                h("span", { style: { fontSize: "12px", color: shifts > 0 ? B.text : B.textMut } }, shifts || "\u2014"),
+                h("span", { style: { fontSize: "12px", color: c.minDayCost > 0 ? B.textSec : B.textMut } }, c.minDayCost > 0 ? "$" + Math.round(c.minDayCost) : "\u2014"),
+                h("span", { style: { fontSize: "11px", color: B.textMut, fontStyle: c.crewNotes ? "italic" : "normal" } }, c.crewNotes || "\u2014"),
+                h(window.Badge, { status: c.crewStatus || "active" }),
+              ] };
+            }) })
     );
   }
 

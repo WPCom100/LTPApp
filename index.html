@@ -98,6 +98,15 @@
     .ltp-list > .ltp-row:last-child { border-bottom: none; }
     .ltp-row-click { transition: background .12s ease; }
     .ltp-row-click:hover { background: rgba(237,243,242,0.045); }
+    /* Sortable column headers (components/ui.js LTPTable). The header's colour
+       is an inline style — orange while it is the column doing the sorting,
+       muted otherwise — and an inline colour beats a plain :hover rule, so the
+       brightening is scoped with !important to the UNSORTED headers via
+       aria-sort (the same trick as .ltp-cal-day's aria-pressed below). The
+       active header keeps its orange under the pointer. */
+    .ltp-th { transition: color .12s ease; }
+    .ltp-th[aria-sort="none"]:hover { color: #EDF3F2 !important; }
+    .ltp-th:focus-visible { outline: 2px solid #EF5822; outline-offset: 2px; }
     /* Calendar popover (components/ui.js LTPDateField): hover and keyboard
        focus on the day cells and month arrows — inline styles can't express
        :hover, and the selected day keeps its orange fill under the pointer. */

@@ -2,6 +2,9 @@
 window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route, settings }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
+  // Date-column format for the desktop table: "Mar 4", with the year only when
+  // it isn't the current one (see components/domain-util.js).
+  function fmtS(d) { return window.LTP_formatDateShort(d, { weekday: false }); }
   var isMobile = window.LTP_useIsMobile();
   var nav = window.LTPRouter.navigate;
 
@@ -29,7 +32,9 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
 
   var [projectFilter,   setProjectFilter]   = useState("all");
   var [searchQuery,     setSearchQuery]     = useState("");
-  var [sortMode,        setSortMode]        = useState("date-asc");
+  // ONE sort state for both viewports — { key, dir } naming a column in COLS
+  // below. The phone chips and the desktop column headers set the same state.
+  var [sort,            setSort]            = useState({ key: "start", dir: "asc" });
   var [showCompleted,   setShowCompleted]   = useState(false);
   var [showAddMeeting,  setShowAddMeeting]  = useState(null);
   var [showAddNote,     setShowAddNote]     = useState(null);
@@ -240,19 +245,36 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
 
   var q = searchQuery.toLowerCase();
 
+  function companyName(p) {
+    var comp = companies.find(function(c) { return c.id === p.companyId; });
+    return comp ? comp.name : "";
+  }
+
+  // The desktop columns, and the ordering accessors behind every sort here.
+  // The date columns open ASCENDING — this list is read forwards, soonest job
+  // first — which is also the view's default order.
+  var COLS = [
+    { key: "name",     label: "Project",  w: "minmax(0,2fr)",
+      sort: function(p) { return p.name || ""; } },
+    { key: "client",   label: "Client",   w: "minmax(0,1.5fr)", sort: companyName },
+    { key: "start",    label: "Start",    w: "104px",
+      sort: function(p) { return p.startDate || ""; } },
+    { key: "end",      label: "End",      w: "104px",
+      sort: function(p) { return p.endDate || ""; } },
+    { key: "category", label: "Category", w: "132px",
+      sort: function(p) { return p.category || ""; } },
+    { key: "status",   label: "Status",   w: "108px",
+      sort: function(p) { return p.status || ""; } },
+  ];
+
   var fp = projects.filter(function(p) {
     if (p.internal) return false;  // manual/one-off shifts live in Labor, not the client Projects list
     if (!showCompleted && p.status === "completed") return false;
     if (projectFilter !== "all" && p.category !== projectFilter) return false;
-    var comp = companies.find(function(c) { return c.id === p.companyId; });
-    if (q && p.name.toLowerCase().indexOf(q) === -1 && (comp ? comp.name : "").toLowerCase().indexOf(q) === -1) return false;
+    if (q && p.name.toLowerCase().indexOf(q) === -1 && companyName(p).toLowerCase().indexOf(q) === -1) return false;
     return true;
-  }).sort(function(a, b) {
-    if (sortMode === "date-asc")  return a.startDate > b.startDate ?  1 : -1;
-    if (sortMode === "date-desc") return b.startDate > a.startDate ?  1 : -1;
-    if (sortMode === "za")        return b.name.localeCompare(a.name);
-    return a.name.localeCompare(b.name);
   });
+  var ordered = window.LTP_sortRows(fp, COLS, sort);
 
   // Show/Hide completed toggle — a chip on mobile (rides the filter row at the
   // right), the small inline button on desktop (rides the sort row).
@@ -260,11 +282,17 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     style: { flexShrink: 0, background: showCompleted ? B.accent : B.raised, color: showCompleted ? B.btnInk : B.textMut, border: "1px solid " + (showCompleted ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "12px" : "11px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap", minHeight: isMobile ? 36 : undefined } },
     showCompleted ? "✓ Completed" : "Show Completed");
 
+  // Sort chips \u2014 PHONE ONLY. On desktop the column headers carry the sort, so a
+  // chip row there would be a second control driving the same state.
   function sortBtns() {
-    var opts = [{ k: "az", l: "A\u2192Z" }, { k: "za", l: "Z\u2192A" }, { k: "date-asc", l: "Date \u2191" }, { k: "date-desc", l: "Date \u2193" }];
+    var opts = [{ l: "A\u2192Z", s: { key: "name",  dir: "asc"  } },
+                { l: "Z\u2192A", s: { key: "name",  dir: "desc" } },
+                { l: "Date \u2191", s: { key: "start", dir: "asc"  } },
+                { l: "Date \u2193", s: { key: "start", dir: "desc" } }];
     return h("div", { style: { display: "flex", gap: 4 } }, opts.map(function(o) {
-      return h("button", { key: o.k, onClick: function() { setSortMode(o.k); },
-        style: { background: sortMode === o.k ? B.accent : B.raised, color: sortMode === o.k ? B.btnInk : B.textMut, border: "1px solid " + (sortMode === o.k ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      var active = sort.key === o.s.key && sort.dir === o.s.dir;
+      return h("button", { key: o.l, onClick: function() { setSort(o.s); },
+        style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "3px 8px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, o.l);
     }));
   }
 
@@ -288,33 +316,52 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       showCompletedBtn
     ),
 
-    // Sort row (both viewports).
-    h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns()),
+    // Sort row \u2014 phone only; the desktop table sorts from its column headers.
+    isMobile && h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns()),
 
-    fp.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
-    h(window.LTPList, null,
-      fp.map(function(p) {
-        var comp = companies.find(function(c) { return c.id === p.companyId; });
-        return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
-          style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
-          isMobile
-            ? h("div", null,
-                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
-                  h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0 } }, p.name),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
-                    h(window.Badge, { status: CAT_KEYS[p.category] }),
-                    p.status !== "upcoming" && h(window.Badge, { status: p.status }))),
-                comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp.name),
-                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate)))
-            : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start" } },
-                h("div", null,
-                  h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, p.name),
-                  h("div", { style: { fontSize: "11px", color: B.textMut } }, (comp ? comp.name + " \u00b7 " : "") + fmt(p.startDate) + " \u2192 " + fmt(p.endDate))),
-                h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                  h(window.Badge, { status: CAT_KEYS[p.category] }),
-                  p.status !== "upcoming" && h(window.Badge, { status: p.status }))));
-      })
-    ),
+    ordered.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
+    isMobile
+      // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+      ? h(window.LTPList, null,
+          ordered.map(function(p) {
+            var comp = companyName(p);
+            return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
+              style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
+              // The name gets a full-width line of its own. It used to share the
+              // top line with two badges that could not shrink, which left it
+              // about 90px and wrapped an ordinary project name onto three.
+              h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, p.name),
+              comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp),
+              // The category rides this line as coloured text rather than a
+              // badge: it is already the colour of the rule down the left edge,
+              // and as a badge it cost more width than the name it crowded out.
+              // Status stays a badge — nothing else on the row encodes it.
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 2 } },
+                h("div", { style: { fontSize: "12px", color: B.textMut, flex: 1, minWidth: 0 } },
+                  h("span", { style: { color: CAT_COLORS[p.category], fontWeight: 600 } }, p.category),
+                  // The short range too — "March 4th, 2026 \u2192 March 8th, 2026" is
+                  // most of a phone row on its own.
+                  " \u00b7 " + window.LTP_formatDateRangeShort(p.startDate, p.endDate)),
+                p.status !== "upcoming" && h(window.Badge, { status: p.status })));
+          })
+        )
+      // \u2500\u2500 Desktop: one line per project, across the full width. The category
+      //    keeps its colour rule down the left edge of every row. \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+      : h(window.LTPTable, { columns: COLS, sort: sort, onSort: setSort,
+          rows: ordered.map(function(p) {
+            return { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
+              style: { borderLeft: "3px solid " + CAT_COLORS[p.category] },
+              cells: [
+                h("span", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, p.name),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, companyName(p) || "\u2014"),
+                h("span", { style: { fontSize: "11px", color: B.textSec } }, fmtS(p.startDate)),
+                h("span", { style: { fontSize: "11px", color: B.textSec } }, fmtS(p.endDate)),
+                h(window.Badge, { status: CAT_KEYS[p.category] }),
+                // "Upcoming" is the resting state and every list is mostly it,
+                // so it stays unbadged here exactly as it does on the phone.
+                p.status !== "upcoming" ? h(window.Badge, { status: p.status }) : null,
+              ] };
+          }) }),
 
     // ── Modals ────────────────────────────────────────────────────────────────
     selectedProject && !editProjectId && h(window.CRMProjectDetail, { ctx: ctx }),
