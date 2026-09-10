@@ -161,10 +161,13 @@
             ),
             // Full-width project name below \u2014 shows in full (wraps if very long).
             h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 2 } }, name),
+            // Joined from the parts that exist, so a quote with no created date
+            // does not trail a lone separator. Short dates too: the long form is
+            // most of a phone row on its own.
             h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
-              clientLabel(qt) + (contact ? " \u00b7 " + contact : "") + " \u00b7 " + fmt(qt.createdDate),
+              [clientLabel(qt), contact, fmtS(qt.createdDate)].filter(Boolean).join(" \u00b7 "),
               expiry && h("span", { style: { color: expired ? B.danger : B.textMut, fontWeight: expired ? 700 : 400 } },
-                " \u00b7 " + (expired ? "Expired " : "Expires ") + fmt(expiry)))
+                " \u00b7 " + (expired ? "Expired " : "Expires ") + fmtS(expiry)))
           );
         })
       )

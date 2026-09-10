@@ -195,32 +195,47 @@
       isMobile && h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtnsEl),
 
       isMobile
-        // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        // \u2500\u2500 Phone: ref and money on one line, then the job full width \u2500\u2500\u2500\u2500
+        //
+        // This row used to be a two-column flex whose right column (price, the
+        // balance, and up to two badges) could not shrink. It took ~200px of a
+        // 327px row, so everything on the left \u2014 ref included \u2014 was rationed the
+        // remainder: "INV-2026-002" wrapped onto two lines and its job name onto
+        // three, for a 202px row. Now nothing competes for a line with anything
+        // that cannot shrink.
         ? h(window.LTPList, null,
             ordered.length === 0 && h("div", { style: { padding: 30, textAlign: "center", color: B.textMut, fontSize: "12px", fontStyle: "italic" } }, "No invoices found."),
             ordered.map(function(inv) {
-              var ref = window.LTP_INVOICE_REF(inv);
               var t = window.LTP_INVOICE_TOTALS(inv);
+              var overdue = window.LTP_isOverdue(inv);
               var qRef = quoteRef(inv);
-              var contact = contactName(inv);
-              var clientLine = [companyName(inv), contact].filter(Boolean).join(" \u00b7 ");
+              var clientLine = [companyName(inv), contactName(inv)].filter(Boolean).join(" \u00b7 ");
               var proj = jobName(inv);
-              // Row top-aligned so the price + status chip sit in line with the ref.
-              return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); },
-                style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
-                h("div", { style: { flex: 1, minWidth: 0 } },
-                  h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, ref),
-                  proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 1 } }, proj),
-                  clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
-                  (qRef || inv.dueDate) && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } },
-                    (qRef ? "from " + qRef : "") + (qRef && inv.dueDate ? " \u00b7 " : "") + (inv.dueDate ? "Due: " + fmt(inv.dueDate) : ""))),
-                h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexShrink: 0 } },
-                  h("div", { style: { textAlign: "right" } },
-                    h("div", { style: { fontSize: "15px", fontWeight: 700, color: window.LTP_isOverdue(inv) ? B.danger : B.accent } }, "$" + window.LTP_money(t.total)),
-                    t.paid > 0 && t.balance > 0 && h("div", { style: { fontSize: "9px", color: B.textMut } }, "bal: $" + window.LTP_money(t.balance))),
-                  h("div", { style: { display: "flex", gap: 4 } },
-                    h(window.Badge, { status: window.LTP_displayStatus(inv) }),
-                    t.paid > 0 && t.balance > 0 && window.LTP_isOverdue(inv) && h(window.Badge, { status: "overdue" })))
+              // The tail line carries provenance, the due date and any balance.
+              // An overdue invoice says so on the due date in red \u2014 the same
+              // signal the desktop table uses, and it covers the partially-paid
+              // case where LTP_displayStatus reports "partial" and the badge
+              // cannot. That is what retires the second badge here: it was the
+              // widest thing on the row and it said what the date already says.
+              var tail = [];
+              if (qRef) tail.push(h("span", { key: "q" }, "from " + qRef));
+              if (inv.dueDate) tail.push(h("span", { key: "d",
+                style: overdue ? { color: B.danger, fontWeight: 700 } : null }, "Due " + fmtS(inv.dueDate)));
+              if (t.paid > 0 && t.balance > 0) tail.push(h("span", { key: "b" }, "bal $" + window.LTP_money(t.balance)));
+              var tailLine = [];
+              tail.forEach(function(el, i) { if (i) tailLine.push(" \u00b7 "); tailLine.push(el); });
+
+              return h(window.LTPRow, { key: inv.id, onClick: function() { nav("invoices/" + inv.id); } },
+                // Ref, total and status are all fixed-width, so none of them has
+                // to give: the spacer between them absorbs the slack instead.
+                h("div", { style: { display: "flex", alignItems: "center", gap: 8 } },
+                  h("div", { style: { fontSize: "14px", fontWeight: 700, color: B.accent, flexShrink: 0 } }, window.LTP_INVOICE_REF(inv)),
+                  h("div", { style: { flex: 1, minWidth: 0 } }),
+                  h("div", { style: { fontSize: "14px", fontWeight: 700, color: overdue ? B.danger : B.accent, flexShrink: 0 } }, "$" + window.LTP_money(t.total)),
+                  h(window.Badge, { status: window.LTP_displayStatus(inv) })),
+                proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 3 } }, proj),
+                clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
+                tailLine.length > 0 && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } }, tailLine)
               );
             }))
         // \u2500\u2500 Desktop: one line per invoice, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

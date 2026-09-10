@@ -223,14 +223,33 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         ? h(window.LTPList, null,
             fc.length === 0 && h(window.EmptyState, { text: "No companies match your search." }),
             fc.map(function(c) {
+              var cc = contactCount(c), pp = projectCount(c);
+              var meta = [window.LTP_formatAddress(c),
+                          cc + (cc === 1 ? " contact" : " contacts"),
+                          pp + (pp === 1 ? " project" : " projects")].filter(Boolean).join(" \u00b7 ");
               return h(window.LTPRow, { key: c.id, onClick: function() { setSelectedCompanyId(c.id); },
-                style: { display: "flex", alignItems: "center", gap: 12 } },
+                style: { display: "flex", alignItems: "flex-start", gap: 12 } },
                 h(window.CompanyLogo, { src: c.logo, size: 32 }),
-                h("div", { style: { flex: 1, display: "flex", justifyContent: "space-between", alignItems: "center" } },
-                  h("div", null,
-                    h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginBottom: 3 } }, c.name),
-                    h("div", { style: { fontSize: "11px", color: B.textMut } }, (window.LTP_formatAddress(c) ? window.LTP_formatAddress(c) + " \u00b7 " : "") + contactCount(c) + " contacts \u00b7 " + projectCount(c) + " projects")),
-                  h("div", { style: { display: "flex", gap: 6 } }, compTypeBadges(c), h(window.Badge, { status: c.status }))));
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  // The name owns its line. It used to sit beside the badges,
+                  // and a company that is both client and vendor carries three
+                  // of them — enough to wrap an ordinary company name in two.
+                  h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text } }, c.name),
+                  // The badges share the meta line, which is short. flexWrap is
+                  // the safety valve: on the rare three-badge row they drop to
+                  // their own line rather than squeezing the text beside them.
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 3 } },
+                    // "1 1 auto", not "1": flex:1 sets a ZERO basis, so this div
+                    // reports no width, the badges always "fit" beside it, and
+                    // the text ends up shrunk and broken mid-phrase instead. A
+                    // content basis is what lets the row decide to wrap at all.
+                    h("div", { style: { fontSize: "11px", color: B.textMut, flex: "1 1 auto", minWidth: 0 } }, meta),
+                    // The badges wrap as ONE unit. Left as loose flex items they
+                    // each compete with the meta text, which then shrinks and
+                    // breaks mid-phrase on a client+vendor row; grouped, they
+                    // drop to their own line together and the text stays whole.
+                    h("div", { style: { display: "flex", gap: 6, flexShrink: 0 } },
+                      compTypeBadges(c), h(window.Badge, { status: c.status })))));
             })
           )
         // \u2500\u2500 Desktop: one line per company, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

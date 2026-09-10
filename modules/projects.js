@@ -324,17 +324,25 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
       ? h(window.LTPList, null,
           ordered.map(function(p) {
-            var comp = companies.find(function(c) { return c.id === p.companyId; });
+            var comp = companyName(p);
             return h(window.LTPRow, { key: p.id, onClick: function() { setSelectedProjectId(p.id); },
               style: { borderLeft: "3px solid " + CAT_COLORS[p.category] } },
-              h("div", null,
-                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 } },
-                  h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text, flex: 1, minWidth: 0 } }, p.name),
-                  h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexShrink: 0 } },
-                    h(window.Badge, { status: CAT_KEYS[p.category] }),
-                    p.status !== "upcoming" && h(window.Badge, { status: p.status }))),
-                comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp.name),
-                h("div", { style: { fontSize: "12px", color: B.textMut } }, fmt(p.startDate) + " \u2192 " + fmt(p.endDate))));
+              // The name gets a full-width line of its own. It used to share the
+              // top line with two badges that could not shrink, which left it
+              // about 90px and wrapped an ordinary project name onto three.
+              h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, p.name),
+              comp && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: 2 } }, comp),
+              // The category rides this line as coloured text rather than a
+              // badge: it is already the colour of the rule down the left edge,
+              // and as a badge it cost more width than the name it crowded out.
+              // Status stays a badge — nothing else on the row encodes it.
+              h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 2 } },
+                h("div", { style: { fontSize: "12px", color: B.textMut, flex: 1, minWidth: 0 } },
+                  h("span", { style: { color: CAT_COLORS[p.category], fontWeight: 600 } }, p.category),
+                  // The short range too — "March 4th, 2026 \u2192 March 8th, 2026" is
+                  // most of a phone row on its own.
+                  " \u00b7 " + window.LTP_formatDateRangeShort(p.startDate, p.endDate)),
+                p.status !== "upcoming" && h(window.Badge, { status: p.status })));
           })
         )
       // \u2500\u2500 Desktop: one line per project, across the full width. The category
