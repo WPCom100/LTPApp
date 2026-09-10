@@ -82,6 +82,12 @@
     var [stateRegion, setStateRegion] = useState(seed.state || "");
     var [zip, setZip] = useState(seed.zip || "");
     var [taxable, setTaxable] = useState(!!seed.taxable);
+    // QuickBooks refuses a tax-exempt customer that carries no exemption reason,
+    // and that rejection fails the whole invoice export — so an exempt company
+    // always files SOMETHING. Blank here means "use the workspace default"
+    // (Settings → QuickBooks), which is what every company created before this
+    // field existed does.
+    var [taxExemptionReason, setTaxExemptionReason] = useState(seed.taxExemptionReason || "");
     var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? B.btnInk : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
 
     return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true, zIndex: modalZIndex },
@@ -106,12 +112,23 @@
           h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
             h("button", { onClick: function() { setTaxable(!taxable); }, style: cbStyle(taxable) }, taxable ? "Taxable" : "Tax-exempt"),
             h("span", { style: { fontSize: "10px", color: B.textMut } }, "QuickBooks calculates sales tax for taxable customers")
-          )
+          ),
+          // Exempt only: QuickBooks will not accept a customer marked not-taxable
+          // without a reason, and refusing it fails the invoice export, not just
+          // the customer sync. Blank falls back to the workspace default so
+          // companies that pre-date this field keep exporting.
+          !taxable && h("div", { style: { marginTop: 8 } },
+            h(window.LTPSelect, { label: "Exemption Reason", value: taxExemptionReason,
+              onChange: setTaxExemptionReason,
+              options: [{ value: "", label: "Use workspace default (Settings → QuickBooks)" }]
+                .concat(window.LTP_QBO_TAX_EXEMPTION_REASONS) }),
+            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
+              "Filed on the QuickBooks customer record as the reason no sales tax is charged."))
         ),
         h(window.LTPInput, { label: "Website", value: website, onChange: setWebsite, placeholder: "https://example.com" }),
         h(window.ImageUpload, { label: "Logo", value: logo, onChange: setLogo }),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Internal notes..." }),
-        h(window.Btn, { onClick: function() { if (!name.trim()) return; onSave({ name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, city: city, state: stateRegion, zip: zip, taxable: taxable, website: website, logo: logo, notes: notes }); } }, initial ? "Save Changes" : "Save Company")
+        h(window.Btn, { onClick: function() { if (!name.trim()) return; onSave({ name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, city: city, state: stateRegion, zip: zip, taxable: taxable, taxExemptionReason: taxable ? "" : taxExemptionReason, website: website, logo: logo, notes: notes }); } }, initial ? "Save Changes" : "Save Company")
       )
     );
   };

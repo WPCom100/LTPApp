@@ -36,7 +36,10 @@ Decisions baked in (confirmed with the owner):
   - Recall → no delete; stamp PrivateNote "RECALLED — MAY NOT BE UP TO DATE",
     cleared on the next push once the invoice is no longer a recalled draft.
   - Tax → customer-level `taxable` flag with per-line override; QB computes the
-    tax and we store TotalTax / TotalAmt read-only so totals always match.
+    tax and we store TotalTax / TotalAmt read-only so totals always match. An
+    EXEMPT customer must also carry a TaxExemptionReasonId or Automated Sales
+    Tax rejects it (and with it the whole invoice push) — see
+    _TAX_EXEMPTION_REASONS / _resolve_exemption_reason.
 """
 import os
 from datetime import datetime, timezone
@@ -59,6 +62,41 @@ from backend.quickbooks import (
 # explicit tax code ids.
 _DEFAULT_TAX_CODE = "TAX"
 _DEFAULT_NON_TAX_CODE = "NON"
+
+# Intuit's fixed Customer.TaxExemptionReasonId enum. Automated Sales Tax REFUSES
+# a customer marked Taxable=false with no reason attached —
+#   "Business Validation Error: Tax Exemption Reason should be specified
+#    incase customer is marked as not taxable"
+# — and that fault lands on the customer create/update that runs ahead of the
+# invoice push, so the whole export fails and the invoice never sends. Since
+# most clients here are exempt, that was every one of them.
+#
+# The reason is a real tax attribute that differs per client (a reseller is not a
+# charity), so it is stored per company; _resolve_exemption_reason falls back to
+# the workspace default for rows that have never set one.
+_TAX_EXEMPTION_REASONS = {
+    "1": "Federal government",
+    "2": "State government",
+    "3": "Local government",
+    "4": "Tribal government",
+    "5": "Charitable organization",
+    "6": "Religious organization",
+    "7": "Educational organization",
+    "8": "Hospital",
+    "9": "Resale",
+    "10": "Direct pay permit",
+    "11": "Multiple points of use",
+    "12": "Direct mail",
+    "13": "Agricultural production",
+    "14": "Industrial production or manufacturing",
+    "15": "Foreign diplomat",
+}
+# Last-resort reason when neither the company nor the workspace has chosen one.
+# Something valid MUST go out or the push fails, and "Resale" is the reason a
+# production company's exempt clients most often carry. Both the company form
+# and Settings → QuickBooks show it, so it is visible and correctable rather
+# than silently invented.
+_DEFAULT_TAX_EXEMPTION_REASON = "9"
 
 _RECALL_NOTE = "RECALLED — MAY NOT BE UP TO DATE"
 # Shown as a prominent first line ON the QB invoice (the memo alone is easy to
@@ -229,12 +267,39 @@ def _party_taxable(party, kind) -> bool:
     return bool(getattr(party, "taxable", False))
 
 
-def _customer_fields(party, kind) -> tuple[str, dict]:
+def _normalize_exemption_reason(value) -> str:
+    """Coerce a stored/configured reason to a valid Intuit id, or "" if it isn't
+    one. Anything QuickBooks would reject is treated as unset so the caller
+    falls through to the next source rather than pushing a fault."""
+    text = str(value or "").strip()
+    return text if text in _TAX_EXEMPTION_REASONS else ""
+
+
+async def _resolve_exemption_reason(db, party) -> str:
+    """The TaxExemptionReasonId to send for a tax-exempt customer:
+    the company's own reason → the workspace default → "9" (Resale).
+
+    Never returns "" — an exempt customer with no reason is exactly what
+    QuickBooks rejects, so there is always something valid to send."""
+    own = _normalize_exemption_reason(getattr(party, "tax_exemption_reason", ""))
+    if own:
+        return own
+    configured = _normalize_exemption_reason(await _settings_get(db, "qboTaxExemptionReasonId"))
+    return configured or _DEFAULT_TAX_EXEMPTION_REASON
+
+
+def _customer_fields(party, kind, exemption_reason=None) -> tuple[str, dict]:
     """Return (display_name, fields) for a QB Customer built from the party.
     `fields` holds the syncable attributes (name parts, contact info, BillAddr,
     Taxable) WITHOUT DisplayName — DisplayName is added only on create, so a
     sparse update of an existing customer can never trip a duplicate-name (6240)
-    conflict by trying to rename it."""
+    conflict by trying to rename it.
+
+    `exemption_reason` (from _resolve_exemption_reason) rides along whenever the
+    party is NOT taxable, because Automated Sales Tax rejects the customer
+    without it. It is omitted for a taxable customer: Intuit reads a customer
+    carrying a reason as exempt, so sending one alongside Taxable=true would
+    contradict itself."""
     if kind == "company":
         display_name = _safe_name(party.name, 100)
         fields: dict = {"CompanyName": (party.name or "")[:100]}
@@ -252,7 +317,12 @@ def _customer_fields(party, kind) -> tuple[str, dict]:
     addr = _bill_addr(party)
     if addr:
         fields["BillAddr"] = addr
-    fields["Taxable"] = _party_taxable(party, kind)
+    taxable = _party_taxable(party, kind)
+    fields["Taxable"] = taxable
+    if not taxable:
+        fields["TaxExemptionReasonId"] = (
+            _normalize_exemption_reason(exemption_reason) or _DEFAULT_TAX_EXEMPTION_REASON
+        )
     return display_name, fields
 
 
@@ -317,7 +387,10 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
     Taxable flag in sync with the app on each push (so a client moved into a
     taxable area, or toggled taxable, reflects in QuickBooks and tax computes).
     The customer sync is best-effort — a hiccup there must not block the push."""
-    display_name, fields = _customer_fields(party, kind)
+    # Only an EXEMPT customer needs a reason, so a taxable one never pays for the
+    # settings read.
+    reason = "" if _party_taxable(party, kind) else await _resolve_exemption_reason(db, party)
+    display_name, fields = _customer_fields(party, kind, reason)
 
     if party.qb_customer_id:
         # A DEACTIVATED customer is still readable by id — QuickBooks only
@@ -348,6 +421,12 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
             update["Id"] = str(current["Id"])
             update["SyncToken"] = str(current.get("SyncToken", "0"))
             update["sparse"] = True
+            if fields["Taxable"] and current.get("TaxExemptionReasonId"):
+                # Client went exempt → taxable. A sparse update leaves unsent
+                # fields alone, and Intuit reads a customer that still carries a
+                # reason as exempt, so Taxable=true on its own would not restore
+                # sales tax — retract the reason in the same call.
+                update["TaxExemptionReasonId"] = ""
             if inactive:
                 # Revive it as part of the sync we are already doing. Recreating
                 # under the same DisplayName is not an option: QB enforces name

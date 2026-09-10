@@ -286,6 +286,38 @@ def test_the_rendered_pdf_shows_adjustments_only_once_one_exists():
     _check("and it prints the difference", "-$1,000.00" in repriced, str(repriced[-14:]))
 
 
+def test_the_exemption_reason_table_matches_the_frontend():
+    """The picker in the company form must file the id the server sends.
+
+    QuickBooks stores the reason by id, and the label a user picks is the only
+    thing they ever see. If components/domain-qbo.js and backend/qbo_sync.py
+    drift apart, someone selects "Resale" and QuickBooks records "Hospital" — a
+    wrong exemption reason on a real tax record, with nothing on screen to say
+    so. Cheap to pin, invisible if it breaks.
+    """
+    import re
+    from backend.qbo_sync import _TAX_EXEMPTION_REASONS, _DEFAULT_TAX_EXEMPTION_REASON
+
+    js = open(os.path.join(_root, "components", "domain-qbo.js"), encoding="utf-8").read()
+    block = js.split("LTP_QBO_TAX_EXEMPTION_REASONS = [", 1)[-1].split("];", 1)[0]
+    front = dict(re.findall(r'\{\s*value:\s*"([^"]+)",\s*label:\s*"([^"]+)"\s*\}', block))
+
+    _check("frontend lists every reason the backend accepts",
+           set(front) == set(_TAX_EXEMPTION_REASONS),
+           f"js={sorted(front)} py={sorted(_TAX_EXEMPTION_REASONS)}")
+    for rid, label in _TAX_EXEMPTION_REASONS.items():
+        _check(f"reason {rid} label agrees", front.get(rid) == label,
+               f"js={front.get(rid)!r} py={label!r}")
+
+    m = re.search(r'LTP_QBO_DEFAULT_TAX_EXEMPTION_REASON = "([^"]+)"', js)
+    _check("frontend knows the same fallback reason",
+           m is not None and m.group(1) == _DEFAULT_TAX_EXEMPTION_REASON)
+    # Whatever the fallback is, it has to be one QuickBooks will accept — an
+    # unknown id reproduces the very fault this exists to prevent.
+    _check("the fallback is a reason QuickBooks defines",
+           _DEFAULT_TAX_EXEMPTION_REASON in _TAX_EXEMPTION_REASONS)
+
+
 def main() -> int:
     tests = [
         test_both_serializers_carry_the_tax,
@@ -300,6 +332,7 @@ def main() -> int:
         test_the_rendered_pdf_draws_the_tax_row_for_both_kinds,
         test_the_rendered_pdf_omits_the_tax_row_when_there_is_no_tax,
         test_the_rendered_pdf_shows_adjustments_only_once_one_exists,
+        test_the_exemption_reason_table_matches_the_frontend,
     ]
     for t in tests:
         print(f"\n{t.__name__}:")

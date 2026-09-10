@@ -1374,10 +1374,181 @@ async def test_names_the_unusable_reference():
     _check("diagnostic failure is swallowed", detail == "", detail)
 
 
+# ── Tax exemption reason ─────────────────────────────────────────────────────
+# QuickBooks' Automated Sales Tax will not accept a Customer carrying
+# Taxable=false with no reason:
+#   "Business Validation Error: Tax Exemption Reason should be specified
+#    incase customer is marked as not taxable"
+# The app pushed the flag and never the reason, and that fault lands on the
+# customer create that runs AHEAD of the invoice push — so the invoice stayed a
+# draft and the customer email never went out. Exempt clients are the common
+# case here, so this was most of them.
+
+def _exempt_company(**over):
+    base = dict(name="Dallas Theater Center", taxable=False, tax_exemption_reason="",
+                address="", city="", state="", zip="", qb_customer_id=None)
+    base.update(over)
+    return types.SimpleNamespace(**base)
+
+
+def test_exempt_customer_carries_a_reason():
+    print("test_exempt_customer_carries_a_reason")
+    _, fields = qbo_sync._customer_fields(_exempt_company(), "company", "5")
+    _check("exempt customer is not taxable", fields["Taxable"] is False)
+    _check("exempt customer carries the reason", fields.get("TaxExemptionReasonId") == "5")
+
+    # Taxable customers must NOT carry one: Intuit reads a customer with a reason
+    # set as exempt, so sending both would contradict itself.
+    taxed = _exempt_company(taxable=True)
+    _, tf = qbo_sync._customer_fields(taxed, "company", "5")
+    _check("taxable customer omits the reason", "TaxExemptionReasonId" not in tf)
+
+    # Directly-billed contacts are always taxable, so they never file one.
+    contact = types.SimpleNamespace(first_name="Jo", last_name="Lee", email="", phone="",
+                                    id=5, address="", city="", state="", zip="")
+    _, cf = qbo_sync._customer_fields(contact, "contact", "5")
+    _check("contact omits the reason", "TaxExemptionReasonId" not in cf)
+
+    # A reason must ALWAYS go out for an exempt customer — a blank or bogus one
+    # reproduces the exact fault this fixes, so it falls back rather than passes
+    # through.
+    for bad in ("", None, "0", "99", "resale", "  "):
+        _, bf = qbo_sync._customer_fields(_exempt_company(), "company", bad)
+        _check(f"invalid reason {bad!r} falls back to a valid id",
+               bf.get("TaxExemptionReasonId") == qbo_sync._DEFAULT_TAX_EXEMPTION_REASON)
+    _check("every id we can send is one Intuit defines",
+           qbo_sync._DEFAULT_TAX_EXEMPTION_REASON in qbo_sync._TAX_EXEMPTION_REASONS)
+
+
+async def test_exemption_reason_resolution_order():
+    print("test_exemption_reason_resolution_order")
+    saved = qbo_sync._settings_get
+
+    # The company's own reason wins.
+    qbo_sync._settings_get = AsyncMock(return_value="7")
+    got = await qbo_sync._resolve_exemption_reason(MagicMock(), _exempt_company(tax_exemption_reason="6"))
+    _check("company reason outranks the workspace default", got == "6")
+
+    # Unset on the company → the workspace default.
+    got = await qbo_sync._resolve_exemption_reason(MagicMock(), _exempt_company())
+    _check("unset company falls back to the workspace default", got == "7")
+
+    # Neither set → the built-in. Nothing here may return "" — that is precisely
+    # what QuickBooks rejects.
+    qbo_sync._settings_get = AsyncMock(return_value=None)
+    got = await qbo_sync._resolve_exemption_reason(MagicMock(), _exempt_company())
+    _check("no default configured → built-in reason", got == qbo_sync._DEFAULT_TAX_EXEMPTION_REASON)
+
+    # A workspace default QuickBooks would reject is treated as unset, not sent.
+    qbo_sync._settings_get = AsyncMock(return_value="not-an-id")
+    got = await qbo_sync._resolve_exemption_reason(MagicMock(), _exempt_company())
+    _check("invalid workspace default is ignored", got == qbo_sync._DEFAULT_TAX_EXEMPTION_REASON)
+
+    # A company reason QuickBooks would reject falls through to the default too.
+    qbo_sync._settings_get = AsyncMock(return_value="7")
+    got = await qbo_sync._resolve_exemption_reason(MagicMock(), _exempt_company(tax_exemption_reason="404"))
+    _check("invalid company reason falls through", got == "7")
+
+    qbo_sync._settings_get = saved
+
+
+async def test_new_exempt_customer_is_created_with_a_reason():
+    print("test_new_exempt_customer_is_created_with_a_reason")
+    # The regression itself: creating the QB customer for a tax-exempt client is
+    # what failed, and it happens before the invoice is ever posted.
+    saved = qbo_sync._settings_get
+    qbo_sync._settings_get = AsyncMock(return_value=None)
+    party = _exempt_company(tax_exemption_reason="5")
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])
+    qbo_sync.quickbooks.create_customer = AsyncMock(return_value={"Customer": {"Id": "CUST-77"}})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    got = await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    _check("customer created", got == "CUST-77")
+    sent = qbo_sync.quickbooks.create_customer.await_args.args[2]
+    _check("created not taxable", sent.get("Taxable") is False)
+    _check("created with the company's reason", sent.get("TaxExemptionReasonId") == "5")
+    _check("DisplayName present on create", sent.get("DisplayName") == "Dallas Theater Center")
+    qbo_sync._settings_get = saved
+
+
+async def test_existing_exempt_customer_syncs_the_reason():
+    print("test_existing_exempt_customer_syncs_the_reason")
+    saved = qbo_sync._settings_get
+    qbo_sync._settings_get = AsyncMock(return_value=None)
+    party = _exempt_company(qb_customer_id="CUST-9")
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True, "DisplayName": "Dallas Theater Center"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    got = await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    _check("cached id kept", got == "CUST-9")
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("sparse update still not taxable", sent.get("Taxable") is False)
+    # With no reason on the company and none configured, the built-in goes out —
+    # the point is that SOMETHING valid always does.
+    _check("reason filled from the fallback",
+           sent.get("TaxExemptionReasonId") == qbo_sync._DEFAULT_TAX_EXEMPTION_REASON)
+    qbo_sync._settings_get = saved
+
+
+async def test_going_taxable_retracts_the_reason():
+    print("test_going_taxable_retracts_the_reason")
+    # A sparse update leaves unsent fields alone and Intuit reads a customer that
+    # still carries a reason as exempt — so Taxable=true on its own would leave
+    # sales tax switched off for a client the app now bills tax to.
+    party = _exempt_company(taxable=True, qb_customer_id="CUST-9")
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True,
+                      "DisplayName": "Dallas Theater Center", "TaxExemptionReasonId": "5"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("now taxable", sent.get("Taxable") is True)
+    _check("stale reason retracted", sent.get("TaxExemptionReasonId") == "")
+
+    # A taxable customer that never had one is left alone — no empty field for
+    # QuickBooks to chew on.
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True,
+                      "DisplayName": "Dallas Theater Center"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("no reason key when there was nothing to retract",
+           "TaxExemptionReasonId" not in sent)
+
+
+async def test_exemption_reason_is_client_writable():
+    print("test_exemption_reason_is_client_writable")
+    # The reason is a user-set tax attribute like `taxable`, NOT a
+    # server-authoritative QuickBooks column — the company form has to be able to
+    # save it.
+    mapped = _dict_to_row({"taxExemptionReason": "5", "taxable": False}, models.Company)
+    _check("taxExemptionReason survives the write filter",
+           mapped.get("tax_exemption_reason") == "5")
+    _check("column exists on the model",
+           "tax_exemption_reason" in {c.name for c in models.Company.__table__.columns})
+
+
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
                   test_period_label,
-                  test_customer_billaddr_and_fields, test_income_account_readonly_columns]
+                  test_customer_billaddr_and_fields, test_income_account_readonly_columns,
+                  test_exempt_customer_carries_a_reason]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
@@ -1395,6 +1566,9 @@ def main():
         test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
         test_inactive_customer_is_reactivated, test_failed_reactivation_says_which_customer,
         test_unreadable_cached_customer_is_re_resolved, test_names_the_unusable_reference,
+        test_exemption_reason_resolution_order, test_new_exempt_customer_is_created_with_a_reason,
+        test_existing_exempt_customer_syncs_the_reason, test_going_taxable_retracts_the_reason,
+        test_exemption_reason_is_client_writable,
     ]
     for t in sync_tests:
         t()

@@ -50,6 +50,15 @@ class Company(Base):
     # the first find-or-create so we never create duplicate QB customers. It is
     # server-authoritative — see _READONLY_COLS in backend/routes/api.py.
     taxable = Column(Boolean, default=False)
+    # WHY a tax-exempt client also needs a reason: QuickBooks' Automated Sales
+    # Tax refuses a Customer carrying Taxable=false with no exemption reason
+    # ("Tax Exemption Reason should be specified incase customer is marked as
+    # not taxable"), which rejected the whole invoice push. Holds one of
+    # Intuit's fixed reason ids (qbo_sync._TAX_EXEMPTION_REASONS, "1".."15").
+    # "" means "not set" → the workspace default (Settings →
+    # qboTaxExemptionReasonId) is sent instead, so existing rows push without a
+    # backfill. Ignored entirely while `taxable` is True.
+    tax_exemption_reason = Column(String(8), default="")
     qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
