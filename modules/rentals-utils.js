@@ -271,6 +271,194 @@
     return parts.length ? parts.join(" · ") : "No batch info set";
   }
 
+  // ── Rental pricing engine (moved here from quotes-builder.js) ────────────
+  // Calculate rental pricing from a date range.
+  // Calculate rental pricing by stacking tiers from largest to smallest.
+  // Consumes days greedily: months first, then weeks, then 3-day blocks.
+  //
+  // Returns { breakdown: [{tier, count, unitRate, subtotal}], totalPrice, label }
+  //   31 days → 1× month + 1× 3-day
+  //   38 days → 1× month + 1× week + 1× 3-day
+  //   64 days → 2× month + 1× 3-day + 1× 3-day  (4 remaining days → week is cheaper check)
+  //
+  // The function picks the cheapest option for the remainder at each step:
+  //   remainder 4-7 days → compare 1× week vs ceil(days/3)× 3-day, pick cheaper
+  //   remainder 1-3 days → 1× 3-day
+  function calcRentalPrice(startDate, endDate, rates) {
+    rates = rates || {};
+    var r3 = rates.threeDay || 0, rw = rates.week || 0, rm = rates.month || 0;
+    if (!startDate || !endDate) return { breakdown: [{ tier: "threeDay", count: 1, unitRate: r3, subtotal: r3 }], totalPrice: r3, label: "3-Day rate" };
+    var start = new Date(startDate), end = new Date(endDate);
+    var days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1; // inclusive
+    if (days <= 0) days = 1;
+
+    var breakdown = [];
+    var remaining = days;
+
+    // Consume full months (30-day blocks)
+    if (remaining >= 30 && rm > 0) {
+      var months = Math.floor(remaining / 30);
+      breakdown.push({ tier: "month", count: months, unitRate: rm, subtotal: rm * months });
+      remaining -= months * 30;
+    }
+
+    // Remainder: pick cheapest combo of weeks and 3-days
+    if (remaining > 0) {
+      if (remaining >= 4 && rw > 0) {
+        // Compare: 1 week vs multiple 3-day blocks
+        var threeDayCost = Math.ceil(remaining / 3) * r3;
+        if (rw <= threeDayCost && remaining <= 7) {
+          breakdown.push({ tier: "week", count: 1, unitRate: rw, subtotal: rw });
+          remaining = 0;
+        } else if (remaining > 7) {
+          // More than a week left but less than a month — use week + remainder
+          var weeks = Math.floor(remaining / 7);
+          breakdown.push({ tier: "week", count: weeks, unitRate: rw, subtotal: rw * weeks });
+          remaining -= weeks * 7;
+        }
+      }
+
+      // Remaining days as 3-day blocks
+      if (remaining > 0 && r3 > 0) {
+        var blocks = Math.ceil(remaining / 3);
+        breakdown.push({ tier: "threeDay", count: blocks, unitRate: r3, subtotal: r3 * blocks });
+      }
+    }
+
+    // Edge case: no rates set
+    if (breakdown.length === 0) {
+      breakdown.push({ tier: "threeDay", count: 1, unitRate: 0, subtotal: 0 });
+    }
+
+    var totalPrice = breakdown.reduce(function(s, b) { return s + b.subtotal; }, 0);
+
+    // Build a human-readable label
+    var label = breakdown.map(function(b) {
+      var tl = b.tier === "month" ? "Mo" : b.tier === "week" ? "Wk" : "3-Day";
+      return b.count + "\u00d7 " + tl;
+    }).join(" + ");
+
+    // Primary rateType = the largest tier used (for display purposes)
+    var rateType = breakdown[0].tier;
+
+    return { breakdown: breakdown, totalPrice: totalPrice, rateType: rateType, label: label };
+  }
+
+
+  // ── Cross rentals (docs/CROSS_RENTAL_PLAN.md) ─────────────────────────────
+  // An ORDER of gear rented in from a vendor, with lines. Only confirmed and
+  // picked-up orders count as inventory; a quoted order is flagged, never
+  // counted (the owner's rule: "like a quote, it's not marked as unavailable
+  // until it's confirmed").
+  var CROSS_STATES = ["quoted", "confirmed", "picked-up", "returned", "cancelled"];
+  var CROSS_COUNTS = { "confirmed": true, "picked-up": true };
+  var CROSS_COLORS = {
+    "quoted":    window.LTP_badgeFromHex("#6FA8F5"),
+    "confirmed": window.LTP_badgeFromHex("#5FD08A"),
+    "picked-up": window.LTP_badgeFromHex("#FF8A50"),
+    "returned":  window.LTP_badgeFromHex("#9AA5B1"),
+    "cancelled": window.LTP_badgeFromHex("#F0857A"),
+  };
+  var CROSS_LABELS = { "quoted": "Quoted", "confirmed": "Confirmed", "picked-up": "Picked Up", "returned": "Returned", "cancelled": "Cancelled" };
+
+  function crossBadge(status) {
+    var c = CROSS_COLORS[status] || CROSS_COLORS["quoted"];
+    return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 8px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", whiteSpace: "nowrap" } }, CROSS_LABELS[status] || status);
+  }
+
+  // A line's effective rental period: its own dates, else the order's.
+  function lineDates(order, line) {
+    order = order || {}; line = line || {};
+    return { start: line.startDate || order.startDate || "", end: line.endDate || order.endDate || "" };
+  }
+
+  // Does the period [s, e] cover the whole query range? Deliberately
+  // "covers", not "overlaps": allocatedQty counts any overlapping booking
+  // against the whole range, so supply must be good for the whole range too.
+  function covers(s, e, startDate, endDate) {
+    if (!s || !e || !startDate || !endDate) return false;
+    return s <= startDate && e >= endDate;
+  }
+
+  // Every (order, line) pair for an item whose period covers the range and
+  // whose order is in one of `statuses`. Shared by the qty sums and the chips.
+  function crossLinesFor(crossRentals, equipmentId, startDate, endDate, statuses) {
+    var out = [];
+    (crossRentals || []).forEach(function(o) {
+      if (!o || !statuses[o.status]) return;
+      (o.lines || []).forEach(function(l) {
+        if (!l || l.equipmentId == null || l.equipmentId !== equipmentId) return;
+        var d = lineDates(o, l);
+        if (!covers(d.start, d.end, startDate, endDate)) return;
+        out.push({ order: o, line: l, qty: Math.max(0, Number(l.qty) || 0) });
+      });
+    });
+    return out;
+  }
+
+  // Units supplied by confirmed cross rentals for the range.
+  function crossRentedQty(crossRentals, equipmentId, startDate, endDate) {
+    return crossLinesFor(crossRentals, equipmentId, startDate, endDate, CROSS_COUNTS)
+      .reduce(function(s, x) { return s + x.qty; }, 0);
+  }
+
+  // Units a vendor has QUOTED for the range — never counted, only flagged.
+  function crossQuotedQty(crossRentals, equipmentId, startDate, endDate) {
+    return crossLinesFor(crossRentals, equipmentId, startDate, endDate, { "quoted": true })
+      .reduce(function(s, x) { return s + x.qty; }, 0);
+  }
+
+  // Owned rentable stock PLUS confirmed cross-rented units for the range.
+  // Every ranged availability check reads this; eqQty stays "owned, rentable".
+  // With no range there is nothing to cover, so it is just the owned figure.
+  function totalQty(eq, crossRentals, startDate, endDate) {
+    var owned = eqQty(eq);
+    if (!startDate || !endDate) return owned;
+    return owned + crossRentedQty(crossRentals, eq.id, startDate, endDate);
+  }
+
+  // What ONE line costs: a negotiated flat total when set, else the pricing
+  // engine over the line's rates × qty.
+  function lineCost(order, line) {
+    if (!line) return 0;
+    var qty = Math.max(0, Number(line.qty) || 0);
+    if (line.costOverride !== null && line.costOverride !== undefined && line.costOverride !== "") {
+      var o = Number(line.costOverride);
+      return isFinite(o) && o >= 0 ? o : 0;
+    }
+    var d = lineDates(order, line);
+    return calcRentalPrice(d.start || null, d.end || null, line.rates).totalPrice * qty;
+  }
+
+  function orderCost(order) {
+    return ((order && order.lines) || []).reduce(function(s, l) { return s + lineCost(order, l); }, 0);
+  }
+
+  // The vendors that price an item, costed for a range: preferred first, then
+  // cheapest. Inactive prices are skipped. Feeds the "cross-rent from…" hints.
+  function vendorOptions(vendorRates, companies, equipmentId, startDate, endDate) {
+    var out = [];
+    (vendorRates || []).forEach(function(v) {
+      if (!v || v.equipmentId !== equipmentId || v.active === false) return;
+      var vendor = (companies || []).find(function(c) { return c.id === v.vendorCompanyId; });
+      var rp = calcRentalPrice(startDate || null, endDate || null, v.rates);
+      out.push({ rate: v, vendor: vendor || null, vendorName: vendor ? vendor.name : "Vendor #" + v.vendorCompanyId,
+                 cost: rp.totalPrice, label: rp.label, preferred: !!v.preferred });
+    });
+    out.sort(function(a, b) {
+      if (a.preferred !== b.preferred) return a.preferred ? -1 : 1;
+      return a.cost - b.cost;
+    });
+    return out;
+  }
+
+  // Past its end date and still out (or confirmed but never marked returned).
+  function crossOverdue(order, todayStr) {
+    if (!order || !CROSS_COUNTS[order.status]) return false;
+    var end = order.endDate || "";
+    return !!end && end < (todayStr || today());
+  }
+
   window.LTP_RENTALS = {
     SerialSearch:  SerialSearch,
     VendorSearch:  VendorSearch,
@@ -290,6 +478,21 @@
     eqQty:            eqQty,
     outOfServiceQty:  outOfServiceQty,
     allocatedQty:     allocatedQty,
+    calcRentalPrice:  calcRentalPrice,
+    lineDates:        lineDates,
+    crossLinesFor:    crossLinesFor,
+    crossRentedQty:   crossRentedQty,
+    crossQuotedQty:   crossQuotedQty,
+    totalQty:         totalQty,
+    lineCost:         lineCost,
+    orderCost:        orderCost,
+    vendorOptions:    vendorOptions,
+    crossOverdue:     crossOverdue,
+    crossBadge:       crossBadge,
+    CROSS_STATES:     CROSS_STATES,
+    CROSS_COUNTS:     CROSS_COUNTS,
+    CROSS_COLORS:     CROSS_COLORS,
+    CROSS_LABELS:     CROSS_LABELS,
     baseRate:      baseRate,
     today:         today,
     addDays:       addDays,

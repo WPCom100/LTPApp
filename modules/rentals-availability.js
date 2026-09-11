@@ -3,7 +3,7 @@
 (function() {
   var h = React.createElement, useState = React.useState;
 
-  window.RentalsAvailabilityView = function({ equipment, allocations, projects, onOpenEquipment }) {
+  window.RentalsAvailabilityView = function({ equipment, allocations, crossRentals, vendorRates, companies, projects, onOpenEquipment, onCrossRent }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
 
@@ -81,7 +81,8 @@
       h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
         filtered.map(function(eq) {
           var consumed = R.allocatedQty(allocations, eq.id, startDate, endDate, null);
-          var total    = R.eqQty(eq);
+          // Owned stock plus confirmed cross-rented units covering the range.
+          var total    = R.totalQty(eq, crossRentals, startDate, endDate);
           var avail    = total - consumed;
           var pct      = total > 0 ? consumed / total : 0;
           var barColor = avail === 0 ? B.danger : pct > 0.5 ? B.warn : B.success;

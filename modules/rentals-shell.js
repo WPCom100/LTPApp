@@ -20,7 +20,7 @@
   var B = window.LTP_THEME;
   var nav = window.LTPRouter.navigate;
 
-  window.RentalsView = function({ projects, companies, route, equipment, setEquipment, allocations, setAllocations, containers, setContainers, kits, setKits }) {
+  window.RentalsView = function({ projects, companies, route, equipment, setEquipment, allocations, setAllocations, containers, setContainers, kits, setKits, vendorRates, setVendorRates, crossRentals, setCrossRentals }) {
     var R = window.LTP_RENTALS;
     var isMobile = window.LTP_useIsMobile();
 
@@ -227,7 +227,7 @@
       activeTab === "containers" && isMobile && h(window.LTPFab, { label: "Add container", onClick: function() { nav("rentals/containers/new"); } }),
       activeTab === "kits"       && isMobile && h(window.LTPFab, { label: "Create kit", onClick: function() { nav("rentals/kits/new"); } }),
 
-      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, projects: projects || [], onOpenEquipment: openEquip }),
+      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, crossRentals: crossRentals || [], vendorRates: vendorRates || [], companies: companies || [], projects: projects || [], onOpenEquipment: openEquip }),
       activeTab === "equipment"   && h(window.RentalsInventoryView,    { equipment: equipment, allocations: allocations, onOpenEquipment: openEquip }),
       activeTab === "containers"  && h(window.RentalsContainersView,   { containers: containers, equipment: equipment, onOpenContainer: openCont }),
       activeTab === "kits"        && h(window.RentalsKitsView,         { kits: kits, equipment: equipment, onOpenKit: function(kid) { nav("rentals/kits/" + kid); } }),

@@ -17,7 +17,7 @@
   window.QuotesView = function({ companies, contacts, projects, route,
                                   quotes, setQuotes, products, setProducts, services, setServices,
                                   fees, setFees, clientRates, setClientRates,
-                                  equipment, allocations, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, setSettings, isAdmin, qbo }) {
+                                  equipment, allocations, crossRentals, vendorRates, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings, setSettings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
 
     // ── Route-derived state ────────────────────────────────────────────────────
@@ -73,6 +73,7 @@
         fees:       fees,
         equipment:  equipment,
         allocations: allocations,
+        crossRentals: crossRentals, vendorRates: vendorRates,
         companies:  companies,
         contacts:   contacts,
         projects:   projects,

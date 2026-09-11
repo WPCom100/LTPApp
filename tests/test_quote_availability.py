@@ -475,9 +475,14 @@ def test_quote_builder_delegates_to_canonical_helpers():
     _check("getAvailability function found", fn_match is not None)
     if fn_match:
         body = fn_match.group(1)
-        _check("delegates to window.LTP_RENTALS.eqQty",
-               "window.LTP_RENTALS.eqQty" in body
-               or "LTP_RENTALS.eqQty" in body)
+        # totalQty (rentals-utils.js) wraps eqQty and adds confirmed
+        # cross-rented units for the range — the picker must read THAT, so
+        # cross rentals show up in the quote exactly as in the checker.
+        _check("delegates to window.LTP_RENTALS.totalQty (owned + cross-rented)",
+               "window.LTP_RENTALS.totalQty" in body
+               or "LTP_RENTALS.totalQty" in body)
+        _check("no direct eqQty call left in getAvailability (totalQty owns it)",
+               "LTP_RENTALS.eqQty(" not in body)
         _check("delegates to window.LTP_RENTALS.allocatedQty",
                "window.LTP_RENTALS.allocatedQty" in body
                or "LTP_RENTALS.allocatedQty" in body)
@@ -492,6 +497,67 @@ def test_quote_builder_delegates_to_canonical_helpers():
                "reintroduced the drift — call eqQty instead")
         _check("no inline `state === \"cancelled\"` filter (dead code in prior copy)",
                'state === "cancelled"' not in body)
+
+
+# ── Cross rentals: the supply term (docs/CROSS_RENTAL_PLAN.md) ─────────────
+
+
+def py_cross_rented_qty(cross_rentals, equipment_id, start_date, end_date):
+    """Port of LTP_RENTALS.crossRentedQty — units on CONFIRMED / PICKED-UP
+    orders whose line period COVERS the whole range. Quoted orders never
+    count (they are flagged instead); part lines with no equipmentId never
+    count; a line's own dates override the order's."""
+    total = 0
+    for o in cross_rentals or []:
+        if not o or o.get("status") not in ("confirmed", "picked-up"):
+            continue
+        for l in o.get("lines") or []:
+            if not l or l.get("equipmentId") is None or l.get("equipmentId") != equipment_id:
+                continue
+            s = l.get("startDate") or o.get("startDate") or ""
+            e = l.get("endDate") or o.get("endDate") or ""
+            if not (s and e and start_date and end_date and s <= start_date and e >= end_date):
+                continue
+            total += max(0, int(l.get("qty") or 0))
+    return total
+
+
+def py_total_qty(eq, cross_rentals, start_date, end_date):
+    """Port of LTP_RENTALS.totalQty: owned rentable stock + confirmed
+    cross-rented units for the range; with no range, just the owned figure."""
+    owned = py_eq_qty(eq)
+    if not start_date or not end_date:
+        return owned
+    return owned + py_cross_rented_qty(cross_rentals, eq["id"], start_date, end_date)
+
+
+def test_cross_rental_supply_term():
+    """Confirmed cross rentals ADD to availability for the dates they cover;
+    quoted ones do not; owned stock and cross-rented units stack; and the
+    booking side (allocatedQty) subtracts from the combined total — the same
+    arithmetic the checker and the picker now share."""
+    print("test_cross_rental_supply_term")
+    eq = {"id": 5, "serialized": False, "qty": 4, "status": "available", "maintenanceLogs": []}
+    line = {"id": "l1", "equipmentId": 5, "qty": 6, "startDate": "", "endDate": ""}
+    part = {"id": "l2", "equipmentId": None, "qty": 3, "startDate": "", "endDate": ""}
+    confirmed = {"id": 1, "status": "confirmed", "startDate": "2026-10-01", "endDate": "2026-10-10", "lines": [line, part]}
+    quoted = dict(confirmed, id=2, status="quoted")
+    _check("confirmed order adds to the total",
+           py_total_qty(eq, [confirmed], "2026-10-02", "2026-10-05") == 10)
+    _check("quoted order does not",
+           py_total_qty(eq, [quoted], "2026-10-02", "2026-10-05") == 4)
+    _check("a range the order only partly covers gets nothing",
+           py_total_qty(eq, [confirmed], "2026-10-05", "2026-10-12") == 4)
+    _check("part lines never count",
+           py_cross_rented_qty([confirmed], None, "2026-10-02", "2026-10-05") == 0)
+    _check("no range → owned only",
+           py_total_qty(eq, [confirmed], "", "") == 4)
+    _check("an item we never stock gets all its supply from the order",
+           py_total_qty(dict(eq, qty=0), [confirmed], "2026-10-02", "2026-10-05") == 6)
+    allocs = [{"id": 1, "equipmentId": 5, "qty": 7, "startDate": "2026-10-03", "endDate": "2026-10-04", "state": "reserved"}]
+    total = py_total_qty(eq, [confirmed], "2026-10-02", "2026-10-05")
+    _check("bookings subtract from the combined total",
+           total - py_allocated_qty(allocs, 5, "2026-10-02", "2026-10-05", None) == 3)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -518,6 +584,7 @@ def main() -> int:
     test_maintenance_form_accepts_qty_input()
     test_equipment_detail_passes_availableQty_to_form()
     test_quote_builder_delegates_to_canonical_helpers()
+    test_cross_rental_supply_term()
 
     fail_count = sum(1 for _, ok in _results if not ok)
     print()

@@ -139,77 +139,11 @@
   //   ADD ITEM PICKER
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // Calculate rental pricing from a date range.
-  // Calculate rental pricing by stacking tiers from largest to smallest.
-  // Consumes days greedily: months first, then weeks, then 3-day blocks.
-  //
-  // Returns { breakdown: [{tier, count, unitRate, subtotal}], totalPrice, label }
-  //   31 days → 1× month + 1× 3-day
-  //   38 days → 1× month + 1× week + 1× 3-day
-  //   64 days → 2× month + 1× 3-day + 1× 3-day  (4 remaining days → week is cheaper check)
-  //
-  // The function picks the cheapest option for the remainder at each step:
-  //   remainder 4-7 days → compare 1× week vs ceil(days/3)× 3-day, pick cheaper
-  //   remainder 1-3 days → 1× 3-day
-  function calcRentalPrice(startDate, endDate, rates) {
-    rates = rates || {};
-    var r3 = rates.threeDay || 0, rw = rates.week || 0, rm = rates.month || 0;
-    if (!startDate || !endDate) return { breakdown: [{ tier: "threeDay", count: 1, unitRate: r3, subtotal: r3 }], totalPrice: r3, label: "3-Day rate" };
-    var start = new Date(startDate), end = new Date(endDate);
-    var days = Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1; // inclusive
-    if (days <= 0) days = 1;
-
-    var breakdown = [];
-    var remaining = days;
-
-    // Consume full months (30-day blocks)
-    if (remaining >= 30 && rm > 0) {
-      var months = Math.floor(remaining / 30);
-      breakdown.push({ tier: "month", count: months, unitRate: rm, subtotal: rm * months });
-      remaining -= months * 30;
-    }
-
-    // Remainder: pick cheapest combo of weeks and 3-days
-    if (remaining > 0) {
-      if (remaining >= 4 && rw > 0) {
-        // Compare: 1 week vs multiple 3-day blocks
-        var threeDayCost = Math.ceil(remaining / 3) * r3;
-        if (rw <= threeDayCost && remaining <= 7) {
-          breakdown.push({ tier: "week", count: 1, unitRate: rw, subtotal: rw });
-          remaining = 0;
-        } else if (remaining > 7) {
-          // More than a week left but less than a month — use week + remainder
-          var weeks = Math.floor(remaining / 7);
-          breakdown.push({ tier: "week", count: weeks, unitRate: rw, subtotal: rw * weeks });
-          remaining -= weeks * 7;
-        }
-      }
-
-      // Remaining days as 3-day blocks
-      if (remaining > 0 && r3 > 0) {
-        var blocks = Math.ceil(remaining / 3);
-        breakdown.push({ tier: "threeDay", count: blocks, unitRate: r3, subtotal: r3 * blocks });
-      }
-    }
-
-    // Edge case: no rates set
-    if (breakdown.length === 0) {
-      breakdown.push({ tier: "threeDay", count: 1, unitRate: 0, subtotal: 0 });
-    }
-
-    var totalPrice = breakdown.reduce(function(s, b) { return s + b.subtotal; }, 0);
-
-    // Build a human-readable label
-    var label = breakdown.map(function(b) {
-      var tl = b.tier === "month" ? "Mo" : b.tier === "week" ? "Wk" : "3-Day";
-      return b.count + "\u00d7 " + tl;
-    }).join(" + ");
-
-    // Primary rateType = the largest tier used (for display purposes)
-    var rateType = breakdown[0].tier;
-
-    return { breakdown: breakdown, totalPrice: totalPrice, rateType: rateType, label: label };
-  }
+  // Rental pricing for a date range lives in modules/rentals-utils.js
+  // (LTP_RENTALS.calcRentalPrice) so the same engine prices what we charge a
+  // client AND costs what a vendor charges us on a cross rental. Aliased here
+  // so the builder reads as before.
+  var calcRentalPrice = window.LTP_RENTALS.calcRentalPrice;
 
   // Simplified version when we just need the rate type (no price calc)
   function calcRateType(startDate, endDate) {
@@ -220,7 +154,7 @@
     return rt === "threeDay" ? "3-Day" : rt === "week" ? "Week" : "Month";
   }
 
-  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, fees, allocations, quoteDates }) {
+  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, fees, allocations, crossRentals, vendorRates, quoteDates }) {
     var isMobile = window.LTP_useIsMobile();
     // Rate is always auto-calculated from dates — never manually selected
     var autoRate = quoteDates ? calcRateType(quoteDates.start, quoteDates.end) : "threeDay";
@@ -267,14 +201,20 @@
     // picker even when both other surfaces correctly reported 0 — see
     // tests/test_quote_availability.py for the regression guard.
     function getAvailability(eq) {
-      var totalQty = window.LTP_RENTALS.eqQty(eq);
+      // Total = owned rentable stock PLUS confirmed cross-rented units whose
+      // period covers the quote dates (rentals-utils.js::totalQty wraps eqQty);
+      // a merely quoted cross rental is reported, never counted.
       if (!quoteDates || !quoteDates.start || !quoteDates.end) {
-        return { total: totalQty, allocated: 0, available: totalQty };
+        var owned = window.LTP_RENTALS.totalQty(eq, crossRentals, "", "");
+        return { total: owned, allocated: 0, available: owned, crossRented: 0, quoted: 0 };
       }
+      var total = window.LTP_RENTALS.totalQty(eq, crossRentals, quoteDates.start, quoteDates.end);
       var allocated = window.LTP_RENTALS.allocatedQty(
         allocations, eq.id, quoteDates.start, quoteDates.end
       );
-      return { total: totalQty, allocated: allocated, available: totalQty - allocated };
+      var crossRented = window.LTP_RENTALS.crossRentedQty(crossRentals, eq.id, quoteDates.start, quoteDates.end);
+      var quoted = window.LTP_RENTALS.crossQuotedQty(crossRentals, eq.id, quoteDates.start, quoteDates.end);
+      return { total: total, allocated: allocated, available: total - allocated, crossRented: crossRented, quoted: quoted };
     }
 
     function filterList(list, fields) {
@@ -1076,7 +1016,7 @@
 
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, companies, contacts, projects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, crossRentals, vendorRates, companies, contacts, projects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
@@ -2505,6 +2445,7 @@
           allSections: draft.sections,
           equipment: equipment, products: products, services: svcs, fees: fees,
           allocations: allocations,
+          crossRentals: crossRentals, vendorRates: vendorRates, companies: companies,
           quoteDates: pickerDates,
           onAdd: function(item) { addItemToSection(pickerForSection, item); },
           onClose: function() { setPickerForSection(null); }
