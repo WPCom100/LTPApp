@@ -433,6 +433,13 @@ class Equipment(Base):
     notes = Column(Text, default="")
     accessories = Column(JSON, default=list)             # list[{name: str, qty: int}] — bundled items (cables, mounts)
     default_container_id = Column(Integer, nullable=True) # container.id this ships in by default (not FK; nullable link)
+    # Gear we never stock but rent in from a vendor whenever a job needs it
+    # (see CrossRental below). The row still exists so the item can be quoted at
+    # OUR rates and checked for availability like anything else; `qty` stays 0
+    # and the inventory list labels it "cross-rental" instead of reading a
+    # 0-unit item as available. A label only: an owned item is cross-rented the
+    # same way, and this can be switched off the day we buy some.
+    cross_rental_only = Column(Boolean, default=False)
     units = Column(JSON, default=list)                   # list[{id: int, serial: str, barcode: str,
                                                          #       purchaseDate: str, purchaseVendorId: int, purchaseCost: float,
                                                          #       status: "available"|"rented"|"under-maintenance",
@@ -642,6 +649,17 @@ class Allocation(Base):
     end_date = Column(String(10), default="")            # ISO YYYY-MM-DD
     state = Column(String(30), default="reserved")       # {reserved, allocated, checked-out, returned, under-maintenance}
     notes = Column(Text, default="")
+    # Where this booking came from. Bookings are DERIVED from confirmed documents
+    # by backend/rental_bookings.py: an accepted quote (or its invoice, once
+    # converted) books one allocation per equipment line for that line's
+    # rental dates, keyed by (doc_type, doc_id, line_id) so a later edit of the
+    # document updates the same row instead of stacking a second one. "manual"
+    # is a booking entered by hand on the Allocations tab; it has no doc_id and
+    # is never touched by the reconcile. Plain ints/strings, not FKs: a booking
+    # that was checked out survives its document's deletion as history.
+    doc_type = Column(String(10), default="manual")      # {manual, quote, invoice}
+    doc_id = Column(Integer, nullable=True, index=True)
+    line_id = Column(String(64), default="")             # the section item id inside the document
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -696,6 +714,87 @@ class Kit(Base):
     auto_rate = Column(Boolean, default=True)            # True → compute from items each render; False → use `rates` literally
     notes = Column(Text, default="")
     status = Column(String(50), default="active")        # {active, inactive}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class VendorRate(Base):
+    """What ONE vendor charges US for ONE catalog item — the price memory behind
+    cross rentals. One row per (vendor company × equipment item), the cost-side
+    twin of ClientRate. Saving a cross-rental order refreshes these rows (see
+    CrossRental.remember_rates); the CRM vendor screen edits them directly.
+
+    `rates` has the same {threeDay, week, month} shape as Equipment.rates so the
+    one rental-pricing engine (modules/rentals-utils.js::calcRentalPrice) costs
+    a vendor line exactly the way it prices ours. `quoted_date` is when the
+    price was last confirmed, so a stale price looks stale. `preferred` pins
+    the vendor first in the item's options list; `active=False` parks a price
+    without losing it (ClientRate.active).
+
+    Both FKs CASCADE, the ClientRate rule: a price for a vendor that no longer
+    exists, or an item we no longer catalog, would match nobody forever."""
+    __tablename__ = "vendor_rates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vendor_company_id = Column(Integer, ForeignKey("companies.id", ondelete="CASCADE"), nullable=True, index=True)
+    equipment_id = Column(Integer, ForeignKey("equipment.id", ondelete="CASCADE"), nullable=True, index=True)
+    rates = Column(JSON, default=dict)                   # {threeDay, week, month} — per unit, what the vendor charges us
+    vendor_item = Column(String(255), default="")        # what the vendor calls it / their SKU, so a PO reads right
+    quoted_date = Column(String(10), default="")         # ISO YYYY-MM-DD — when this price was last confirmed
+    preferred = Column(Boolean, default=False)
+    active = Column(Boolean, default=True)
+    notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CrossRental(Base):
+    """One ORDER of gear rented in from a vendor, with its lines — the fixtures
+    and the parts and accessories that come with them, the way a vendor PO
+    reads. A confirmed order's catalog-item lines COUNT AS OUR INVENTORY for
+    their dates (modules/rentals-utils.js::crossRentedQty adds them beside
+    eqQty in every availability surface); a merely quoted order does not, but
+    is flagged as "quoted" wherever availability is shown. Owned stock and
+    cross-rented units stack.
+
+    Lifecycle: quoted → confirmed → picked-up → returned, or cancelled. Only
+    confirmed and picked-up count. Status never moves on its own; an order past
+    its end date still picked-up shows as overdue in the list.
+
+    Lines live in JSON on the order (the Quote.sections / Kit.items pattern) so
+    an order and its lines save atomically under one _rev:
+        lines: list[{
+          id: str,                        stable across edits
+          equipmentId: int | null,        catalog item → counts toward availability;
+                                          null → a part/accessory (cable, clamp): cost only
+          name: str,                      auto from the equipment, or free text for a part
+          qty: int,
+          startDate: str, endDate: str,   "" = inherit the order's dates
+          rates: {threeDay, week, month}, price SNAPSHOT seeded from vendor_rates, editable —
+                                          a later price change never rewrites history
+          costOverride: float | null,     negotiated flat total for the line; null = compute
+          notes: str
+        }]
+    Per-line status is deliberately not modelled: an order is quoted, confirmed,
+    picked up and returned as a whole. Lines are JSON, so it can be added later
+    without a migration.
+
+    `project_id` is OPTIONAL on purpose: an order that spans several jobs simply
+    leaves it empty. The vendor FK is SET NULL so deleting the vendor keeps the
+    cost record; a deleted catalog item is cleared off the lines on the
+    frontend (the line stays as a cost record with its name)."""
+    __tablename__ = "cross_rentals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    vendor_company_id = Column(Integer, ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True)
+    reference = Column(String(100), default="")          # vendor PO / quote / confirmation number
+    status = Column(String(20), default="quoted")        # {quoted, confirmed, picked-up, returned, cancelled}
+    start_date = Column(String(10), default="")          # ISO YYYY-MM-DD — the order's rental period …
+    end_date = Column(String(10), default="")            # … every line uses it unless it sets its own
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="SET NULL"), nullable=True, index=True)
+    lines = Column(JSON, default=list)                   # see class docstring
+    remember_rates = Column(Boolean, default=True)       # on save, upsert vendor_rates for every catalog-item line (frontend)
+    notes = Column(Text, default="")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
