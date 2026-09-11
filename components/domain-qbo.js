@@ -190,25 +190,19 @@ window.LTP_qboExemptionReasonLabel = function(id) {
   return "";
 };
 
-// Which way a company's tax status flows, and therefore what the UI may offer.
+// What a company's sales tax controls mean, which depends on whether QuickBooks
+// has met this client yet.
 //
-// The app pushes its own view exactly once — when it CREATES the QuickBooks
-// customer. From then on QuickBooks owns the status and each push copies it
-// back down (backend/qbo_sync.py::_adopt_customer_tax_state), because that is
-// where tax is filed and where exemption certificates are kept.
+// The status is always editable here — it is the app's to set. What changes is
+// what an edit DOES. Before the QuickBooks customer exists, the app's status is
+// what builds it. After, QuickBooks owns the status by default (that is where
+// tax is filed and where the exemption certificate lives), and only a
+// deliberate change made here is pushed back over it — see
+// backend/qbo_sync.py::_reconcile_customer_tax_state.
 //
-// So `qbCustomerId` is the whole test: absent → the picker is a real input that
-// will be sent; present → it is a mirror, and editing it here would be a lie
-// (the next push overwrites it from QuickBooks).
-window.LTP_qboTaxStatusIsEditable = function(company) {
-  return !(company && company.qbCustomerId);
-};
-
-// One line of plain English for whichever of those two states a company is in.
-// Shared so the edit form and the company info screen cannot describe the same
-// rule differently.
+// `qbCustomerId` is the whole test, and it is the same one the backend uses.
 window.LTP_qboTaxStatusNote = function(company) {
-  return window.LTP_qboTaxStatusIsEditable(company)
-    ? "Sent to QuickBooks when this client is first created there."
-    : "Read from QuickBooks, which owns this client's tax status — change it there.";
+  return (company && company.qbCustomerId)
+    ? "Set from QuickBooks, which owns this client's tax status. Changing it here updates QuickBooks on the next invoice push."
+    : "Sent to QuickBooks when this client is first created there.";
 };

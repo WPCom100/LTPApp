@@ -40,12 +40,14 @@ Decisions baked in (confirmed with the owner):
     EXEMPT customer must also carry a TaxExemptionReasonId or Automated Sales
     Tax rejects it, and with it the whole invoice push — see
     _TAX_EXEMPTION_REASONS.
-  - Customer tax status flows ONE WAY, and which way depends on who created the
-    customer. Creating it is the only time the app's own status is pushed
-    (_new_customer_tax_fields); after that QuickBooks owns it and the app
-    mirrors it (_adopt_customer_tax_state). QuickBooks is where tax is filed and
-    where exemption certificates are maintained, so a push must not overwrite
-    it.
+  - Customer tax status is settled per push by _reconcile_customer_tax_state
+    against `companies.qb_tax_synced`, the pair the two last agreed on. A
+    customer the app CREATES is built from the app's status; one already in
+    QuickBooks hands its status over the first time, because that is where tax
+    is filed and where the exemption certificate lives; and after that a
+    deliberate edit in the app — its pair moving away from the agreed
+    baseline — is pushed. No baseline can be faked: the column is read-only to
+    clients.
 """
 import os
 from datetime import datetime, timezone
@@ -301,10 +303,10 @@ def _customer_fields(party, kind) -> tuple[str, dict]:
     of an existing customer can never trip a duplicate-name (6240) conflict by
     trying to rename it.
 
-    The TAX block (Taxable / TaxExemptionReasonId) is deliberately NOT here — it
-    is pushed only when we create the customer, by _new_customer_tax_fields. For
-    a customer that already exists in QuickBooks the flow runs the other way
-    (_adopt_customer_tax_state)."""
+    The TAX block (Taxable / TaxExemptionReasonId) is deliberately NOT here. For
+    a customer we create it comes from _new_customer_tax_fields; for one that
+    already exists, _reconcile_customer_tax_state decides per push whether
+    anything is pushed at all."""
     if kind == "company":
         display_name = _safe_name(party.name, 100)
         fields: dict = {"CompanyName": (party.name or "")[:100]}
@@ -341,55 +343,111 @@ def _new_customer_tax_fields(party, kind, exemption_reason) -> dict:
     return fields
 
 
-def _adopt_customer_tax_state(party, kind, current) -> bool:
-    """Copy an EXISTING QuickBooks customer's tax status onto the app's row.
+def _tax_sig(taxable, reason) -> str:
+    """The `taxable` + reason pair as one comparable token ("1|" / "0|9")."""
+    return f"{'1' if taxable else '0'}|{_normalize_exemption_reason(reason)}"
 
-    QuickBooks is the record of account: its customers' exempt status and
-    exemption reason are what actually get filed, they are maintained by whoever
-    does the books, and a resale certificate on file there is not something an
-    invoice push should quietly overwrite. So the app pushes a tax status only
-    when it CREATES the customer (_new_customer_tax_fields); from then on the
-    flow runs this way instead, and the app mirrors QuickBooks.
 
-    Returns True when something changed, so the caller can say so in the log —
-    a client's taxability moving is money-visible and shouldn't happen silently.
+def _app_tax_state(party) -> tuple[bool, str]:
+    """What the app currently says about this client. getattr like
+    _party_taxable: a party row is not always a fully-populated Company."""
+    return (bool(getattr(party, "taxable", False)),
+            _normalize_exemption_reason(getattr(party, "tax_exemption_reason", "")))
 
-    Directly-billed contacts are skipped: they are always taxable by design and
-    carry no columns to hold this.
-    """
-    if kind != "company":
-        return False
 
+def _qb_tax_state(current) -> tuple[bool | None, str]:
+    """What QuickBooks says about a customer. `None` for taxable means it said
+    nothing usable, which is not the same as "taxable" and must not be read as
+    a change."""
     reason = _normalize_exemption_reason(current.get("TaxExemptionReasonId"))
-    raw_taxable = current.get("Taxable")
     if reason:
         # Intuit's own rule: a customer carrying an exemption reason IS exempt,
-        # whether or not the flag came back with it.
-        taxable = False
-    elif isinstance(raw_taxable, bool):
-        taxable = raw_taxable
-    else:
-        # QuickBooks said nothing about either — keep what the app has rather
-        # than inventing a change.
-        taxable = None
+        # whether or not the flag came back alongside it.
+        return False, reason
+    raw = current.get("Taxable")
+    if isinstance(raw, bool):
+        return raw, ""
+    return None, ""
 
-    # getattr for the reads, like _party_taxable: a party row is not always a
-    # fully-populated Company (fixtures, and a deploy that has not run the
-    # migration yet), and a mirror must never be the thing that raises.
-    changed = False
-    if taxable is not None and bool(getattr(party, "taxable", False)) != taxable:
-        party.taxable = taxable
-        changed = True
-    if reason != (getattr(party, "tax_exemption_reason", "") or ""):
-        party.tax_exemption_reason = reason
-        changed = True
-    return changed
+
+def _reconcile_customer_tax_state(party, kind, current, *, can_push) -> dict:
+    """Settle a client's tax status against the QuickBooks customer that already
+    exists, and return the tax fields to put in the sparse update ({} = push
+    nothing).
+
+    Three states, decided by `qb_tax_synced` — the pair as the two last agreed
+    on it:
+
+      no baseline    They have never met. QuickBooks wins outright: a customer
+                     already on file carries the exemption certificate the books
+                     were built on, and nothing here has been deliberately set
+                     against it yet.
+      app differs    The only way the app's pair can move away from an agreed
+                     baseline is someone changing it here on purpose. That is
+                     the edit the app is allowed to make, so it is pushed —
+                     including over a QuickBooks-side change, because a person
+                     asked for this one.
+      app matches    No local edit. QuickBooks stays in charge and its status is
+                     adopted.
+
+    `can_push` is False for callers with no update request to attach fields to
+    (a by-name match, the quote refresh). There a pending local edit is simply
+    left pending for the next real push rather than being silently dropped.
+
+    Directly-billed contacts are skipped: always taxable by design, and they
+    carry no columns for any of this.
+    """
+    if kind != "company":
+        return {}
+
+    baseline = getattr(party, "qb_tax_synced", "") or ""
+    app_taxable, app_reason = _app_tax_state(party)
+
+    if baseline and _tax_sig(app_taxable, app_reason) != baseline:
+        if not can_push:
+            return {}
+        qb_taxable, qb_reason = _qb_tax_state(current)
+        fields = {"Taxable": app_taxable}
+        if app_taxable:
+            # Intuit reads a customer that still carries a reason as exempt, so
+            # going back to taxable has to retract it in the same call or sales
+            # tax stays switched off for a client we now bill it to.
+            if qb_reason:
+                fields["TaxExemptionReasonId"] = ""
+        else:
+            # Exempt without a reason is what QuickBooks rejects outright, so
+            # something valid always goes with it.
+            fields["TaxExemptionReasonId"] = app_reason or _DEFAULT_TAX_EXEMPTION_REASON
+        # NOTE: the baseline is NOT moved here. The push has not happened yet,
+        # and a sync failure on an active customer is swallowed as best-effort —
+        # moving it now would mark the edit as agreed and it would never be
+        # retried. The caller records it once the update succeeds.
+        print(f"[LTP] qbo: pushing tax status changed in the app for "
+              f"“{getattr(party, 'name', '?')}” (taxable={app_taxable}, "
+              f"reason={app_reason or '-'}; QuickBooks had {_tax_sig(qb_taxable, qb_reason)})",
+              flush=True)
+        return fields
+
+    qb_taxable, qb_reason = _qb_tax_state(current)
+    if qb_taxable is not None and (qb_taxable, qb_reason) != (app_taxable, app_reason):
+        party.taxable = qb_taxable
+        party.tax_exemption_reason = qb_reason
+        print(f"[LTP] qbo: adopted QuickBooks tax status for "
+              f"“{getattr(party, 'name', '?')}” (taxable={qb_taxable}, "
+              f"reason={qb_reason or '-'})", flush=True)
+    # Whatever happened, the two now agree as far as we know — record it so the
+    # NEXT difference can only be a deliberate edit.
+    party.qb_tax_synced = _tax_sig(*_app_tax_state(party))
+    return {}
 
 
 async def _refresh_customer_tax_state(db, party, kind, *, client_id, client_secret) -> None:
     """Best-effort: re-read a LINKED customer's tax status from QuickBooks onto
     the app row, for callers that decide something from it before they would
     otherwise touch QuickBooks (see get_quote_estimate_tax).
+
+    Reconciles by the same rule as a push (can_push=False), so a tax status
+    someone changed in the app and has not pushed yet survives this.
 
     Never raises. A disconnected or unreachable QuickBooks simply leaves the
     app's own flag in charge, exactly as it was before this existed — refreshing
@@ -405,9 +463,8 @@ async def _refresh_customer_tax_state(db, party, kind, *, client_id, client_secr
         print(f"[LTP] qbo: tax status not refreshed for customer "
               f"{getattr(party, 'qb_customer_id', '?')} ({e})", flush=True)
         return
-    if current and current.get("Id") and _adopt_customer_tax_state(party, kind, current):
-        print(f"[LTP] qbo: adopted QuickBooks tax status for “{party.name}” "
-              f"(taxable={party.taxable}, reason={party.tax_exemption_reason or '-'})", flush=True)
+    if current and current.get("Id"):
+        _reconcile_customer_tax_state(party, kind, current, can_push=False)
 
 
 async def _name_unusable_refs(conn, db, customer_id, lines, *, client_id, client_secret) -> str:
@@ -472,15 +529,15 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
     QuickBooks and Automated Sales Tax geocodes the new jurisdiction). The
     customer sync is best-effort — a hiccup there must not block the push.
 
-    TAX STATUS FLOWS ONE WAY PER CUSTOMER, and which way depends on who created
-    it. Creating it here is the one moment the app's own view is pushed
-    (_new_customer_tax_fields); every path that finds an EXISTING customer
-    adopts QuickBooks' status instead (_adopt_customer_tax_state) and pushes
-    nothing. QuickBooks is where tax is actually filed and where the bookkeeper
-    maintains exemption certificates, so an invoice push must not overwrite it —
-    and never sending Taxable/TaxExemptionReasonId on an update is also what
-    makes "Tax Exemption Reason should be specified incase customer is marked as
-    not taxable" structurally impossible on the update path."""
+    TAX STATUS is settled separately, by _reconcile_customer_tax_state. Creating
+    the customer here builds it from the app's status; a customer QuickBooks
+    already has hands its status over the first time the two meet, because that
+    is where tax is filed and where the bookkeeper keeps exemption certificates;
+    and from then on an edit made deliberately in the app is pushed. An update
+    therefore carries the tax pair only when there is a real local edit to
+    send — never speculatively, which is what used to overwrite QuickBooks and
+    what made "Tax Exemption Reason should be specified incase customer is marked
+    as not taxable" reachable on this path at all."""
     display_name, fields = _customer_fields(party, kind)
 
     if party.qb_customer_id:
@@ -507,15 +564,14 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
             current = None
 
         if current and current.get("Id"):
-            # The customer exists in QuickBooks, so QuickBooks owns its tax
-            # status — take it, don't send one. Done BEFORE the push so the
-            # invoice lines built after this call use the adopted flag.
-            if _adopt_customer_tax_state(party, kind, current):
-                print(f"[LTP] qbo: adopted QuickBooks tax status for “{display_name}” "
-                      f"(taxable={party.taxable}, reason={party.tax_exemption_reason or '-'})",
-                      flush=True)
-            inactive = current.get("Active") is False
+            # Settle the tax status against the customer QuickBooks already has:
+            # adopt it, or push an edit someone made here on purpose. Done
+            # BEFORE the update so a push rides along on the same request, and
+            # before the invoice lines are built so they bill the settled status.
             update = dict(fields)
+            tax_push = _reconcile_customer_tax_state(party, kind, current, can_push=True)
+            update.update(tax_push)
+            inactive = current.get("Active") is False
             update["Id"] = str(current["Id"])
             update["SyncToken"] = str(current.get("SyncToken", "0"))
             update["sparse"] = True
@@ -530,6 +586,11 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
                 await quickbooks.update_customer(
                     conn, db, update, client_id=client_id, client_secret=client_secret
                 )
+                if tax_push:
+                    # QuickBooks took the edit, so the two agree again. Only now
+                    # — a failed push above leaves the baseline where it was, so
+                    # the edit is still pending and goes out on the next sync.
+                    party.qb_tax_synced = _tax_sig(*_app_tax_state(party))
             except QboApiError as e:
                 if inactive:
                     # Staying quiet here is what produced the unexplainable
@@ -555,11 +616,13 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
     found = await quickbooks.query(
         conn, db, by_name, client_id=client_id, client_secret=client_secret,
     )
+    created = False
     if found:
         qb_id = str(found[0].get("Id"))
-        if _adopt_customer_tax_state(party, kind, found[0]):
-            print(f"[LTP] qbo: adopted QuickBooks tax status for “{display_name}” "
-                  f"(taxable={party.taxable}, reason={party.tax_exemption_reason or '-'})", flush=True)
+        # An existing customer, so it reconciles like one. can_push=False: there
+        # is no update request here to attach fields to, so an edit made in the
+        # app stays pending for the next real push rather than being dropped.
+        _reconcile_customer_tax_state(party, kind, found[0], can_push=False)
     else:
         # The one moment the app's own tax status is pushed. Resolve the
         # exemption reason only here — a taxable customer, and every customer
@@ -573,6 +636,7 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
                 conn, db, payload, client_id=client_id, client_secret=client_secret
             )
             qb_id = str((resp.get("Customer") or {}).get("Id"))
+            created = True
         except QboApiError as e:
             # Duplicate name (6240) — another path created it; re-query + adopt.
             if e.fault_code == "6240":
@@ -583,11 +647,17 @@ async def find_or_create_customer(conn, db, party, kind, *, client_id, client_se
                     raise
                 qb_id = str(again[0].get("Id"))
                 # It exists after all, so it is theirs, not ours — same rule.
-                _adopt_customer_tax_state(party, kind, again[0])
+                _reconcile_customer_tax_state(party, kind, again[0], can_push=False)
             else:
                 raise
 
     party.qb_customer_id = qb_id
+    if created and kind == "company":
+        # The customer was built FROM the app's status, so the two agree now.
+        # Record that, so the next difference can only be a deliberate edit.
+        # (Both other branches found an existing customer and recorded their own
+        # baseline inside _reconcile_customer_tax_state.)
+        party.qb_tax_synced = _tax_sig(*_app_tax_state(party))
     await db.flush()
     return qb_id
 

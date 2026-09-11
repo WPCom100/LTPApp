@@ -58,12 +58,18 @@ class Company(Base):
     # "" means "not set" → the workspace default (Settings →
     # qboTaxExemptionReasonId) stands in. Ignored while `taxable` is True.
     #
-    # This and `taxable` are only an INPUT while `qb_customer_id` is null — i.e.
-    # until the QuickBooks customer exists. Once it does, QuickBooks owns both
-    # and each push copies them back down onto this row
-    # (qbo_sync._adopt_customer_tax_state), because that is where tax is filed
-    # and where exemption certificates are kept.
     tax_exemption_reason = Column(String(8), default="")
+    # The `taxable` + `tax_exemption_reason` pair as QuickBooks and this row last
+    # AGREED on it ("1|" / "0|9"), written only by the sync engine — see
+    # _READONLY_COLS in backend/routes/api.py.
+    #
+    # It is what tells a deliberate edit from a stale value, which is the whole
+    # reason it exists. Empty means the two have never met: QuickBooks wins
+    # outright there, because a customer already on file carries the exemption
+    # certificate the books were built on. Once set, the app's pair differing
+    # from it can only be someone changing it here on purpose, so that change is
+    # pushed; matching it means no local edit, and QuickBooks stays in charge.
+    qb_tax_synced = Column(String(16), default="")
     qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

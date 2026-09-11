@@ -1405,7 +1405,7 @@ async def test_names_the_unusable_reference():
 
 def _exempt_company(**over):
     base = dict(name="Dallas Theater Center", taxable=False, tax_exemption_reason="",
-                address="", city="", state="", zip="", qb_customer_id=None)
+                qb_tax_synced="", address="", city="", state="", zip="", qb_customer_id=None)
     base.update(over)
     return types.SimpleNamespace(**base)
 
@@ -1489,11 +1489,12 @@ async def test_new_exempt_customer_is_created_with_a_reason():
     qbo_sync._settings_get = saved
 
 
-async def test_existing_customer_tax_status_is_never_pushed():
-    print("test_existing_customer_tax_status_is_never_pushed")
-    # A customer QuickBooks already has is QuickBooks'. The sparse update carries
-    # the address and name only — pushing Taxable/TaxExemptionReasonId here is
-    # what would overwrite a resale certificate set up in the books.
+async def test_existing_customer_tax_status_is_not_pushed_unprompted():
+    print("test_existing_customer_tax_status_is_not_pushed_unprompted")
+    # A customer QuickBooks already has, met for the first time (no baseline):
+    # the sparse update carries the address and name only. Pushing
+    # Taxable/TaxExemptionReasonId here is what would overwrite a resale
+    # certificate set up in the books.
     party = _exempt_company(qb_customer_id="CUST-9", tax_exemption_reason="5")
     qbo_sync.quickbooks.get_customer = AsyncMock(
         return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True,
@@ -1538,38 +1539,187 @@ async def test_quickbooks_taxable_customer_is_adopted():
     _check("lines will bill tax", qbo_sync._party_taxable(party, "company") is True)
 
 
-def test_adopting_quickbooks_tax_state():
-    print("test_adopting_quickbooks_tax_state")
-    adopt = qbo_sync._adopt_customer_tax_state
+def test_reconciling_quickbooks_tax_state():
+    print("test_reconciling_quickbooks_tax_state")
+    rec = qbo_sync._reconcile_customer_tax_state
 
-    # A reason present means exempt even when QuickBooks omits the flag —
-    # Intuit's own rule is that a customer carrying a reason IS exempt.
+    # ── No baseline: the two have never met, so QuickBooks wins outright. ────
     p = _exempt_company(taxable=True)
-    _check("reason alone implies exempt", adopt(p, "company", {"TaxExemptionReasonId": "9"}) is True)
-    _check("...and sets the flag", p.taxable is False and p.tax_exemption_reason == "9")
+    push = rec(p, "company", {"TaxExemptionReasonId": "9"}, can_push=True)
+    _check("first contact pushes nothing", push == {})
+    _check("first contact adopts QuickBooks", p.taxable is False and p.tax_exemption_reason == "9")
+    _check("...and records the agreed baseline", p.qb_tax_synced == "0|9")
 
-    # QuickBooks saying nothing about either must not invent a change — a
-    # response missing the fields is not the same as "taxable".
+    # A reason alone implies exempt even with no flag — Intuit's own rule.
+    p = _exempt_company(taxable=True)
+    rec(p, "company", {"TaxExemptionReasonId": "6"}, can_push=True)
+    _check("reason alone implies exempt", p.taxable is False)
+
+    # QuickBooks saying nothing usable must not be read as a change.
     p = _exempt_company()
-    _check("silence changes nothing", adopt(p, "company", {"Id": "1"}) is False)
-    _check("...and the app keeps its own status", p.taxable is False)
+    rec(p, "company", {"Id": "1"}, can_push=True)
+    _check("silence changes nothing", p.taxable is False and p.tax_exemption_reason == "")
+    _check("...but the baseline still starts tracking", p.qb_tax_synced == "0|")
 
-    # No change to make → reports False, so a no-op push logs nothing.
-    p = _exempt_company(tax_exemption_reason="9")
-    _check("identical state is not a change",
-           adopt(p, "company", {"Taxable": False, "TaxExemptionReasonId": "9"}) is False)
+    # ── Baseline matches the app: no local edit, QuickBooks stays in charge. ─
+    p = _exempt_company(tax_exemption_reason="9", qb_tax_synced="0|9")
+    push = rec(p, "company", {"Taxable": True}, can_push=True)
+    _check("no local edit pushes nothing", push == {})
+    _check("a QuickBooks-side change is adopted", p.taxable is True and p.tax_exemption_reason == "")
+    _check("baseline follows it", p.qb_tax_synced == "1|")
 
-    # A reason QuickBooks would not recognize is treated as absent rather than
-    # copied into the app as a value we could never send back.
-    p = _exempt_company(tax_exemption_reason="9")
-    adopt(p, "company", {"Taxable": False, "TaxExemptionReasonId": "not-an-id"})
-    _check("unrecognized reason is not adopted", p.tax_exemption_reason == "")
+    # ── Baseline differs from the app: a deliberate edit, so push it. ────────
+    # Exempt here, taxable in QuickBooks and in the baseline → someone marked
+    # this client exempt in the app on purpose.
+    p = _exempt_company(tax_exemption_reason="5", qb_tax_synced="1|")
+    push = rec(p, "company", {"Taxable": True}, can_push=True)
+    _check("a deliberate exemption is pushed", push.get("Taxable") is False)
+    _check("...with its reason", push.get("TaxExemptionReasonId") == "5")
+    _check("...and is NOT overwritten by QuickBooks", p.taxable is False)
+    # The baseline is deliberately NOT moved here: the push has not happened
+    # yet. Moving it now would mark the edit agreed, and a sync failure (which
+    # is swallowed as best-effort on an active customer) would strand it
+    # forever. find_or_create_customer records it once the update succeeds —
+    # see test_a_failed_push_leaves_the_edit_pending.
+    _check("the baseline waits for the push to land", p.qb_tax_synced == "1|",
+           p.qb_tax_synced)
+
+    # The reverse: exempt in QuickBooks, taxable in the app now. The stale
+    # reason must be retracted or Intuit keeps reading the customer as exempt
+    # and no sales tax computes.
+    p = _exempt_company(taxable=True, qb_tax_synced="0|9")
+    push = rec(p, "company", {"Taxable": False, "TaxExemptionReasonId": "9"}, can_push=True)
+    _check("a deliberate un-exemption is pushed", push.get("Taxable") is True)
+    _check("...retracting the stale reason", push.get("TaxExemptionReasonId") == "")
+
+    # Going taxable when QuickBooks holds no reason sends no empty field for it
+    # to chew on.
+    p = _exempt_company(taxable=True, qb_tax_synced="0|9")
+    push = rec(p, "company", {"Taxable": False}, can_push=True)
+    _check("nothing to retract → no reason key", "TaxExemptionReasonId" not in push)
+
+    # A deliberate exemption with no reason chosen still files a valid one —
+    # exempt-without-reason is exactly what QuickBooks rejects.
+    p = _exempt_company(qb_tax_synced="1|")
+    push = rec(p, "company", {"Taxable": True}, can_push=True)
+    _check("a reasonless exemption still files one",
+           push.get("TaxExemptionReasonId") == qbo_sync._DEFAULT_TAX_EXEMPTION_REASON)
+
+    # ── can_push=False: a caller with no update request to attach fields to. ─
+    p = _exempt_company(tax_exemption_reason="5", qb_tax_synced="1|")
+    push = rec(p, "company", {"Taxable": True}, can_push=False)
+    _check("no push channel → nothing pushed", push == {})
+    _check("...and the pending edit survives for the next push",
+           p.taxable is False and p.qb_tax_synced == "1|")
 
     # Directly-billed contacts are always taxable and hold no such columns.
     contact = types.SimpleNamespace(first_name="Jo", last_name="Lee")
     _check("contacts are skipped",
-           adopt(contact, "contact", {"Taxable": False, "TaxExemptionReasonId": "9"}) is False)
+           rec(contact, "contact", {"Taxable": False, "TaxExemptionReasonId": "9"}, can_push=True) == {})
     _check("...and nothing is written to them", not hasattr(contact, "taxable"))
+
+
+async def test_a_deliberate_app_change_is_pushed():
+    print("test_a_deliberate_app_change_is_pushed")
+    # Once the two have agreed on a status (qb_tax_synced), the app's pair moving
+    # away from it can only be someone changing it here on purpose — so it rides
+    # out on the same sparse update, over QuickBooks' own value.
+    party = _exempt_company(qb_customer_id="CUST-9", tax_exemption_reason="5",
+                            qb_tax_synced="1|")
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True,
+                      "DisplayName": "Dallas Theater Center", "Taxable": True})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("the edit is pushed", sent.get("Taxable") is False)
+    _check("...with the chosen reason", sent.get("TaxExemptionReasonId") == "5")
+    _check("...on the same request as the rest of the sync", sent.get("sparse") is True)
+    _check("the app keeps its edit", party.taxable is False)
+    _check("baseline moves so it is not pushed again", party.qb_tax_synced == "0|5")
+
+    # Second push, nothing changed since: back to quiet.
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "4", "Active": True,
+                      "DisplayName": "Dallas Theater Center",
+                      "Taxable": False, "TaxExemptionReasonId": "5"})
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("a settled status is not re-pushed", "Taxable" not in sent)
+
+
+async def test_a_failed_push_leaves_the_edit_pending():
+    print("test_a_failed_push_leaves_the_edit_pending")
+    # A customer sync hiccup on an ACTIVE customer is swallowed — the reference
+    # itself is fine and the invoice can still go. But the tax edit did NOT
+    # land, so the baseline must not move: otherwise the app and QuickBooks
+    # would be recorded as agreeing on something QuickBooks never received, and
+    # the change would never be retried.
+    party = _exempt_company(qb_customer_id="CUST-9", tax_exemption_reason="5",
+                            qb_tax_synced="1|")
+    qbo_sync.quickbooks.get_customer = AsyncMock(
+        return_value={"Id": "CUST-9", "SyncToken": "3", "Active": True,
+                      "DisplayName": "Dallas Theater Center", "Taxable": True})
+    qbo_sync.quickbooks.update_customer = AsyncMock(
+        side_effect=QboApiError(400, '{"Fault":{"Error":[{"Message":"nope"}]}}'))
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    got = await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+
+    _check("the push still returns the customer", got == "CUST-9")
+    _check("the edit stays pending", party.qb_tax_synced == "1|", party.qb_tax_synced)
+    _check("...and the app keeps it", party.taxable is False and party.tax_exemption_reason == "5")
+
+    # The next sync retries it, and this time it lands.
+    qbo_sync.quickbooks.update_customer = AsyncMock(return_value={})
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+    sent = qbo_sync.quickbooks.update_customer.await_args.args[2]
+    _check("the retry pushes it", sent.get("Taxable") is False
+           and sent.get("TaxExemptionReasonId") == "5")
+    _check("and now the baseline moves", party.qb_tax_synced == "0|5", party.qb_tax_synced)
+
+
+async def test_baseline_is_recorded_when_we_create_the_customer():
+    print("test_baseline_is_recorded_when_we_create_the_customer")
+    # A customer built FROM the app's status starts out agreeing with it, so the
+    # baseline has to be recorded — otherwise the very next push would read the
+    # app's own status as "never met" and hand control straight back.
+    saved = qbo_sync._settings_get
+    qbo_sync._settings_get = AsyncMock(return_value=None)
+    party = _exempt_company(tax_exemption_reason="5")
+    qbo_sync.quickbooks.query = AsyncMock(return_value=[])
+    qbo_sync.quickbooks.create_customer = AsyncMock(return_value={"Customer": {"Id": "CUST-77"}})
+    db = MagicMock()
+    db.flush = AsyncMock()
+
+    await _real_find_or_create_customer(
+        object(), db, party, "company", client_id="c", client_secret="s")
+    _check("baseline recorded from what we pushed", party.qb_tax_synced == "0|5")
+    qbo_sync._settings_get = saved
+
+
+def test_tax_baseline_is_not_client_writable():
+    print("test_tax_baseline_is_not_client_writable")
+    # The baseline is what tells a deliberate edit from a stale one. A client
+    # able to write it could fake "nothing changed" (its edit never pushes) or
+    # "everything changed" (QuickBooks' status is overwritten on the next push).
+    mapped = _dict_to_row(
+        {"qbTaxSynced": "1|", "taxable": False, "taxExemptionReason": "5"}, models.Company)
+    _check("qbTaxSynced stripped from client writes", "qb_tax_synced" not in mapped)
+    _check("its two subjects stay writable",
+           mapped.get("taxable") is False and mapped.get("tax_exemption_reason") == "5")
+    _check("column exists on the model",
+           "qb_tax_synced" in {c.name for c in models.Company.__table__.columns})
 
 
 async def test_customer_found_by_name_is_adopted_not_overwritten():
@@ -1655,7 +1805,8 @@ def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
                   test_period_label,
                   test_customer_billaddr_and_fields, test_income_account_readonly_columns,
-                  test_exempt_customer_carries_a_reason, test_adopting_quickbooks_tax_state]
+                  test_exempt_customer_carries_a_reason, test_reconciling_quickbooks_tax_state,
+                  test_tax_baseline_is_not_client_writable]
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
@@ -1674,10 +1825,13 @@ def main():
         test_inactive_customer_is_reactivated, test_failed_reactivation_says_which_customer,
         test_unreadable_cached_customer_is_re_resolved, test_names_the_unusable_reference,
         test_exemption_reason_resolution_order, test_new_exempt_customer_is_created_with_a_reason,
-        test_existing_customer_tax_status_is_never_pushed,
+        test_existing_customer_tax_status_is_not_pushed_unprompted,
+        test_a_deliberate_app_change_is_pushed,
         test_quickbooks_taxable_customer_is_adopted,
         test_customer_found_by_name_is_adopted_not_overwritten,
         test_quote_refreshes_tax_status_before_exempting,
+        test_baseline_is_recorded_when_we_create_the_customer,
+        test_a_failed_push_leaves_the_edit_pending,
         test_exemption_reason_is_client_writable,
     ]
     for t in sync_tests:
