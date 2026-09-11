@@ -273,7 +273,16 @@
 // the phone the rows no longer crush their own titles against a chip cluster
 // that could not shrink. ui.js, index.html, invoices.js, quotes-list.js,
 // projects.js, crm-shell.js, labor.js, the three rentals lists.
-var CACHE_VERSION = 'ltp-shell-v88';
+// v89: a tax-exempt client can be invoiced again. QuickBooks rejects a customer
+// marked not-taxable unless an exemption reason comes with it, and that
+// rejection failed the whole invoice export. The company info screen gains a
+// Sales Tax block — a Tax-exempt toggle and an Exemption Reason picker, both
+// editable in place — and the edit form carries the same pair. What an edit
+// DOES depends on whether QuickBooks has met the client: before its customer
+// exists the app's status builds it; after, QuickBooks owns the status and only
+// a deliberate change here is pushed back over it. Settings → QuickBooks sets
+// the workspace default reason. domain-qbo.js, crm-companies.js, settings.js.
+var CACHE_VERSION = 'ltp-shell-v89';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

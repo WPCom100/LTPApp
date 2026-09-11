@@ -144,3 +144,65 @@ window.LTP_qboPushOutcome = function(resp, money) {
   return { ok: false, reason: b.reason || "error", title: "QuickBooks sync failed", variant: "error",
            message: b.error || ("HTTP " + status + ".") };
 };
+
+// ── Tax exemption reasons ───────────────────────────────────────────────────
+// Intuit's fixed Customer.TaxExemptionReasonId enum, in id order. Mirrors
+// backend/qbo_sync.py::_TAX_EXEMPTION_REASONS — the two are checked against each
+// other in tests/test_sales_tax_plumbing.py, because a label drifting apart from
+// the id the server sends would let someone pick "Resale" and file "Hospital".
+//
+// Why the app carries this at all: QuickBooks' Automated Sales Tax rejects a
+// customer marked not-taxable unless a reason comes with it, and that fault
+// fails the invoice push, not just the customer sync. The reason is a real tax
+// attribute that differs per client, so it is picked per company rather than
+// guessed.
+window.LTP_QBO_TAX_EXEMPTION_REASONS = [
+  { value: "1",  label: "Federal government" },
+  { value: "2",  label: "State government" },
+  { value: "3",  label: "Local government" },
+  { value: "4",  label: "Tribal government" },
+  { value: "5",  label: "Charitable organization" },
+  { value: "6",  label: "Religious organization" },
+  { value: "7",  label: "Educational organization" },
+  { value: "8",  label: "Hospital" },
+  { value: "9",  label: "Resale" },
+  { value: "10", label: "Direct pay permit" },
+  { value: "11", label: "Multiple points of use" },
+  { value: "12", label: "Direct mail" },
+  { value: "13", label: "Agricultural production" },
+  { value: "14", label: "Industrial production or manufacturing" },
+  { value: "15", label: "Foreign diplomat" },
+];
+
+// The reason sent when a company has not chosen one — matches
+// backend/qbo_sync.py::_DEFAULT_TAX_EXEMPTION_REASON.
+window.LTP_QBO_DEFAULT_TAX_EXEMPTION_REASON = "9";
+
+// Label for a stored reason id, or "" when it is unset/unrecognized. Used to
+// show what a company would actually file without making the caller carry the
+// table around.
+window.LTP_qboExemptionReasonLabel = function(id) {
+  var want = String(id == null ? "" : id).trim();
+  var rows = window.LTP_QBO_TAX_EXEMPTION_REASONS;
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].value === want) return rows[i].label;
+  }
+  return "";
+};
+
+// What a company's sales tax controls mean, which depends on whether QuickBooks
+// has met this client yet.
+//
+// The status is always editable here — it is the app's to set. What changes is
+// what an edit DOES. Before the QuickBooks customer exists, the app's status is
+// what builds it. After, QuickBooks owns the status by default (that is where
+// tax is filed and where the exemption certificate lives), and only a
+// deliberate change made here is pushed back over it — see
+// backend/qbo_sync.py::_reconcile_customer_tax_state.
+//
+// `qbCustomerId` is the whole test, and it is the same one the backend uses.
+window.LTP_qboTaxStatusNote = function(company) {
+  return (company && company.qbCustomerId)
+    ? "Set from QuickBooks, which owns this client's tax status. Changing it here updates QuickBooks on the next invoice push."
+    : "Sent to QuickBooks when this client is first created there.";
+};

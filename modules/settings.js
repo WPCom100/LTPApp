@@ -687,6 +687,20 @@
               h(window.LTPSelect, { label: "Default Income Account", value: draft.qboIncomeAccountId || "",
                 onChange: function(v) { set("qboIncomeAccountId", v || null); },
                 options: incomeAccountOptions(draft.qboIncomeAccountId, "Auto — first income account in QuickBooks") }))),
+          // ── Sales tax exemption ────────────────────────────────────────────
+          // QuickBooks rejects a customer marked not-taxable unless an exemption
+          // reason rides along, and that rejection fails the whole invoice
+          // export. This is the reason used for any tax-exempt client that has
+          // not picked its own on its company record.
+          h("div", { style: { marginTop: 12, paddingTop: 12, borderTop: "1px solid " + B.border } },
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Sales Tax Exemption"),
+            h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 10, lineHeight: 1.5 } },
+              "QuickBooks requires a reason on every tax-exempt customer. This one is used for clients whose company record doesn't set its own — override it per client in CRM → Companies → Edit."),
+            h(window.LTPSelect, { label: "Default Exemption Reason",
+              value: draft.qboTaxExemptionReasonId || "",
+              onChange: function(v) { set("qboTaxExemptionReasonId", v || null); },
+              options: [{ value: "", label: window.LTP_qboExemptionReasonLabel(window.LTP_QBO_DEFAULT_TAX_EXEMPTION_REASON) + " (default)" }]
+                .concat(window.LTP_QBO_TAX_EXEMPTION_REASONS) })),
           h("div", { style: { display: "flex", gap: 8, marginTop: 12 } },
             qbo.needsReconnect && h("button", { onClick: connectQbo, style: { background: "#2CA01C", border: "none", borderRadius: "6px", padding: "6px 14px", color: "#fff", fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Reconnect"),
             h("button", { onClick: disconnectQbo, style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 14px", color: B.danger, fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } }, "Disconnect")))

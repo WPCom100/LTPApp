@@ -69,6 +69,12 @@ _READONLY_COLS = {
     # re-point path. Its sibling `qb_income_account_id` is deliberately NOT
     # here: that's the user-set override, editable like `taxable`.
     "qb_income_account_synced",
+    # The last tax status QuickBooks and a company row agreed on. It is what
+    # tells a deliberate edit of `taxable` / `tax_exemption_reason` from a stale
+    # one, so a client that could write it could fake "nothing changed" (its
+    # edit is then never pushed) or "everything changed" (QuickBooks' status is
+    # overwritten on the next push). Its two subjects stay user-editable.
+    "qb_tax_synced",
     # Auto-receipt state — written only by the receipt poller + the manual
     # receipt send path; the client must never set these via a CRUD PUT.
     "qb_balance", "receipt_email_status", "receipt_email_sent_at",
