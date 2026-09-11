@@ -309,6 +309,12 @@ def test_the_exemption_reason_table_matches_the_frontend():
         _check(f"reason {rid} label agrees", front.get(rid) == label,
                f"js={front.get(rid)!r} py={label!r}")
 
+    # The frontend decides whether to offer an editable picker from qbCustomerId
+    # alone — the same test the backend uses to decide push vs pull. If those two
+    # ever disagree the UI offers a control that silently does nothing.
+    _check("frontend gates editing on qbCustomerId",
+           "qbCustomerId" in js.split("LTP_qboTaxStatusIsEditable", 1)[-1][:400])
+
     m = re.search(r'LTP_QBO_DEFAULT_TAX_EXEMPTION_REASON = "([^"]+)"', js)
     _check("frontend knows the same fallback reason",
            m is not None and m.group(1) == _DEFAULT_TAX_EXEMPTION_REASON)

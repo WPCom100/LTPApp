@@ -54,10 +54,15 @@ class Company(Base):
     # Tax refuses a Customer carrying Taxable=false with no exemption reason
     # ("Tax Exemption Reason should be specified incase customer is marked as
     # not taxable"), which rejected the whole invoice push. Holds one of
-    # Intuit's fixed reason ids (qbo_sync._TAX_EXEMPTION_REASONS, "1".."15").
+    # Intuit's fixed reason ids (qbo_sync._TAX_EXEMPTION_REASONS, "1".."15");
     # "" means "not set" → the workspace default (Settings →
-    # qboTaxExemptionReasonId) is sent instead, so existing rows push without a
-    # backfill. Ignored entirely while `taxable` is True.
+    # qboTaxExemptionReasonId) stands in. Ignored while `taxable` is True.
+    #
+    # This and `taxable` are only an INPUT while `qb_customer_id` is null — i.e.
+    # until the QuickBooks customer exists. Once it does, QuickBooks owns both
+    # and each push copies them back down onto this row
+    # (qbo_sync._adopt_customer_tax_state), because that is where tax is filed
+    # and where exemption certificates are kept.
     tax_exemption_reason = Column(String(8), default="")
     qb_customer_id = Column(String(32), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

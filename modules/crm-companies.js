@@ -2,6 +2,49 @@
 (function() {
   var B = window.LTP_THEME, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS, fmt = window.LTP_formatDate, h = React.createElement, useState = React.useState;
 
+  // Sales tax status for one client, on the company info screen.
+  //
+  // Which controls it offers depends on who owns the value. Until the client
+  // exists in QuickBooks the app's setting is what gets pushed at creation, so
+  // both are pickers. Once it exists QuickBooks owns it and every push copies it
+  // back down (backend/qbo_sync.py::_adopt_customer_tax_state), so the same two
+  // values are shown as a read-only mirror — an editable control there would
+  // just be overwritten by the next push.
+  window.CompanyTaxStatus = function({ company, setCompanies }) {
+    var editable = window.LTP_qboTaxStatusIsEditable(company);
+    var taxable = !!company.taxable;
+    var reason = company.taxExemptionReason || "";
+    function patch(fields) {
+      setCompanies(function(prev) {
+        return prev.map(function(c) { return c.id === company.id ? Object.assign({}, c, fields) : c; });
+      });
+    }
+    return h("div", { style: { marginBottom: 20 } },
+      h("h4", { style: { fontSize: "13px", fontWeight: 700, color: B.textSec, margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" } }, "Sales Tax"),
+      h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 10 } },
+        h("div", { style: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+          editable
+            ? h("button", { onClick: function() { patch({ taxable: !taxable, taxExemptionReason: !taxable ? "" : reason }); },
+                style: { background: taxable ? B.accent : B.bg, color: taxable ? B.btnInk : B.textMut, border: "1px solid " + (taxable ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, fontFamily: "inherit", cursor: "pointer" } },
+                taxable ? "Taxable" : "Tax-exempt")
+            : h("span", { style: { background: B.bg, color: B.textSec, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, whiteSpace: "nowrap" } },
+                taxable ? "Taxable" : "Tax-exempt"),
+          h("span", { style: { fontSize: "10px", color: B.textMut } },
+            taxable ? "QuickBooks calculates sales tax on this client's invoices"
+                    : "No sales tax is charged on this client's invoices")),
+        !taxable && (editable
+          ? h(window.LTPSelect, { label: "Exemption Reason", value: reason,
+              onChange: function(v) { patch({ taxExemptionReason: v }); },
+              options: [{ value: "", label: "Use workspace default (Settings → QuickBooks)" }]
+                .concat(window.LTP_QBO_TAX_EXEMPTION_REASONS) })
+          : h("div", null,
+              h(window.LTPFieldLabel, { label: "Exemption Reason" }),
+              h("div", { style: { fontSize: "13px", color: B.text } },
+                window.LTP_qboExemptionReasonLabel(reason) || "Not set in QuickBooks"))),
+        h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic", lineHeight: 1.5 } },
+          window.LTP_qboTaxStatusNote(company))));
+  };
+
   window.CRMCompanyDetail = function({ ctx }) {
     var company = ctx.selectedCompany; if (!company) return null;
     var compContacts = ctx.contacts.filter(function(c) { return c.companyIds.includes(company.id); });
@@ -33,6 +76,11 @@
         h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Upcoming"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.info } }, upcomingP)),
         h("div", { style: { background: B.raised, borderRadius: "8px", padding: "12px 14px" } }, h("div", { style: { fontSize: "10px", color: B.textMut, textTransform: "uppercase", marginBottom: 4, fontWeight: 600 } }, "Completed"), h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.success } }, completedP))
       ),
+      // Sales tax status, at a glance and editable in place — the reason is a
+      // real tax attribute and previously took a trip through the Edit form to
+      // even see. Only meaningful for clients we bill, so it's hidden on a
+      // vendor-only company (same rule as Service Rates below).
+      company.isClient !== false && h(window.CompanyTaxStatus, { company: company, setCompanies: ctx.setCompanies }),
       h("h4", { style: { fontSize: "13px", fontWeight: 700, color: B.textSec, margin: "0 0 10px", textTransform: "uppercase", letterSpacing: "0.06em" } }, "Contacts (" + compContacts.length + ")"),
       h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 20 } },
         compContacts.map(function(c) { return h("div", { key: c.id, onClick: function() { ctx.setSelectedCompanyId(null); ctx.setEditContactId(c.id); }, style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", transition: "all 0.15s" }, onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; }, onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; } }, h("div", null, h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, c.firstName + " " + c.lastName), h("div", { style: { fontSize: "11px", color: B.textMut } }, c.role + " \u00b7 " + c.email + " \u00b7 " + c.phone)), h("span", { style: { fontSize: "11px", color: B.accent } }, "View \u2192")); }),
@@ -88,6 +136,11 @@
     // (Settings → QuickBooks), which is what every company created before this
     // field existed does.
     var [taxExemptionReason, setTaxExemptionReason] = useState(seed.taxExemptionReason || "");
+    // Once the QuickBooks customer exists, QuickBooks owns this client's tax
+    // status and each push copies it back down — so these two controls are an
+    // input only until then, and a read-only mirror after. Offering an editable
+    // picker for a linked client would be a lie: the next push overwrites it.
+    var taxEditable = window.LTP_qboTaxStatusIsEditable(initial);
     var cbStyle = function(on) { return { background: on ? B.accent : B.raised, color: on ? B.btnInk : B.textMut, border: "1px solid " + (on ? B.accent : B.border), borderRadius: "4px", padding: "4px 14px", fontSize: "11px", fontWeight: 600, cursor: "pointer" }; };
 
     return h(window.LTPModal, { title: initial ? "Edit Company" : "Add Company", onClose: onClose, disableBackdrop: true, zIndex: modalZIndex },
@@ -110,25 +163,46 @@
         h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
           h("label", { style: { fontSize: "11px", fontWeight: 600, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Sales Tax"),
           h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },
-            h("button", { onClick: function() { setTaxable(!taxable); }, style: cbStyle(taxable) }, taxable ? "Taxable" : "Tax-exempt"),
+            taxEditable
+              ? h("button", { onClick: function() { setTaxable(!taxable); }, style: cbStyle(taxable) }, taxable ? "Taxable" : "Tax-exempt")
+              : h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.textSec, background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "4px 14px" } }, taxable ? "Taxable" : "Tax-exempt"),
             h("span", { style: { fontSize: "10px", color: B.textMut } }, "QuickBooks calculates sales tax for taxable customers")
           ),
           // Exempt only: QuickBooks will not accept a customer marked not-taxable
           // without a reason, and refusing it fails the invoice export, not just
           // the customer sync. Blank falls back to the workspace default so
           // companies that pre-date this field keep exporting.
-          !taxable && h("div", { style: { marginTop: 8 } },
-            h(window.LTPSelect, { label: "Exemption Reason", value: taxExemptionReason,
-              onChange: setTaxExemptionReason,
-              options: [{ value: "", label: "Use workspace default (Settings → QuickBooks)" }]
-                .concat(window.LTP_QBO_TAX_EXEMPTION_REASONS) }),
-            h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
-              "Filed on the QuickBooks customer record as the reason no sales tax is charged."))
+          !taxable && (taxEditable
+            ? h("div", { style: { marginTop: 8 } },
+                h(window.LTPSelect, { label: "Exemption Reason", value: taxExemptionReason,
+                  onChange: setTaxExemptionReason,
+                  options: [{ value: "", label: "Use workspace default (Settings → QuickBooks)" }]
+                    .concat(window.LTP_QBO_TAX_EXEMPTION_REASONS) }),
+                h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
+                  "Filed on the QuickBooks customer record as the reason no sales tax is charged."))
+            : h("div", { style: { marginTop: 8 } },
+                h(window.LTPFieldLabel, { label: "Exemption Reason" }),
+                h("div", { style: { fontSize: "13px", color: B.text } },
+                  window.LTP_qboExemptionReasonLabel(taxExemptionReason) || "Not set in QuickBooks"))),
+          h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 6, fontStyle: "italic", lineHeight: 1.5 } },
+            window.LTP_qboTaxStatusNote(initial))
         ),
         h(window.LTPInput, { label: "Website", value: website, onChange: setWebsite, placeholder: "https://example.com" }),
         h(window.ImageUpload, { label: "Logo", value: logo, onChange: setLogo }),
         h(window.LTPInput, { label: "Notes", value: notes, onChange: setNotes, textarea: true, placeholder: "Internal notes..." }),
-        h(window.Btn, { onClick: function() { if (!name.trim()) return; onSave({ name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, city: city, state: stateRegion, zip: zip, taxable: taxable, taxExemptionReason: taxable ? "" : taxExemptionReason, website: website, logo: logo, notes: notes }); } }, initial ? "Save Changes" : "Save Company")
+        h(window.Btn, { onClick: function() {
+          if (!name.trim()) return;
+          var out = { name: name, isClient: isClient, isVendor: isVendor, status: status, address: address, city: city, state: stateRegion, zip: zip, website: website, logo: logo, notes: notes };
+          // Omit the tax pair entirely once QuickBooks owns it. A PUT only
+          // writes the keys it carries, so leaving them out means a status this
+          // form seeded before the last push cannot be written back over the
+          // one the push just adopted.
+          if (taxEditable) {
+            out.taxable = taxable;
+            out.taxExemptionReason = taxable ? "" : taxExemptionReason;
+          }
+          onSave(out);
+        } }, initial ? "Save Changes" : "Save Company")
       )
     );
   };

@@ -275,9 +275,14 @@
 // projects.js, crm-shell.js, labor.js, the three rentals lists.
 // v89: a tax-exempt client can be invoiced again. QuickBooks rejects a customer
 // marked not-taxable unless an exemption reason comes with it, and that
-// rejection failed the whole invoice export — so the company form gained an
-// "Exemption Reason" picker (shown only while exempt) and Settings → QuickBooks
-// a workspace default. domain-qbo.js, crm-companies.js, settings.js.
+// rejection failed the whole invoice export. The company info screen and the
+// edit form now both carry the client's sales tax status: a "Tax-exempt" toggle
+// and an "Exemption Reason" picker while the client has yet to reach
+// QuickBooks — that pair is what gets pushed when its customer is created — and
+// the same two values as a read-only mirror once it has, because from then on
+// QuickBooks owns them and every push copies them back down. Settings →
+// QuickBooks sets the workspace default reason. domain-qbo.js,
+// crm-companies.js, settings.js.
 var CACHE_VERSION = 'ltp-shell-v89';
 
 var SAME_ORIGIN_PRECACHE = [
