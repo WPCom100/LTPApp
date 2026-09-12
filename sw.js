@@ -309,7 +309,10 @@
 // skips the staff auth probe there; both are precached, so the shell must be
 // refetched. dev had taken v92 for the gear check-out work, so this is the
 // next string above it.
-var CACHE_VERSION = 'ltp-shell-v93';
+// v94: the crew portal's explanatory blurbs are gone (sign-in intro and
+// invitation note, the signup/reset advice, the schedule and pay legends, the
+// account hints). modules/crew-portal.js only, but it is precached.
+var CACHE_VERSION = 'ltp-shell-v94';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

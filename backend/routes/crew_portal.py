@@ -347,7 +347,6 @@ _PORTAL_FALLBACKS = {
 _PORTAL_KINDS = {
     "invite": {"template": "crewInvite", "eyebrow": "Crew portal",
                "title": "Set up your account", "cta": "Set Up My Account",
-               "sub": "Choose a password and you're in — your calls, requests and pay in one place.",
                "expires": "7 days"},
     "reset": {"template": "crewPasswordReset", "eyebrow": "Crew portal",
               "title": "Reset your password", "cta": "Choose a New Password",
@@ -361,13 +360,14 @@ def _portal_header_html(kind: str, url: str, company: str) -> str:
     same shape as the crew request's header (routes/crew.py::_crew_header_html)
     so every crew email reads as one family."""
     k = _PORTAL_KINDS[kind]
+    sub = k.get("sub") or ""   # optional one-liner under the title; the button follows directly without it
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
         '<tr><td style="padding:22px;text-align:center">'
         '<div style="font-size:12px;color:#8a949e;text-transform:uppercase;letter-spacing:0.06em">' + escape(company) + ' &middot; ' + escape(k["eyebrow"]) + '</div>'
-        '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 2px">' + escape(k["title"]) + '</div>'
-        '<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + escape(k["sub"]) + '</div>'
+        '<div style="font-size:19px;font-weight:bold;color:#233038;margin:4px 0 ' + ("2px" if sub else "18px") + '">' + escape(k["title"]) + '</div>'
+        + ('<div style="font-size:12px;color:#8a949e;margin-bottom:18px">' + escape(sub) + '</div>' if sub else '') +
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin:0 auto"><tr>'
         '<td style="background-color:' + _CTA_ORANGE + ';border-radius:7px">'
         '<a href="' + escape(url) + '" style="display:inline-block;padding:14px 38px;font-size:15px;font-weight:bold;'
