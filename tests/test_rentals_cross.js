@@ -145,8 +145,14 @@ ok("S12 quote picker mounts RentalsCrossForm with a z-index above itself", /wind
 ok("S13 quote picker saves through the shared helpers", /upsertCrossRental\(/.test(qb) && /rememberVendorRates\(/.test(qb));
 const sh = fs.readFileSync(path.join(root, "modules", "rentals-shell.js"), "utf8");
 ok("S14 shell saves orders through the shared helpers too", /R\.upsertCrossRental\(/.test(sh) && /R\.rememberVendorRates\(/.test(sh));
-ok("S15 shell routes the Allocations tab", /RentalsAllocationsView/.test(sh) && /"allocations"/.test(sh));
-ok("S16 allocations + cross-rental modules are loaded by index.html", idx.includes("modules/rentals-allocations.js") && idx.includes("modules/rentals-cross.js") && idx.includes("components/vendor-rates.js"));
+ok("S15 shell hands the popup a per-booking state setter (no Allocations tab)", /onSetBookingState:\s*setAllocationState/.test(sh) && !/RentalsAllocationsView/.test(sh));
+ok("S16 cross-rental modules are loaded by index.html", idx.includes("modules/rentals-cross.js") && idx.includes("components/vendor-rates.js") && !idx.includes("rentals-allocations.js"));
+// Gear leaves and comes back from the quote: one button for the whole job.
+ok("S18 quote builder checks gear out / returns it through the gear route", /\/api\/quotes\/" \+ draft\.id \+ "\/gear/.test(qb) && /"checked-out"/.test(qb) && /"returned"/.test(qb));
+const eqm = fs.readFileSync(path.join(root, "modules", "rentals-equipment.js"), "utf8");
+ok("S19 equipment popup lists bookings with their source and an inline state", /Bookings/.test(eqm) && /onSetBookingState\(/.test(eqm) && /Quote #/.test(eqm));
+const inv = fs.readFileSync(path.join(root, "modules", "rentals-inventory.js"), "utf8");
+ok("S20 inventory list says where each item is", /Where/.test(inv) && /"checked-out"/.test(inv));
 // The order form only ever counts confirmed/picked-up as inventory.
 ok("S17 CROSS_COUNTS is exactly confirmed + picked-up", Object.keys(R.CROSS_COUNTS).sort().join(",") === "confirmed,picked-up");
 

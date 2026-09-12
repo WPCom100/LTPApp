@@ -1145,6 +1145,8 @@
     var [sendHeaderVars, setSendHeaderVars] = useState(null);
     var [sending, setSending] = useState(false);  // disables Send button while POST is in flight
     var [generatingPdf, setGeneratingPdf] = useState(false);
+    // Check out / return of the gear behind this quote (see the header).
+    var [gearBusy, setGearBusy] = useState(false);
 
     // Generate PDF: POST /api/quotes/{id}/pdf → triggers archive + activity
     // append on the server → returns {token, downloadUrl, filename}. We then
@@ -2014,6 +2016,52 @@
         : h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: isMobile ? "wrap" : "nowrap" } },
           justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: "5px 10px", borderRadius: "6px", transition: "opacity 0.2s" } }, "\u2713 Saved"),
           (draft.status === "accepted" || draft.status === "converted") && h("div", { style: { fontSize: "10px", color: B.warn, padding: "4px 10px", border: "1px solid " + B.warn, borderRadius: "6px" } }, "Locked"),
+          // ── Gear on the job ────────────────────────────────────────────
+          // The bookings behind this quote's equipment lines — on the quote
+          // itself, or on the invoices it converted into (the handover in
+          // backend/rental_bookings.py). Check Out when the gear leaves the
+          // shop, so a later edit of the document can't release it; Mark
+          // Returned when it is back, early or not, so it is quotable again.
+          (function() {
+            if (!(draft.status === "accepted" || draft.status === "converted") || draft.id == null) return null;
+            var rows = (allocations || []).filter(function(a) { return a.docType === "quote" && a.docId === draft.id; });
+            (invoices || []).forEach(function(inv) {
+              (inv.sections || []).forEach(function(sec) {
+                (sec.items || []).forEach(function(it) {
+                  if (it && it.type === "equipment" && it.sourceQuoteId === draft.id) {
+                    rows = rows.concat((allocations || []).filter(function(a) { return a.docType === "invoice" && a.docId === inv.id && a.lineId === it.id; }));
+                  }
+                });
+              });
+            });
+            if (rows.length === 0) return null;
+            var held = rows.filter(function(a) { return a.state === "reserved" || a.state === "allocated"; }).length;
+            var out  = rows.filter(function(a) { return a.state === "checked-out"; }).length;
+            var back = rows.filter(function(a) { return a.state === "returned"; }).length;
+            function move(state) {
+              setGearBusy(true);
+              fetch("/api/quotes/" + draft.id + "/gear", { method: "POST", credentials: "include",
+                headers: { "Content-Type": "application/json" }, body: JSON.stringify({ state: state }) })
+                .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }, function() { return { ok: r.ok, body: {} }; }); })
+                .then(function(res) {
+                  setGearBusy(false);
+                  if (!res.ok) { showAlert("Gear", "Could not update the bookings. " + ((res.body && res.body.detail && JSON.stringify(res.body.detail)) || "")); return; }
+                  if (window.LTP_toast) window.LTP_toast(state === "checked-out" ? "Gear checked out" : "Gear marked returned", { variant: "success" });
+                })
+                .catch(function() { setGearBusy(false); showAlert("Gear", "Could not reach the server."); });
+            }
+            var summary = [held ? held + " reserved" : null, out ? out + " out" : null, back ? back + " returned" : null].filter(Boolean).join(" \u00b7 ");
+            var btn = function(key, label, state, primary) {
+              return h("button", { key: key, onClick: function() { move(state); }, disabled: gearBusy, title: label + " every booking behind this quote",
+                style: { background: primary ? B.accent : "transparent", border: primary ? "none" : "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px",
+                         color: primary ? B.btnInk : B.textSec, fontSize: "11px", fontWeight: primary ? 700 : 500, fontFamily: "inherit", cursor: gearBusy ? "wait" : "pointer", opacity: gearBusy ? 0.6 : 1 } }, label);
+            };
+            return [
+              h("span", { key: "g", title: "Bookings behind this quote's equipment lines", style: { fontSize: "10px", color: out ? B.accent : B.textMut, padding: "4px 8px", border: "1px solid " + (out ? B.accent + "66" : B.border), borderRadius: "6px", whiteSpace: "nowrap" } }, "Gear: " + summary),
+              held > 0 && btn("co", "Check Out Gear", "checked-out", true),
+              out > 0 && btn("rt", "Mark Returned", "returned", false),
+            ];
+          })(),
           draft.id != null && h("button", {
               onClick: generatePdf,
               disabled: generatingPdf,
