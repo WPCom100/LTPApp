@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import undefer
 from backend.database import async_session, get_db
-from backend import crew_integrity, livesync, models, payouts
+from backend import crew_integrity, livesync, models, payouts, rental_bookings
 from backend.auth_deps import load_session_user, require_session, require_admin
 from backend.sanitize import email_html
 from backend.validators import validate
@@ -448,6 +448,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             row.share_token = secrets.token_urlsafe(32)
         db.add(row)
         await db.flush()
+        # Bookings are derived from confirmed documents: an invoice books its
+        # equipment lines from the moment it exists, an accepted quote from the
+        # moment it is accepted (backend/rental_bookings.py). A new document is
+        # usually a draft that books nothing, but a POSTed invoice is not.
+        if model_cls in (models.Quote, models.Invoice):
+            r = await rental_bookings.reconcile_doc(
+                db, "quote" if model_cls is models.Quote else "invoice", row)
+            if any(r.values()):
+                livesync.mark_dirty(db, "allocations")
         await db.refresh(row)
         livesync.mark_dirty(db, path)
         return _row_to_dict(row)
@@ -595,6 +604,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             # crew-requests collection moved too even though this was a project
             # write. Same on the delete path below.
             livesync.mark_dirty(db, "crew-requests")
+        # Booking integrity (Quote/Invoice): a status change, a line edit or a
+        # date change moves what the document commits us to. Re-derive its
+        # allocations so availability follows the document, not the other way
+        # round (backend/rental_bookings.py).
+        if model_cls in (models.Quote, models.Invoice):
+            r = await rental_bookings.reconcile_doc(
+                db, "quote" if model_cls is models.Quote else "invoice", row)
+            if any(r.values()):
+                livesync.mark_dirty(db, "allocations")
         await db.refresh(row)
         livesync.mark_dirty(db, path)
         return _row_to_dict(row)
@@ -641,6 +659,14 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
         if model_cls is models.Project:
             await crew_integrity.reconcile_project(db, row, deleted=True)
             livesync.mark_dirty(db, "crew-requests")
+        # A deleted document releases the bookings it still merely reserved;
+        # gear already checked out against it stays booked until it is
+        # returned by hand (backend/rental_bookings.py).
+        if model_cls in (models.Quote, models.Invoice):
+            r = await rental_bookings.reconcile_doc(
+                db, "quote" if model_cls is models.Quote else "invoice", row, deleted=True)
+            if any(r.values()):
+                livesync.mark_dirty(db, "allocations")
         await db.delete(row)
         # Audit destructive ops (SECURITY_REVIEW.md L3). Deletes stay member-
         # level by design (trusted staff delete their own drafts) but are now
@@ -681,6 +707,42 @@ _crud_routes(router, "client-rates", models.ClientRate, has_activity=False)
 _crud_routes(router, "allocations", models.Allocation, has_activity=False)
 _crud_routes(router, "containers",  models.Container, has_activity=False)
 _crud_routes(router, "kits",        models.Kit,       has_activity=False)
+# Cross rentals (docs/CROSS_RENTAL_PLAN.md): what a vendor charges us per
+# item, and the orders of gear rented in. Hyphenated like client-rates.
+_crud_routes(router, "vendor-rates",  models.VendorRate,  has_activity=False)
+_crud_routes(router, "cross-rentals", models.CrossRental, has_activity=False)
+
+
+@router.post("/quotes/{item_id}/gear")
+async def quote_gear(item_id: int, data: dict, db: AsyncSession = Depends(get_db),
+                     user: models.User = Depends(require_session)):
+    """Check out, or return, all the gear an accepted quote books — the rows
+    keyed to the quote plus any handed to its invoices on conversion
+    (backend/rental_bookings.py::set_gear_state). Body: {"state": "checked-out"
+    | "returned"}. Checked out means the gear physically left, so a later edit
+    of the document will not release it; returned frees it, early or not."""
+    state = (data or {}).get("state") if isinstance(data, dict) else None
+    if state not in rental_bookings._GEAR_MOVES:
+        raise HTTPException(status_code=400, detail={"field": "state", "reason": "must be checked-out or returned"})
+    row = (await db.execute(select(models.Quote).where(models.Quote.id == item_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"quotes {item_id} not found")
+    moved = await rental_bookings.set_gear_state(db, item_id, state)
+    if moved:
+        livesync.mark_dirty(db, "allocations")
+    return {"updated": moved, "state": state}
+
+
+@router.post("/allocations/reconcile", dependencies=[Depends(require_admin)])
+async def reconcile_allocations(db: AsyncSession = Depends(get_db)):
+    """Rebuild every document-derived booking from the quotes and invoices as
+    they stand (backend/rental_bookings.py::reconcile_all). Idempotent; the
+    Allocations tab offers it as "Rebuild from documents". Manual bookings are
+    never touched."""
+    totals = await rental_bookings.reconcile_all(db)
+    if any(totals.values()):
+        livesync.mark_dirty(db, "allocations")
+    return totals
 
 
 # ── Settings (singleton JSON blob; admin-only write) ──────────────────────

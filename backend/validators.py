@@ -55,6 +55,11 @@ ENUMS = {
     "crew_status":      {"active", "inactive"},
     "company_status":   {"active", "inactive", "one-time", "prospect"},
     "equipment_status": {"available", "rented", "under-maintenance"},
+    # Cross-rental orders (backend/models.py::CrossRental). Only confirmed and
+    # picked-up count as inventory — see modules/rentals-utils.js::crossRentedQty.
+    "cross_rental_status": {"quoted", "confirmed", "picked-up", "returned", "cancelled"},
+    # Where a booking came from (backend/rental_bookings.py).
+    "allocation_doc_type": {"manual", "quote", "invoice"},
 }
 
 
@@ -311,6 +316,21 @@ def _build_rules():
         models.Allocation: {
             "state":     _enum("allocation_state"),
             "qty":       _nonneg_number,
+            "startDate": _iso_date,
+            "endDate":   _iso_date,
+            "docType":   _enum("allocation_doc_type"),
+            "lineId":    _str_max(64),
+        },
+        # Vendor price memory + cross-rental orders (docs/CROSS_RENTAL_PLAN.md).
+        # Line contents inside CrossRental.lines are not validated per element,
+        # the same as quote items — readers guard per line.
+        models.VendorRate: {
+            "vendorItem": _str_max(255),
+            "quotedDate": _iso_date,
+        },
+        models.CrossRental: {
+            "reference": _str_max(100),
+            "status":    _enum("cross_rental_status"),
             "startDate": _iso_date,
             "endDate":   _iso_date,
         },

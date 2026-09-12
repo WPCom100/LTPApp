@@ -198,6 +198,33 @@ def _app_origin() -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def crew_origin() -> str:
+    """Origin every CREW-FACING link is built on — the invitation and reset
+    links, the call-sheet link in a crew request or confirmation. It is
+    LTP_CREW_PORTAL_ORIGIN when that names a valid http(s) origin (the crew
+    portal's own domain, e.g. https://crew.example.com — see
+    docs/CREW_DOMAIN.md), else the app origin. Staff-facing links and every
+    asset URL (masthead, avatars) stay on _app_origin(): a mail client fetches
+    those from whichever host, and the app host is the one that is never
+    detached."""
+    raw = (os.environ.get("LTP_CREW_PORTAL_ORIGIN") or "").strip().rstrip("/")
+    if raw:
+        parsed = urlparse(raw)
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}"
+    return _app_origin()
+
+
+def crew_host() -> str:
+    """Lower-case hostname (no port) of LTP_CREW_PORTAL_ORIGIN, or "" when it is
+    unset or malformed. backend/main.py keys the crew-host identity on it."""
+    raw = (os.environ.get("LTP_CREW_PORTAL_ORIGIN") or "").strip()
+    parsed = urlparse(raw) if raw else None
+    if parsed is not None and parsed.scheme in ("http", "https") and parsed.hostname:
+        return parsed.hostname.lower()
+    return ""
+
+
 def _build_view_url(entity_type: str, share_token: str, tracking_token: str) -> str:
     """Per-recipient client view URL. The `?r=` query param is what the
     backend's view route uses to attribute opens to a specific recipient."""

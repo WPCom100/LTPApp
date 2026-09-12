@@ -46,6 +46,9 @@
     companies: 1, contacts: 1, projects: 1, quotes: 1, invoices: 1,
     equipment: 1, products: 1, services: 1, fees: 1, "client-rates": 1,
     allocations: 1, containers: 1, kits: 1,
+    // Cross rentals: vendor price memory + orders of gear rented in
+    // (docs/CROSS_RENTAL_PLAN.md).
+    "vendor-rates": 1, "cross-rentals": 1,
   };
 
   function classify(key) {

@@ -356,6 +356,8 @@
   <script src="data/allocations.js"></script>
   <script src="data/containers.js"></script>
   <script src="data/kits.js"></script>
+  <script src="data/vendor-rates.js"></script>
+  <script src="data/cross-rentals.js"></script>
 
   <!-- 5. Shared components.
        DOMPurify: external HTML sanitizer used by sanitize.js. MUST load
@@ -397,6 +399,8 @@
   <script src="components/email-body-editor.js"></script>
   <script src="components/recipient-editor.js"></script>
   <script src="components/client-rates.js"></script>
+  <!-- Vendor rental rates editor + vendor order history (cross rentals). -->
+  <script src="components/vendor-rates.js"></script>
   <script src="components/doc-terms.js"></script>
   <!-- Record-payment modal, lifted out of the invoice builder. -->
   <script src="components/doc-payment-form.js"></script>
@@ -436,6 +440,8 @@
   <script src="modules/rentals-inventory.js"></script>
   <script src="modules/rentals-containers.js"></script>
   <script src="modules/rentals-kits.js"></script>
+  <!-- Cross rentals: orders of gear rented in from a vendor (docs/CROSS_RENTAL_PLAN.md). -->
+  <script src="modules/rentals-cross.js"></script>
   <script src="modules/rentals-shell.js"></script>
 
   <!-- 6d. Quotes sub-modules.
@@ -462,6 +468,11 @@
   <!-- Public crew-request view — rendered when the URL starts with #/crew/.
        Loaded here so app.js can reference window.LTPCrewView. -->
   <script src="modules/crew-view.js"></script>
+  <!-- Crew portal — the crew member's own sign-in + dashboard, rendered when
+       the URL starts with #/crew-portal. Loaded here so app.js can reference
+       window.LTPCrewPortal. Reads LTP_useIsMobile (ui.js), LTP_gcalUrl and
+       LTP_useDocFreshness (domain-util.js) — all loaded above. -->
+  <script src="modules/crew-portal.js"></script>
 
   <!-- 7. App shell — wires everything -->
   <script src="app.js"></script>

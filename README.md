@@ -144,6 +144,8 @@ shell exports.
 | `LTP_APP_VARIANT` | Optional | (none) | Set to `dev` on a non-production deployment to give its installed PWA a distinct home-screen icon (the "DEV"-tagged variant) and name ("LTP Dev"), so it's unmistakable next to production ("LTP"). Unset = normal production identity. See [Dev app identity](#dev-app-identity). |
 | `ANTHROPIC_API_KEY` | Optional | (none) | Enables label OCR in the barcode scan-import flow: when the barcode won't decode (glare/angle), the frame is sent to Claude to read the serial *printed* on the label. Unset = the feature hides itself entirely. **Secret — server-side only.** Get a key at console.anthropic.com; usage is roughly $2–3 per 1,000 fallback reads. |
 | `LTP_OCR_MODEL` | Optional | `claude-haiku-4-5-20251001` | Overrides the Claude model used for label OCR. Haiku is fast and cheap; only change if Anthropic deprecates the default. |
+| `LTP_CREW_PORTAL_ORIGIN` | Optional | (none) | The crew portal's own domain, e.g. `https://crew.luminarytechnology.productions` — a second custom domain on the same Railway service. When set, every crew-facing email link (invitations, resets, call sheets) is built on it, and requests arriving on that host get the crew identity: a bare visit lands on `#/crew-portal`, the tab and home-screen name read *LTP Crew*, and the PWA installs opening on the portal. Unset = crew links use the app origin. Setup: [docs/CREW_DOMAIN.md](docs/CREW_DOMAIN.md). |
+| `LTP_CREW_PORTAL_SENDER_EMAIL` | Optional | (none) | Which team member's Gmail sends the crew portal's **self-serve** emails — a crew member's own "Forgot your password?" and "Request access" (invitations and resets a producer sends from the roster go out as that producer). Must be a user who has signed in with Gmail connected. Unset = the most recently signed-in admin with Gmail connected. See [Crew portal](#crew-portal). |
 
 ## Inline add / edit on entity pickers
 
@@ -331,6 +333,108 @@ All three FKs CASCADE, so an override can't outlive its client or its service.
 The engine reads only `minHours` / `minCostHours` off the resolved service; the
 rate/cost columns are ordinary rate-card values by the time they reach it.
 
+## Cross rentals & vendor pricing
+
+Gear rented **in** from a vendor to cover what we don't stock or don't have
+free on the dates. The whole thing rests on three ideas:
+
+- **A cross rental is an order.** One per vendor, with a reference number, a
+  rental period, an optional project and a list of lines — the fixtures
+  (catalog items) and the parts and accessories that come with them (free
+  text, cost only). It reads like the vendor's PO because that is what it is.
+- **Quoted is not inventory; confirmed is.** Like a quote, an order the vendor
+  has only quoted does not change availability. It is flagged as *quoted*
+  wherever availability is shown, so nobody sources it twice. Once the order is
+  **confirmed** (or picked up), its catalog-item lines count as our stock for
+  the dates they cover. Owned units and cross-rented units stack.
+- **Vendor prices are remembered.** What each vendor charges us per item, in
+  the same 3-day / week / month tiers as our own rates, with the date it was
+  last quoted — so the next time you can see who to call and what they charged.
+
+### Where it lives
+
+| Surface | What you get |
+|---|---|
+| **Rentals → Cross Rentals** | The orders list (filters for open / status / vendor, overdue flag), the order form, and the detail popup with each line's cost and what other vendors price the item at. |
+| **Rentals → Availability Checker** | Totals include confirmed cross-rented units for the range, with an *incl. ×N cross-rented · Vendor* chip; quoted orders show as *×N quoted*. When an item is short, the row lists the vendors who price it (preferred first, then cheapest) and **+ Cross rental** opens the order form already filled in with the item, the dates and the vendor. |
+| **Quote builder → Add Item** | Same totals and chips. An item with nothing free offers **Cross-rent**, which opens the order form *over* the picker so the draft stays put. |
+| **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), the open cross rentals naming it, and its **Bookings** — which job, which document, when, and a per-booking state. The checker opens this popup when you click an item. |
+| **Rentals → Equipment List** | **Where** says which jobs each item is on ("Autumn Gala ×3 (out)"), and the status reads *out* (physically checked out), *reserved* (booked for today or later), *available*, or *cross-rental*. |
+| **CRM → a vendor** | **Rental Rates** — every item this vendor prices — and the orders placed with them, with the year's spend. |
+| **Rentals → Equipment → Add / Edit** | **Cross-rental only** marks gear we never stock. The row still exists so the item can be quoted at *our* rates and checked for availability; the inventory list labels it instead of showing a 0-unit item as available. It is a label, not a mode — switch it off the day you buy some. |
+
+### The order form
+
+Pick the vendor and every catalog line's rates are seeded from that vendor's
+price rows (a `RATE ON FILE` chip while unchanged, with the quoted date). Type
+a different price and the line says so. Each line carries qty, the three
+tiers, a computed cost from the rental-pricing engine (or a flat **override
+total** for a negotiated deal), optional **own dates** when a part comes back
+on a different day, and notes. **Remember these prices** (on by default)
+refreshes the vendor's price rows on save — only for lines whose price differs
+from what is on file, stamped with today's date, so re-saving an old order to
+mark it returned never re-dates a price.
+
+Status runs `quoted → confirmed → picked-up → returned`, or `cancelled`. It
+never moves on its own; an order past its end date and still out shows as
+**overdue**.
+
+### Counting rule
+
+A cross rental counts toward a date range only when its period **covers the
+whole range** — deliberately conservative, and the mirror of how bookings are
+counted (any overlapping booking counts against the whole range). A line's own
+dates, when set, are what is checked; otherwise the order's.
+
+### Data model
+
+`vendor_rates`, one row per (vendor company, equipment item), both FKs
+CASCADE — see `backend/models.py::VendorRate`. `cross_rentals`, one row per
+order with the lines in JSON (`CrossRental.lines`, documented on the model);
+vendor and project FKs SET NULL so the cost record outlives either.
+`equipment.cross_rental_only` is the label above. The helpers every surface
+shares live in `modules/rentals-utils.js` (`crossRentedQty`, `crossQuotedQty`,
+`totalQty`, `vendorOptions`, `lineCost`, `orderCost`), guarded by
+`tests/test_rentals_cross.js` and `tests/test_quote_availability.py`.
+
+## Bookings (allocations)
+
+An **allocation** is the record that some units of an item are booked to a
+project for a date range — it is what makes the checker read "3 of 10
+available" and the item popup say "On Rental". Bookings are **derived from
+confirmed documents** (`backend/rental_bookings.py`):
+
+- An **accepted quote** books one allocation per equipment line for that
+  line's rental dates (the section's own period when set, else the quote's
+  project dates, else its custom dates). A draft or sent quote books nothing.
+- An **invoice** books its equipment lines in every status — an invoice only
+  exists for confirmed work, and the draft created by converting a quote must
+  keep the booking alive without a gap. A partially invoiced quote books the
+  un-invoiced remainder while the invoice books what it drew, so nothing is
+  counted twice.
+- Bookings are keyed by document and line, so editing the document **updates
+  the same row** instead of stacking a second one, and the state someone set
+  on it survives. A line that stops booking releases its row only while it is
+  still `reserved` / `allocated`; gear that is physically `checked-out` keeps
+  counting until it is returned by hand.
+- **Converting a quote hands its bookings to the invoice.** An invoice line
+  drawn from a quote line adopts the quote's booking: the same row is re-keyed
+  to the invoice with its state intact, so gear checked out against the quote
+  stays checked out. A partial conversion splits the quantity and the invoice's
+  part inherits the state. Either save order lands on the same rows.
+- **Gear leaves and comes back from the quote.** An accepted (or converted)
+  quote's header shows *Gear: 3 reserved · 2 out* with **Check Out Gear** and
+  **Mark Returned** — one click moves every booking behind the quote's
+  equipment lines, including the ones its invoices now own
+  (`POST /api/quotes/{id}/gear`). Per-item, the equipment popup's **Bookings**
+  list has the same state on each row, and the Equipment List's **Where**
+  column says which jobs an item is on.
+- The reconcile runs on every quote/invoice create, save and delete, on the
+  client's public accept link, and once at boot as a backfill. An admin can
+  rebuild every derived booking with `POST /api/allocations/reconcile`.
+  Bookings with `docType: "manual"` (entered through the API) are never touched
+  by the engine.
+
 ## Flat-rate positions (fixed-cost hires)
 
 Some people are hired for the **whole production at a flat fee** and never get
@@ -392,6 +496,98 @@ event spanning the project dates.
   scheduled days), marked with a dashed edge and "Flat rate · whole project"
   in place of call times. The Calendar grid, which places rows on a single
   date, does not show them.
+
+## Crew portal
+
+Crew members get their **own sign-in** at `#/crew-portal` — a dashboard that
+answers, from their phone, the three things they otherwise had to ask about:
+what am I on next, what's still waiting on my answer, and what am I owed.
+
+It is deliberately a **separate credential system** from the staff app. Staff
+sign in with Google and carry the `ltp_session` cookie; crew sign in with an
+email + password and carry `ltp_crew_session`, which is checked only by the
+portal's own routes (`backend/routes/crew_portal.py`). A crew session reaches
+no `/api/*` staff route, and a staff session is not a crew session. Passwords
+are scrypt-hashed (`backend/crew_auth.py`, standard library — no new
+dependency); sessions and one-time links are stored as SHA-256 hashes, so a
+database read yields nothing usable.
+
+### What crew see
+
+| Tab | What's on it |
+|---|---|
+| **Overview** | Tiles (requests needing an answer · accepted-awaiting-confirmation · confirmed calls · next call), the **requests waiting on them** with Accept / I Can't Make It and an optional note right there (the same state machine as the emailed call sheet, which stays one tap away), the next five calls, this pay period, and their recent answers with where each stands (awaiting confirmation → confirmed, declined, released). |
+| **Schedule** | Every call they're on from today forward, grouped by date: role, call/wrap, project, venue, the producer's shift note, a map link, **Add to calendar** on confirmed calls, and a status chip — *Needs your answer*, *Awaiting confirmation*, *Confirmed*. Flat-rate positions list as one block with the fee and the schedule outline. A *Recently worked* view shows the last few weeks' confirmed calls with a *Signed off* marker. |
+| **Pay** | Paid this year, this period, pending, next pay day; then one card per pay period (the next, the current, and the last five): signed-off days with the frozen figure the QuickBooks bill posts (tier, hours, adjustments itemized), confirmed-but-unsigned days as *~estimates* from the pay locked at confirm, the period's pay day, and whether its bill is **Not yet submitted / Submitted / Paid** (from `payout_bills`). Never another crew member's day, never the client's rate. |
+| **Account** | Sign-in email, the roster email requests go to (when different), roles and departments, a **phone** they keep current themselves (it lands on their roster row), change password (signs out other devices), sign out. |
+
+The dashboard re-checks itself every ten seconds (the same freshness poll as
+the call sheet) and on every return to the app, and adopts changes silently —
+a producer moving a call, confirming them, or signing off a day shows up
+without a reload.
+
+### Getting crew in
+
+Access is **by invitation**, and the roster is the onboarding step:
+
+- **Labor → Crew Roster → + Add Crew** with an email address emails a crew
+  portal invitation as soon as the row saves (a checkbox on the form, on by
+  default). Existing crew get a **Crew Portal** block on their edit form —
+  *Send invitation*, *Resend invitation*, *Send password reset*, and for
+  admins *Turn off / on access* — plus a **Portal** column on the list
+  (— / Invited / Active / Off).
+- An invitation link (`#/crew-portal/signup/<token>`) is single-use and good
+  for **7 days**; accepting it means choosing a password (8+ characters).
+  Resending retires the earlier link. Invitations go to the email **on file**;
+  an unsaved email edit disables the button rather than sending to the old
+  address. If the email can't go out (the sender's Google isn't connected, say),
+  the roster shows the link once so the producer can text it — that link is
+  the credential, so it is never returned otherwise.
+- **Forgot your password?** on the sign-in screen emails a reset link
+  (`#/crew-portal/reset/<token>`, good for **1 hour**); finishing a reset
+  signs out every other device. **Request access** does the right thing for
+  the address given: an invitation for a roster email with no account, a reset
+  for one that has one, nothing otherwise — and always answers the same way, so
+  an address can't be tested for existence. Both are throttled to one email
+  per crew member every two minutes.
+- **Turning access off** (admin) signs the crew member out everywhere,
+  retires their open links and blocks sign-in; the password survives a later
+  *Turn on*. Setting a crew member **inactive** on the roster also blocks
+  sign-in. Deleting the contact deletes the account.
+
+Sign-in is rate-limited per IP (30 attempts a minute on the sign-in surface)
+and per account (10 wrong passwords locks the account for 15 minutes), and a
+wrong email and a wrong password answer identically. Invitations and resets a
+producer sends go out **as that producer** through the Gmail pipeline; the
+self-serve ones go out as `LTP_CREW_PORTAL_SENDER_EMAIL` (else the most
+recently signed-in admin with Gmail connected). Both templates —
+**Crew Portal Invitation** and **Crew Portal Password Reset** — are editable
+under Settings → Email Templates.
+
+### Its own domain
+
+The portal can live at **crew.luminarytechnology.productions** — a second custom
+domain on the same Railway service, switched per request on the `Host` header.
+Set `LTP_CREW_PORTAL_ORIGIN` and every crew-facing link is built on it; a bare
+visit to that host lands on the portal instead of the staff sign-in, and the
+PWA installs there as *LTP Crew*. Step by step, with verification and rollback:
+[docs/CREW_DOMAIN.md](docs/CREW_DOMAIN.md).
+
+### Routes
+
+| | |
+|---|---|
+| `POST /api/crew-portal/auth/login` · `logout` · `GET …/auth/me` | the crew session |
+| `POST /api/crew-portal/auth/forgot` · `request-access` | self-serve links (always `{ok: true}`) |
+| `GET /api/crew-portal/auth/token/{token}` | who a link is for, and whether it is still live |
+| `POST /api/crew-portal/auth/signup` · `reset` · `change-password` | set / change the password |
+| `GET /api/crew-portal/dashboard?today=` · `…/dashboard/version` | the dashboard payload and its freshness stamp |
+| `POST /api/crew-portal/requests/{id}/respond` | answer one of their own requests |
+| `GET /api/crew-portal/accounts` · `POST …/{contactId}/invite` · `reset` · `disable` · `enable` | staff side (session-gated; disable/enable admin-only) |
+
+Tables: `crew_accounts`, `crew_sessions`, `crew_auth_tokens` (migration
+`e0f1a2b3c4d5`). Tests: `tests/test_crew_portal.py` (backend, end to end) and
+`tests/test_crew_portal_routes.js` (routing + wiring).
 
 ## Role order (dropdowns and exported lines)
 
@@ -836,7 +1032,7 @@ All entities follow REST conventions:
 | PUT | `/api/{entity}/{id}` | Update |
 | DELETE | `/api/{entity}/{id}` | Delete |
 
-Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`
+Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`, `vendor-rates`, `cross-rentals`
 
 `PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
 row the API returns includes one). If the row changed since you read it, the PUT
@@ -848,6 +1044,8 @@ header keeps last-write-wins. See *Live sync* below.
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
 - `GET /api/versions` — Per-collection change stamps (live sync)
+- `POST /api/quotes/{id}/gear` — Check out (`{"state":"checked-out"}`) or return (`"returned"`) every booking behind a quote's gear
+- `POST /api/allocations/reconcile` — Rebuild every document-derived booking (admin)
 - `GET /api/stream` — Server-sent change feed (live sync)
 
 ## Live sync (cross-window)
@@ -1033,6 +1231,7 @@ ltp-app/
 │   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
 │   ├── pdf_generator.py   # Quote/invoice PDF rendering
 │   ├── livesync.py        # Cross-window change stamps + SSE broadcast bus
+│   ├── rental_bookings.py # Bookings (allocations) derived from accepted quotes + invoices
 │   └── routes/
 │       ├── api.py         # REST API routes
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete

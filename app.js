@@ -2,6 +2,9 @@
 // Picks what to render based on the route AND window.LTP_AUTH_USER:
 //   route.module === "view"  → public client view; render LTPClientView with
 //                              NO auth gate (the share token is the credential)
+//   route.module === "crew" / "crew-portal" → the crew call sheet (token) and
+//                              the crew portal (its own password sign-in);
+//                              both outside the staff gate
 //   authUser === undefined   → auth check in flight; show "Loading…"
 //   authUser === null        → not signed in; show sign-in screen
 //   authUser === {…}         → signed in; render LTPSignedInApp (the real app)
@@ -50,6 +53,14 @@ window.LTPApp = function() {
   // is the credential, no LTP session required (see modules/crew-view.js).
   if (route.module === "crew") {
     return h(window.LTPCrewView, { route: route });
+  }
+
+  // Crew portal — the crew member's own password sign-in and dashboard. Also
+  // outside the staff gate: it authenticates itself against its own cookie
+  // (ltp_crew_session) and never touches the staff session or /api/* data
+  // hooks (see modules/crew-portal.js, backend/routes/crew_portal.py).
+  if (route.module === "crew-portal") {
+    return h(window.LTPCrewPortal, { route: route });
   }
 
   if (authUser === undefined) {
@@ -172,6 +183,11 @@ function LTPSignedInApp(props) {
   var [allocations, setAllocations, allocationsReady] = usePersistentState("allocations", window.LTP_DATA_ALLOCATIONS);
   var [containers,  setContainers,  containersReady]  = usePersistentState("containers",  window.LTP_DATA_CONTAINERS);
   var [kits,        setKits,        kitsReady]        = usePersistentState("kits",        window.LTP_DATA_KITS);
+  // Cross rentals — what each vendor charges us per item, and the orders of
+  // gear rented in (docs/CROSS_RENTAL_PLAN.md). Confirmed orders count as
+  // inventory in every availability surface (rentals-utils.js::totalQty).
+  var [vendorRates,  setVendorRates,  vendorRatesReady]  = usePersistentState("vendor-rates",  window.LTP_DATA_VENDOR_RATES);
+  var [crossRentals, setCrossRentals, crossRentalsReady] = usePersistentState("cross-rentals", window.LTP_DATA_CROSS_RENTALS);
   // Quotes + catalogs
   var [quotes,   setQuotes,   quotesReady]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
   var [products, setProducts, productsReady] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
@@ -188,6 +204,7 @@ function LTPSignedInApp(props) {
 
   var allReady = companiesReady && contactsReady && projectsReady
               && equipmentReady && allocationsReady && containersReady && kitsReady
+              && vendorRatesReady && crossRentalsReady
               && quotesReady && productsReady && servicesReady && feesReady && clientRatesReady
               && invoicesReady && settingsReady;
 
@@ -417,7 +434,7 @@ function LTPSignedInApp(props) {
   function renderModule() {
     switch (activeModule) {
       case "dashboard": return h(window.LTPErrorBoundary, { name: "Dashboard" }, h(window.DashboardView, { companies: companies, projects: projects, quotes: quotes, equipment: equipment, invoices: invoices, contacts: contacts, services: services, settings: settings }));
-      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services, clientRates: clientRates, setClientRates: setClientRates }));
+      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services, clientRates: clientRates, setClientRates: setClientRates, equipment: equipment, vendorRates: vendorRates, setVendorRates: setVendorRates, crossRentals: crossRentals }));
       case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, clientRates: clientRates, invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId, route: route, settings: settings }));
       case "calendar":  return h(window.LTPErrorBoundary, { name: "Calendar" }, h(window.CalendarView,  { projects: projects }));
       case "rentals":   return h(window.LTPErrorBoundary, { name: "Rentals" }, h(window.RentalsView,   {
@@ -426,6 +443,8 @@ function LTPSignedInApp(props) {
         allocations: allocations, setAllocations: setAllocations,
         containers: containers,   setContainers: setContainers,
         kits: kits,               setKits: setKits,
+        vendorRates: vendorRates,   setVendorRates: setVendorRates,
+        crossRentals: crossRentals, setCrossRentals: setCrossRentals,
       }));
       case "quotes":    return h(window.LTPErrorBoundary, { name: "Quotes" }, h(window.QuotesView,    {
         // The quote builder never mutates projects — see modules/quotes-shell.js.
@@ -436,6 +455,8 @@ function LTPSignedInApp(props) {
         fees: fees,         setFees: setFees,
         clientRates: clientRates, setClientRates: setClientRates,
         equipment: equipment, allocations: allocations,
+        crossRentals: crossRentals, vendorRates: vendorRates,
+        setCrossRentals: setCrossRentals, setVendorRates: setVendorRates,
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,
@@ -550,20 +571,11 @@ function LTPSignedInApp(props) {
 
           // Rentals sub-nav
           if (sidebarOpen && m.id === "rentals") {
-            var rentalSubs = [
-              { path: "rentals", label: "Availability Checker" },
-              { path: "rentals/equipment",  label: "Equipment List"       },
-              { path: "rentals/containers", label: "Containers List"      },
-              { path: "rentals/kits",       label: "Kits & Packages"      },
-            ];
+            var rentalSubs = LTP_MODULE_SUBS.rentals;
             rentalSubs.forEach(function(sub) {
               var subActive = sub.path === "rentals"
                 ? (route.module === "rentals" && !route.sub)
-                : sub.path === "rentals/equipment"
-                  ? (route.module === "rentals" && route.sub === "equipment")
-                  : sub.path === "rentals/containers"
-                    ? (route.module === "rentals" && route.sub === "containers")
-                    : (route.module === "rentals" && route.sub === "kits");
+                : (route.module === "rentals" && route.sub === sub.path.split("/")[1]);
               rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
@@ -713,10 +725,11 @@ var LTP_MODULE_SUBS = {
     { path: "crm/contacts",  label: "Contacts"  },
   ],
   rentals: [
-    { path: "rentals",            label: "Availability Checker" },
-    { path: "rentals/equipment",  label: "Equipment List"       },
-    { path: "rentals/containers", label: "Containers List"      },
-    { path: "rentals/kits",       label: "Kits & Packages"      },
+    { path: "rentals",               label: "Availability Checker" },
+    { path: "rentals/equipment",     label: "Equipment List"       },
+    { path: "rentals/containers",    label: "Containers List"      },
+    { path: "rentals/kits",          label: "Kits & Packages"      },
+    { path: "rentals/cross-rentals", label: "Cross Rentals"        },
   ],
   quotes: [
     { path: "quotes",          label: "Quotes"   },

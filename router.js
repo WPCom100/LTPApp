@@ -13,6 +13,8 @@
 // Special module — public client view (token-only, no session):
 //   view/quote/<token>       → { module:"view", sub:"quote",   id:<token>, action:null }
 //   view/invoice/<token>     → { module:"view", sub:"invoice", id:<token>, action:null }
+//   crew/<token>             → { module:"crew", sub:null, id:<token> }   (call sheet)
+//   crew-portal/<screen>[/<token>] → { module:"crew-portal", sub:<screen>, id:<token|null> }
 //   ?preview=1               → query.preview = "1" (used by Preview button to
 //                               disable accept/decline so the LTP user doesn't
 //                               accidentally finalize a quote during preview)
@@ -24,6 +26,23 @@
 //   crm/companies/5/edit              → { module:"crm",  sub:"companies", id:5, action:"edit", query:{} }
 //   view/quote/abc123?preview=1       → { module:"view", sub:"quote",     id:"abc123", action:null, query:{preview:"1"} }
 (function() {
+
+  // Where a bare visit lands. The staff dashboard — unless the page says
+  // otherwise: on the crew portal's own domain the server serves index.html
+  // with <meta name="ltp-default-route" content="crew-portal"> (backend/
+  // main.py, docs/CREW_DOMAIN.md), so a crew member typing the address reaches
+  // their portal, not the staff Google sign-in. Read once at load; the tag is
+  // absent on every other host and the value is validated to a route name.
+  function defaultRoute() {
+    try {
+      var meta = (typeof document !== "undefined" && document.querySelector)
+        ? document.querySelector('meta[name="ltp-default-route"]') : null;
+      var v = meta && meta.getAttribute("content");
+      if (v && /^[a-z][a-z-]*$/.test(v)) return v;
+    } catch (e) { /* no DOM (tests) → the staff default */ }
+    return "dashboard";
+  }
+  var DEFAULT_ROUTE = defaultRoute();
 
   function isNumericId(s) {
     return s && s !== "new" && s !== "edit" && !isNaN(Number(s));
@@ -46,7 +65,7 @@
   }
 
   function parsePath(hash) {
-    var raw   = (hash || "").replace(/^#\/?/, "") || "dashboard";
+    var raw   = (hash || "").replace(/^#\/?/, "") || DEFAULT_ROUTE;
     // Split off the query portion BEFORE the path split so segments like
     // "abc?preview=1" don't end up in `id`. The "?" lives inside the hash
     // string; the browser doesn't peel it off for us.
@@ -55,7 +74,7 @@
     var query = parseQuery(qIdx >= 0 ? raw.substring(qIdx + 1) : "");
 
     var parts  = path.split("/");
-    var module = parts[0] || "dashboard";
+    var module = parts[0] || DEFAULT_ROUTE;
 
     // Public client view: dedicated parsing because the third segment is an
     // opaque token (non-numeric, longer than any normal ID) and the existing
@@ -78,6 +97,22 @@
         module: "crew",
         sub: null,
         id: parts[1] || null,      // crew request token
+        action: null,
+        query: query,
+      };
+    }
+
+    // Crew portal: #/crew-portal[/<screen>[/<token>]]. The second segment is a
+    // screen name (login, forgot, request-access, signup, reset, overview,
+    // schedule, payouts, account) and the third — for signup/reset — is an
+    // opaque one-time token, which the generic parser below would otherwise
+    // mistake for an `action`. Handled here like "crew" so the token lands in
+    // `id` untouched (modules/crew-portal.js).
+    if (module === "crew-portal") {
+      return {
+        module: "crew-portal",
+        sub: parts[1] || null,     // screen
+        id: parts[2] || null,      // invitation / reset token
         action: null,
         query: query,
       };
@@ -139,10 +174,11 @@
     return route;
   }
 
-  // Default redirect to dashboard on bare load. DOES NOT fire when the user
-  // arrives at a #view/... URL (that hash is non-empty).
+  // Default redirect on a bare load — the dashboard, or the crew portal on its
+  // own host (see defaultRoute above). DOES NOT fire when the user arrives at a
+  // #view/... URL (that hash is non-empty).
   if (!window.location.hash || window.location.hash === "#") {
-    window.location.hash = "/dashboard";
+    window.location.hash = "/" + DEFAULT_ROUTE;
   }
 
   window.LTPRouter = { getRoute: getRoute, navigate: navigate, replace: replace, useRoute: useRoute };

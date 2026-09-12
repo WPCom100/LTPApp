@@ -282,7 +282,34 @@
 // exists the app's status builds it; after, QuickBooks owns the status and only
 // a deliberate change here is pushed back over it. Settings → QuickBooks sets
 // the workspace default reason. domain-qbo.js, crm-companies.js, settings.js.
-var CACHE_VERSION = 'ltp-shell-v89';
+// v90: cross rentals. Gear rented in from a vendor: a Cross Rentals tab (orders
+// with lines), per-vendor price memory on the company screen and the equipment
+// popup, confirmed orders counting as inventory in every availability surface,
+// and an Allocations tab now that bookings are derived from accepted quotes and
+// invoices. rentals-utils.js (pricing engine moved here), rentals-cross.js,
+// rentals-allocations.js, vendor-rates.js, app.js, data-state.js.
+// v91: the crew portal — a crew member's own password sign-in and dashboard
+// (modules/crew-portal.js, #/crew-portal). index.html gained its script tag,
+// router.js parses the new route, components/auth.js skips the staff auth
+// probe on it and app.js renders it outside the staff gate; all four are
+// precached or runtime-cached, so the shell must be refetched. The roster
+// (modules/labor.js) grew the invitation controls and data/settings.js the two
+// new email templates. dev had already taken v90 for cross rentals, so this
+// is the next string above it (see the note on the numbers above).
+// v92: gear leaves and returns from the quote (Check Out Gear / Mark Returned
+// on an accepted quote), the equipment list says where each item is, and the
+// item popup lists its bookings with a per-booking state. The Allocations tab
+// is gone. quotes-builder.js, rentals-inventory.js, rentals-equipment.js,
+// rentals-shell.js, app.js.
+// (v91 was taken by the crew portal on dev while this shipped as v91 on its
+// branch, so the merge takes the next string above both.)
+// v93: the crew portal's own domain (docs/CREW_DOMAIN.md). router.js lands a
+// bare visit on the route the page names (<meta name="ltp-default-route">,
+// which backend/main.py sets only on the crew host) and components/auth.js
+// skips the staff auth probe there; both are precached, so the shell must be
+// refetched. dev had taken v92 for the gear check-out work, so this is the
+// next string above it.
+var CACHE_VERSION = 'ltp-shell-v93';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
