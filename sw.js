@@ -296,7 +296,14 @@
 // (modules/labor.js) grew the invitation controls and data/settings.js the two
 // new email templates. dev had already taken v90 for cross rentals, so this
 // is the next string above it (see the note on the numbers above).
-var CACHE_VERSION = 'ltp-shell-v91';
+// v92: gear leaves and returns from the quote (Check Out Gear / Mark Returned
+// on an accepted quote), the equipment list says where each item is, and the
+// item popup lists its bookings with a per-booking state. The Allocations tab
+// is gone. quotes-builder.js, rentals-inventory.js, rentals-equipment.js,
+// rentals-shell.js, app.js.
+// (v91 was taken by the crew portal on dev while this shipped as v91 on its
+// branch, so the merge takes the next string above both.)
+var CACHE_VERSION = 'ltp-shell-v92';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

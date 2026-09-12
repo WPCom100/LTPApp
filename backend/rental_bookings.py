@@ -18,6 +18,7 @@ into every path that can change what a document commits us to:
                                                                    (one-time backfill for
                                                                    documents that pre-date
                                                                    this engine; idempotent)
+    check out / return     (POST /api/quotes/{id}/gear)          → set_gear_state()
 
 Policy (confirmed with the owner: "similar to quotes, it's not marked as
 unavailable until it's confirmed")
@@ -42,7 +43,14 @@ unavailable until it's confirmed")
   gear that is physically out (``checked-out``) keeps counting against
   availability until someone returns it, and ``returned`` rows are history.
   ``under-maintenance`` rows are never touched.
-- ``doc_type == "manual"`` rows (entered on the Allocations tab) are never
+- Converting a quote HANDS ITS BOOKINGS TO THE INVOICE. An invoice line that
+  draws from a quote line (``sourceQuoteId`` / ``sourceItemId``) adopts the
+  quote's booking: when it draws everything the quote still books, the row is
+  re-keyed to the invoice with its state intact (gear checked out against the
+  quote stays checked out); when it draws part, the invoice row is created in
+  the quote row's state and the quote row shrinks to the remainder. Either
+  save order (invoice first or quote first) lands on the same rows.
+- ``doc_type == "manual"`` rows (entered by hand through the API) are never
   touched by anything here.
 """
 from __future__ import annotations
@@ -177,6 +185,62 @@ def _referenced_project_ids(row) -> set:
     return ids
 
 
+def _source_map(invoice) -> dict:
+    """invoice line id → (sourceQuoteId, sourceItemId) for lines drawn from a quote."""
+    out = {}
+    for sec in (invoice.sections if isinstance(invoice.sections, list) else []):
+        if not isinstance(sec, dict):
+            continue
+        for it in (sec.get("items") if isinstance(sec.get("items"), list) else []):
+            if not isinstance(it, dict) or it.get("type") != "equipment":
+                continue
+            qid, lid = it.get("sourceQuoteId"), it.get("sourceItemId")
+            if isinstance(qid, int) and not isinstance(qid, bool) and lid:
+                out[str(it.get("id") or "")] = (qid, str(lid))
+    return out
+
+
+async def _adopt_from_quotes(db: AsyncSession, invoice, wanted: dict, existing_line_ids: set):
+    """For each invoice line drawn from a quote line that has no booking on
+    this invoice yet, take over the quote's booking (see the module docstring).
+    Returns (adopted, inherited): rows re-keyed onto this invoice, keyed by
+    invoice line id, and the state a still-to-be-created row should start in."""
+    adopted: dict = {}
+    inherited: dict = {}
+    sources = _source_map(invoice)
+    quote_cache: dict = {}
+    for line_id, ln in wanted.items():
+        if line_id in existing_line_ids or line_id not in sources:
+            continue
+        qid, src_line = sources[line_id]
+        q_row = (await db.execute(
+            select(models.Allocation).where(
+                models.Allocation.doc_type == "quote",
+                models.Allocation.doc_id == qid,
+                models.Allocation.line_id == src_line,
+            )
+        )).scalars().first()
+        if q_row is None:
+            continue
+        if qid not in quote_cache:
+            quote = (await db.execute(select(models.Quote).where(models.Quote.id == qid))).scalar_one_or_none()
+            q_wanted = {}
+            if quote is not None:
+                projects = await _load_projects(db, _referenced_project_ids(quote))
+                q_wanted = {x["line_id"]: x for x in booking_lines("quote", quote, projects)}
+            quote_cache[qid] = q_wanted
+        remainder = quote_cache[qid].get(src_line, {}).get("qty", 0)
+        if remainder <= 0 or ln["qty"] >= remainder:
+            # The invoice takes the whole booking: same row, new owner.
+            q_row.doc_type, q_row.doc_id, q_row.line_id = "invoice", invoice.id, line_id
+            for col in ("equipment_id", "qty", "start_date", "end_date", "project_id"):
+                setattr(q_row, col, ln[col])
+            adopted[line_id] = q_row
+        else:
+            inherited[line_id] = q_row.state
+    return adopted, inherited
+
+
 async def reconcile_doc(db: AsyncSession, doc_type: str, row, *, deleted: bool = False) -> dict:
     """Bring the allocations owned by this document in line with what it books.
     Flushes when anything changed. Returns {"created", "updated", "removed"}
@@ -210,6 +274,12 @@ async def reconcile_doc(db: AsyncSession, doc_type: str, row, *, deleted: bool =
 
     created = updated = removed = 0
     seen: set = set()
+    inherited: dict = {}
+    if doc_type == "invoice" and not deleted:
+        adopted, inherited = await _adopt_from_quotes(db, row, wanted, {a.line_id for a in existing})
+        for line_id in adopted:
+            seen.add(line_id)
+            updated += 1
     for a in existing:
         ln = wanted.get(a.line_id)
         if ln is None or a.line_id in seen:
@@ -234,7 +304,8 @@ async def reconcile_doc(db: AsyncSession, doc_type: str, row, *, deleted: bool =
             continue
         db.add(models.Allocation(
             equipment_id=ln["equipment_id"], project_id=ln["project_id"], qty=ln["qty"],
-            start_date=ln["start_date"], end_date=ln["end_date"], state="reserved",
+            start_date=ln["start_date"], end_date=ln["end_date"],
+            state=inherited.get(line_id, "reserved"),
             notes="", doc_type=doc_type, doc_id=row.id, line_id=line_id,
         ))
         created += 1
@@ -257,3 +328,55 @@ async def reconcile_all(db: AsyncSession) -> dict:
             for k in totals:
                 totals[k] += r[k]
     return totals
+
+
+
+# What "check out" and "return" move, and from where. Return frees anything
+# still out or merely held (a job that wrapped early); under-maintenance rows
+# are a repair record, never gear on a job.
+_GEAR_MOVES = {
+    "checked-out": ("reserved", "allocated"),
+    "returned": ("reserved", "allocated", "checked-out"),
+}
+
+
+async def gear_rows_for_quote(db: AsyncSession, quote_id: int) -> list:
+    """Every booking that belongs to this quote's gear: the rows keyed to the
+    quote itself, plus rows on invoices for lines drawn from it (the handover
+    above moves bookings there on conversion)."""
+    rows = list((await db.execute(
+        select(models.Allocation).where(
+            models.Allocation.doc_type == "quote",
+            models.Allocation.doc_id == quote_id,
+        )
+    )).scalars().all())
+    invoices = (await db.execute(select(models.Invoice))).scalars().all()
+    pairs = set()
+    for inv in invoices:
+        for line_id, (qid, _src) in _source_map(inv).items():
+            if qid == quote_id:
+                pairs.add((inv.id, line_id))
+    if pairs:
+        inv_rows = (await db.execute(
+            select(models.Allocation).where(
+                models.Allocation.doc_type == "invoice",
+                models.Allocation.doc_id.in_({p[0] for p in pairs}),
+            )
+        )).scalars().all()
+        rows.extend(a for a in inv_rows if (a.doc_id, a.line_id) in pairs)
+    return rows
+
+
+async def set_gear_state(db: AsyncSession, quote_id: int, state: str) -> int:
+    """Check out (or return) every booking behind a quote's gear. Returns how
+    many rows moved. Flushes when any did."""
+    from_states = _GEAR_MOVES[state]
+    moved = 0
+    for a in await gear_rows_for_quote(db, quote_id):
+        if a.state in from_states:
+            a.state = state
+            moved += 1
+    if moved:
+        await db.flush()
+        print(f"[LTP] bookings: quote {quote_id} gear → {state} ({moved} row(s))", flush=True)
+    return moved

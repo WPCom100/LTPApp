@@ -3,10 +3,11 @@
 (function() {
   var h = React.createElement, useState = React.useState;
 
-  window.RentalsInventoryView = function({ equipment, allocations, onOpenEquipment }) {
+  window.RentalsInventoryView = function({ equipment, allocations, projects, onOpenEquipment }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
 
+    projects = projects || [];
     var [catFilter, setCatFilter] = useState("all");
     var [search,    setSearch]    = useState("");
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
@@ -19,16 +20,45 @@
     // Units on the road right now, and open maintenance issues. Both were muted
     // scraps at the right edge of the old row; as columns they can be ordered
     // by, which is how you find what is out and what is broken.
+    // Where the units are. "Out" is gear that physically left (checked out,
+    // whatever its dates); "reserved" is booked for today or later and still
+    // in the shop. Both come from the bookings accepted quotes and invoices
+    // create (backend/rental_bookings.py).
+    var today = R.today();
+    function bookingsFor(eq) {
+      return allocations.filter(function(a) {
+        if (a.equipmentId !== eq.id) return false;
+        if (a.state === "checked-out") return true;
+        return (a.state === "reserved" || a.state === "allocated") && (a.endDate || "") >= today;
+      });
+    }
     function outQty(eq) {
-      return allocations.filter(function(a) { return a.equipmentId === eq.id && a.state !== "returned"; })
+      return allocations.filter(function(a) { return a.equipmentId === eq.id && a.state === "checked-out"; })
         .reduce(function(s, a) { return s + a.qty; }, 0);
+    }
+    function reservedQty(eq) {
+      return bookingsFor(eq).filter(function(a) { return a.state !== "checked-out"; })
+        .reduce(function(s, a) { return s + a.qty; }, 0);
+    }
+    // "Autumn Gala ×3 (out), Spring Show ×2"
+    function whereText(eq) {
+      var parts = bookingsFor(eq).slice().sort(function(a, b) {
+        if ((a.state === "checked-out") !== (b.state === "checked-out")) return a.state === "checked-out" ? -1 : 1;
+        return (a.startDate || "") < (b.startDate || "") ? -1 : 1;
+      }).map(function(a) {
+        var p = projects.find(function(x) { return x.id === a.projectId; });
+        return (p ? p.name : "No project") + " \u00d7" + a.qty + (a.state === "checked-out" ? " (out)" : "");
+      });
+      var text = parts.slice(0, 2).join(", ");
+      if (parts.length > 2) text += " +" + (parts.length - 2);
+      return text;
     }
     function issueCount(eq) {
       return eq.serialized
         ? (eq.units || []).reduce(function(s, u) { return s + (u.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length; }, 0)
         : (eq.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
     }
-    function availability(eq) { return eq.crossRentalOnly ? "cross-rental" : outQty(eq) > 0 ? "partial" : "available"; }
+    function availability(eq) { return eq.crossRentalOnly ? "cross-rental" : outQty(eq) > 0 ? "out" : reservedQty(eq) > 0 ? "reserved" : "available"; }
 
     var COLS = [
       { key: "name",     label: "Item",         w: "minmax(0,1.8fr)",
@@ -39,6 +69,7 @@
         sort: function(e) { return e.manufacturer || ""; } },
       { key: "units",    label: "Units",  w: "78px",  align: "right", mono: true, dir: "desc", sort: R.eqQty },
       { key: "out",      label: "Out",    w: "68px",  align: "right", mono: true, dir: "desc", sort: outQty },
+      { key: "where",    label: "Where",  w: "minmax(0,1.4fr)", sort: whereText },
       { key: "issues",   label: "Issues", w: "76px",  align: "right", mono: true, dir: "desc", sort: issueCount },
       { key: "rate",     label: "3-Day",  w: "100px", align: "right", mono: true, dir: "desc",
         sort: function(e) { return (e.rates && e.rates.threeDay) || 0; } },
@@ -101,12 +132,14 @@
               openIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, openIssues + " issue" + (openIssues > 1 ? "s" : "")),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + R.baseRate(eq) + "/3-day"),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.crossRentalOnly ? "not stocked" : totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : ""))
+                h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.crossRentalOnly ? "not stocked" + (whereText(eq) ? " \u00b7 " + whereText(eq) : "") : totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : "") + (whereText(eq) ? " \u00b7 " + whereText(eq) : ""))
               ),
               eq.crossRentalOnly
                 ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "cross-rental")
                 : activeOut > 0
-                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "out")
+                : reservedQty(eq) > 0
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "reserved")
                 // The green "available" chip is the default state — redundant on
                 // a phone, so it's dropped there (the desktop table keeps it).
                 : null
@@ -131,12 +164,15 @@
                 h("span", { style: { fontSize: "12px", color: B.textSec } }, eq.manufacturer || "—"),
                 h("span", { style: { fontSize: "12px", color: B.textSec } }, eq.crossRentalOnly ? "\u2014" : R.eqQty(eq)),
                 h("span", { style: { fontSize: "12px", color: activeOut > 0 ? B.accent : B.textMut, fontWeight: activeOut > 0 ? 700 : 400 } }, activeOut || "—"),
+                h("span", { title: whereText(eq), style: { fontSize: "11px", color: B.textSec, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, whereText(eq) || "\u2014"),
                 h("span", { style: { fontSize: "12px", color: openIssues > 0 ? B.danger : B.textMut, fontWeight: openIssues > 0 ? 700 : 400 } }, openIssues || "—"),
                 h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + R.baseRate(eq)),
                 eq.crossRentalOnly
                   ? h("span", { style: Object.assign({}, chip, { background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55" }) }, "cross-rental")
                   : activeOut > 0
-                  ? h("span", { style: Object.assign({}, chip, { background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44" }) }, "partial")
+                  ? h("span", { style: Object.assign({}, chip, { background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44" }) }, "out")
+                  : reservedQty(eq) > 0
+                  ? h("span", { style: Object.assign({}, chip, { background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55" }) }, "reserved")
                   : h("span", { style: Object.assign({}, chip, { background: B.successBg, color: B.success, border: "1px solid " + B.successBd }) }, "available"),
               ] };
             }) })

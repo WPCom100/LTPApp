@@ -379,6 +379,107 @@ def test_api_deleting_a_quote_releases_its_reservations():
     _check("reservations released", _allocs(client, "quote", 8104) == [])
 
 
+def _inv_body(iid, ids, qid, src_line, qty):
+    """An invoice drawing `qty` of Mover A from quote `qid`'s line `src_line` —
+    the shape the convert flow posts."""
+    return {"id": iid, "clientType": "company", "companyId": ids["co"], "projectId": ids["proj"], "quoteId": qid,
+            "status": "draft", "sections": [{"id": "isec" + str(iid), "label": "Lighting", "customDates": False,
+                                             "startDate": "", "endDate": "", "items": [
+                {"id": f"i{iid}-a", "type": "equipment", "equipmentId": ids["eqA"], "name": "Mover A", "qty": qty,
+                 "unitPrice": 100, "sourceItemId": src_line, "sourceQuoteId": qid, "linkedQty": qty}]}]}
+
+
+def _gear(client, qid, state):
+    return client.post(f"/api/quotes/{qid}/gear", json={"state": state}, cookies=_cookies())
+
+
+def _rows_for(client, ids, qid):
+    """Every booking of Mover A that belongs to quote `qid`: on the quote or on
+    invoice `qid` (the tests reuse the id for the invoice drawn from it)."""
+    return [a for a in _allocs(client) if a["equipmentId"] == ids["eqA"] and a["docId"] == qid
+            and a["docType"] in ("quote", "invoice")]
+
+
+def test_api_gear_checkout_and_return():
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8108, ids, "accepted", qty_a=2, qty_b=1))
+    r = _gear(client, 8108, "lost")
+    _check("unknown gear state is a 400", r.status_code == 400, r.text[:120])
+    r = _gear(client, 424242, "checked-out")
+    _check("unknown quote is a 404", r.status_code == 404, r.text[:120])
+    r = _gear(client, 8108, "checked-out")
+    _check("check out ok", r.status_code == 200, r.text[:120])
+    _check("…moved both bookings", r.json() == {"updated": 2, "state": "checked-out"}, r.text)
+    _check("…rows are checked out", all(a["state"] == "checked-out" for a in _allocs(client, "quote", 8108)))
+    r = _gear(client, 8108, "checked-out")
+    _check("checking out again moves nothing", r.json()["updated"] == 0, r.text)
+    r = _gear(client, 8108, "returned")
+    _check("return moves both back", r.json()["updated"] == 2, r.text)
+    _check("…rows are returned", all(a["state"] == "returned" for a in _allocs(client, "quote", 8108)))
+    _check("returned gear is not counted as booked",
+           all(a["state"] == "returned" for a in _allocs(client, "quote", 8108)))
+
+
+def test_api_conversion_keeps_checked_out_gear_invoice_first():
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8105, ids, "accepted", qty_a=5, qty_b=0))
+    _gear(client, 8105, "checked-out")
+    _check("precondition: quote row checked out", _allocs(client, "quote", 8105)[0]["state"] == "checked-out")
+    # Convert: the invoice is posted BEFORE the quote's invoicedQty is saved.
+    _post(client, "/api/invoices", _inv_body(8105, ids, 8105, "q8105-a", 5))
+    rows = _rows_for(client, ids, 8105)
+    _check("one booking survives the handover", len(rows) == 1, str(rows))
+    _check("…now owned by the invoice", rows[0]["docType"] == "invoice" and rows[0]["lineId"] == "i8105-a")
+    _check("…still checked out", rows[0]["state"] == "checked-out")
+    body = _quote_body(8105, ids, "converted", qty_a=5, qty_b=0)
+    body["sections"][0]["items"][0]["invoicedQty"] = 5
+    body["sections"][0]["items"][0]["deliveredQty"] = 5
+    _put(client, "/api/quotes/8105", body)
+    rows = _rows_for(client, ids, 8105)
+    _check("saving the converted quote afterwards changes nothing", len(rows) == 1 and rows[0]["state"] == "checked-out"
+           and rows[0]["docType"] == "invoice", str(rows))
+    r = _gear(client, 8105, "returned")
+    _check("Mark Returned on the converted quote reaches the invoice's booking", r.json()["updated"] == 1, r.text)
+
+
+def test_api_conversion_keeps_checked_out_gear_quote_first():
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8106, ids, "accepted", qty_a=5, qty_b=0))
+    _gear(client, 8106, "checked-out")
+    # Convert: the quote is saved as converted BEFORE the invoice is posted.
+    body = _quote_body(8106, ids, "converted", qty_a=5, qty_b=0)
+    body["sections"][0]["items"][0]["invoicedQty"] = 5
+    body["sections"][0]["items"][0]["deliveredQty"] = 5
+    _put(client, "/api/quotes/8106", body)
+    rows = _rows_for(client, ids, 8106)
+    _check("checked-out gear is kept while the invoice is on its way", len(rows) == 1 and rows[0]["state"] == "checked-out")
+    _post(client, "/api/invoices", _inv_body(8106, ids, 8106, "q8106-a", 5))
+    rows = _rows_for(client, ids, 8106)
+    _check("the invoice adopts that same booking", len(rows) == 1 and rows[0]["docType"] == "invoice"
+           and rows[0]["state"] == "checked-out" and rows[0]["qty"] == 5, str(rows))
+
+
+def test_api_partial_conversion_inherits_state_and_splits_qty():
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8107, ids, "accepted", qty_a=5, qty_b=0))
+    _gear(client, 8107, "checked-out")
+    _post(client, "/api/invoices", _inv_body(8107, ids, 8107, "q8107-a", 2))
+    body = _quote_body(8107, ids, "accepted", qty_a=5, qty_b=0)
+    body["sections"][0]["items"][0]["invoicedQty"] = 2
+    body["sections"][0]["items"][0]["deliveredQty"] = 2
+    _put(client, "/api/quotes/8107", body)
+    rows = _rows_for(client, ids, 8107)
+    q = [a for a in rows if a["docType"] == "quote"]
+    i = [a for a in rows if a["docType"] == "invoice"]
+    _check("quote keeps the remainder, still checked out", len(q) == 1 and q[0]["qty"] == 3 and q[0]["state"] == "checked-out", str(q))
+    _check("invoice row inherits checked-out for what it drew", len(i) == 1 and i[0]["qty"] == 2 and i[0]["state"] == "checked-out", str(i))
+    _check("nothing double-counted", sum(a["qty"] for a in rows) == 5)
+
+
 def _teardown():
     global _client
     if _client is not None:

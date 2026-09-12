@@ -713,6 +713,26 @@ _crud_routes(router, "vendor-rates",  models.VendorRate,  has_activity=False)
 _crud_routes(router, "cross-rentals", models.CrossRental, has_activity=False)
 
 
+@router.post("/quotes/{item_id}/gear")
+async def quote_gear(item_id: int, data: dict, db: AsyncSession = Depends(get_db),
+                     user: models.User = Depends(require_session)):
+    """Check out, or return, all the gear an accepted quote books — the rows
+    keyed to the quote plus any handed to its invoices on conversion
+    (backend/rental_bookings.py::set_gear_state). Body: {"state": "checked-out"
+    | "returned"}. Checked out means the gear physically left, so a later edit
+    of the document will not release it; returned frees it, early or not."""
+    state = (data or {}).get("state") if isinstance(data, dict) else None
+    if state not in rental_bookings._GEAR_MOVES:
+        raise HTTPException(status_code=400, detail={"field": "state", "reason": "must be checked-out or returned"})
+    row = (await db.execute(select(models.Quote).where(models.Quote.id == item_id))).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"quotes {item_id} not found")
+    moved = await rental_bookings.set_gear_state(db, item_id, state)
+    if moved:
+        livesync.mark_dirty(db, "allocations")
+    return {"updated": moved, "state": state}
+
+
 @router.post("/allocations/reconcile", dependencies=[Depends(require_admin)])
 async def reconcile_allocations(db: AsyncSession = Depends(get_db)):
     """Rebuild every document-derived booking from the quotes and invoices as

@@ -259,7 +259,7 @@
   };
 
   // ── Equipment Detail Modal ──────────────────────────────────────────────────
-  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, companies, vendorRates, setVendorRates, crossRentals, onClose, onEdit, onDelete, onScan, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer, onOpenCrossRental, onCrossRent }) {
+  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, companies, vendorRates, setVendorRates, crossRentals, onClose, onEdit, onDelete, onScan, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer, onOpenCrossRental, onCrossRent, onSetBookingState }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var fmt = window.LTP_formatDate;
     var isMobile = window.LTP_useIsMobile();
@@ -393,17 +393,30 @@
                 R.crossBadge(o.status));
             }))),
 
-        // Current allocations
-        currentAllocs.length > 0 && h("div", { style: { marginBottom: 14 } },
-          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Currently Out"),
+        // Bookings — where the units are and what state each booking is in.
+        // Derived from accepted quotes and invoices (backend/rental_bookings.py);
+        // the state is the one thing set by hand: per booking here, or for a
+        // whole job from the quote's Check Out / Mark Returned buttons.
+        activeAllocs.length > 0 && h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Bookings (" + activeAllocs.length + ")"),
           h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
-            currentAllocs.map(function(a) {
+            activeAllocs.slice().sort(function(a, b) { return (a.startDate || "") < (b.startDate || "") ? -1 : 1; }).map(function(a) {
               var proj = projects.find(function(p) { return p.id === a.projectId; });
-              return h("div", { key: a.id, style: { background: B.raised, borderRadius: 6, padding: "10px 12px", border: "1px solid " + B.border, display: "flex", justifyContent: "space-between", alignItems: "center" } },
-                h("div", null,
-                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, proj ? proj.name : "Unknown Project"),
-                  h("div", { style: { fontSize: "11px", color: B.textMut } }, "\u00d7" + a.qty + " \u00b7 " + fmt(a.startDate) + " \u2192 " + fmt(a.endDate))),
-                R.allocBadge(a.state));
+              var source = a.docType === "quote" ? "Quote #" + a.docId : a.docType === "invoice" ? "Invoice #" + a.docId : "Manual";
+              var when = a.state === "checked-out" && a.endDate && a.endDate < td ? "overdue"
+                       : (a.startDate <= td && a.endDate >= td) ? "now"
+                       : a.startDate > td ? "upcoming" : "past";
+              return h("div", { key: a.id, style: { background: B.raised, borderRadius: 6, padding: "10px 12px", border: "1px solid " + (when === "overdue" ? B.dangerBd : B.border), display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" } },
+                h("div", { style: { minWidth: 0 } },
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, (proj ? proj.name : "No project") + "  ·  " + source),
+                  h("div", { style: { fontSize: "11px", color: when === "overdue" ? B.danger : B.textMut } },
+                    "×" + a.qty + " · " + fmt(a.startDate) + " → " + fmt(a.endDate) + " · " + when)),
+                h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexShrink: 0 } },
+                  R.allocBadge(a.state),
+                  onSetBookingState && h("select", { value: a.state, "aria-label": "Booking state",
+                    onChange: function(e) { onSetBookingState(a.id, e.target.value); },
+                    style: Object.assign({}, R.INP, { padding: "3px 6px", fontSize: "11px" }) },
+                    R.ALLOC_STATES.map(function(st) { return h("option", { key: st, value: st }, "→ " + (st === "under-maintenance" ? "Under Maint." : st.charAt(0).toUpperCase() + st.slice(1))); }))));
             })
           )
         ),

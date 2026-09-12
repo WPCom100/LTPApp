@@ -357,7 +357,8 @@ free on the dates. The whole thing rests on three ideas:
 | **Rentals → Cross Rentals** | The orders list (filters for open / status / vendor, overdue flag), the order form, and the detail popup with each line's cost and what other vendors price the item at. |
 | **Rentals → Availability Checker** | Totals include confirmed cross-rented units for the range, with an *incl. ×N cross-rented · Vendor* chip; quoted orders show as *×N quoted*. When an item is short, the row lists the vendors who price it (preferred first, then cheapest) and **+ Cross rental** opens the order form already filled in with the item, the dates and the vendor. |
 | **Quote builder → Add Item** | Same totals and chips. An item with nothing free offers **Cross-rent**, which opens the order form *over* the picker so the draft stays put. |
-| **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), and the open cross rentals naming it. |
+| **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), the open cross rentals naming it, and its **Bookings** — which job, which document, when, and a per-booking state. The checker opens this popup when you click an item. |
+| **Rentals → Equipment List** | **Where** says which jobs each item is on ("Autumn Gala ×3 (out)"), and the status reads *out* (physically checked out), *reserved* (booked for today or later), *available*, or *cross-rental*. |
 | **CRM → a vendor** | **Rental Rates** — every item this vendor prices — and the orders placed with them, with the year's spend. |
 | **Rentals → Equipment → Add / Edit** | **Cross-rental only** marks gear we never stock. The row still exists so the item can be quoted at *our* rates and checked for availability; the inventory list labels it instead of showing a 0-unit item as available. It is a label, not a mode — switch it off the day you buy some. |
 
@@ -415,13 +416,23 @@ confirmed documents** (`backend/rental_bookings.py`):
   on it survives. A line that stops booking releases its row only while it is
   still `reserved` / `allocated`; gear that is physically `checked-out` keeps
   counting until it is returned by hand.
+- **Converting a quote hands its bookings to the invoice.** An invoice line
+  drawn from a quote line adopts the quote's booking: the same row is re-keyed
+  to the invoice with its state intact, so gear checked out against the quote
+  stays checked out. A partial conversion splits the quantity and the invoice's
+  part inherits the state. Either save order lands on the same rows.
+- **Gear leaves and comes back from the quote.** An accepted (or converted)
+  quote's header shows *Gear: 3 reserved · 2 out* with **Check Out Gear** and
+  **Mark Returned** — one click moves every booking behind the quote's
+  equipment lines, including the ones its invoices now own
+  (`POST /api/quotes/{id}/gear`). Per-item, the equipment popup's **Bookings**
+  list has the same state on each row, and the Equipment List's **Where**
+  column says which jobs an item is on.
 - The reconcile runs on every quote/invoice create, save and delete, on the
-  client's public accept link, and once at boot as a backfill. **Rentals →
-  Allocations** lists every booking with its source (Quote #12 / Invoice #5 /
-  Manual), lets you move it through `reserved → allocated → checked-out →
-  returned` inline, add a booking by hand for gear going out with no document,
-  and (admins) **Rebuild from documents** — `POST /api/allocations/reconcile`.
-  Manual bookings are never touched by the engine.
+  client's public accept link, and once at boot as a backfill. An admin can
+  rebuild every derived booking with `POST /api/allocations/reconcile`.
+  Bookings with `docType: "manual"` (entered through the API) are never touched
+  by the engine.
 
 ## Flat-rate positions (fixed-cost hires)
 
@@ -1023,6 +1034,7 @@ header keeps last-write-wins. See *Live sync* below.
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
 - `GET /api/versions` — Per-collection change stamps (live sync)
+- `POST /api/quotes/{id}/gear` — Check out (`{"state":"checked-out"}`) or return (`"returned"`) every booking behind a quote's gear
 - `POST /api/allocations/reconcile` — Rebuild every document-derived booking (admin)
 - `GET /api/stream` — Server-sent change feed (live sync)
 

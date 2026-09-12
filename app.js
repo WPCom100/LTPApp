@@ -445,7 +445,6 @@ function LTPSignedInApp(props) {
         kits: kits,               setKits: setKits,
         vendorRates: vendorRates,   setVendorRates: setVendorRates,
         crossRentals: crossRentals, setCrossRentals: setCrossRentals,
-        isAdmin: isAdmin,
       }));
       case "quotes":    return h(window.LTPErrorBoundary, { name: "Quotes" }, h(window.QuotesView,    {
         // The quote builder never mutates projects — see modules/quotes-shell.js.
@@ -731,7 +730,6 @@ var LTP_MODULE_SUBS = {
     { path: "rentals/containers",    label: "Containers List"      },
     { path: "rentals/kits",          label: "Kits & Packages"      },
     { path: "rentals/cross-rentals", label: "Cross Rentals"        },
-    { path: "rentals/allocations",   label: "Allocations"          },
   ],
   quotes: [
     { path: "quotes",          label: "Quotes"   },

@@ -7,7 +7,7 @@ with **per-vendor pricing remembered** so the next time we can see who to call
 and what they charged — and have that gear **count as inventory for the rental
 period** once it is confirmed, without having to tie it to one project.
 
-Status: **built on this branch** (steps 1–6 below, plus the bookings engine the owner asked for in question 8). The README sections "Cross rentals & vendor pricing" and "Bookings (allocations)" are the user-facing description; this document is the design record.
+Status: **built on this branch** (steps 1–6 below, plus the bookings engine the owner asked for in question 8). Follow-up after review: the Allocations tab was retired as redundant; gear is checked out and returned from the accepted quote itself, and each item's bookings show on the equipment list ("Where") and its popup. The README sections "Cross rentals & vendor pricing" and "Bookings (allocations)" are the user-facing description; this document is the design record.
 
 ## Decisions (confirmed with owner)
 
