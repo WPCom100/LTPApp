@@ -28,7 +28,7 @@
         ? (eq.units || []).reduce(function(s, u) { return s + (u.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length; }, 0)
         : (eq.maintenanceLogs || []).filter(function(l) { return l.status === "open"; }).length;
     }
-    function availability(eq) { return outQty(eq) > 0 ? "partial" : "available"; }
+    function availability(eq) { return eq.crossRentalOnly ? "cross-rental" : outQty(eq) > 0 ? "partial" : "available"; }
 
     var COLS = [
       { key: "name",     label: "Item",         w: "minmax(0,1.8fr)",
@@ -52,7 +52,8 @@
     });
     var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
-    var totalUnits = equipment.reduce(function(s, e) { return s + e.qty; }, 0);
+    // Gear we never stock carries no units of ours.
+    var totalUnits = equipment.reduce(function(s, e) { return s + (e.crossRentalOnly ? 0 : e.qty); }, 0);
     var totalCost  = equipment.reduce(function(s, e) { return s + (e.purchaseCost || 0) * e.qty; }, 0);
     var checkedOut = allocations.filter(function(a) { return a.state === "checked-out"; }).length;
 
@@ -100,9 +101,11 @@
               openIssues > 0 && h("span", { style: { fontSize: "10px", color: B.danger, fontWeight: 700 } }, openIssues + " issue" + (openIssues > 1 ? "s" : "")),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + R.baseRate(eq) + "/3-day"),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : ""))
+                h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.crossRentalOnly ? "not stocked" : totalUnitQty + " units" + (activeOut > 0 ? " \u00b7 " + activeOut + " out" : ""))
               ),
-              activeOut > 0
+              eq.crossRentalOnly
+                ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "cross-rental")
+                : activeOut > 0
                 ? h("span", { style: { fontSize: "10px", fontWeight: 700, background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44", padding: "2px 8px", borderRadius: 4, textTransform: "uppercase" } }, "partial")
                 // The green "available" chip is the default state — redundant on
                 // a phone, so it's dropped there (the desktop table keeps it).
@@ -126,11 +129,13 @@
                 [h("span", { key: "c", style: { fontSize: "12px", color: B.textSec, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, eq.category || "—"),
                  eq.subcategory && h("span", { key: "s", style: { fontSize: "10px", color: B.textMut, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, eq.subcategory)],
                 h("span", { style: { fontSize: "12px", color: B.textSec } }, eq.manufacturer || "—"),
-                h("span", { style: { fontSize: "12px", color: B.textSec } }, R.eqQty(eq)),
+                h("span", { style: { fontSize: "12px", color: B.textSec } }, eq.crossRentalOnly ? "\u2014" : R.eqQty(eq)),
                 h("span", { style: { fontSize: "12px", color: activeOut > 0 ? B.accent : B.textMut, fontWeight: activeOut > 0 ? 700 : 400 } }, activeOut || "—"),
                 h("span", { style: { fontSize: "12px", color: openIssues > 0 ? B.danger : B.textMut, fontWeight: openIssues > 0 ? 700 : 400 } }, openIssues || "—"),
                 h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + R.baseRate(eq)),
-                activeOut > 0
+                eq.crossRentalOnly
+                  ? h("span", { style: Object.assign({}, chip, { background: B.info + "1c", color: B.info, border: "1px solid " + B.info + "55" }) }, "cross-rental")
+                  : activeOut > 0
                   ? h("span", { style: Object.assign({}, chip, { background: B.accentMuted, color: B.accent, border: "1px solid " + B.accent + "44" }) }, "partial")
                   : h("span", { style: Object.assign({}, chip, { background: B.successBg, color: B.success, border: "1px solid " + B.successBd }) }, "available"),
               ] };

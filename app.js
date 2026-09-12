@@ -434,6 +434,7 @@ function LTPSignedInApp(props) {
         kits: kits,               setKits: setKits,
         vendorRates: vendorRates,   setVendorRates: setVendorRates,
         crossRentals: crossRentals, setCrossRentals: setCrossRentals,
+        isAdmin: isAdmin,
       }));
       case "quotes":    return h(window.LTPErrorBoundary, { name: "Quotes" }, h(window.QuotesView,    {
         // The quote builder never mutates projects — see modules/quotes-shell.js.
@@ -445,6 +446,7 @@ function LTPSignedInApp(props) {
         clientRates: clientRates, setClientRates: setClientRates,
         equipment: equipment, allocations: allocations,
         crossRentals: crossRentals, vendorRates: vendorRates,
+        setCrossRentals: setCrossRentals, setVendorRates: setVendorRates,
         getNextQuoteId: getNextQuoteId,
         invoices: invoices, setInvoices: setInvoices,
         getNextInvoiceId: getNextInvoiceId,

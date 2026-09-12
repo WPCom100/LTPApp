@@ -154,7 +154,7 @@
     return rt === "threeDay" ? "3-Day" : rt === "week" ? "Week" : "Month";
   }
 
-  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, fees, allocations, crossRentals, vendorRates, quoteDates }) {
+  function AddItemPicker({ sectionId, sectionLabel, sectionItems, allSections, onAdd, onClose, equipment, products, services, fees, allocations, crossRentals, vendorRates, setCrossRentals, setVendorRates, companies, projects, quoteDates }) {
     var isMobile = window.LTP_useIsMobile();
     // Rate is always auto-calculated from dates — never manually selected
     var autoRate = quoteDates ? calcRateType(quoteDates.start, quoteDates.end) : "threeDay";
@@ -168,6 +168,10 @@
     var [variantFor, setVariantFor] = useState(null);
     // Per-equipment qty state in the picker: { equipmentId: number }
     var [eqQtys, setEqQtys] = useState({});
+    // Item whose "Cross-rent" was clicked: the order form stacks over the
+    // picker with the item, the quote dates and the wanted qty filled in, and
+    // the draft stays open underneath. null = closed.
+    var [crossFor, setCrossFor] = useState(null);
 
     var q = search.trim().toLowerCase();
 
@@ -300,7 +304,21 @@
       { k: "note",      l: "Note"      },
     ];
 
+    var crossEq = crossFor != null ? equipment.find(function(e) { return e.id === crossFor; }) : null;
     return h(window.LTPModal, { title: "Add to \"" + sectionLabel + "\"", onClose: onClose, wide: true },
+      // Stacked cross-rental order form (above this picker's own modal).
+      crossEq && h(window.RentalsCrossForm, {
+        prefill: { equipmentId: crossEq.id, qty: getEqQty(crossEq.id), startDate: quoteDates ? quoteDates.start : "", endDate: quoteDates ? quoteDates.end : "" },
+        vendors: (companies || []).filter(function(c) { return c.isVendor; }), companies: companies || [],
+        equipment: equipment, projects: projects || [], vendorRates: vendorRates || [], modalZIndex: 1100,
+        onClose: function() { setCrossFor(null); },
+        onSave: function(data) {
+          var R = window.LTP_RENTALS;
+          var id = R.upsertCrossRental(data, crossRentals || [], setCrossRentals);
+          R.rememberVendorRates(Object.assign({ id: id }, data), setVendorRates);
+          setCrossFor(null);
+        },
+      }),
       // Tab bar
       h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 12 } },
         tabs.map(function(t) {
@@ -347,14 +365,24 @@
                   // Phone: availability rides the meta line so the next line is
                   // just stepper · price · Add.
                   isMobile && h("span", { style: { fontWeight: 600, color: avColor } }, " · " + av.available + " / " + av.total + " avail"),
-                  isMobile && quoted > 0 && h("span", { style: { fontWeight: 600, color: overquoted ? B.danger : B.warn } }, " · " + quoted + " quoted"))
+                  isMobile && quoted > 0 && h("span", { style: { fontWeight: 600, color: overquoted ? B.danger : B.warn } }, " · " + quoted + " quoted"),
+                  isMobile && av.crossRented > 0 && h("span", { style: { fontWeight: 600, color: B.info } }, " · incl. " + av.crossRented + " cross-rented"),
+                  isMobile && av.quoted > 0 && h("span", { style: { fontWeight: 600, color: B.warn } }, " · " + av.quoted + " vendor-quoted"))
               ),
-              // Availability + quoted
+              // Availability + quoted (+ cross-rental supply, when any)
               !isMobile && h("div", { style: { textAlign: "right", minWidth: 65 } },
                 h("div", { style: { fontSize: "10px", fontWeight: 600, color: avColor } }, av.available + " / " + av.total + " avail"),
                 quoted > 0 && h("div", { style: { fontSize: "9px", fontWeight: 600, color: overquoted ? B.danger : B.warn } },
-                  quoted + " quoted")
+                  quoted + " quoted"),
+                av.crossRented > 0 && h("div", { style: { fontSize: "9px", fontWeight: 600, color: B.info } }, "incl. " + av.crossRented + " cross-rented"),
+                av.quoted > 0 && h("div", { style: { fontSize: "9px", fontWeight: 600, color: B.warn } }, av.quoted + " vendor-quoted")
               ),
+              // Short for the quote dates: open a cross-rental order for it
+              // without leaving the draft.
+              av.available <= 0 && setCrossRentals && h("button", { onClick: function(e) { e.stopPropagation(); setCrossFor(eq.id); },
+                title: "Rent this in from a vendor for these dates",
+                style: { background: B.info + "14", border: "1px solid " + B.info + "55", borderRadius: 4, color: B.info, padding: "3px 8px", fontSize: "10px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                "Cross-rent"),
               // Qty input
               h("div", { style: { display: "flex", alignItems: "center", gap: 2 } },
                 h("button", { onClick: function(e) { e.stopPropagation(); setEqQty(eq.id, curQty - 1); }, "aria-label": "Fewer",
@@ -1016,7 +1044,7 @@
 
 
 
-  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, crossRentals, vendorRates, companies, contacts, projects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
+  window.QuotesBuilder = function({ quoteId, isNew, quotes, setQuotes, getNextQuoteId, products, services, clientRates, fees, equipment, allocations, crossRentals, vendorRates, setCrossRentals, setVendorRates, companies, contacts, projects, invoices, setInvoices, getNextInvoiceId, settings, isAdmin, qbo }) {
     var isMobile = window.LTP_useIsMobile();
     // Load initial draft
     var initial = useMemo(function() {
@@ -2445,7 +2473,8 @@
           allSections: draft.sections,
           equipment: equipment, products: products, services: svcs, fees: fees,
           allocations: allocations,
-          crossRentals: crossRentals, vendorRates: vendorRates, companies: companies,
+          crossRentals: crossRentals, vendorRates: vendorRates, companies: companies, projects: projects,
+          setCrossRentals: setCrossRentals, setVendorRates: setVendorRates,
           quoteDates: pickerDates,
           onAdd: function(item) { addItemToSection(pickerForSection, item); },
           onClose: function() { setPickerForSection(null); }

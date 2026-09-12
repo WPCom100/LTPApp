@@ -135,7 +135,20 @@ ok("S8 both collections publish on the live feed", ls.includes('"vendor-rates"')
 for (const rel of ["modules/rentals-availability.js", "modules/quotes-builder.js"]) {
   const src = fs.readFileSync(path.join(root, rel), "utf8");
   ok("S9 " + rel + " reads LTP_RENTALS.totalQty", /LTP_RENTALS\.totalQty|R\.totalQty/.test(src));
+  ok("S10 " + rel + " flags quoted cross rentals", /crossQuotedQty|"quoted": true/.test(src));
 }
+// The checker and the quote picker both open the shared order form when an
+// item is short; the picker stacks it over its own modal.
+const av = fs.readFileSync(path.join(root, "modules", "rentals-availability.js"), "utf8");
+ok("S11 checker lists vendor options for a shortage", /R\.vendorOptions\(/.test(av) && /onCrossRent\(/.test(av));
+ok("S12 quote picker mounts RentalsCrossForm with a z-index above itself", /window\.RentalsCrossForm/.test(qb) && /modalZIndex:\s*1100/.test(qb));
+ok("S13 quote picker saves through the shared helpers", /upsertCrossRental\(/.test(qb) && /rememberVendorRates\(/.test(qb));
+const sh = fs.readFileSync(path.join(root, "modules", "rentals-shell.js"), "utf8");
+ok("S14 shell saves orders through the shared helpers too", /R\.upsertCrossRental\(/.test(sh) && /R\.rememberVendorRates\(/.test(sh));
+ok("S15 shell routes the Allocations tab", /RentalsAllocationsView/.test(sh) && /"allocations"/.test(sh));
+ok("S16 allocations + cross-rental modules are loaded by index.html", idx.includes("modules/rentals-allocations.js") && idx.includes("modules/rentals-cross.js") && idx.includes("components/vendor-rates.js"));
+// The order form only ever counts confirmed/picked-up as inventory.
+ok("S17 CROSS_COUNTS is exactly confirmed + picked-up", Object.keys(R.CROSS_COUNTS).sort().join(",") === "confirmed,picked-up");
 
 console.log("cross-rentals suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { fails.forEach(function (f) { console.log("  ✗ " + f); }); process.exit(1); }

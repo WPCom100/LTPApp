@@ -459,6 +459,55 @@
     return !!end && end < (todayStr || today());
   }
 
+  // ── Saving an order (shared by the Cross Rentals tab and the quote picker) ─
+  // Assigns an id to a new order and writes it through the app-level setter.
+  // Returns the saved id.
+  function upsertCrossRental(data, crossRentals, setCrossRentals) {
+    var saved;
+    if (data.id) {
+      saved = data;
+      setCrossRentals(function(prev) { return prev.map(function(o) { return o.id === data.id ? data : o; }); });
+    } else {
+      var newId = Math.max.apply(null, (crossRentals || []).map(function(o) { return o.id; }).concat([0])) + 1;
+      saved = Object.assign({ id: newId }, data);
+      setCrossRentals(function(prev) { return prev.concat([saved]); });
+    }
+    return saved.id;
+  }
+
+  // Saving an order with "remember these prices" on refreshes the vendor's
+  // price rows for every catalog-item line whose rates differ from what is on
+  // file (or that has no row yet), stamped with today's quoted date. A line
+  // still at the price on file leaves the row — and its date — alone, so
+  // re-saving an old order to mark it returned never re-dates a price.
+  function rememberVendorRates(order, setVendorRates) {
+    if (!order || !order.rememberRates || order.vendorCompanyId == null || !setVendorRates) return;
+    var todayStr = today();
+    setVendorRates(function(prev) {
+      var next = prev.slice();
+      var nextId = Math.max.apply(null, next.map(function(v) { return v.id; }).concat([0])) + 1;
+      (order.lines || []).forEach(function(l) {
+        if (!l || l.equipmentId == null) return;
+        var rates = l.rates || {};
+        if (!RATE_KEYS.some(function(k) { return (Number(rates[k]) || 0) > 0; })) return;
+        var clean = { threeDay: Number(rates.threeDay) || 0, week: Number(rates.week) || 0, month: Number(rates.month) || 0 };
+        var idx = -1;
+        for (var i = 0; i < next.length; i++) {
+          if (next[i].vendorCompanyId === order.vendorCompanyId && next[i].equipmentId === l.equipmentId) { idx = i; break; }
+        }
+        if (idx === -1) {
+          next.push({ id: nextId++, vendorCompanyId: order.vendorCompanyId, equipmentId: l.equipmentId, rates: clean,
+                      vendorItem: "", quotedDate: todayStr, preferred: false, active: true, notes: "" });
+        } else {
+          var cur = next[idx].rates || {};
+          var same = RATE_KEYS.every(function(k) { return (Number(cur[k]) || 0) === clean[k]; });
+          if (!same) next[idx] = Object.assign({}, next[idx], { rates: clean, quotedDate: todayStr, active: true });
+        }
+      });
+      return next;
+    });
+  }
+
   window.LTP_RENTALS = {
     SerialSearch:  SerialSearch,
     VendorSearch:  VendorSearch,
@@ -488,6 +537,8 @@
     orderCost:        orderCost,
     vendorOptions:    vendorOptions,
     crossOverdue:     crossOverdue,
+    upsertCrossRental:  upsertCrossRental,
+    rememberVendorRates: rememberVendorRates,
     crossBadge:       crossBadge,
     CROSS_STATES:     CROSS_STATES,
     CROSS_COUNTS:     CROSS_COUNTS,

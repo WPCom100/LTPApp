@@ -36,6 +36,7 @@
       status: "available", vendorCompanyId: null,
       location: "", weight: "", notes: "",
       units: [],
+      crossRentalOnly: false,
     };
 
     var init = initial
@@ -95,8 +96,8 @@
     function save() {
       if (!f.name.trim()) { setErr("Name is required."); return; }
       if (!f.category)    { setErr("Category is required."); return; }
-      if (f.serialized && units.length === 0) { setErr("Add at least one serialized unit."); return; }
-      if (!f.serialized && (isNaN(parseInt(f.qty)) || parseInt(f.qty) < 1)) { setErr("Quantity must be at least 1."); return; }
+      if (!f.crossRentalOnly && f.serialized && units.length === 0) { setErr("Add at least one serialized unit."); return; }
+      if (!f.crossRentalOnly && !f.serialized && (isNaN(parseInt(f.qty)) || parseInt(f.qty) < 1)) { setErr("Quantity must be at least 1."); return; }
 
       var cleanUnits = units.map(function(u) {
         return Object.assign({}, u, {
@@ -105,6 +106,19 @@
         });
       });
 
+      // Gear we never stock: no units, no qty, no purchase vendor — the row
+      // exists so the item can be quoted and its cross rentals counted.
+      if (f.crossRentalOnly) {
+        onSave(Object.assign({}, f, {
+          serialized: false, qty: 0, units: [], vendorCompanyId: null,
+          weight: parseFloat(f.weight) || null,
+          rates: { threeDay: parseFloat(f.rates.threeDay) || 0, week: parseFloat(f.rates.week) || 0, month: parseFloat(f.rates.month) || 0 },
+          accessories: initial ? initial.accessories : [],
+          defaultContainerId: initial ? initial.defaultContainerId : null,
+          maintenanceLogs: initial ? initial.maintenanceLogs : [],
+        }));
+        return;
+      }
       onSave(Object.assign({}, f, {
         qty:         f.serialized ? cleanUnits.length : (parseInt(f.qty) || 1),
         weight:      parseFloat(f.weight) || null,
@@ -150,11 +164,21 @@
           R.Field("Weight", h("input", { type: "number", min: 0, step: "0.1", value: f.weight || "", onChange: function(e) { set("weight", e.target.value); }, style: Object.assign({}, R.INP, { width: "100%" }) }))
         ),
 
+        // Gear we never stock but rent in from a vendor whenever a job needs it.
+        // A label, not a mode: an owned item is cross-rented the same way, and
+        // this can be switched off the day we buy some.
+        h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: "13px", color: B.text, fontWeight: 600 } },
+          h("input", { type: "checkbox", checked: !!f.crossRentalOnly, onChange: function(e) { set("crossRentalOnly", e.target.checked); }, style: { accentColor: B.accent, width: 15, height: 15 } }),
+          "Cross-rental only — we don't stock this; it's rented in from a vendor when a job needs it",
+        ),
+        f.crossRentalOnly && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: -6, lineHeight: 1.5 } },
+          "The rates below are what we charge the client. Vendor prices live on the item's Vendor Pricing list and on each vendor in CRM."),
+
         // Vendor from CRM — only for non-serialized (serialized items have per-unit vendor).
         // Uses the same VendorSearch as the per-unit picker below rather than a
         // bare <select>: one behaviour for the same field, and it can create a
         // vendor that isn't in CRM yet.
-        !f.serialized && R.Field("Purchase Vendor (from CRM)", h(R.VendorSearch, {
+        !f.serialized && !f.crossRentalOnly && R.Field("Purchase Vendor (from CRM)", h(R.VendorSearch, {
           vendors: vendors, value: f.vendorCompanyId || null,
           onChange: function(id) { set("vendorCompanyId", id); }
         })),
@@ -169,8 +193,8 @@
           )
         ),
 
-        // Serialized toggle + qty
-        h("div", { style: { background: B.raised, borderRadius: 8, padding: "14px", border: "1px solid " + B.border } },
+        // Serialized toggle + qty (hidden for gear we never stock)
+        !f.crossRentalOnly && h("div", { style: { background: B.raised, borderRadius: 8, padding: "14px", border: "1px solid " + B.border } },
           h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: f.serialized ? 14 : 0 } },
             h("label", { style: { display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: "13px", color: B.text, fontWeight: 600 } },
               h("input", { type: "checkbox", checked: !!f.serialized, onChange: function(e) { toggleSerialized(e.target.checked); }, style: { accentColor: B.accent, width: 15, height: 15 } }),
@@ -235,7 +259,7 @@
   };
 
   // ── Equipment Detail Modal ──────────────────────────────────────────────────
-  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, onClose, onEdit, onDelete, onScan, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer }) {
+  window.RentalsEquipmentDetail = function({ eq, allocations, projects, vendors, containers, companies, vendorRates, setVendorRates, crossRentals, onClose, onEdit, onDelete, onScan, onMainLog, onMainResolve, onSetUnderMaintenance, onOpenContainer, onOpenCrossRental, onCrossRent }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var fmt = window.LTP_formatDate;
     var isMobile = window.LTP_useIsMobile();
@@ -260,8 +284,17 @@
     var activeAllocs = eqAllocs.filter(function(a) { return a.state !== "returned"; });
     var currentAllocs = eqAllocs.filter(function(a) { return a.startDate <= td && a.endDate >= td && a.state !== "returned"; });
     var currentOut  = currentAllocs.reduce(function(s, a) { return s + a.qty; }, 0);
-    // Available right now = everything not out for maintenance and not on rental.
-    var remainingQty = Math.max(0, rawQty - maintQty - currentOut);
+    // Cross-rented units with us today (confirmed / picked-up orders whose
+    // period covers today) and units a vendor has quoted for today.
+    var crossToday  = R.crossRentedQty(crossRentals || [], eq.id, td, td);
+    var quotedToday = R.crossQuotedQty(crossRentals || [], eq.id, td, td);
+    // Available right now = everything not out for maintenance and not on
+    // rental, plus whatever is cross-rented in for today.
+    var remainingQty = Math.max(0, rawQty - maintQty - currentOut + crossToday);
+    // Open orders naming this item, soonest first — the popup's cross-rental list.
+    var eqOrders = (crossRentals || []).filter(function(o) {
+      return o && o.status !== "cancelled" && o.status !== "returned" && (o.lines || []).some(function(l) { return l && l.equipmentId === eq.id; });
+    }).sort(function(a, b) { return (a.startDate || "") < (b.startDate || "") ? -1 : 1; });
     var vendor      = eq.vendorCompanyId ? (vendors || []).find(function(v) { return v.id === eq.vendorCompanyId; }) : null;
 
     // For non-serialized: line-level maintenance logs
@@ -304,8 +337,10 @@
 
       // ── OVERVIEW ────────────────────────────────────────────────────────────
       tab === "overview" && h("div", null,
+        eq.crossRentalOnly && h("div", { style: { fontSize: "11px", color: B.info, background: B.info + "14", border: "1px solid " + B.info + "44", borderRadius: 6, padding: "8px 12px", marginBottom: 12 } },
+          "Cross-rental only: we don't stock this item. Its availability comes entirely from confirmed cross rentals."),
         // Stat row
-        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 18 } },
+        h("div", { style: { display: "grid", gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(5, 1fr)", gap: 10, marginBottom: 18 } },
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Total"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: B.text } }, rawQty)),
@@ -315,6 +350,10 @@
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "On Rental"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: currentOut > 0 ? B.accent : B.textMut } }, currentOut)),
+          h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
+            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Cross-rented"),
+            h("div", { style: { fontSize: "22px", fontWeight: 700, color: crossToday > 0 ? B.info : B.textMut } }, crossToday),
+            quotedToday > 0 && h("div", { style: { fontSize: "10px", color: B.textMut } }, "+" + quotedToday + " quoted")),
           h("div", { style: { background: B.raised, borderRadius: 8, padding: "12px 14px", border: "1px solid " + B.border } },
             h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600, textTransform: "uppercase", marginBottom: 6 } }, "Remaining"),
             h("div", { style: { fontSize: "22px", fontWeight: 700, color: remainingQty > 0 ? B.success : B.textMut } }, remainingQty))
@@ -328,6 +367,31 @@
               h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent } }, "$" + (eq.rates[k] || 0)));
           })
         ),
+
+        // What each vendor charges us for this item — the cross-rental price
+        // memory, editable in place (components/vendor-rates.js).
+        setVendorRates && h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 } },
+            h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em" } }, "Vendor Pricing"),
+            onCrossRent && h(window.Btn, { small: true, variant: "ghost", onClick: function() { onCrossRent(eq.id); } }, "+ Cross rental")),
+          h(window.VendorRatesEditor, { equipmentId: eq.id, equipment: [eq], companies: companies || [], vendorRates: vendorRates || [], setVendorRates: setVendorRates, compact: true })),
+
+        // Open cross rentals naming this item
+        eqOrders.length > 0 && h("div", { style: { marginBottom: 14 } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Cross Rentals"),
+          h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            eqOrders.map(function(o) {
+              var vendorCo = (companies || []).find(function(c) { return c.id === o.vendorCompanyId; });
+              var qtyHere = (o.lines || []).filter(function(l) { return l.equipmentId === eq.id; }).reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+              var first = (o.lines || []).find(function(l) { return l.equipmentId === eq.id; });
+              var d = R.lineDates(o, first);
+              return h("div", { key: o.id, onClick: onOpenCrossRental ? function() { onOpenCrossRental(o.id); } : null,
+                style: { background: B.raised, borderRadius: 6, padding: "10px 12px", border: "1px solid " + B.border, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: onOpenCrossRental ? "pointer" : "default" } },
+                h("div", null,
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, (vendorCo ? vendorCo.name : "Vendor") + (o.reference ? " · " + o.reference : "")),
+                  h("div", { style: { fontSize: "11px", color: B.textMut } }, "×" + qtyHere + " · " + fmt(d.start) + " → " + fmt(d.end))),
+                R.crossBadge(o.status));
+            }))),
 
         // Current allocations
         currentAllocs.length > 0 && h("div", { style: { marginBottom: 14 } },
