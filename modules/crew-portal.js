@@ -221,8 +221,7 @@
         onKeyDown: props.onEnter ? function(e) { if (e.key === "Enter") { e.preventDefault(); props.onEnter(); } } : undefined,
         disabled: !!props.disabled,
         style: { width: "100%", boxSizing: "border-box", minHeight: 48, background: BG, border: "1px solid " + HAIR, borderRadius: 10, padding: "0 14px", color: WHITE, fontSize: "16px", fontFamily: "inherit" },
-      }),
-      props.hint && h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 5, lineHeight: 1.45 } }, props.hint));
+      }));
   }
   function Notice(kind, text) {
     if (!text) return null;
@@ -296,7 +295,6 @@
         h(Masthead, { failed: props.mastheadFailed, onFail: props.onMastheadFail, companyName: props.companyName, maxWidth: 300 }),
         h("div", { style: { marginTop: 18 } }, Eyebrow("Crew Portal")),
         h("div", { style: { fontSize: "26px", fontWeight: 800, color: WHITE, letterSpacing: "-0.02em", lineHeight: 1.1, marginTop: 10 } }, props.title),
-        props.intro && h("div", { style: { fontSize: "14px", color: MUTE, lineHeight: 1.55, marginTop: 8 } }, props.intro),
         h("div", { style: { marginTop: 26, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: props.isMobile ? 18 : 24 } }, props.children),
         props.footer && h("div", { style: { marginTop: 22, fontSize: "13px", color: MUTE, lineHeight: 1.6, textAlign: "center" } }, props.footer)));
   }
@@ -318,10 +316,7 @@
     }
     return h(AuthShell, Object.assign({}, props.shell, {
       title: "Welcome back",
-      intro: "Sign in to see your upcoming calls, answer requests, and check your pay.",
-      footer: h("div", null,
-        h("div", null, "First time here? ", LinkBtn({ onClick: function() { go("request-access"); } }, "Request access")),
-        h("div", { style: { marginTop: 8, color: FAINT, fontSize: "12px" } }, "Access is by invitation from the production team.")) }),
+      footer: h("div", null, "First time here? ", LinkBtn({ onClick: function() { go("request-access"); } }, "Request access")) }),
       Notice("error", err),
       h(Field, { id: "cp-email", label: "Email", type: "email", value: email, onChange: setEmail, autoComplete: "username", inputMode: "email", placeholder: "you@example.com", onEnter: submit }),
       h(Field, { id: "cp-password", label: "Password", type: "password", value: password, onChange: setPassword, autoComplete: "current-password", onEnter: submit }),
@@ -351,16 +346,9 @@
     }
     return h(AuthShell, Object.assign({}, props.shell, {
       title: isForgot ? "Reset your password" : "Request access",
-      intro: isForgot
-        ? "Enter the email you sign in with and we'll send you a link to choose a new password."
-        : "Enter the email address the production team has on file for you. If it's on the crew roster, we'll email you an invitation to set up your account.",
       footer: LinkBtn({ onClick: function() { go("login"); } }, "← Back to sign in") }),
       done
-        ? h("div", null,
-            Notice("success", "If " + email.trim() + " is on our crew roster, an email is on its way. Check your inbox — and your spam folder — for a link from us."),
-            h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6 } }, isForgot
-              ? "The link works for one hour. If nothing arrives, the address may not be the one we have on file — get in touch with the production team."
-              : "The invitation link works for seven days. If nothing arrives, the address may not match the roster — get in touch with the production team."))
+        ? Notice("success", "If " + email.trim() + " is on our crew roster, an email is on its way. Check your inbox — and your spam folder — for a link from us.")
         : h("div", null,
             Notice("error", err),
             h(Field, { id: "cp-email2", label: "Email", type: "email", value: email, onChange: setEmail, autoComplete: "username", inputMode: "email", placeholder: "you@example.com", onEnter: submit }),
@@ -411,7 +399,6 @@
         Notice("error", why),
         info.reason !== "inactive" && (info.kind === "invite"
           ? h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
-              h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6 } }, "Already set up? Sign in instead. Otherwise ask for a fresh invitation — it's sent to " + (info.email || "your roster email") + "."),
               PrimaryBtn({ onClick: function() { go("login"); } }, "Sign In"),
               QuietBtn({ onClick: function() { props.onPresetEmail(info.email || ""); go("request-access"); } }, "Request a New Invitation"))
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
@@ -421,21 +408,16 @@
       body = h("div", null,
         Notice("error", err),
         h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6, marginBottom: 16 } },
-          isSignup
-            ? h("span", null, "You'll sign in as ", h("strong", { style: { color: WHITE } }, info.email), ". Pick a password that's at least 8 characters — a few words you'll remember work best.")
-            : h("span", null, "Choose a new password for ", h("strong", { style: { color: WHITE } }, info.email), ". Any other device signed in as you will be signed out.")),
+          "Signing in as ", h("strong", { style: { color: WHITE } }, info.email)),
         // A hidden username field lets password managers pair the new password
         // with the right login.
         h("input", { type: "email", value: info.email || "", readOnly: true, autoComplete: "username", "aria-hidden": "true", tabIndex: -1, style: { position: "absolute", opacity: 0, height: 0, width: 0, border: 0, padding: 0 } }),
-        h(Field, { id: "cp-pw1", label: "New password", type: "password", value: password, onChange: setPassword, autoComplete: "new-password", onEnter: submit, hint: "At least 8 characters." }),
+        h(Field, { id: "cp-pw1", label: "New password", type: "password", value: password, onChange: setPassword, autoComplete: "new-password", onEnter: submit, placeholder: "At least 8 characters" }),
         h(Field, { id: "cp-pw2", label: "Confirm password", type: "password", value: password2, onChange: setPassword2, autoComplete: "new-password", onEnter: submit }),
         PrimaryBtn({ onClick: submit, disabled: busy, style: { width: "100%" } }, busy ? "Saving…" : (isSignup ? "Create My Account" : "Save New Password")));
     }
     return h(AuthShell, Object.assign({}, props.shell, {
       title: (info && info.valid && info.firstName ? "Hi " + info.firstName + " — " : "") + title,
-      intro: isSignup && info && info.valid
-        ? "Your account gives you one place for your upcoming calls, the requests waiting on you, and what you're owed."
-        : null,
       companyName: info && info.companyName,
       footer: info === undefined ? null : LinkBtn({ onClick: function() { go("login"); } }, "Already have a password? Sign in") }), body);
   }
@@ -672,7 +654,7 @@
       h("div", { style: { marginTop: 30 } },
         SectionTitle("Needs your answer"),
         requests.length === 0
-          ? Empty("No requests are waiting on you. When a producer sends one it appears here — and in your email.")
+          ? Empty("No requests waiting on you.")
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
               requests.map(function(r) { return h(RequestCard, { key: r.id, request: r, reload: props.reload, showToast: props.showToast }); }))),
 
@@ -695,7 +677,7 @@
         h("div", null,
           SectionTitle("Recent responses"),
           recent.length === 0
-            ? Card(Empty("Your answers to recent requests show up here."))
+            ? Card(Empty("No responses yet."))
             : Card(h("div", null, recent.slice(0, 5).map(function(r, i) {
                 var tone = r.status === "declined" ? "danger" : r.released ? "neutral" : r.confirmed ? "success" : "amber";
                 var label = r.status === "declined" ? "Declined" : r.released ? "Released" : r.confirmed ? "Confirmed" : "Awaiting confirmation";
@@ -712,7 +694,6 @@
     var d = props.data, today = props.today;
     var viewState = useState("upcoming"), view = viewState[0], setView = viewState[1];
     var upcoming = d.upcoming || [], past = d.past || [];
-    var confirmedCal = upcoming.filter(function(e) { return e.status === "confirmed"; });
     var seg = function(id, label, n) {
       var active = view === id;
       return h("button", { key: id, type: "button", className: "ltp-cp-tap", onClick: function() { setView(id); },
@@ -730,22 +711,16 @@
     });
     return h("div", null,
       h("div", { style: { display: "flex", gap: 8 } }, seg("upcoming", "Upcoming", upcoming.length), seg("past", "Recently worked", past.length)),
-      h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 10, lineHeight: 1.5 } },
-        view === "upcoming"
-          ? "Every call you're on, from today forward. A call is only locked in once it says Confirmed — until then a producer still has to confirm you."
-          : "Confirmed calls from the last few weeks. Signed off means the day's pay has been finalized and is on its way through payroll."),
       h("div", { style: { marginTop: 18 } },
         groups.length === 0
-          ? Empty(view === "upcoming" ? "No upcoming calls. When a producer books you, your calls appear here." : "No recent calls to show.")
+          ? Empty(view === "upcoming" ? "No upcoming calls." : "No recent calls to show.")
           : groups.map(function(g) {
               return h("div", { key: g.key, style: { marginBottom: 22 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 8 } },
                   h("div", { style: { fontSize: "13px", fontWeight: 700, color: ORANGE_SOFT } }, g.entries[0].flat ? "Flat-rate · " + g.entries[0].projectName : fmtDate(g.key)),
                   !g.entries[0].flat && relDay(g.key, today) && h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: relDay(g.key, today) === "Today" ? ORANGE : MUTE } }, relDay(g.key, today))),
                 callList(g.entries, today));
-            })),
-      view === "upcoming" && confirmedCal.length > 1 && h("div", { style: { marginTop: 8, fontSize: "12px", color: FAINT, lineHeight: 1.5 } },
-        "Each confirmed call has its own Add to calendar button — one tap drops the date, times, role and address into your calendar."));
+            })));
   }
 
   // ── Pay ────────────────────────────────────────────────────────────────────
@@ -807,7 +782,7 @@
     var current = periods.find(function(p) { return p.current; });
     var nextPayDay = current ? current.payDay : "";
     if (pay.configured === false) {
-      return Card(Empty("Pay periods aren't configured yet — the production team sets the payroll calendar in the app. Your signed-off days will show here once they do."));
+      return Card(Empty("Pay periods aren't set up yet."));
     }
     return h("div", null,
       h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
@@ -815,10 +790,6 @@
         Tile("This period", fmtMoney(current ? current.signedTotal : 0), current ? "signed off so far" : ""),
         Tile("Pending", "~" + fmtMoney(pay.pendingEstimate || 0), "confirmed, awaiting sign-off", AMBER),
         Tile("Next pay day", nextPayDay ? fmtMonthDay(nextPayDay) : "—", nextPayDay ? fmtDate(nextPayDay).split(",")[0] : "")),
-      h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 14, lineHeight: 1.55 } },
-        "A day's pay is finalized when the producer signs it off after the call. Each pay period is paid on its pay day: ",
-        h("strong", { style: { color: MUTE } }, "Submitted"), " means the period has gone to payroll, ",
-        h("strong", { style: { color: MUTE } }, "Paid"), " means it has been paid. Pending figures are estimates from your booking and can change at sign-off."),
       h("div", { style: { marginTop: 22, display: "flex", flexDirection: "column", gap: 12 } },
         periods.length === 0 ? Empty("No pay periods to show yet.") : periods.map(function(p) {
           return h(PeriodCard, { key: p.index, period: p, isMobile: props.isMobile, defaultOpen: p.current && (p.days.length + p.pending.length) > 0 });
@@ -880,14 +851,13 @@
             h("div", { style: { fontSize: "13px", color: MUTE, marginBottom: 6 } }, "Roles & departments"),
             roleChips.length ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, roleChips) : h("div", { style: { fontSize: "13px", color: FAINT } }, "—")),
           h("div", { style: { paddingTop: 14 } },
-            h(Field, { id: "cp-phone", label: "Phone", type: "tel", value: phone, onChange: setPhone, autoComplete: "tel", inputMode: "tel", placeholder: "(555) 555-5555", onEnter: savePhone, hint: "The number producers reach you on for day-of changes. Everything else on your profile is kept by the production team — let them know if something's wrong." }),
+            h(Field, { id: "cp-phone", label: "Phone", type: "tel", value: phone, onChange: setPhone, autoComplete: "tel", inputMode: "tel", placeholder: "(555) 555-5555", onEnter: savePhone }),
             Notice("error", pErr),
             QuietBtn({ onClick: savePhone, disabled: pBusy || phone.trim() === (user.phone || "") }, pBusy ? "Saving…" : "Save Phone")))),
         h("div", { style: { marginTop: 22 } },
           SectionTitle("Session"),
           Card(h("div", null,
-            h("div", { style: { fontSize: "12px", color: MUTE, lineHeight: 1.55, marginBottom: 12 } },
-              "You stay signed in on this device for 30 days" + (user.lastLoginAt ? " · last sign-in " + fmtStamp(user.lastLoginAt) : "") + "."),
+            user.lastLoginAt && h("div", { style: { fontSize: "12px", color: MUTE, lineHeight: 1.55, marginBottom: 12 } }, "Last sign-in " + fmtStamp(user.lastLoginAt)),
             QuietBtn({ onClick: props.onSignOut, style: { width: "100%" } }, "Sign Out"))))),
       h("div", null,
         SectionTitle("Change password"),
@@ -896,10 +866,9 @@
           wOk && Notice("success", "Your password has been changed."),
           h("input", { type: "email", value: user.email || "", readOnly: true, autoComplete: "username", "aria-hidden": "true", tabIndex: -1, style: { position: "absolute", opacity: 0, height: 0, width: 0, border: 0, padding: 0 } }),
           h(Field, { id: "cp-cur", label: "Current password", type: "password", value: curPw, onChange: setCurPw, autoComplete: "current-password" }),
-          h(Field, { id: "cp-new", label: "New password", type: "password", value: newPw, onChange: setNewPw, autoComplete: "new-password", hint: "At least 8 characters." }),
+          h(Field, { id: "cp-new", label: "New password", type: "password", value: newPw, onChange: setNewPw, autoComplete: "new-password", placeholder: "At least 8 characters" }),
           h(Field, { id: "cp-new2", label: "Confirm new password", type: "password", value: newPw2, onChange: setNewPw2, autoComplete: "new-password", onEnter: changePassword }),
-          PrimaryBtn({ onClick: changePassword, disabled: wBusy, style: { width: "100%", minHeight: 46 } }, wBusy ? "Saving…" : "Change Password"),
-          h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 12, lineHeight: 1.5 } }, "Forgot it? Sign out and use “Forgot your password?” on the sign-in screen.")))));
+          PrimaryBtn({ onClick: changePassword, disabled: wBusy, style: { width: "100%", minHeight: 46 } }, wBusy ? "Saving…" : "Change Password")))));
   }
 
   // ── Entry point ────────────────────────────────────────────────────────────
