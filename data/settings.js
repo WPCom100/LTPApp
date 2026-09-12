@@ -241,6 +241,31 @@ window.LTP_DATA_SETTINGS = {
       subject: "Note added: {{projectName}}",
       body: "Hi {{crewName}},\n\nThere's a new note for your confirmed call on {{projectName}} — please review it below:\n\n{{shifts}}\n\nAny questions, just reply to this email.\n\n{{signature}}"
     },
+    crewInvite: {
+      label: "Crew Portal Invitation",
+      cc: "",
+      // Sent from Labor → Crew Roster (or by the crew member's own "request
+      // access") to set up their crew-portal sign-in. {{header}} renders the
+      // "Set up your account" card + button linking to #/crew-portal/signup/
+      // {token}; {{portalUrl}} is the same link as text; {{expiresIn}} is the
+      // link's life ("7 days"). Composed server-side by
+      // backend/routes/crew_portal.py, whose _PORTAL_FALLBACKS entry must match
+      // this body byte-for-byte.
+      subject: "You're invited to the {{companyName}} crew portal",
+      body: "Hi {{crewName}},\n\nWe've set you up with access to our crew portal, where you can see your upcoming calls, answer crew requests, and keep track of what you're owed — all in one place.\n\n{{header}}\n\nThe link is yours alone and expires in {{expiresIn}}. If it stops working, just ask us to send a new one.\n\n{{signature}}"
+    },
+    crewPasswordReset: {
+      label: "Crew Portal Password Reset",
+      cc: "",
+      // Sent when a crew member uses "Forgot your password?" (or a producer
+      // sends a reset from the roster). {{header}} renders the "Reset your
+      // password" card + button linking to #/crew-portal/reset/{token};
+      // {{expiresIn}} is "1 hour". The backend fallback in
+      // routes/crew_portal.py::_PORTAL_FALLBACKS must match this body
+      // byte-for-byte.
+      subject: "Reset your {{companyName}} crew portal password",
+      body: "Hi {{crewName}},\n\nWe received a request to reset your crew portal password. Use the button below to choose a new one.\n\n{{header}}\n\nThis link expires in {{expiresIn}}. If you didn't ask for a reset, you can ignore this email — your password won't change.\n\n{{signature}}"
+    },
   },
 };
 
@@ -269,4 +294,9 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewScheduleChanged: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewShiftNote:   ["companyName", "crewName", "projectName", "shifts", "signature"],
+  // Crew portal (backend/routes/crew_portal.py): header is the set-up / reset
+  // card with its button, portalUrl the same link as text, expiresIn the
+  // link's life.
+  crewInvite:        ["companyName", "crewName", "header", "portalUrl", "expiresIn", "signature"],
+  crewPasswordReset: ["companyName", "crewName", "header", "portalUrl", "expiresIn", "signature"],
 };

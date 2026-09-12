@@ -535,7 +535,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   CREW ROSTER TAB
   // ═══════════════════════════════════════════════════════════════════════════
-  function CrewRoster({ contacts, setContacts, services, allPositions, settings }) {
+  function CrewRoster({ contacts, setContacts, services, allPositions, settings, isAdmin }) {
     var isMobile = window.LTP_useIsMobile();
     var [search, setSearch] = useState("");
     var [deptFilter, setDeptFilter] = useState("all");
@@ -552,6 +552,103 @@
       { title: "This crew member changed elsewhere",
         message: "Another window updated them while this form was open. Saving will replace the newer version." });
     var [customRole, setCustomRole] = useState("");
+
+    // ── Crew portal access (backend/routes/crew_portal.py) ─────────────────
+    // A crew member's own sign-in to #/crew-portal — their calls, requests and
+    // pay. `portal` is contactId → { status: invited|active|disabled, email,
+    // invitedAt, inviteExpiresAt, lastLoginAt } from GET /api/crew-portal/
+    // accounts; a contact absent from it has never been invited. Not in the
+    // live feed (it changes only when someone here acts or a crew member signs
+    // up), so it loads once per mount and after every action below.
+    var [portal, setPortal] = useState({});
+    var [portalBusy, setPortalBusy] = useState(null);     // contactId mid-action
+    var [linkDlg, setLinkDlg] = useState(null);           // { name, url, why } when an invitation couldn't be emailed
+    // New crew with an email are invited the moment the row lands on the
+    // server. On by default: the roster entry IS the onboarding step.
+    var [inviteOnSave, setInviteOnSave] = useState(true);
+    function loadPortal() {
+      fetch("/api/crew-portal/accounts", { credentials: "include" })
+        .then(function(r) { return r.ok ? r.json() : []; })
+        .then(function(list) {
+          var m = {};
+          (Array.isArray(list) ? list : []).forEach(function(a) { m[a.contactId] = a; });
+          setPortal(m);
+        })
+        .catch(function() {});
+    }
+    React.useEffect(loadPortal, []);
+    function portalStatus(contactId) { var a = portal[contactId]; return (a && a.status) || "none"; }
+    var PORTAL_CHIP = {
+      active:   { label: "Active",  color: B.success },
+      invited:  { label: "Invited", color: B.warn },
+      disabled: { label: "Off",     color: B.textMut },
+    };
+    function portalChip(contactId) {
+      var st = portalStatus(contactId);
+      var c = PORTAL_CHIP[st];
+      if (!c) return h("span", { style: { fontSize: "12px", color: B.textMut } }, "\u2014");
+      return h("span", { title: "Crew portal: " + c.label, style: { fontSize: "10px", fontWeight: 700, color: c.color, background: c.color + "18", border: "1px solid " + c.color + "44", padding: "2px 7px", borderRadius: "4px", textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap" } }, c.label);
+    }
+    // POST /api/crew-portal/accounts/{id}/{invite|reset|disable|enable}, with
+    // the outcome told as a toast. An invitation whose email did not go out
+    // (sender not connected to Google, no address …) opens the share-link
+    // dialog so the producer can text the link instead — the link is the
+    // credential, so it is handed over only in that case.
+    function portalAction(contactId, action, name, opts) {
+      opts = opts || {};
+      setPortalBusy(contactId);
+      return fetch("/api/crew-portal/accounts/" + contactId + "/" + action, { method: "POST", credentials: "include" })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, status: r.status, body: j || {} }; }, function() { return { ok: r.ok, status: r.status, body: {} }; }); })
+        .then(function(res) {
+          var body = res.body || {};
+          var detail = (body.detail && (body.detail.message || body.detail.reason)) || body.error || "";
+          if (!res.ok) {
+            if (!(res.status === 404 && opts.quiet404)) {
+              window.LTP_toast(action === "invite" ? "Invitation not sent" : "Crew portal", { message: (name ? name + ": " : "") + (detail || ("request failed (" + res.status + ")")), variant: "error" });
+            }
+            return res;
+          }
+          var es = body.emailStatus || {};
+          if (action === "invite" || action === "reset") {
+            var what = action === "invite" ? "Invitation" : "Password reset";
+            if (es.emailed) {
+              window.LTP_toast(what + " sent", { message: "Emailed to " + (es.to || name) + "." + (action === "invite" ? " The link is good for 7 days." : " The link is good for 1 hour."), variant: "success" });
+            } else if (action === "invite" && body.inviteUrl) {
+              var why = es.needsReconnect ? "Your Google account isn't connected for sending (Settings → reconnect)."
+                : es.noEmail ? "No email address is on file." : (es.error || "The email didn't go out.");
+              setLinkDlg({ name: name, url: body.inviteUrl, why: why });
+            } else if (es.needsReconnect) {
+              window.LTP_toast(what + " not sent", { message: "Connect Google in Settings, then try again.", variant: "warn" });
+            } else {
+              window.LTP_toast(what + " not sent", { message: es.error || "The email didn't go out.", variant: "error" });
+            }
+          } else if (action === "disable") {
+            window.LTP_toast("Portal access turned off", { message: name + " is signed out everywhere and can't sign back in.", variant: "info" });
+          } else if (action === "enable") {
+            window.LTP_toast("Portal access turned on", { message: name + " can sign in again with their existing password.", variant: "success" });
+          }
+          loadPortal();
+          return res;
+        })
+        .catch(function() {
+          window.LTP_toast("Crew portal", { message: "Couldn't reach the server — try again.", variant: "error" });
+          return { ok: false, status: 0, body: {} };
+        })
+        .then(function(res) { setPortalBusy(null); return res; });
+    }
+    // A just-added crew member reaches the server through data-state's
+    // debounced sync (~400 ms), so an invitation fired straight after Save can
+    // 404 on the contact for a moment. Retry briefly rather than making the
+    // producer come back and click Invite.
+    function inviteWhenSynced(contactId, name, attempt) {
+      attempt = attempt || 0;
+      portalAction(contactId, "invite", name, { quiet404: attempt < 8 }).then(function(res) {
+        if (res && res.status === 404 && attempt < 8) {
+          setTimeout(function() { inviteWhenSynced(contactId, name, attempt + 1); }, 750);
+        }
+      });
+    }
+
     var crew = contacts.filter(function(c) { return c.isCrew; });
     var q = search.toLowerCase();
 
@@ -590,6 +687,9 @@
         sort: function(c) { return c.crewNotes || ""; } },
       { key: "status", label: "Status",      w: "100px",
         sort: function(c) { return c.crewStatus || "active"; } },
+      // Crew portal sign-in: never invited (—), invited, active, or off.
+      { key: "portal", label: "Portal",      w: "84px",
+        sort: function(c) { var r = { active: 0, invited: 1, disabled: 2 }[portalStatus(c.id)]; return r === undefined ? 3 : r; } },
     ];
     var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
@@ -616,12 +716,75 @@
       function doSaveCrew() {
         if (isNew) {
           var maxId = Math.max.apply(null, contacts.map(function(c) { return c.id; }).concat([0]));
-          setContacts(function(prev) { return prev.concat([Object.assign({}, f, { id: maxId + 1, isCrew: true, companyIds: f.companyIds || [] })]); });
+          var newId = maxId + 1;
+          setContacts(function(prev) { return prev.concat([Object.assign({}, f, { id: newId, isCrew: true, companyIds: f.companyIds || [] })]); });
+          // Roster input doubles as onboarding: the invitation goes out as soon
+          // as the new row has synced (see inviteWhenSynced).
+          if (inviteOnSave && window.LTP_isValidEmail(f.email || "")) {
+            inviteWhenSynced(newId, (f.firstName + " " + f.lastName).trim());
+          }
         } else {
           setContacts(function(prev) { return prev.map(function(c) { return c.id === f.id ? f : c; }); });
         }
         setEditingCrew(null);
       }
+      // ── Crew Portal panel (the form's last block) ─────────────────────────
+      // New crew: an "invite after saving" switch. Existing crew: where they
+      // stand (never invited / invited / active / off) and the one or two
+      // actions that make sense from there. Invitations always go to the email
+      // ON FILE, so an unsaved email edit disables the button rather than
+      // sending to the old address.
+      function renderPortalPanel() {
+        var name = (f.firstName + " " + f.lastName).trim() || "this crew member";
+        var hasEmail = window.LTP_isValidEmail(f.email || "");
+        var saved = !isNew ? contacts.find(function(c) { return c.id === f.id; }) : null;
+        var emailDirty = !!saved && (saved.email || "").trim() !== (f.email || "").trim();
+        var acct = !isNew ? portal[f.id] : null;
+        var status = !isNew ? portalStatus(f.id) : "none";
+        var busy = portalBusy === f.id;
+        var hint = { fontSize: "10px", color: B.textMut, lineHeight: 1.5 };
+        var body;
+        if (isNew) {
+          body = h("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" } },
+            h("input", { type: "checkbox", checked: inviteOnSave && hasEmail, disabled: !hasEmail, onChange: function(e) { setInviteOnSave(e.target.checked); }, style: { marginTop: 2 } }),
+            h("span", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5 } },
+              "Email a crew portal invitation after saving",
+              h("div", { style: hint }, hasEmail
+                ? "They get a link to set a password and sign in to see their calls, answer requests, and check their pay."
+                : "Add an email address above to invite them.")));
+        } else {
+          var lines = [];
+          var actions = [];
+          function actBtn(label, action, variant) {
+            return h(window.Btn, { key: action, small: true, variant: variant || "ghost", disabled: busy || emailDirty, onClick: function() { portalAction(f.id, action, name); } }, busy ? "Working…" : label);
+          }
+          if (status === "active") {
+            lines.push("Signed up as " + (acct.email || f.email) + (acct.lastLoginAt ? " · last sign-in " + fmtShort(acct.lastLoginAt.slice(0, 10)) : "") + (acct.lockedUntil ? " · temporarily locked after too many wrong passwords" : "") + ".");
+            actions.push(actBtn("Send password reset", "reset"));
+            if (isAdmin) actions.push(actBtn("Turn off access", "disable", "danger"));
+          } else if (status === "disabled") {
+            lines.push("Access is turned off — they can't sign in.");
+            if (isAdmin) actions.push(actBtn("Turn on access", "enable"));
+            actions.push(actBtn("Re-invite", "invite"));
+          } else if (status === "invited") {
+            lines.push("Invited " + (acct.invitedAt ? fmtShort(acct.invitedAt.slice(0, 10)) : "") + " at " + (acct.email || f.email) + (acct.inviteExpiresAt ? " · link expires " + fmtShort(acct.inviteExpiresAt.slice(0, 10)) : "") + ". Not signed up yet.");
+            actions.push(actBtn("Resend invitation", "invite"));
+          } else {
+            lines.push(hasEmail ? "Not invited yet." : "Add an email address to invite them.");
+            actions.push(h(window.Btn, { key: "invite", small: true, disabled: busy || emailDirty || !hasEmail, onClick: function() { portalAction(f.id, "invite", name); } }, busy ? "Sending…" : "Send invitation"));
+          }
+          if (emailDirty) lines.push("Save the new email address first — invitations go to the address on file.");
+          body = h("div", null,
+            h("div", { style: { fontSize: "11px", color: B.textSec, lineHeight: 1.5, marginBottom: 8 } }, lines.join(" ")),
+            h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, actions));
+        }
+        return h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 6 } },
+            h("div", { style: { fontSize: "10px", color: B.textMut, fontWeight: 600 } }, "Crew Portal"),
+            !isNew && portalChip(f.id)),
+          body);
+      }
+
       return h("div", null,
         h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
           h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, isNew ? "Add Crew Member" : "Edit Crew Member"),
@@ -704,6 +867,7 @@
               h(window.LTPInput, { label: "Minimum Day Rate ($)", value: f.minDayCost || 0, onChange: function(v) { set("minDayCost", Number(v) || 0); }, type: "number" }),
               h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 3, lineHeight: 1.4 } },
                 "Negotiated payout floor — we pay at least this per day when the assigned role costs less. Not billed to the client. Leave 0 for none."))),
+          renderPortalPanel(),
         ),
 
         crewDlg && h(window.LTPModal, { title: crewDlg.title, onClose: function() { setCrewDlg(null); } },
@@ -711,11 +875,13 @@
           h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8 } },
             h(window.Btn, { variant: "ghost", onClick: function() { setCrewDlg(null); } }, "Cancel"),
             h(window.Btn, { variant: "danger", onClick: crewDlg.onConfirm }, crewDlg.confirmLabel))
-        )
+        ),
+        linkDlg && h(LinkShareDialog, { dlg: linkDlg, onClose: function() { setLinkDlg(null); } })
       );
     }
 
     return h("div", null,
+      linkDlg && h(LinkShareDialog, { dlg: linkDlg, onClose: function() { setLinkDlg(null); } }),
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 } },
         h("h3", { style: { fontSize: "15px", fontWeight: 700, color: B.text, margin: 0 } }, "Crew Roster (" + crew.length + ")"),
         h(window.Btn, { small: true, onClick: function() { setCustomRole(""); setEditingCrew({ firstName: "", lastName: "", email: "", phone: "", role: "", crewDepartments: [], crewRoles: [], crewNotes: "", crewStatus: "active", minDayCost: 0, isCrew: true, companyIds: [] }); } }, "+ Add Crew")),
@@ -753,7 +919,8 @@
                   // (the chips are visible when the row is tapped open to edit).
                   h(window.LTPCallBtn, { key: "call", phone: c.phone, name: c.firstName + " " + c.lastName }),
                   h(window.LTPMailBtn, { key: "mail", email: c.email, name: c.firstName + " " + c.lastName }),
-                  h(window.Badge, { status: c.crewStatus || "active" }))
+                  h(window.Badge, { status: c.crewStatus || "active" }),
+                  portalStatus(c.id) !== "none" && portalChip(c.id))
               );
             }))
         // \u2500\u2500 Desktop: one line per crew member, across the full width \u2500\u2500\u2500\u2500\u2500\u2500\u2500
@@ -770,9 +937,31 @@
                 h("span", { style: { fontSize: "12px", color: c.minDayCost > 0 ? B.textSec : B.textMut } }, c.minDayCost > 0 ? "$" + Math.round(c.minDayCost) : "\u2014"),
                 h("span", { style: { fontSize: "11px", color: B.textMut, fontStyle: c.crewNotes ? "italic" : "normal" } }, c.crewNotes || "\u2014"),
                 h(window.Badge, { status: c.crewStatus || "active" }),
+                portalChip(c.id),
               ] };
             }) })
     );
+  }
+
+  // Invitation link fallback: the email didn't go out, so hand the producer
+  // the crew member's personal sign-up link to text instead. Read-only field
+  // + Copy; the link is the credential, so it is shown only here, on purpose.
+  function LinkShareDialog({ dlg, onClose }) {
+    var [copied, setCopied] = useState(false);
+    function copy() {
+      var done = function() { setCopied(true); setTimeout(function() { setCopied(false); }, 1800); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(dlg.url).then(done, function() {});
+      else { try { var el = document.getElementById("ltp-invite-link"); el.select(); document.execCommand("copy"); done(); } catch (e) { /* ignore */ } }
+    }
+    return h(window.LTPModal, { title: "Share the invitation link", onClose: onClose },
+      h("p", { style: { fontSize: "12px", color: B.textSec, marginBottom: 12, lineHeight: 1.5 } },
+        "The invitation for ", h("strong", { style: { color: B.text } }, dlg.name), " was created but the email didn't go out — ", dlg.why,
+        " Send them this link by text instead. It's their personal sign-up link and works for 7 days."),
+      h("input", { id: "ltp-invite-link", readOnly: true, value: dlg.url, onFocus: function(e) { e.target.select(); },
+        style: { width: "100%", boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px 10px", color: B.text, fontSize: "11px", fontFamily: B.mono, outline: "none" } }),
+      h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 } },
+        h(window.Btn, { variant: "ghost", onClick: onClose }, "Done"),
+        h(window.Btn, { onClick: copy }, copied ? "Copied ✓" : "Copy link")));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -3709,7 +3898,7 @@
         conflictCount > 0 && tab !== "assignments" && tab !== "requests" && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
           conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
       ),
-      tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings }),
+      tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings, isAdmin: isAdmin }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests, clientRates: clientRates, companies: companies }),
       tab === "requests" && h(CrewRequestsTab, { crewRequests: crewRequests, reloadCrewRequests: loadCrewRequests, contacts: contacts, projects: projects, setProjects: setProjects, services: services, clientRates: clientRates, companies: companies }),
       tab === "calendar" && h(LaborCalendar, { allPositions: allPositions }),

@@ -28,11 +28,14 @@
   // URL is the credential:
   //   #/view/quote|invoice/<share_token>   (modules/client-view.js)
   //   #/crew/<token>                        (modules/crew-view.js)
+  //   #/crew-portal[/...]                   (modules/crew-portal.js — its own
+  //                                          password sign-in + cookie)
   // Don't fire /auth/me on those: it'd 401, costing a round-trip and
   // (more importantly) data-state.js would see a 401 and bounce to
   // /auth/login, breaking the public page for the actual visitor.
   var hash = (window.location.hash || "").replace(/^#\/?/, "");
-  if (hash.indexOf("view/") === 0 || hash.indexOf("crew/") === 0) {
+  if (hash.indexOf("view/") === 0 || hash.indexOf("crew/") === 0
+      || hash === "crew-portal" || hash.indexOf("crew-portal/") === 0 || hash.indexOf("crew-portal?") === 0) {
     window.LTP_AUTH_USER = null;
     // Defer so listeners attached later this tick still see the event.
     setTimeout(dispatchReady, 0);

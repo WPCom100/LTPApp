@@ -917,7 +917,8 @@
             var groups = [
               { label: "Quotes", keys: ["quoteSent", "quoteFollowUp"] },
               { label: "Invoices", keys: ["invoiceSent", "invoiceReminder", "paymentReceipt"] },
-              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged"] },
+              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"] },
+              { label: "Crew Portal", keys: ["crewInvite", "crewPasswordReset"] },
             ];
             var elements = [];
             groups.forEach(function(group) {

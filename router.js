@@ -13,6 +13,8 @@
 // Special module — public client view (token-only, no session):
 //   view/quote/<token>       → { module:"view", sub:"quote",   id:<token>, action:null }
 //   view/invoice/<token>     → { module:"view", sub:"invoice", id:<token>, action:null }
+//   crew/<token>             → { module:"crew", sub:null, id:<token> }   (call sheet)
+//   crew-portal/<screen>[/<token>] → { module:"crew-portal", sub:<screen>, id:<token|null> }
 //   ?preview=1               → query.preview = "1" (used by Preview button to
 //                               disable accept/decline so the LTP user doesn't
 //                               accidentally finalize a quote during preview)
@@ -78,6 +80,22 @@
         module: "crew",
         sub: null,
         id: parts[1] || null,      // crew request token
+        action: null,
+        query: query,
+      };
+    }
+
+    // Crew portal: #/crew-portal[/<screen>[/<token>]]. The second segment is a
+    // screen name (login, forgot, request-access, signup, reset, overview,
+    // schedule, payouts, account) and the third — for signup/reset — is an
+    // opaque one-time token, which the generic parser below would otherwise
+    // mistake for an `action`. Handled here like "crew" so the token lands in
+    // `id` untouched (modules/crew-portal.js).
+    if (module === "crew-portal") {
+      return {
+        module: "crew-portal",
+        sub: parts[1] || null,     // screen
+        id: parts[2] || null,      // invitation / reset token
         action: null,
         query: query,
       };

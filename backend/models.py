@@ -946,6 +946,86 @@ class Session(Base):
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
 
+class CrewAccount(Base):
+    """A crew member's OWN sign-in to the crew portal (#/crew-portal) — one row
+    per contact, created the moment they accept an invitation and set a
+    password. Entirely separate from `users`, which is staff signing in with
+    Google: a crew account has no role, reaches no /api/* staff route, and is
+    checked only by backend/routes/crew_portal.py against `crew_sessions`.
+
+    `email` is the login identity, snapshotted from the invitation the crew
+    member accepted (lower-cased). It is NOT re-read from the contact row on
+    every sign-in — a staff edit to the roster email changes where the next
+    request is delivered, not who can sign in — but the portal's own profile
+    view shows both so a mismatch is visible.
+
+    `password_hash` is backend/crew_auth.py's self-describing scrypt string.
+    `failed_attempts` / `locked_until` implement the per-account lockout;
+    `disabled` is the staff off-switch (Labor → Crew Roster), which also
+    deletes every live session so revocation is immediate.
+
+    CASCADE on contact_id: an account is meaningless without its roster entry,
+    and a deleted crew member must not keep a working sign-in."""
+    __tablename__ = "crew_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=False, unique=True, index=True)
+    password_hash = Column(Text, nullable=False, default="")
+    disabled = Column(Boolean, nullable=False, server_default=false(), default=False)
+    failed_attempts = Column(Integer, nullable=False, server_default="0", default=0)
+    locked_until = Column(DateTime(timezone=True), nullable=True)
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    password_changed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CrewSession(Base):
+    """A crew portal login session — the `ltp_crew_session` cookie. Same model
+    as Session for staff: the primary key is the SHA-256 of the raw cookie
+    token (never the token itself), rows expire after 30 days or 30 idle days,
+    and deleting a row revokes the cookie immediately (logout, password reset,
+    account disable). CASCADE on the account so revoking an account takes its
+    sessions with it."""
+    __tablename__ = "crew_sessions"
+
+    id = Column(String(64), primary_key=True)
+    account_id = Column(Integer, ForeignKey("crew_accounts.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    last_used_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class CrewAuthToken(Base):
+    """A one-time link for the crew portal: an INVITATION (kind='invite' — set
+    up your account) or a PASSWORD RESET (kind='reset'). The raw token travels
+    only in the emailed link (#/crew-portal/signup/<token> or
+    #/crew-portal/reset/<token>); this row stores its SHA-256 (`token_hash`),
+    so a database disclosure yields no usable links.
+
+    Single-use (`used_at`) and time-boxed (`expires_at`: invites 7 days, resets
+    1 hour — backend/crew_auth.py). Minting a new token of the same kind for
+    the same contact retires the earlier open ones, so a resent invitation
+    leaves exactly one live link. `email` is the address the link was sent to,
+    which becomes the account's login identity when an invite is accepted.
+
+    `created_by_user_id` records the staff member who sent an invitation or a
+    staff-initiated reset; NULL for the crew member's own forgot-password
+    request. CASCADE on contact_id: a deleted crew member's links die too."""
+    __tablename__ = "crew_auth_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    contact_id = Column(Integer, ForeignKey("contacts.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(10), nullable=False)                       # {invite, reset}
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    email = Column(String(255), nullable=False, default="")
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class PushSubscription(Base):
     """A browser Web Push subscription for one internal user's device (iOS
     home-screen PWA, Android, or desktop). One row per device endpoint — a user

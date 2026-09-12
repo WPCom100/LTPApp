@@ -282,7 +282,14 @@
 // exists the app's status builds it; after, QuickBooks owns the status and only
 // a deliberate change here is pushed back over it. Settings → QuickBooks sets
 // the workspace default reason. domain-qbo.js, crm-companies.js, settings.js.
-var CACHE_VERSION = 'ltp-shell-v89';
+// v90: the crew portal — a crew member's own password sign-in and dashboard
+// (modules/crew-portal.js, #/crew-portal). index.html gained its script tag,
+// router.js parses the new route, components/auth.js skips the staff auth
+// probe on it and app.js renders it outside the staff gate; all four are
+// precached or runtime-cached, so the shell must be refetched. The roster
+// (modules/labor.js) grew the invitation controls and data/settings.js the two
+// new email templates.
+var CACHE_VERSION = 'ltp-shell-v90';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

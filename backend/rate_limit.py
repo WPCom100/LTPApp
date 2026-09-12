@@ -53,6 +53,22 @@ _RULES = [
     # longest-prefix matcher treats "/api/crew-requests" as a separate path
     # ("/api/crew" only matches "/api/crew" or "/api/crew/...").
     ("/api/crew",         60),
+    # Crew portal sign-in surface — password login, invitation acceptance,
+    # forgot / reset, request-access. Unauthenticated by nature and every hit
+    # is a guess at a credential or a trigger for an email, so the tightest
+    # bucket here: a person signs in a couple of times a day, a bot loops. The
+    # per-account lockout in backend/routes/crew_portal.py covers the other
+    # axis (many IPs, one account). Longest-prefix match keeps this family
+    # apart from /api/crew (the call sheet) and /api/crew-requests (producer).
+    ("/api/crew-portal/auth", 30),
+    # …except the cookie probe and logout, which every portal load makes and
+    # which guess nothing. A crew of twenty on one venue WiFi opening the
+    # portal in the same minute must not lock each other out of a page load —
+    # carved out by the longest-prefix rule into the dashboard's bucket.
+    ("/api/crew-portal/auth/me", 120),
+    ("/api/crew-portal/auth/logout", 120),
+    # The signed-in crew dashboard, its 10-second freshness poll included.
+    ("/api/crew-portal",  120),
     # Public, UNAUTHENTICATED avatar bytes (embedded in email signatures). The
     # token is unguessable and each hit serves small cached bytes, so a generous
     # bucket — one email render can load several avatars, and pages fan out too.
