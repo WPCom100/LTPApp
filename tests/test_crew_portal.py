@@ -67,6 +67,7 @@ P_DASH = 7101   # A and B share this project
 P_PAY = 7102    # A's signed-off day in the past
 P_RESP = 7103   # respond-from-dashboard
 P_FLAT = 7104   # a flat-rate position for A
+P_LINK = 7105   # crew-domain links: a request for B
 
 _ADMIN_TOK = "crew-portal-admin"
 _MEMBER_TOK = "crew-portal-member"
@@ -138,6 +139,9 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_RESP, name="Portal Respond", schedule=[
                     _shift("cpr1", "Show", "2027-04-01", [_pos("cpr_a", C_A), _pos("cpr_b", C_B)]),
+                ]))
+                db.add(models.Project(id=P_LINK, name="Portal Link", schedule=[
+                    _shift("cpl1", "Show", "2027-06-01", [_pos("cpl_b", C_B)]),
                 ]))
                 db.add(models.Project(id=P_FLAT, name="Portal Flat", start_date="2027-05-01", end_date="2027-05-03",
                                       fixed_positions=[{"id": "cpf_a", "serviceId": S1, "role": "L1", "crewId": C_A,
@@ -707,6 +711,97 @@ def test_invite_hands_over_the_link_only_when_mail_fails(monkeypatch):
     # The handed-over link is live.
     token = body["inviteUrl"].rsplit("/", 1)[1]
     assert client.get("/api/crew-portal/auth/token/" + token).json()["valid"] is True
+
+
+# ── The crew portal's own domain (docs/CREW_DOMAIN.md) ──────────────────────
+
+def test_crew_origin_falls_back_to_the_app_origin(monkeypatch):
+    from backend.email_compose import crew_origin, crew_host
+    monkeypatch.delenv("LTP_CREW_PORTAL_ORIGIN", raising=False)
+    assert crew_origin() == "https://ltp.example.com" and crew_host() == ""
+    monkeypatch.setenv("LTP_CREW_PORTAL_ORIGIN", "crew.example.com")          # no scheme → ignored
+    assert crew_origin() == "https://ltp.example.com" and crew_host() == ""
+    monkeypatch.setenv("LTP_CREW_PORTAL_ORIGIN", "https://Crew.Example.com/")
+    assert crew_origin() == "https://Crew.Example.com" and crew_host() == "crew.example.com"
+
+
+def test_crew_origin_drives_every_crew_facing_link(monkeypatch):
+    """With the crew domain configured, the invitation / reset links AND the
+    call-sheet link in a crew request point at it; the masthead and avatar
+    stay on the app origin (assets are never served from a host that could
+    be detached)."""
+    client, tok = _setup()
+    monkeypatch.setenv("LTP_CREW_PORTAL_ORIGIN", "https://crew.example.com")
+    r = _invite(client, C_B)                       # B holds a live invite, never signed up
+    assert r.status_code == 200, r.text
+    html = SENT[-1]["html_body"]
+    assert "https://crew.example.com/#/crew-portal/signup/" in html
+    assert "https://ltp.example.com/#/crew-portal" not in html
+    assert "https://ltp.example.com/assets/logos/luminary-masthead.png" in html
+    r = client.post("/api/crew-requests/send", json={"projectId": P_LINK, "contactId": C_B}, cookies=_staff())
+    assert r.status_code == 200, r.text
+    html = SENT[-1]["html_body"]
+    assert "https://crew.example.com/#/crew/" + r.json()["token"] in html
+    assert "https://ltp.example.com/#/crew/" not in html
+    # Unset again, links go back to the app origin.
+    monkeypatch.delenv("LTP_CREW_PORTAL_ORIGIN")
+    r = client.post(f"/api/crew-requests/{r.json()['id']}/resend", cookies=_staff())
+    assert r.status_code == 200 and "https://ltp.example.com/#/crew/" in SENT[-1]["html_body"]
+
+
+def test_crew_host_serves_the_portal_identity(monkeypatch):
+    """Keyed on the request's Host: the crew host gets the LTP Crew title,
+    home-screen name, default-route hint and a manifest that opens on the
+    portal; the app host is served byte-for-byte from disk."""
+    client, tok = _setup()
+    monkeypatch.setenv("LTP_CREW_PORTAL_ORIGIN", "https://crew.example.com")
+    on_disk = open(os.path.join(_root, "index.html"), "rb").read()
+
+    r = client.get("/", headers={"host": "crew.example.com"})
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "<title>LTP Crew Portal</title>" in r.text
+    assert '<meta name="apple-mobile-web-app-title" content="LTP Crew" />' in r.text
+    assert '<meta name="ltp-default-route" content="crew-portal" />' in r.text
+    assert "<title>LTP Business Suite</title>" not in r.text
+    assert r.headers["cache-control"] == "no-cache"
+    # A port in Host, upper case, and a deep path (SPA fallback) all count.
+    assert "ltp-default-route" in client.get("/", headers={"host": "CREW.example.com:443"}).text
+    assert "ltp-default-route" in client.get("/anything/deep", headers={"host": "crew.example.com"}).text
+    assert "ltp-default-route" in client.get("/index.html", headers={"host": "crew.example.com"}).text
+    # The app host — and any other host — is untouched.
+    for host in ("ltp.example.com", "ltpapp.up.railway.app"):
+        r2 = client.get("/", headers={"host": host})
+        assert r2.content == on_disk, host
+        assert "ltp-default-route" not in r2.text
+
+    m = client.get("/manifest.webmanifest", headers={"host": "crew.example.com"})
+    assert m.status_code == 200 and "application/manifest+json" in m.headers["content-type"]
+    m = m.json()
+    assert m["name"] == "LTP Crew" and m["short_name"] == "LTP Crew" and m["start_url"] == "/#/crew-portal"
+    assert m["icons"] and m["scope"] == "/"
+    m2 = client.get("/manifest.webmanifest", headers={"host": "ltp.example.com"}).json()
+    assert m2["name"] == "LTP" and m2["start_url"] == "/#/dashboard"
+
+    # Static files and the API answer the same on the crew host.
+    assert client.get("/router.js", headers={"host": "crew.example.com"}).status_code == 200
+    assert client.get("/api/crew-portal/auth/me", headers={"host": "crew.example.com"}).status_code == 401
+
+    # Without the variable, the crew host is just another host.
+    monkeypatch.delenv("LTP_CREW_PORTAL_ORIGIN")
+    assert client.get("/", headers={"host": "crew.example.com"}).content == on_disk
+
+
+def test_crew_origin_is_an_allowed_csrf_source(monkeypatch):
+    """A state-changing request whose Origin is the crew domain passes the CSRF
+    check even when it reaches the app under another Host (a proxy alias)."""
+    client, tok = _setup()
+    monkeypatch.setenv("LTP_CREW_PORTAL_ORIGIN", "https://crew.example.com")
+    r = client.post("/api/crew-portal/auth/login", json={"email": "nobody@x.com", "password": "whatever pw"},
+                    headers={"origin": "https://crew.example.com", "host": "ltp.example.com"})
+    assert r.status_code == 401                    # past CSRF (403), refused as credentials
+    r = client.post("/api/crew-portal/auth/login", json={"email": "nobody@x.com", "password": "whatever pw"},
+                    headers={"origin": "https://evil.example.com", "host": "ltp.example.com"})
+    assert r.status_code == 403
 
 
 # ── Housekeeping ────────────────────────────────────────────────────────────

@@ -27,6 +27,23 @@
 //   view/quote/abc123?preview=1       → { module:"view", sub:"quote",     id:"abc123", action:null, query:{preview:"1"} }
 (function() {
 
+  // Where a bare visit lands. The staff dashboard — unless the page says
+  // otherwise: on the crew portal's own domain the server serves index.html
+  // with <meta name="ltp-default-route" content="crew-portal"> (backend/
+  // main.py, docs/CREW_DOMAIN.md), so a crew member typing the address reaches
+  // their portal, not the staff Google sign-in. Read once at load; the tag is
+  // absent on every other host and the value is validated to a route name.
+  function defaultRoute() {
+    try {
+      var meta = (typeof document !== "undefined" && document.querySelector)
+        ? document.querySelector('meta[name="ltp-default-route"]') : null;
+      var v = meta && meta.getAttribute("content");
+      if (v && /^[a-z][a-z-]*$/.test(v)) return v;
+    } catch (e) { /* no DOM (tests) → the staff default */ }
+    return "dashboard";
+  }
+  var DEFAULT_ROUTE = defaultRoute();
+
   function isNumericId(s) {
     return s && s !== "new" && s !== "edit" && !isNaN(Number(s));
   }
@@ -48,7 +65,7 @@
   }
 
   function parsePath(hash) {
-    var raw   = (hash || "").replace(/^#\/?/, "") || "dashboard";
+    var raw   = (hash || "").replace(/^#\/?/, "") || DEFAULT_ROUTE;
     // Split off the query portion BEFORE the path split so segments like
     // "abc?preview=1" don't end up in `id`. The "?" lives inside the hash
     // string; the browser doesn't peel it off for us.
@@ -57,7 +74,7 @@
     var query = parseQuery(qIdx >= 0 ? raw.substring(qIdx + 1) : "");
 
     var parts  = path.split("/");
-    var module = parts[0] || "dashboard";
+    var module = parts[0] || DEFAULT_ROUTE;
 
     // Public client view: dedicated parsing because the third segment is an
     // opaque token (non-numeric, longer than any normal ID) and the existing
@@ -157,10 +174,11 @@
     return route;
   }
 
-  // Default redirect to dashboard on bare load. DOES NOT fire when the user
-  // arrives at a #view/... URL (that hash is non-empty).
+  // Default redirect on a bare load — the dashboard, or the crew portal on its
+  // own host (see defaultRoute above). DOES NOT fire when the user arrives at a
+  // #view/... URL (that hash is non-empty).
   if (!window.location.hash || window.location.hash === "#") {
-    window.location.hash = "/dashboard";
+    window.location.hash = "/" + DEFAULT_ROUTE;
   }
 
   window.LTPRouter = { getRoute: getRoute, navigate: navigate, replace: replace, useRoute: useRoute };

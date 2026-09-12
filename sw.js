@@ -303,7 +303,13 @@
 // rentals-shell.js, app.js.
 // (v91 was taken by the crew portal on dev while this shipped as v91 on its
 // branch, so the merge takes the next string above both.)
-var CACHE_VERSION = 'ltp-shell-v92';
+// v93: the crew portal's own domain (docs/CREW_DOMAIN.md). router.js lands a
+// bare visit on the route the page names (<meta name="ltp-default-route">,
+// which backend/main.py sets only on the crew host) and components/auth.js
+// skips the staff auth probe there; both are precached, so the shell must be
+// refetched. dev had taken v92 for the gear check-out work, so this is the
+// next string above it.
+var CACHE_VERSION = 'ltp-shell-v93';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

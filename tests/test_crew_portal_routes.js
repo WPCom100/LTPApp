@@ -38,6 +38,34 @@ eq("query survives", parse("#/crew-portal/login?next=payouts").query, { next: "p
 eq("#/crew/<token> is still the call sheet", parse("#/crew/" + tok), { module: "crew", sub: null, id: tok, action: null, query: {} });
 eq("crm/companies/5/edit unchanged", parse("#/crm/companies/5/edit"), { module: "crm", sub: "companies", id: 5, action: "edit", query: {} });
 
+// ── The default route comes from the page (the crew portal's own domain) ────
+// backend/main.py serves index.html on the crew host with
+// <meta name="ltp-default-route" content="crew-portal">; router.js reads it
+// once at load so a bare visit lands on the portal. Everywhere else the tag is
+// absent and the staff dashboard stays the default.
+function loadRouter(metaContent, startHash) {
+  global.window = { location: { hash: startHash || "" }, addEventListener() {}, removeEventListener() {}, history: { replaceState() {} } };
+  global.document = {
+    querySelector(sel) {
+      if (metaContent === null || sel.indexOf("ltp-default-route") === -1) return null;
+      return { getAttribute() { return metaContent; } };
+    },
+  };
+  (0, eval)(read("router.js"));
+  const w = global.window;
+  delete global.document;
+  return w;
+}
+eq("no tag → a bare visit lands on the dashboard", loadRouter(null).location.hash, "/dashboard");
+eq("crew-portal tag → a bare visit lands on the portal", loadRouter("crew-portal").location.hash, "/crew-portal");
+eq("a bare '#' counts as bare", loadRouter("crew-portal", "#").location.hash, "/crew-portal");
+eq("an existing hash is never overridden by the tag", loadRouter("crew-portal", "#/labor/roster").location.hash, "#/labor/roster");
+eq("an unexpected tag value is ignored", loadRouter("evil<script>").location.hash, "/dashboard");
+eq("the tag also sets the module a bare hash parses to", loadRouter("crew-portal").LTPRouter.getRoute().module, "crew-portal");
+// Restore the plain shim for the remaining assertions.
+global.window = { location: { hash: "#/crew-portal" }, addEventListener() {}, removeEventListener() {}, history: { replaceState() {} } };
+(0, eval)(read("router.js"));
+
 // ── Wiring ───────────────────────────────────────────────────────────────────
 const app = read("app.js");
 ok("app.js renders the portal outside the staff gate",
@@ -48,6 +76,8 @@ ok("app.js checks the portal route BEFORE the auth gate",
 const auth = read("components/auth.js");
 ok("auth.js skips the staff /auth/me probe on #/crew-portal",
    /crew-portal/.test(auth.split("function fireAuthCheck")[0]));
+ok("auth.js also skips the probe on a bare visit to the crew host (the default-route tag)",
+   /ltp-default-route/.test(auth.split("function fireAuthCheck")[0]));
 
 const html = read("index.html");
 const srcs = [...html.matchAll(/<script\s+src="([^"]+)"/g)].map((m) => m[1]);

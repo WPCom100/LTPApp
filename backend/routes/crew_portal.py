@@ -72,7 +72,7 @@ from backend import crew_auth, crew_integrity, gmail, livesync, models, payouts
 from backend.auth_deps import require_admin, require_session
 from backend.database import get_db
 from backend.email_compose import (
-    _CTA_ORANGE, _app_origin, _email_brand, _paragraphs_to_html, _render_signature, email_shell,
+    _CTA_ORANGE, _email_brand, _paragraphs_to_html, _render_signature, crew_origin, email_shell,
 )
 from backend.routes._shared import load_settings, public_settings
 from backend.routes.auth import _cookie_secure
@@ -232,7 +232,9 @@ def _token_state(row) -> str:
 
 
 def _portal_url(path: str) -> str:
-    return (_app_origin() or "") + "/#/crew-portal/" + path
+    """An absolute portal link — on the crew portal's own domain when one is
+    configured (email_compose.crew_origin), else the app's."""
+    return (crew_origin() or "") + "/#/crew-portal/" + path
 
 
 def _me_payload(account, contact) -> dict:

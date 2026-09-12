@@ -34,8 +34,14 @@
   // (more importantly) data-state.js would see a 401 and bounce to
   // /auth/login, breaking the public page for the actual visitor.
   var hash = (window.location.hash || "").replace(/^#\/?/, "");
+  // On the crew portal's own domain a bare visit is about to become
+  // #/crew-portal (router.js reads the same tag); this script runs first, so
+  // it checks the tag itself rather than firing a probe that can only 401.
+  var routeMeta = document.querySelector && document.querySelector('meta[name="ltp-default-route"]');
+  var crewHost = !!(routeMeta && routeMeta.getAttribute("content") === "crew-portal");
   if (hash.indexOf("view/") === 0 || hash.indexOf("crew/") === 0
-      || hash === "crew-portal" || hash.indexOf("crew-portal/") === 0 || hash.indexOf("crew-portal?") === 0) {
+      || hash === "crew-portal" || hash.indexOf("crew-portal/") === 0 || hash.indexOf("crew-portal?") === 0
+      || (!hash && crewHost)) {
     window.LTP_AUTH_USER = null;
     // Defer so listeners attached later this tick still see the event.
     setTimeout(dispatchReady, 0);
