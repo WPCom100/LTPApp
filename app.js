@@ -2,6 +2,9 @@
 // Picks what to render based on the route AND window.LTP_AUTH_USER:
 //   route.module === "view"  → public client view; render LTPClientView with
 //                              NO auth gate (the share token is the credential)
+//   route.module === "crew" / "crew-portal" → the crew call sheet (token) and
+//                              the crew portal (its own password sign-in);
+//                              both outside the staff gate
 //   authUser === undefined   → auth check in flight; show "Loading…"
 //   authUser === null        → not signed in; show sign-in screen
 //   authUser === {…}         → signed in; render LTPSignedInApp (the real app)
@@ -50,6 +53,14 @@ window.LTPApp = function() {
   // is the credential, no LTP session required (see modules/crew-view.js).
   if (route.module === "crew") {
     return h(window.LTPCrewView, { route: route });
+  }
+
+  // Crew portal — the crew member's own password sign-in and dashboard. Also
+  // outside the staff gate: it authenticates itself against its own cookie
+  // (ltp_crew_session) and never touches the staff session or /api/* data
+  // hooks (see modules/crew-portal.js, backend/routes/crew_portal.py).
+  if (route.module === "crew-portal") {
+    return h(window.LTPCrewPortal, { route: route });
   }
 
   if (authUser === undefined) {

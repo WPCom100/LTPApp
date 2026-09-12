@@ -288,7 +288,15 @@
 // and an Allocations tab now that bookings are derived from accepted quotes and
 // invoices. rentals-utils.js (pricing engine moved here), rentals-cross.js,
 // rentals-allocations.js, vendor-rates.js, app.js, data-state.js.
-var CACHE_VERSION = 'ltp-shell-v90';
+// v91: the crew portal — a crew member's own password sign-in and dashboard
+// (modules/crew-portal.js, #/crew-portal). index.html gained its script tag,
+// router.js parses the new route, components/auth.js skips the staff auth
+// probe on it and app.js renders it outside the staff gate; all four are
+// precached or runtime-cached, so the shell must be refetched. The roster
+// (modules/labor.js) grew the invitation controls and data/settings.js the two
+// new email templates. dev had already taken v90 for cross rentals, so this
+// is the next string above it (see the note on the numbers above).
+var CACHE_VERSION = 'ltp-shell-v91';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

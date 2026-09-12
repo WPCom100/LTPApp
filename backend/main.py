@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
@@ -20,6 +20,7 @@ from backend.routes.auth import router as auth_router
 from backend.routes.pdf import api_pdf_router, public_pdf_router
 from backend.routes.view import view_router
 from backend.routes.crew import crew_public_router, crew_admin_router
+from backend.routes.crew_portal import crew_portal_router, crew_portal_admin_router
 from backend.routes.email import email_router
 from backend.routes.qbo import qbo_router
 from backend.routes.push import push_router
@@ -41,15 +42,31 @@ async def _sweep_expired_sessions_once() -> int:
     """Delete every session whose expires_at is in the past. Returns the
     rowcount deleted (0 if none). Uses ORM-level delete() so rowcount works
     consistently across SQLite and Postgres dialects."""
+    now = datetime.now(timezone.utc)
     async with async_session() as db:
         result = await db.execute(
-            delete(models.Session).where(models.Session.expires_at < datetime.now(timezone.utc))
+            delete(models.Session).where(models.Session.expires_at < now)
+        )
+        # The crew portal's sessions and its one-time invitation / reset links
+        # age out the same way (backend/routes/crew_portal.py). A spent link is
+        # kept for a day so a second click on it still says "already used"
+        # rather than "unknown link".
+        crew_sessions = await db.execute(
+            delete(models.CrewSession).where(models.CrewSession.expires_at < now)
+        )
+        crew_tokens = await db.execute(
+            delete(models.CrewAuthToken).where(
+                models.CrewAuthToken.expires_at < now - timedelta(days=1)
+            )
         )
         await db.commit()
         # Some dialect drivers return -1 if rowcount isn't supported; treat
         # those as "we don't know, assume 0 for logging purposes".
-        rc = result.rowcount
-        return rc if rc and rc > 0 else 0
+        total = 0
+        for r in (result, crew_sessions, crew_tokens):
+            rc = r.rowcount
+            total += rc if rc and rc > 0 else 0
+        return total
 
 
 async def _session_sweeper_loop():
@@ -631,6 +648,15 @@ app.include_router(view_router)
 # unmatched sub-paths. See backend/routes/crew.py.
 app.include_router(crew_public_router)
 app.include_router(crew_admin_router)
+# Crew portal: the crew member's OWN sign-in (email + password, a separate
+# cookie from the staff session) and dashboard — upcoming calls, open requests,
+# statuses, payouts. crew_portal_router carries the public sign-in surface
+# (/api/crew-portal/auth/*) and the crew-session routes; crew_portal_admin_router
+# is the staff side (/api/crew-portal/accounts/*: invite, reset, disable). Both
+# under /api/ so the static catch-all's api/ early-return covers them. See
+# backend/routes/crew_portal.py and backend/crew_auth.py.
+app.include_router(crew_portal_router)
+app.include_router(crew_portal_admin_router)
 # Email send: session-gated. Per-user Gmail via OAuth scope gmail.send;
 # see backend/routes/email.py for the full lifecycle.
 app.include_router(email_router)

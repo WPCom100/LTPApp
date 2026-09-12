@@ -470,6 +470,11 @@
   <!-- Public crew-request view — rendered when the URL starts with #/crew/.
        Loaded here so app.js can reference window.LTPCrewView. -->
   <script src="modules/crew-view.js"></script>
+  <!-- Crew portal — the crew member's own sign-in + dashboard, rendered when
+       the URL starts with #/crew-portal. Loaded here so app.js can reference
+       window.LTPCrewPortal. Reads LTP_useIsMobile (ui.js), LTP_gcalUrl and
+       LTP_useDocFreshness (domain-util.js) — all loaded above. -->
+  <script src="modules/crew-portal.js"></script>
 
   <!-- 7. App shell — wires everything -->
   <script src="app.js"></script>
