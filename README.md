@@ -331,6 +331,97 @@ All three FKs CASCADE, so an override can't outlive its client or its service.
 The engine reads only `minHours` / `minCostHours` off the resolved service; the
 rate/cost columns are ordinary rate-card values by the time they reach it.
 
+## Cross rentals & vendor pricing
+
+Gear rented **in** from a vendor to cover what we don't stock or don't have
+free on the dates. The whole thing rests on three ideas:
+
+- **A cross rental is an order.** One per vendor, with a reference number, a
+  rental period, an optional project and a list of lines — the fixtures
+  (catalog items) and the parts and accessories that come with them (free
+  text, cost only). It reads like the vendor's PO because that is what it is.
+- **Quoted is not inventory; confirmed is.** Like a quote, an order the vendor
+  has only quoted does not change availability. It is flagged as *quoted*
+  wherever availability is shown, so nobody sources it twice. Once the order is
+  **confirmed** (or picked up), its catalog-item lines count as our stock for
+  the dates they cover. Owned units and cross-rented units stack.
+- **Vendor prices are remembered.** What each vendor charges us per item, in
+  the same 3-day / week / month tiers as our own rates, with the date it was
+  last quoted — so the next time you can see who to call and what they charged.
+
+### Where it lives
+
+| Surface | What you get |
+|---|---|
+| **Rentals → Cross Rentals** | The orders list (filters for open / status / vendor, overdue flag), the order form, and the detail popup with each line's cost and what other vendors price the item at. |
+| **Rentals → Availability Checker** | Totals include confirmed cross-rented units for the range, with an *incl. ×N cross-rented · Vendor* chip; quoted orders show as *×N quoted*. When an item is short, the row lists the vendors who price it (preferred first, then cheapest) and **+ Cross rental** opens the order form already filled in with the item, the dates and the vendor. |
+| **Quote builder → Add Item** | Same totals and chips. An item with nothing free offers **Cross-rent**, which opens the order form *over* the picker so the draft stays put. |
+| **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), and the open cross rentals naming it. |
+| **CRM → a vendor** | **Rental Rates** — every item this vendor prices — and the orders placed with them, with the year's spend. |
+| **Rentals → Equipment → Add / Edit** | **Cross-rental only** marks gear we never stock. The row still exists so the item can be quoted at *our* rates and checked for availability; the inventory list labels it instead of showing a 0-unit item as available. It is a label, not a mode — switch it off the day you buy some. |
+
+### The order form
+
+Pick the vendor and every catalog line's rates are seeded from that vendor's
+price rows (a `RATE ON FILE` chip while unchanged, with the quoted date). Type
+a different price and the line says so. Each line carries qty, the three
+tiers, a computed cost from the rental-pricing engine (or a flat **override
+total** for a negotiated deal), optional **own dates** when a part comes back
+on a different day, and notes. **Remember these prices** (on by default)
+refreshes the vendor's price rows on save — only for lines whose price differs
+from what is on file, stamped with today's date, so re-saving an old order to
+mark it returned never re-dates a price.
+
+Status runs `quoted → confirmed → picked-up → returned`, or `cancelled`. It
+never moves on its own; an order past its end date and still out shows as
+**overdue**.
+
+### Counting rule
+
+A cross rental counts toward a date range only when its period **covers the
+whole range** — deliberately conservative, and the mirror of how bookings are
+counted (any overlapping booking counts against the whole range). A line's own
+dates, when set, are what is checked; otherwise the order's.
+
+### Data model
+
+`vendor_rates`, one row per (vendor company, equipment item), both FKs
+CASCADE — see `backend/models.py::VendorRate`. `cross_rentals`, one row per
+order with the lines in JSON (`CrossRental.lines`, documented on the model);
+vendor and project FKs SET NULL so the cost record outlives either.
+`equipment.cross_rental_only` is the label above. The helpers every surface
+shares live in `modules/rentals-utils.js` (`crossRentedQty`, `crossQuotedQty`,
+`totalQty`, `vendorOptions`, `lineCost`, `orderCost`), guarded by
+`tests/test_rentals_cross.js` and `tests/test_quote_availability.py`.
+
+## Bookings (allocations)
+
+An **allocation** is the record that some units of an item are booked to a
+project for a date range — it is what makes the checker read "3 of 10
+available" and the item popup say "On Rental". Bookings are **derived from
+confirmed documents** (`backend/rental_bookings.py`):
+
+- An **accepted quote** books one allocation per equipment line for that
+  line's rental dates (the section's own period when set, else the quote's
+  project dates, else its custom dates). A draft or sent quote books nothing.
+- An **invoice** books its equipment lines in every status — an invoice only
+  exists for confirmed work, and the draft created by converting a quote must
+  keep the booking alive without a gap. A partially invoiced quote books the
+  un-invoiced remainder while the invoice books what it drew, so nothing is
+  counted twice.
+- Bookings are keyed by document and line, so editing the document **updates
+  the same row** instead of stacking a second one, and the state someone set
+  on it survives. A line that stops booking releases its row only while it is
+  still `reserved` / `allocated`; gear that is physically `checked-out` keeps
+  counting until it is returned by hand.
+- The reconcile runs on every quote/invoice create, save and delete, on the
+  client's public accept link, and once at boot as a backfill. **Rentals →
+  Allocations** lists every booking with its source (Quote #12 / Invoice #5 /
+  Manual), lets you move it through `reserved → allocated → checked-out →
+  returned` inline, add a booking by hand for gear going out with no document,
+  and (admins) **Rebuild from documents** — `POST /api/allocations/reconcile`.
+  Manual bookings are never touched by the engine.
+
 ## Flat-rate positions (fixed-cost hires)
 
 Some people are hired for the **whole production at a flat fee** and never get
@@ -836,7 +927,7 @@ All entities follow REST conventions:
 | PUT | `/api/{entity}/{id}` | Update |
 | DELETE | `/api/{entity}/{id}` | Delete |
 
-Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`
+Entities: `companies`, `contacts`, `projects`, `quotes`, `invoices`, `equipment`, `products`, `services`, `fees`, `client-rates`, `allocations`, `containers`, `kits`, `vendor-rates`, `cross-rentals`
 
 `PUT` accepts an optional **`If-Match`** header carrying the row's `_rev` (every
 row the API returns includes one). If the row changed since you read it, the PUT
@@ -848,6 +939,7 @@ header keeps last-write-wins. See *Live sync* below.
 Special endpoints:
 - `GET/PUT /api/settings` — App settings (singleton)
 - `GET /api/versions` — Per-collection change stamps (live sync)
+- `POST /api/allocations/reconcile` — Rebuild every document-derived booking (admin)
 - `GET /api/stream` — Server-sent change feed (live sync)
 
 ## Live sync (cross-window)
@@ -1033,6 +1125,7 @@ ltp-app/
 │   ├── qbo_sync.py        # QuickBooks invoice sync engine (customers, items, tax)
 │   ├── pdf_generator.py   # Quote/invoice PDF rendering
 │   ├── livesync.py        # Cross-window change stamps + SSE broadcast bus
+│   ├── rental_bookings.py # Bookings (allocations) derived from accepted quotes + invoices
 │   └── routes/
 │       ├── api.py         # REST API routes
 │       └── qbo.py         # QuickBooks connect/callback/status/push/delete
