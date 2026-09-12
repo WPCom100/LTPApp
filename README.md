@@ -144,6 +144,7 @@ shell exports.
 | `LTP_APP_VARIANT` | Optional | (none) | Set to `dev` on a non-production deployment to give its installed PWA a distinct home-screen icon (the "DEV"-tagged variant) and name ("LTP Dev"), so it's unmistakable next to production ("LTP"). Unset = normal production identity. See [Dev app identity](#dev-app-identity). |
 | `ANTHROPIC_API_KEY` | Optional | (none) | Enables label OCR in the barcode scan-import flow: when the barcode won't decode (glare/angle), the frame is sent to Claude to read the serial *printed* on the label. Unset = the feature hides itself entirely. **Secret — server-side only.** Get a key at console.anthropic.com; usage is roughly $2–3 per 1,000 fallback reads. |
 | `LTP_OCR_MODEL` | Optional | `claude-haiku-4-5-20251001` | Overrides the Claude model used for label OCR. Haiku is fast and cheap; only change if Anthropic deprecates the default. |
+| `LTP_CREW_PORTAL_ORIGIN` | Optional | (none) | The crew portal's own domain, e.g. `https://crew.luminarytechnology.productions` — a second custom domain on the same Railway service. When set, every crew-facing email link (invitations, resets, call sheets) is built on it, and requests arriving on that host get the crew identity: a bare visit lands on `#/crew-portal`, the tab and home-screen name read *LTP Crew*, and the PWA installs opening on the portal. Unset = crew links use the app origin. Setup: [docs/CREW_DOMAIN.md](docs/CREW_DOMAIN.md). |
 | `LTP_CREW_PORTAL_SENDER_EMAIL` | Optional | (none) | Which team member's Gmail sends the crew portal's **self-serve** emails — a crew member's own "Forgot your password?" and "Request access" (invitations and resets a producer sends from the roster go out as that producer). Must be a user who has signed in with Gmail connected. Unset = the most recently signed-in admin with Gmail connected. See [Crew portal](#crew-portal). |
 
 ## Inline add / edit on entity pickers
@@ -551,6 +552,15 @@ self-serve ones go out as `LTP_CREW_PORTAL_SENDER_EMAIL` (else the most
 recently signed-in admin with Gmail connected). Both templates —
 **Crew Portal Invitation** and **Crew Portal Password Reset** — are editable
 under Settings → Email Templates.
+
+### Its own domain
+
+The portal can live at **crew.luminarytechnology.productions** — a second custom
+domain on the same Railway service, switched per request on the `Host` header.
+Set `LTP_CREW_PORTAL_ORIGIN` and every crew-facing link is built on it; a bare
+visit to that host lands on the portal instead of the staff sign-in, and the
+PWA installs there as *LTP Crew*. Step by step, with verification and rollback:
+[docs/CREW_DOMAIN.md](docs/CREW_DOMAIN.md).
 
 ### Routes
 

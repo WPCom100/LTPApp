@@ -36,6 +36,13 @@ def _allowed_hosts(request_host: str) -> set:
         extra = extra.strip()
         if extra:
             hosts.add(urlparse(extra).netloc if "//" in extra else extra)
+    # The crew portal's own domain (docs/CREW_DOMAIN.md). Same-origin calls
+    # there already pass on the request's Host below; naming it keeps the
+    # allow-list explicit for a request that reaches the app through another
+    # host (a proxy that rewrites Host, a staging alias).
+    crew = os.environ.get("LTP_CREW_PORTAL_ORIGIN", "").strip()
+    if crew and "//" in crew:
+        hosts.add(urlparse(crew).netloc)
     if request_host:
         hosts.add(request_host)
     return {h for h in hosts if h}

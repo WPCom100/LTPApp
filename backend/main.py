@@ -3,7 +3,9 @@ import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI
+from urllib.parse import urlparse
+
+from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from sqlalchemy import delete
 from starlette.middleware.gzip import GZipMiddleware
@@ -12,6 +14,7 @@ from authlib.integrations.starlette_client import OAuth
 
 from backend import livesync, models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
+from backend.email_compose import crew_host
 from backend import rental_bookings
 from backend.routes.api import router as api_router
 from backend.routes.api import public_router as users_public_router
@@ -808,25 +811,36 @@ async def service_worker():
 
 
 @app.get("/manifest.webmanifest")
-async def web_manifest():
+async def web_manifest(request: Request):
     # mimetypes doesn't reliably know .webmanifest, so set it explicitly.
     path = os.path.join(frontend_dir, "manifest.webmanifest")
-    if _IS_DEV_VARIANT:
+    crew = _is_crew_host(request)
+    if _IS_DEV_VARIANT or crew:
         # Dev deployment: rename to "LTP Dev". The icon `src`s stay the same
         # paths — the /assets/icons route below serves the dev bytes (the "DEV"
         # variant) for them. Theme/background stay the base slate so the splash
         # matches the dev icon's field. Built from the base file so every other
         # field stays a single source of truth.
+        # Crew host: the portal installs as its own app — "LTP Crew", opening
+        # on #/crew-portal — so a crew member's home-screen icon lands on their
+        # dashboard, never the staff sign-in. See docs/CREW_DOMAIN.md.
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            data["name"] = "LTP Dev"
-            data["short_name"] = "LTP Dev"
+            if crew:
+                name = "LTP Crew Dev" if _IS_DEV_VARIANT else "LTP Crew"
+                data["name"] = name
+                data["short_name"] = name
+                data["description"] = "Luminary Technology & Productions crew portal — your calls, requests and pay."
+                data["start_url"] = "/#/crew-portal"
+            else:
+                data["name"] = "LTP Dev"
+                data["short_name"] = "LTP Dev"
             resp = JSONResponse(data, media_type="application/manifest+json")
             resp.headers["Cache-Control"] = "no-cache"
             return resp
         except Exception as e:
-            print(f"[LTP] dev manifest build failed, serving base: {e}", flush=True)
+            print(f"[LTP] manifest build failed, serving base: {e}", flush=True)
     resp = FileResponse(path, media_type="application/manifest+json")
     resp.headers["Cache-Control"] = "no-cache"
     return resp
@@ -864,30 +878,74 @@ _APPLE_TITLE_DEV = '<meta name="apple-mobile-web-app-title" content="LTP Dev" />
 _DOC_TITLE_PROD = "<title>LTP Business Suite</title>"
 _DOC_TITLE_DEV = "<title>LTP Dev — Business Suite</title>"
 
+# ── Crew portal host ─────────────────────────────────────────────────────────
+# The crew portal can live on its own domain (LTP_CREW_PORTAL_ORIGIN, e.g.
+# https://crew.example.com) attached to this same service — docs/CREW_DOMAIN.md.
+# Requests whose Host is that domain get the crew identity: the document title
+# and iOS home-screen name read "LTP Crew", the manifest above installs onto
+# #/crew-portal, and index.html carries a default-route hint that router.js
+# reads so a bare visit lands on the portal instead of the staff Google
+# sign-in. Every other host is served byte-for-byte as before — the switch is
+# per request, on Host, never on which branch is deployed.
+_APPLE_TITLE_CREW = '<meta name="apple-mobile-web-app-title" content="LTP Crew" />'
+_APPLE_TITLE_CREW_DEV = '<meta name="apple-mobile-web-app-title" content="LTP Crew Dev" />'
+_DOC_TITLE_CREW = "<title>LTP Crew Portal</title>"
+_DOC_TITLE_CREW_DEV = "<title>LTP Crew Dev — Portal</title>"
+_CREW_ROUTE_META = '<meta name="ltp-default-route" content="crew-portal" />'
 
-def _index_response():
+
+def _request_host(request: Request) -> str:
+    """Lower-case hostname out of the request's Host header, port dropped."""
+    raw = (request.headers.get("host") or "").strip().lower()
+    if not raw:
+        return ""
+    try:
+        return urlparse("//" + raw).hostname or ""
+    except ValueError:
+        return ""
+
+
+def _is_crew_host(request: Request) -> bool:
+    host = crew_host()
+    return bool(host) and _request_host(request) == host
+
+
+if os.environ.get("LTP_CREW_PORTAL_ORIGIN", "").strip() and not crew_host():
+    print("[LTP] WARNING: LTP_CREW_PORTAL_ORIGIN is set but is not an http(s) origin "
+          "(expected e.g. https://crew.example.com) — ignoring it.", flush=True)
+
+
+def _index_response(request: Request | None = None):
     """Serve index.html. On the dev deployment (LTP_APP_VARIANT=dev) rewrite the
     iOS home-screen app name (apple-mobile-web-app-title) and the document title
     to the 'LTP Dev' identity — iOS reads the home-screen label from that meta
-    tag, not the manifest. Production is served verbatim from disk (unchanged)."""
-    if _IS_DEV_VARIANT:
+    tag, not the manifest. On the crew portal's host, the 'LTP Crew' identity
+    plus the default-route hint (see _CREW_ROUTE_META). Production on the app
+    host is served verbatim from disk (unchanged)."""
+    crew = request is not None and _is_crew_host(request)
+    if _IS_DEV_VARIANT or crew:
         try:
             with open(_INDEX_PATH, "r", encoding="utf-8") as f:
                 html = f.read()
-            html = html.replace(_APPLE_TITLE_PROD, _APPLE_TITLE_DEV)
-            html = html.replace(_DOC_TITLE_PROD, _DOC_TITLE_DEV)
+            if crew:
+                apple = _APPLE_TITLE_CREW_DEV if _IS_DEV_VARIANT else _APPLE_TITLE_CREW
+                html = html.replace(_APPLE_TITLE_PROD, apple + "\n  " + _CREW_ROUTE_META)
+                html = html.replace(_DOC_TITLE_PROD, _DOC_TITLE_CREW_DEV if _IS_DEV_VARIANT else _DOC_TITLE_CREW)
+            else:
+                html = html.replace(_APPLE_TITLE_PROD, _APPLE_TITLE_DEV)
+                html = html.replace(_DOC_TITLE_PROD, _DOC_TITLE_DEV)
             resp = HTMLResponse(html)
             resp.headers["Cache-Control"] = "no-cache"
             return resp
         except Exception as e:
-            print(f"[LTP] dev index rewrite failed, serving base: {e}", flush=True)
+            print(f"[LTP] index rewrite failed, serving base: {e}", flush=True)
     resp = FileResponse(_INDEX_PATH)
     resp.headers["Cache-Control"] = "no-cache"
     return resp
 
 
 @app.get("/{full_path:path}")
-async def serve_frontend(full_path: str):
+async def serve_frontend(full_path: str, request: Request):
     # Anything under api/, auth/, or pdf/ that didn't match the routers
     # above is a genuinely unknown endpoint — 404 instead of returning
     # index.html, which would otherwise mask typos.
@@ -899,7 +957,7 @@ async def serve_frontend(full_path: str):
         # index.html gets the dev-name rewrite (below); all other statics served
         # straight from disk.
         if os.path.realpath(static) == _INDEX_PATH:
-            return _index_response()
+            return _index_response(request)
         # WebAssembly must be served as application/wasm — the browser's
         # WebAssembly.instantiateStreaming validates the MIME and refuses
         # anything else (Python's mimetypes doesn't reliably know .wasm, so set
@@ -919,5 +977,5 @@ async def serve_frontend(full_path: str):
             resp.headers["Cache-Control"] = "no-cache"
         return resp
 
-    # SPA fallback for any unknown path (also the dev-name rewrite applies).
-    return _index_response()
+    # SPA fallback for any unknown path (also the dev/crew rewrites apply).
+    return _index_response(request)

@@ -296,7 +296,12 @@
 // (modules/labor.js) grew the invitation controls and data/settings.js the two
 // new email templates. dev had already taken v90 for cross rentals, so this
 // is the next string above it (see the note on the numbers above).
-var CACHE_VERSION = 'ltp-shell-v91';
+// v92: the crew portal's own domain (docs/CREW_DOMAIN.md). router.js lands a
+// bare visit on the route the page names (<meta name="ltp-default-route">,
+// which backend/main.py sets only on the crew host) and components/auth.js
+// skips the staff auth probe there; both are precached, so the shell must be
+// refetched.
+var CACHE_VERSION = 'ltp-shell-v92';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -50,8 +50,8 @@ from backend import crew_integrity, gmail, livesync, models, view_tracking, webp
 from backend.auth_deps import require_session
 from backend.database import get_db
 from backend.email_compose import (
-    _CTA_ORANGE, _app_origin, _email_brand, _fmt_hhmm, _fmt_iso_date,
-    _paragraphs_to_html, _render_signature, email_shell,
+    _CTA_ORANGE, _email_brand, _fmt_hhmm, _fmt_iso_date,
+    _paragraphs_to_html, _render_signature, crew_origin, email_shell,
 )
 from backend.routes._shared import load_settings, public_settings
 from backend.routes.api import _row_to_dict
@@ -551,7 +551,10 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
         company = brand["company"]
         crew_name = ((contact.first_name or "") + " " + (contact.last_name or "")).strip() or "there"
         project_name = (project.name if project else "") or "Project"
-        view_url = (_app_origin() or "") + "/#/crew/" + token
+        # The call sheet lives on the crew portal's own domain when one is
+        # configured (docs/CREW_DOMAIN.md), so every link a crew member gets
+        # points at the same host.
+        view_url = (crew_origin() or "") + "/#/crew/" + token
 
         subject = ((tmpl.get("subject") or "Crew request: {{projectName}}")
                    .replace("{{projectName}}", project_name)
@@ -734,7 +737,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # The button is injected above the signature for any saved body that
         # predates the {{addToCalendar}} token, so it always renders on a confirmation.
         if template_key == "crewConfirmed":
-            view_url = ((_app_origin() or "") + "/#/crew/" + token) if token else ""
+            view_url = ((crew_origin() or "") + "/#/crew/" + token) if token else ""
             cal_html = _add_to_calendar_cta(view_url, _CTA_ORANGE)
             blocks["{{addToCalendar}}"] = cal_html
             if cal_html and "{{addToCalendar}}" not in body_text:
