@@ -3,7 +3,7 @@
 (function() {
   var h = React.createElement, useState = React.useState;
 
-  window.RentalsAvailabilityView = function({ equipment, allocations, projects, onOpenEquipment }) {
+  window.RentalsAvailabilityView = function({ equipment, allocations, crossRentals, vendorRates, companies, projects, onOpenEquipment, onCrossRent }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
 
@@ -81,7 +81,8 @@
       h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
         filtered.map(function(eq) {
           var consumed = R.allocatedQty(allocations, eq.id, startDate, endDate, null);
-          var total    = R.eqQty(eq);
+          // Owned stock plus confirmed cross-rented units covering the range.
+          var total    = R.totalQty(eq, crossRentals, startDate, endDate);
           var avail    = total - consumed;
           var pct      = total > 0 ? consumed / total : 0;
           var barColor = avail === 0 ? B.danger : pct > 0.5 ? B.warn : B.success;
@@ -89,6 +90,18 @@
           var rangeAllocs = allocations.filter(function(a) {
             return a.equipmentId === eq.id && a.state !== "returned" && a.startDate <= endDate && a.endDate >= startDate;
           });
+          // Cross rentals covering the range: confirmed ones are already in
+          // `total`; quoted ones are shown but never counted.
+          var crossLines  = R.crossLinesFor(crossRentals || [], eq.id, startDate, endDate, R.CROSS_COUNTS);
+          var quotedLines = R.crossLinesFor(crossRentals || [], eq.id, startDate, endDate, { "quoted": true });
+          var vendorName = function(id) { var c = (companies || []).find(function(x) { return x.id === id; }); return c ? c.name : "vendor"; };
+          // Short for the range: who could supply it, and at what.
+          var options = avail <= 0 ? R.vendorOptions(vendorRates || [], companies || [], eq.id, startDate, endDate) : [];
+          var crossChip = function(x, quoted) {
+            var tone = quoted ? B.warn : B.info;
+            return h("span", { key: x.order.id + ":" + x.line.id, style: { fontSize: "10px", background: tone + "14", border: "1px solid " + tone + "55", borderRadius: 4, padding: "2px 8px", color: tone, fontWeight: 600 } },
+              (quoted ? "×" + x.qty + " quoted · " : "incl. ×" + x.qty + " cross-rented · ") + vendorName(x.order.vendorCompanyId));
+          };
 
           return h("div", { key: eq.id, onClick: function() { onOpenEquipment(eq.id); },
             style: { background: B.surface, border: "1px solid " + B.border, borderRadius: 8, padding: "12px 16px", cursor: "pointer", transition: "all 0.15s" },
@@ -98,15 +111,33 @@
             h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } },
               h("div", null,
                 h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginBottom: 2 } }, eq.name),
-                h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.category + (eq.subcategory ? " \u00b7 " + eq.subcategory : "") + " \u00b7 $" + R.baseRate(eq) + "/3-day")),
+                h("div", { style: { fontSize: "11px", color: B.textMut } }, eq.category + (eq.subcategory ? " \u00b7 " + eq.subcategory : "") + " \u00b7 $" + R.baseRate(eq) + "/3-day" + (eq.crossRentalOnly ? " \u00b7 cross-rental only" : ""))),
               h("div", { style: { textAlign: "right" } },
                 h("div", { style: { fontSize: "16px", fontWeight: 700, color: barColor } }, avail + "/" + total),
                 h("div", { style: { fontSize: "10px", color: B.textMut } }, "available"))
             ),
 
-            h("div", { style: { height: 6, background: B.raised, borderRadius: 3, overflow: "hidden", marginBottom: rangeAllocs.length > 0 ? 8 : 0 } },
+            h("div", { style: { height: 6, background: B.raised, borderRadius: 3, overflow: "hidden", marginBottom: (rangeAllocs.length > 0 || crossLines.length > 0 || quotedLines.length > 0 || avail <= 0) ? 8 : 0 } },
               h("div", { style: { width: (pct * 100) + "%", height: "100%", background: barColor, borderRadius: 3, transition: "width 0.3s" } })
             ),
+
+            (crossLines.length > 0 || quotedLines.length > 0) && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: rangeAllocs.length > 0 || avail <= 0 ? 6 : 0 } },
+              crossLines.map(function(x) { return crossChip(x, false); }).concat(quotedLines.map(function(x) { return crossChip(x, true); }))),
+
+            // Nothing free for these dates: the vendors who price it, cheapest
+            // after preferred, and a one-click order form already filled in.
+            avail <= 0 && onCrossRent && h("div", { onClick: function(e) { e.stopPropagation(); },
+              style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: "11px", color: B.textSec, marginBottom: rangeAllocs.length > 0 ? 6 : 0 } },
+              h("span", { style: { fontWeight: 600, color: B.textMut } }, "Cross-rent:"),
+              options.length === 0
+                ? h("span", { style: { fontStyle: "italic", color: B.textMut } }, "no vendor prices on file")
+                : options.slice(0, 3).map(function(o) {
+                    return h("button", { key: o.rate.id, onClick: function() { onCrossRent(eq.id, startDate, endDate, o.rate.vendorCompanyId); },
+                      title: o.label + " at " + o.vendorName + (o.preferred ? " (preferred)" : ""),
+                      style: { background: B.raised, border: "1px solid " + B.border, borderRadius: 4, color: B.text, padding: "3px 8px", fontSize: "11px", cursor: "pointer" } },
+                      (o.preferred ? "★ " : "") + o.vendorName + " $" + window.LTP_money(o.cost));
+                  }),
+              h(window.Btn, { small: true, onClick: function() { onCrossRent(eq.id, startDate, endDate, options.length ? options[0].rate.vendorCompanyId : null); } }, "+ Cross rental")),
 
             rangeAllocs.length > 0 && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
               rangeAllocs.map(function(a) {

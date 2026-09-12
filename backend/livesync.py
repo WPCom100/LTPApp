@@ -106,6 +106,8 @@ _COLLECTION_MODELS = {
     "allocations":   "Allocation",
     "containers":    "Container",
     "kits":          "Kit",
+    "vendor-rates":  "VendorRate",
+    "cross-rentals": "CrossRental",
     "settings":      "Settings",
     "crew-requests": "CrewRequest",
 }

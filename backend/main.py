@@ -12,6 +12,7 @@ from authlib.integrations.starlette_client import OAuth
 
 from backend import livesync, models, qbo_bill_poll, qbo_receipts
 from backend.database import init_db, async_session
+from backend import rental_bookings
 from backend.routes.api import router as api_router
 from backend.routes.api import public_router as users_public_router
 from backend.routes.api import stream_router as livesync_stream_router
@@ -144,6 +145,19 @@ async def _qbo_payout_poll_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Bookings are derived from confirmed documents (backend/rental_bookings.py).
+    # Walk every quote and invoice once at boot: idempotent on a healthy DB, and
+    # the one-time backfill for documents accepted before the engine existed.
+    # Best-effort — a failure here must not keep the app from serving.
+    try:
+        async with async_session() as db:
+            totals = await rental_bookings.reconcile_all(db)
+            await db.commit()
+        if any(totals.values()):
+            print(f"[LTP] bookings: boot backfill → {totals['created']} booked, "
+                  f"{totals['updated']} updated, {totals['removed']} released", flush=True)
+    except Exception as exc:  # noqa: BLE001 — logged, never fatal
+        print(f"[LTP] bookings: boot backfill failed: {exc!r}", flush=True)
     # In-memory debounce dict for the public view route. Keys are
     # (entity_kind, entity_id, debounce_key) tuples; values are the
     # most-recent view timestamp. backend/view_tracking.py manages reads

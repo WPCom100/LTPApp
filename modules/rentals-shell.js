@@ -15,12 +15,19 @@
 //   #/rentals/kits/new                 Create kit form
 //   #/rentals/kits/:id                 Kit detail popup
 //   #/rentals/kits/:id/edit            Kit edit form
+//   #/rentals/cross-rentals            Cross rentals (orders of gear rented in)
+//   #/rentals/cross-rentals/new        New order (?equipmentId=&start=&end=&vendorId= prefill)
+//   #/rentals/cross-rentals/:id        Order detail popup
+//   #/rentals/cross-rentals/:id/edit   Order edit form
+//   #/rentals/allocations              Bookings (derived from documents + manual)
+//   #/rentals/allocations/new          New manual booking
+//   #/rentals/allocations/:id          Edit a booking
 (function() {
   var h = React.createElement;
   var B = window.LTP_THEME;
   var nav = window.LTPRouter.navigate;
 
-  window.RentalsView = function({ projects, companies, route, equipment, setEquipment, allocations, setAllocations, containers, setContainers, kits, setKits }) {
+  window.RentalsView = function({ projects, companies, route, equipment, setEquipment, allocations, setAllocations, containers, setContainers, kits, setKits, vendorRates, setVendorRates, crossRentals, setCrossRentals, isAdmin }) {
     var R = window.LTP_RENTALS;
     var isMobile = window.LTP_useIsMobile();
 
@@ -31,7 +38,8 @@
     var id     = route.id;
     var action = route.action;
 
-    var activeTab        = sub === "equipment" ? "equipment" : sub === "containers" ? "containers" : sub === "kits" ? "kits" : "availability";
+    var activeTab        = sub === "equipment" ? "equipment" : sub === "containers" ? "containers" : sub === "kits" ? "kits"
+                         : sub === "cross-rentals" ? "cross" : sub === "allocations" ? "allocations" : "availability";
     var openEqId         = activeTab === "equipment"  && id && !action ? id : null;
     var openContainerId  = activeTab === "containers" && id && !action ? id : null;
     var openKitId        = activeTab === "kits"       && id && !action ? id : null;
@@ -42,6 +50,11 @@
     var editContainerId  = activeTab === "containers" && id && action === "edit" ? id : null;
     var showAddKit       = activeTab === "kits"       && action === "new";
     var editKitId        = activeTab === "kits"       && id && action === "edit" ? id : null;
+    var openCrossId      = activeTab === "cross"      && id && !action ? id : null;
+    var showAddCross     = activeTab === "cross"      && action === "new";
+    var editCrossId      = activeTab === "cross"      && id && action === "edit" ? id : null;
+    var openAllocId      = activeTab === "allocations" && id ? id : null;
+    var showAddAlloc     = activeTab === "allocations" && action === "new";
 
     var openEq        = openEqId       ? equipment.find(function(e) { return e.id === openEqId; })        : null;
     var openContainer = openContainerId? containers.find(function(c) { return c.id === openContainerId; }) : null;
@@ -50,9 +63,23 @@
     var scanEq        = scanEqId       ? equipment.find(function(e) { return e.id === scanEqId; })        : null;
     var editContainer = editContainerId? containers.find(function(c) { return c.id === editContainerId; }) : null;
     var editKit       = editKitId      ? kits.find(function(k) { return k.id === editKitId; })             : null;
+    var openCross     = openCrossId    ? (crossRentals || []).find(function(o) { return o.id === openCrossId; }) : null;
+    var editCross     = editCrossId    ? (crossRentals || []).find(function(o) { return o.id === editCrossId; }) : null;
+    var openAlloc     = openAllocId    ? allocations.find(function(a) { return a.id === openAllocId; }) : null;
+    // The checker and the quote picker open a new order with the item, the
+    // dates and a chosen vendor already filled in (router.js parses the query).
+    var crossPrefill = showAddCross ? (function(qs) {
+      qs = qs || {};
+      return { equipmentId: qs.equipmentId ? Number(qs.equipmentId) : null, vendorCompanyId: qs.vendorId ? Number(qs.vendorId) : null,
+               startDate: qs.start || "", endDate: qs.end || "", qty: qs.qty ? Number(qs.qty) : 1 };
+    })(route.query) : null;
 
     // ── Navigation helpers ───────────────────────────────────────────────────
-    function goList()        { nav("rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : "equipment")); }
+    function goList()        { nav("rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : activeTab === "allocations" ? "allocations" : "equipment")); }
+    // The checker's shortage hint opens a new order with everything filled in.
+    function crossRentFor(eid, start, end, vendorId) {
+      nav("rentals/cross-rentals/new?equipmentId=" + eid + (start ? "&start=" + start : "") + (end ? "&end=" + end : "") + (vendorId ? "&vendorId=" + vendorId : ""));
+    }
     function openEquip(eid)  { nav("rentals/equipment/" + eid); }
     function editEquip(eid)  { nav("rentals/equipment/" + eid + "/edit"); }
     function openCont(cid)   { nav("rentals/containers/" + cid); }
@@ -75,6 +102,14 @@
     function deleteEquipment(eid) {
       setEquipment(function(prev) { return prev.filter(function(e) { return e.id !== eid; }); });
       setAllocations(function(prev) { return prev.filter(function(a) { return a.equipmentId !== eid; }); });
+      // A cross-rental line naming the item keeps its name as a cost record
+      // but stops counting toward availability; the vendor's prices for it
+      // go (the DB cascades them too).
+      if (setCrossRentals) setCrossRentals(function(prev) { return prev.map(function(o) {
+        if (!(o.lines || []).some(function(l) { return l.equipmentId === eid; })) return o;
+        return Object.assign({}, o, { lines: o.lines.map(function(l) { return l.equipmentId === eid ? Object.assign({}, l, { equipmentId: null }) : l; }) });
+      }); });
+      if (setVendorRates) setVendorRates(function(prev) { return prev.filter(function(v) { return v.equipmentId !== eid; }); });
       setContainers(function(prev) { return prev.map(function(c) {
         return Object.assign({}, c, { defaultForEquipment: (c.defaultForEquipment || []).filter(function(x) { return x !== eid; }) });
       }); });
@@ -145,6 +180,42 @@
       setKits(function(prev) { return prev.filter(function(k) { return k.id !== kid; }); });
       nav("rentals/kits");
     }
+
+    // ── Cross-rental CRUD ────────────────────────────────────────────────────
+    // The save itself (id assignment + the vendor price memory) is shared with
+    // the quote picker's stacked form — see rentals-utils.js.
+    function saveCrossRental(data) {
+      var id = R.upsertCrossRental(data, crossRentals, setCrossRentals);
+      R.rememberVendorRates(Object.assign({ id: id }, data), setVendorRates);
+      return id;
+    }
+
+    // ── Bookings (allocations) ───────────────────────────────────────────────
+    function saveAllocation(data) {
+      if (data.id) {
+        setAllocations(function(prev) { return prev.map(function(a) { return a.id === data.id ? data : a; }); });
+        return data.id;
+      }
+      var newId = Math.max.apply(null, allocations.map(function(a) { return a.id; }).concat([0])) + 1;
+      setAllocations(function(prev) { return prev.concat([Object.assign({ id: newId }, data)]); });
+      return newId;
+    }
+    function setAllocationState(aid, state) {
+      setAllocations(function(prev) { return prev.map(function(a) { return a.id === aid ? Object.assign({}, a, { state: state }) : a; }); });
+    }
+    function deleteAllocation(aid) {
+      setAllocations(function(prev) { return prev.filter(function(a) { return a.id !== aid; }); });
+      nav("rentals/allocations");
+    }
+
+    function setCrossStatus(oid, status) {
+      setCrossRentals(function(prev) { return prev.map(function(o) { return o.id === oid ? Object.assign({}, o, { status: status }) : o; }); });
+    }
+
+    function deleteCrossRental(oid) {
+      setCrossRentals(function(prev) { return prev.filter(function(o) { return o.id !== oid; }); });
+      nav("rentals/cross-rentals");
+    }
     function logMaintenance(eqId, log, unitId) {
       setEquipment(function(prev) { return prev.map(function(e) {
         if (e.id !== eqId) return e;
@@ -211,7 +282,7 @@
     }
 
     // ── Render ───────────────────────────────────────────────────────────────
-    var titleMap = { equipment: "Equipment List", containers: "Containers List", kits: "Kits & Packages", availability: "Availability Checker" };
+    var titleMap = { equipment: "Equipment List", containers: "Containers List", kits: "Kits & Packages", availability: "Availability Checker", cross: "Cross Rentals", allocations: "Allocations" };
 
     return h("div", null,
       // Kits renders its own title + search row on mobile, so suppress the shell
@@ -221,20 +292,30 @@
         h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0 } }, titleMap[activeTab]),
         activeTab === "equipment"  && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/equipment/new"); } }, "+ Add Equipment"),
         activeTab === "containers" && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/containers/new"); } }, "+ Add Container"),
-        activeTab === "kits"       && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/kits/new"); } }, "+ Create Kit")
+        activeTab === "kits"       && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/kits/new"); } }, "+ Create Kit"),
+        activeTab === "cross"      && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/cross-rentals/new"); } }, "+ Cross Rental"),
+        activeTab === "allocations" && !isMobile && h(window.Btn, { small: true, onClick: function() { nav("rentals/allocations/new"); } }, "+ Booking")
       ),
       activeTab === "equipment"  && isMobile && h(window.LTPFab, { label: "Add equipment", onClick: function() { nav("rentals/equipment/new"); } }),
       activeTab === "containers" && isMobile && h(window.LTPFab, { label: "Add container", onClick: function() { nav("rentals/containers/new"); } }),
       activeTab === "kits"       && isMobile && h(window.LTPFab, { label: "Create kit", onClick: function() { nav("rentals/kits/new"); } }),
+      activeTab === "cross"      && isMobile && h(window.LTPFab, { label: "New cross rental", onClick: function() { nav("rentals/cross-rentals/new"); } }),
+      activeTab === "allocations" && isMobile && h(window.LTPFab, { label: "New booking", onClick: function() { nav("rentals/allocations/new"); } }),
 
-      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, projects: projects || [], onOpenEquipment: openEquip }),
+      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, crossRentals: crossRentals || [], vendorRates: vendorRates || [], companies: companies || [], projects: projects || [], onOpenEquipment: openEquip, onCrossRent: crossRentFor }),
+      activeTab === "allocations" && h(window.RentalsAllocationsView, { allocations: allocations, equipment: equipment, projects: projects || [], isAdmin: !!isAdmin,
+        onOpen: function(aid) { nav("rentals/allocations/" + aid); }, onSetState: setAllocationState }),
       activeTab === "equipment"   && h(window.RentalsInventoryView,    { equipment: equipment, allocations: allocations, onOpenEquipment: openEquip }),
       activeTab === "containers"  && h(window.RentalsContainersView,   { containers: containers, equipment: equipment, onOpenContainer: openCont }),
       activeTab === "kits"        && h(window.RentalsKitsView,         { kits: kits, equipment: equipment, onOpenKit: function(kid) { nav("rentals/kits/" + kid); } }),
+      activeTab === "cross"       && h(window.RentalsCrossView,        { crossRentals: crossRentals || [], companies: companies || [], equipment: equipment, projects: projects || [], onOpen: function(oid) { nav("rentals/cross-rentals/" + oid); } }),
 
       // Equipment detail popup
       openEq && h(window.RentalsEquipmentDetail, {
         eq: openEq, allocations: allocations, projects: projects || [], vendors: vendors, containers: containers,
+        companies: companies || [], vendorRates: vendorRates || [], setVendorRates: setVendorRates, crossRentals: crossRentals || [],
+        onOpenCrossRental:    function(oid) { nav("rentals/cross-rentals/" + oid); },
+        onCrossRent:          function(eid) { nav("rentals/cross-rentals/new?equipmentId=" + eid); },
         onClose:              function() { nav("rentals/equipment"); },
         onEdit:               function() { editEquip(openEq.id); },
         onDelete:             function() { deleteEquipment(openEq.id); },
@@ -313,6 +394,43 @@
         initial: editKit, equipment: equipment,
         onClose: function() { nav("rentals/kits/" + editKitId); },
         onSave:  function(data) { saveKit(Object.assign({ id: editKitId }, data)); nav("rentals/kits/" + editKitId); },
+      }),
+
+      // Cross rental detail
+      openCross && h(window.RentalsCrossDetail, {
+        order: openCross, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
+        onClose:  function() { nav("rentals/cross-rentals"); },
+        onEdit:   function() { nav("rentals/cross-rentals/" + openCross.id + "/edit"); },
+        onDelete: function() { deleteCrossRental(openCross.id); },
+        onStatus: function(st) { setCrossStatus(openCross.id, st); },
+        onOpenEquipment: function(eid) { openEquip(eid); },
+      }),
+
+      // New cross rental (prefilled from the checker / quote picker when opened there)
+      showAddCross && h(window.RentalsCrossForm, {
+        prefill: crossPrefill, vendors: vendors, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
+        onClose: function() { nav("rentals/cross-rentals"); },
+        onSave:  function(data) { var newId = saveCrossRental(data); nav("rentals/cross-rentals/" + newId); },
+      }),
+
+      // Bookings
+      showAddAlloc && h(window.RentalsAllocationForm, {
+        equipment: equipment, projects: projects || [], companies: companies || [],
+        onClose: function() { nav("rentals/allocations"); },
+        onSave:  function(data) { saveAllocation(data); nav("rentals/allocations"); },
+      }),
+      openAlloc && h(window.RentalsAllocationForm, {
+        initial: openAlloc, equipment: equipment, projects: projects || [], companies: companies || [],
+        onClose: function() { nav("rentals/allocations"); },
+        onSave:  function(data) { saveAllocation(Object.assign({ id: openAlloc.id }, data)); nav("rentals/allocations"); },
+        onDelete: function() { deleteAllocation(openAlloc.id); },
+      }),
+
+      // Edit cross rental
+      editCross && h(window.RentalsCrossForm, {
+        initial: editCross, vendors: vendors, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
+        onClose: function() { nav("rentals/cross-rentals/" + editCrossId); },
+        onSave:  function(data) { saveCrossRental(Object.assign({ id: editCrossId }, data)); nav("rentals/cross-rentals/" + editCrossId); },
       })
     );
   };

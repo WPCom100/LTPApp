@@ -39,7 +39,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend import livesync, models, view_tracking, webpush
+from backend import livesync, models, rental_bookings, view_tracking, webpush
 from backend.activity import append_activity
 from backend.auth_deps import get_optional_user
 from backend.database import get_db
@@ -522,6 +522,13 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
     )
     row.status = "accepted"
     await db.flush()
+    # Acceptance is the moment a quote starts booking its gear
+    # (backend/rental_bookings.py) — the one status flip that happens with no
+    # producer session, so it has to be wired here as well as in the CRUD PUT.
+    if kind == "quote":
+        booked = await rental_bookings.reconcile_doc(db, "quote", row)
+        if any(booked.values()):
+            livesync.mark_dirty(db, "allocations")
     # Publish. get_db broadcasts only what the request marked dirty, and a client
     # answering a share link is the canonical change-behind-the-producer's-back
     # write — the exact case live sync exists for — yet it published nothing.

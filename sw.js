@@ -282,7 +282,13 @@
 // exists the app's status builds it; after, QuickBooks owns the status and only
 // a deliberate change here is pushed back over it. Settings → QuickBooks sets
 // the workspace default reason. domain-qbo.js, crm-companies.js, settings.js.
-var CACHE_VERSION = 'ltp-shell-v89';
+// v90: cross rentals. Gear rented in from a vendor: a Cross Rentals tab (orders
+// with lines), per-vendor price memory on the company screen and the equipment
+// popup, confirmed orders counting as inventory in every availability surface,
+// and an Allocations tab now that bookings are derived from accepted quotes and
+// invoices. rentals-utils.js (pricing engine moved here), rentals-cross.js,
+// rentals-allocations.js, vendor-rates.js, app.js, data-state.js.
+var CACHE_VERSION = 'ltp-shell-v90';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
