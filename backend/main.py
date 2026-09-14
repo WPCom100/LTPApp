@@ -674,6 +674,10 @@ app.include_router(push_router)
 # flagged on ANTHROPIC_API_KEY. See backend/routes/scan.py.
 app.include_router(scan_router)
 
+# Separately scoped read-only requirements feed; disabled until its own token is set.
+from backend.routes.shop_export import router as shop_export_router
+app.include_router(shop_export_router)
+
 
 # ── Static frontend serving ─────────────────────────────────────────────────
 # Files live at the project root (one level up from backend/).
