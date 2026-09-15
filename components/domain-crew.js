@@ -38,7 +38,8 @@
 // one day rate sized by its max concurrent count, rated over the role's actual
 // worked span. LTP_calcDayLabor owns that math; this function only aggregates
 // its per-role output across days into line items — day rates keyed role+tier,
-// OT pooled by role.
+// OT pooled by role, and an HOURLY role's straight hours pooled by role the
+// same way (one "hourly" line, qty = hours; it never produces a day-rate line).
 //
 //   schedule  the project's schedule rows (already saved — the caller gates on
 //             dirty state, since a day's times drive its price)
@@ -85,6 +86,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
 
   var dayRateItems = {};
   var otItems = {};
+  var hourlyItems = {};
 
   Object.keys(dateGroups).forEach(function(dateKey) {
     var g = dateGroups[dateKey];
@@ -92,22 +94,39 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     var dayLabel = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
 
     window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
-      // Each unit is one person. The day-rate line aggregates units of the same
-      // role+tier (qty = how many people); costAccum adds $0 for a full-margin
-      // unit so its rate is pure margin. Per-unit cost is blended at build time
-      // so a single line stays correct.
-      var drKey = u.serviceId + "|" + u.tier;
-      if (!dayRateItems[drKey]) {
-        dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [],
-                                dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
+      if (u.tier === "hourly") {
+        // An hourly role: this person's straight hours join ONE line for the
+        // role (qty = hours across every person and day, like the OT pool
+        // below). u.dayRate / u.dayCost are the PER-HOUR figures on an hourly
+        // unit; the cost is blended per hour so a full-margin person's hours
+        // cost $0. OT still lands on the shared OT line further down.
+        var hKey = u.serviceId;
+        if (!hourlyItems[hKey]) {
+          hourlyItems[hKey] = { svc: u.svc, rate: u.dayRate, rateHours: 0, costAccum: 0, dates: [],
+                               dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
+        }
+        if (u.minHoursApplied) hourlyItems[hKey].minApplied = true;
+        hourlyItems[hKey].rateHours = Math.round((hourlyItems[hKey].rateHours + u.straightHours) * 100) / 100;
+        hourlyItems[hKey].costAccum = Math.round((hourlyItems[hKey].costAccum + (u.fullMargin ? 0 : u.dayCost * u.straightHours)) * 100) / 100;
+        if (hourlyItems[hKey].dates.indexOf(dayLabel) === -1) hourlyItems[hKey].dates.push(dayLabel);
+      } else {
+        // Each unit is one person. The day-rate line aggregates units of the same
+        // role+tier (qty = how many people); costAccum adds $0 for a full-margin
+        // unit so its rate is pure margin. Per-unit cost is blended at build time
+        // so a single line stays correct.
+        var drKey = u.serviceId + "|" + u.tier;
+        if (!dayRateItems[drKey]) {
+          dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [],
+                                  dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
+        }
+        // A day billed up to the client's contract minimum says so on the line —
+        // otherwise "Full day" against a 4-hour call reads as a mistake to
+        // whoever reviews it.
+        if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
+        dayRateItems[drKey].qty += 1;
+        dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
+        if (dayRateItems[drKey].dates.indexOf(dayLabel) === -1) dayRateItems[drKey].dates.push(dayLabel);
       }
-      // A day billed up to the client's contract minimum says so on the line —
-      // otherwise "Full day" against a 4-hour call reads as a mistake to
-      // whoever reviews it.
-      if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
-      dayRateItems[drKey].qty += 1;
-      dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
-      if (dayRateItems[drKey].dates.indexOf(dayLabel) === -1) dayRateItems[drKey].dates.push(dayLabel);
 
       // OT line item — this person's own OT hours (cost $0 if full margin).
       if (u.otHours > 0) {
@@ -142,6 +161,23 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       rateType: li.tier === "half" ? "half" : "day",
       qty: li.qty, unitPrice: li.rate, adjustedPrice: null,
       cost: li.qty > 0 ? Math.round((li.costAccum / li.qty) * 100) / 100 : 0,
+      notes: dayList(li.dates) + (li.minApplied ? " · " + li.minHours + "-hour contract minimum applied" : ""),
+      deliveredQty: 0, invoicedQty: 0
+    } });
+  });
+
+  // Hourly lines — one per hourly role: its straight hours across every
+  // person and day at the hourly rate, blended per-hour cost. A short call
+  // billed up to a client's hour minimum says so, like a day line does.
+  Object.keys(hourlyItems).forEach(function(key) {
+    var li = hourlyItems[key];
+    if (li.rateHours <= 0) return;
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "hourly", item: {
+      id: gen("item"), type: "service", serviceId: li.svc.id,
+      name: li.svc.role + " — " + li.svc.description,
+      rateType: "hourly",
+      qty: li.rateHours, unitPrice: li.rate, adjustedPrice: null,
+      cost: Math.round((li.costAccum / li.rateHours) * 100) / 100,
       notes: dayList(li.dates) + (li.minApplied ? " · " + li.minHours + "-hour contract minimum applied" : ""),
       deliveredQty: 0, invoicedQty: 0
     } });

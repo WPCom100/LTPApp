@@ -61,21 +61,35 @@
     var [department,  setDepartment]  = useState(initial ? initial.department  : "Lighting");
     var [dayRate,     setDayRate]     = useState(initial ? initial.dayRate     : 0);
     var [dayCost,     setDayCost]     = useState(initial ? initial.dayCost     : 0);
+    // Per-hour pricing (shop / warehouse roles). The hourly fields are seeded
+    // the way the engine would read the role anyway (LTP_hourlyTiers: the
+    // stored hourly figure, else day ÷ 10), so flipping an existing day-rate
+    // role to hourly shows the number it would price at before anything is typed.
+    var [hourly,      setHourly]      = useState(initial ? !!initial.hourly : false);
+    var [hourlyRate,  setHourlyRate]  = useState(initial ? window.LTP_hourlyTiers(initial).hourlyRate : 0);
+    var [hourlyCost,  setHourlyCost]  = useState(initial ? window.LTP_hourlyTiers(initial).hourlyCost : 0);
     var [notes,       setNotes]       = useState(initial ? initial.notes       : "");
     var [qbAccount,   setQbAccount]   = useState(initial ? (initial.qbIncomeAccountId || "") : "");
     var [qbExpense,   setQbExpense]   = useState(initial ? (initial.qbExpenseAccountId || "") : "");
 
     function submit() {
       if (!role.trim() || !description.trim()) return;
-      onSave({
+      var d = {
         role: role.trim(), description: description.trim(), department: department,
-        dayRate: Number(dayRate) || 0, dayCost: Number(dayCost) || 0, notes: notes,
+        hourly: hourly, notes: notes,
         qbIncomeAccountId: qbAccount || null,
         qbExpenseAccountId: qbExpense || null,
-      });
+      };
+      // Each mode saves only the figures it shows. An hourly role's day columns
+      // are never read (every tier derives from the hourly figure), and a
+      // day-rate role keeps deriving its hourly tier from the day rate as before.
+      if (hourly) { d.hourlyRate = Number(hourlyRate) || 0; d.hourlyCost = Number(hourlyCost) || 0; }
+      else { d.dayRate = Number(dayRate) || 0; d.dayCost = Number(dayCost) || 0; }
+      onSave(d);
     }
 
-    var margin = dayRate > 0 ? Math.round(((dayRate - dayCost) / dayRate) * 100) : 0;
+    var baseRate = hourly ? hourlyRate : dayRate, baseCost = hourly ? hourlyCost : dayCost;
+    var margin = baseRate > 0 ? Math.round(((baseRate - baseCost) / baseRate) * 100) : 0;
 
     return h("div", { style: { background: B.raised, border: "1px solid " + B.accent + "44", borderRadius: "8px", padding: 14, marginBottom: 12 } },
       h("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
@@ -84,9 +98,23 @@
           h(window.LTPInput, { label: "Description *", value: description, onChange: setDescription, placeholder: "e.g. Lead Lighting Tech" }),
           h(window.LTPSelect, { label: "Department", value: department, onChange: setDepartment, options: DEPARTMENTS.map(function(d) { return { value: d, label: d }; }) })
         ),
+        // Billing basis. Day rate (the default) is the card everything has always
+        // priced on; Hourly is for shop and warehouse roles, where a 3-hour call
+        // is 3 hours, not a half day. Only the fields the chosen basis reads are shown.
+        h("div", { style: { display: "grid", gridTemplateColumns: "1fr 2fr", gap: 10, alignItems: "end" } },
+          h(window.LTPSelect, { label: "Billing", value: hourly ? "hourly" : "day", onChange: function(v) { setHourly(v === "hourly"); },
+            options: [{ value: "day", label: "Day rate" }, { value: "hourly", label: "Hourly" }] }),
+          h("div", { style: { fontSize: "10px", color: B.textMut, lineHeight: 1.5, paddingBottom: 6 } },
+            hourly
+              ? "Every hour worked bills the hourly rate and pays the hourly cost \u2014 no half or full day. Overtime (past 10 hours in a day, or a missed meal break) is 1.5\u00d7, as for every role."
+              : "Half day up to 5 hours, full day to 10, then overtime. The hourly and OT tiers derive from the day rate (\u00f710, \u00f710 \u00d7 1.5).")),
         h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } },
-          h(window.LTPInput, { label: "Day Rate ($)", value: dayRate, onChange: function(v) { setDayRate(Number(v) || 0); }, type: "number" }),
-          h(window.LTPInput, { label: "Day Cost ($)", value: dayCost, onChange: function(v) { setDayCost(Number(v) || 0); }, type: "number" }),
+          hourly
+            ? h(window.LTPInput, { label: "Hourly Rate ($)", value: hourlyRate, onChange: function(v) { setHourlyRate(Number(v) || 0); }, type: "number" })
+            : h(window.LTPInput, { label: "Day Rate ($)", value: dayRate, onChange: function(v) { setDayRate(Number(v) || 0); }, type: "number" }),
+          hourly
+            ? h(window.LTPInput, { label: "Hourly Cost ($)", value: hourlyCost, onChange: function(v) { setHourlyCost(Number(v) || 0); }, type: "number" })
+            : h(window.LTPInput, { label: "Day Cost ($)", value: dayCost, onChange: function(v) { setDayCost(Number(v) || 0); }, type: "number" }),
           h("div", null,
             h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 2 } }, "Margin"),
             h("div", { style: { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "6px 8px", fontSize: "12px", color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, fontWeight: 700 } }, margin + "%")
@@ -236,7 +264,11 @@
               onDelete: function() { deleteService(s.id); },
               settings: settings, qbo: qbo });
           }
-          var margin = s.dayRate > 0 ? Math.round(((s.dayRate - s.dayCost) / s.dayRate) * 100) : 0;
+          // An hourly role reads per hour (its day columns are never priced);
+          // everything else reads per day exactly as before.
+          var ht = s.hourly ? window.LTP_hourlyTiers(s) : null;
+          var rowRate = ht ? ht.hourlyRate : s.dayRate, rowCost = ht ? ht.hourlyCost : s.dayCost;
+          var margin = rowRate > 0 ? Math.round(((rowRate - rowCost) / rowRate) * 100) : 0;
           return h(window.LTPRow, { key: s.id,
             onClick: function() { setEditingId(s.id); setShowAdd(false); },
             style: { display: "flex", alignItems: "center", gap: 12 } },
@@ -247,13 +279,16 @@
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, s.description),
               h("div", { style: { fontSize: "11px", color: B.textMut, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
                 h("span", null, s.department + (s.notes ? " \u00b7 " + s.notes : "")),
+                s.hourly && h("span", { title: "Hourly role: shifts bill and pay by the hour, never as a half or full day.",
+                  style: { color: B.warn, fontWeight: 700, fontSize: "9px", background: B.warn + "1c", border: "1px solid " + B.warn + "55", borderRadius: "3px", padding: "0 4px", cursor: "help" } },
+                  "HOURLY"),
                 (clientRatesByService[s.id] || []).length > 0 && h("span", {
                   title: "Negotiated for: " + clientRatesByService[s.id].join(", ") + ". Those clients price on their own contract, not this row.",
                   style: { color: B.info, fontWeight: 700, fontSize: "9px", background: B.info + "1c", border: "1px solid " + B.info + "55", borderRadius: "3px", padding: "0 4px", cursor: "help" } },
                   clientRatesByService[s.id].length + " client rate" + (clientRatesByService[s.id].length === 1 ? "" : "s")))
             ),
-            h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 80, textAlign: "right" } }, "$" + s.dayRate + "/day"),
-            h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 70, textAlign: "right" } }, "cost $" + s.dayCost),
+            h("div", { style: { fontSize: "12px", color: B.textSec, minWidth: 80, textAlign: "right" } }, "$" + rowRate + (ht ? "/hr" : "/day")),
+            h("div", { style: { fontSize: "11px", color: B.textMut, minWidth: 70, textAlign: "right" } }, "cost $" + rowCost),
             h("div", { style: { fontSize: "11px", fontWeight: 700, color: margin >= 30 ? B.success : margin >= 15 ? B.warn : B.danger, minWidth: 40, textAlign: "right" } }, margin + "%")
           );
         })

@@ -3107,7 +3107,7 @@
       if (!src) return "—";
       if (src.tier === "flat") return "Flat rate";
       if (!src.tier && !(src.paidHours > 0)) return "No-show";
-      var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : "Mixed";
+      var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : src.tier === "hourly" ? "Hourly" : "Mixed";
       var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
       // A client's negotiated PAYOUT minimum paid this day up to a floor — say
       // so, otherwise "Full day · 10h" against a 4-hour call reads as an error.

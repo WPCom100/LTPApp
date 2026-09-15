@@ -245,7 +245,9 @@ def doc_number(period) -> str:
     return f"PAY-{int(y):02d}-{int(n)}"[:21]
 
 
-_TIER_LABEL = {"half": "Half day", "full": "Full day", "mixed": "Mixed", "flat": "Flat rate"}
+# "hourly" is an hourly-priced role's day (components/domain-labor.js::
+# LTP_calcDayLabor); its hours read the same way as a day-rate day's.
+_TIER_LABEL = {"half": "Half day", "full": "Full day", "hourly": "Hourly", "mixed": "Mixed", "flat": "Flat rate"}
 
 
 def _f(x):

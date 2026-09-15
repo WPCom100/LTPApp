@@ -258,12 +258,17 @@
       });
     }
     function addService(s) {
+      // An hourly role (s.hourly) lands as an hourly line, a day-rate role as
+      // a day line — priced off the same maps the rate-type switch uses, so
+      // the two can never disagree.
+      var rt = s.hourly ? "hourly" : "day";
+      var maps = window.LTP_serviceRateMaps(s);
       onAdd({
         id: genId("item"), type: "service",
         serviceId: s.id, name: s.role + " \u2014 " + s.description, qty: 1,
-        rateType: "day",
-        unitPrice: s.dayRate || 0, adjustedPrice: null,
-        cost: s.dayCost || 0, notes: "", taxable: true,
+        rateType: rt,
+        unitPrice: maps.priceMap[rt] || 0, adjustedPrice: null,
+        cost: maps.costMap[rt] || 0, notes: "", taxable: true,
       });
     }
     // Fee lines carry the catalog default amount as their unitPrice; the price
@@ -488,7 +493,7 @@
                   // rate (the list is resolved) — say where it came from.
                   h(window.ClientRateChip, { svc: s, tiny: true }))
               ),
-              h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + s.dayRate + "/day")
+              h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, s.hourly ? "$" + window.LTP_hourlyTiers(s).hourlyRate + "/hr" : "$" + s.dayRate + "/day")
             );
           })
         )

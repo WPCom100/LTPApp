@@ -532,7 +532,14 @@ class Service(Base):
     four billing tiers (`day_rate`, `half_day`, `hourly_rate`, `ot_rate`) with
     paired cost values for margin calculation. Standard formula:
         hourly = day_rate / 10, ot = hourly * 1.5, half_day = day_rate / 2
-    but any field can be overridden for non-standard rates."""
+    but any field can be overridden for non-standard rates.
+
+    `hourly` flips ONE role from the day-rate card to per-hour pricing (shop
+    and warehouse work). For such a role the hourly tier is the source of
+    truth and the other tiers derive from it (day = ×10, half = ×5, OT = ×1.5
+    unless restated); a shift bills and pays every hour worked instead of a
+    half/full day. Everything else — day-rate roles, the default — is untouched.
+    Engine: components/domain-labor.js::LTP_calcDayLabor."""
     __tablename__ = "services"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -547,6 +554,10 @@ class Service(Base):
     half_day_cost = Column(Float, default=0)
     hourly_cost = Column(Float, default=0)
     ot_cost = Column(Float, default=0)
+    # Price this role BY THE HOUR (see class docstring). False/NULL = the
+    # day-rate card exactly as before, so the flag is invisible until a role
+    # opts in. USER-WRITABLE; validated as a real boolean (backend/validators.py).
+    hourly = Column(Boolean, default=False)
     notes = Column(Text, default="")
     qb_item_id = Column(String(32), nullable=True, index=True)  # QB Item.Id (find-or-create cache)
     # Income account override / synced cache for the QB item backing this
