@@ -820,7 +820,11 @@
           h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
             contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
-            crewConflicts: window.LTP_detectCrewConflicts(projects),
+            // The person's saved shifts on OTHER projects that day — any status
+            // but declined, the rule LTP_detectCrewConflicts applies (a
+            // pencilled-in "open" booking still takes the day). Each carries
+            // its row's times so the editor can tell a real overlap (red) from
+            // a same-day booking at other times (yellow).
             checkCrewConflict: function(crewId, date) {
               var otherBookings = [];
               (projects || []).forEach(function(pr) {
@@ -828,8 +832,9 @@
                 (pr.schedule || []).forEach(function(sc) {
                   if (sc.date !== date) return;
                   (sc.positions || []).forEach(function(ps) {
-                    if (ps.crewId === crewId && ps.status !== "open" && ps.status !== "declined") {
-                      otherBookings.push(pr.name + " (" + sc.title + ")");
+                    if (ps.crewId === crewId && ps.status !== "declined") {
+                      otherBookings.push({ posId: ps.id, projectId: pr.id, projectName: pr.name, schedTitle: sc.title, status: ps.status,
+                                           date: sc.date, endDate: sc.endDate, time: sc.time, endTime: sc.endTime });
                     }
                   });
                 });
@@ -887,7 +892,9 @@
               }))
           ),
 
-          // CONFLICTS
+          // CONFLICTS — this project's people booked on another project the
+          // same day (saved state). A line is red when the two shifts' times
+          // overlap and yellow when they don't; the panel takes the worst.
           function() {
             var conflicts = window.LTP_detectCrewConflicts(projects);
             var projectConflicts = [];
@@ -899,26 +906,40 @@
                     var cm = contacts.find(function(c) { return c.id === p.crewId; });
                     conflicts[posId].forEach(function(other) {
                       if (other.projectId !== project.id) {
-                        projectConflicts.push({ crewName: cm ? cm.firstName + " " + cm.lastName : "?", otherProject: other.projectName, date: other.date, schedTitle: s.title });
+                        projectConflicts.push({ crewName: cm ? cm.firstName + " " + cm.lastName : "?", otherProject: other.projectName, date: other.date, schedTitle: s.title,
+                                                time: other.time, endTime: other.endTime, overlap: other.overlap !== false });
                       }
                     });
                   }
                 });
               });
             });
-            // Deduplicate
+            // Deduplicate per person / day / other shift; an overlap outranks a
+            // same-day entry for the same key (two of our positions against one
+            // shift over there).
             var seen = {};
-            projectConflicts = projectConflicts.filter(function(c) { var k = c.crewName + "|" + c.date + "|" + c.otherProject; if (seen[k]) return false; seen[k] = true; return true; });
+            var deduped = [];
+            projectConflicts.forEach(function(c) {
+              var k = c.crewName + "|" + c.date + "|" + c.otherProject + "|" + (c.time || "") + "|" + (c.endTime || "");
+              if (!seen[k]) { seen[k] = c; deduped.push(c); }
+              else if (c.overlap && !seen[k].overlap) seen[k].overlap = true;
+            });
+            projectConflicts = deduped;
             if (projectConflicts.length === 0) return null;
-            return h("div", { style: isMobile ? Object.assign({}, sideCard, { background: B.danger + "11", borderColor: B.danger + "44" }) : { background: B.danger + "11", borderTop: "1px solid " + B.danger + "44", padding: 14 } },
-              h("h4", { style: Object.assign({}, sideH4, { color: B.danger }) }, "Scheduling Conflicts"),
+            var anyOverlap = projectConflicts.some(function(c) { return c.overlap; });
+            var tone = anyOverlap ? B.danger : B.warn;
+            return h("div", { style: isMobile ? Object.assign({}, sideCard, { background: tone + "11", borderColor: tone + "44" }) : { background: tone + "11", borderTop: "1px solid " + tone + "44", padding: 14 } },
+              h("h4", { style: Object.assign({}, sideH4, { color: tone }) }, anyOverlap ? "Scheduling Conflicts" : "Same-day Bookings"),
               h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
                 projectConflicts.map(function(c, i) {
-                  return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + B.danger + "33" } },
+                  var lineTone = c.overlap ? B.danger : B.warn;
+                  var span = c.time ? ft(c.time) + (c.endTime ? " \u2013 " + ft(c.endTime) : "") : "no times set";
+                  return h("div", { key: i, style: { fontSize: "10px", color: B.text, padding: "4px 6px", background: B.bg, borderRadius: "3px", border: "1px solid " + lineTone + "33", borderLeft: "3px solid " + lineTone } },
                     h("span", { style: { fontWeight: 600 } }, c.crewName),
                     " is also booked on ",
                     h("span", { style: { fontWeight: 600, color: B.accent } }, c.otherProject),
-                    " on " + fmt(c.date));
+                    " on " + fmt(c.date) + ", " + span,
+                    h("span", { style: { color: lineTone, fontWeight: 700 } }, c.overlap ? " \u2014 times overlap" : " \u2014 no overlap"));
                 }))
             );
           }(),

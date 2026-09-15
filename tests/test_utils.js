@@ -266,6 +266,105 @@ conf = DCC([{ id: 1, name: "P1", schedule: [{ id: "s1", date: "2026-07-01", posi
 // counterpart on the unsettled side (empty array is truthy — assert the id).
 ok("CC7 same-project vs confirmed -> unsettled side flags, keeps confirmed counterpart", !conf.pa && conf.pb && conf.pb.length === 1 && conf.pb[0].posId === "pa");
 
+// ── Same-day booking vs time conflict ───────────────────────────────────────
+// A person on two shifts one day is yellow ("day") when the shifts' times
+// don't overlap and red ("overlap") when they do — or when either shift has no
+// times, since the clash can't be ruled out. Same-day pairs used to be red
+// regardless; nothing that was flagged stops being flagged, it only changes
+// colour.
+const SP = window.LTP_shiftSpan, OV = window.LTP_shiftTimesOverlap, LV = window.LTP_conflictLevel, CT = window.LTP_conflictTitle;
+const D1 = "2026-07-01", D2 = "2026-07-02";
+const row = (t, e, extra) => Object.assign({ date: D1, time: t, endTime: e }, extra || {});
+let sp = SP(row("08:00", "17:00"));
+ok("SP1 plain day span is 9h", sp && sp.end - sp.start === 9 * 60, JSON.stringify(sp));
+sp = SP(row("22:00", "02:00"));
+ok("SP2 wrap before call runs past midnight (4h)", sp && sp.end - sp.start === 4 * 60, JSON.stringify(sp));
+sp = SP(row("06:00", "06:00"));
+ok("SP3 wrap equal to call is a 24h day", sp && sp.end - sp.start === 24 * 60, JSON.stringify(sp));
+sp = SP(row("18:00", "24:00"));
+ok("SP4 24:00 is end-of-day midnight (6h)", sp && sp.end - sp.start === 6 * 60, JSON.stringify(sp));
+sp = SP(row("08:00", "17:00", { endDate: "2026-07-03" }));
+ok("SP5 multi-day row ends on its last day", sp && sp.end - sp.start === 2 * 1440 + 9 * 60, JSON.stringify(sp));
+sp = SP(row("08:00", "17:00", { endDate: "2026-06-20" }));
+ok("SP6 endDate before date is ignored (single day)", sp && sp.end - sp.start === 9 * 60, JSON.stringify(sp));
+eq("SP7 no end time -> null", SP(row("08:00", "")), null);
+eq("SP8 no start time -> null", SP(row("", "17:00")), null);
+eq("SP9 no date -> null", SP({ date: "", time: "08:00", endTime: "17:00" }), null);
+eq("SP10 garbage time -> null", SP(row("8", "17:00")), null);
+eq("SP11 24:30 is not a time -> null", SP(row("08:00", "24:30")), null);
+eq("SP12 null row -> null", SP(null), null);
+ok("SP13 spans on consecutive dates sit 24h apart", SP({ date: D2, time: "08:00", endTime: "09:00" }).start - SP(row("08:00", "09:00")).start === 1440);
+
+eq("OV1 disjoint -> false", OV(row("08:00", "12:00"), row("13:00", "17:00")), false);
+eq("OV2 overlapping -> true", OV(row("08:00", "12:00"), row("11:00", "17:00")), true);
+eq("OV3 back-to-back (12:00 wrap, 12:00 call) -> false", OV(row("08:00", "12:00"), row("12:00", "17:00")), false);
+eq("OV4 one inside the other -> true", OV(row("08:00", "18:00"), row("10:00", "12:00")), true);
+eq("OV5 identical spans -> true", OV(row("08:00", "18:00"), row("08:00", "18:00")), true);
+eq("OV6 overnight call overlaps the next morning's early call", OV(row("22:00", "02:00"), { date: D2, time: "01:00", endTime: "05:00" }), true);
+eq("OV7 overnight call is clear of that morning's early call", OV(row("22:00", "02:00"), row("01:00", "05:00")), false);
+eq("OV8 missing times can't be ruled out -> true", OV(row("08:00", ""), row("13:00", "17:00")), true);
+eq("OV9 symmetric when the other side lacks times", OV(row("13:00", "17:00"), row("08:00", "")), true);
+eq("OV10 multi-day row covers a shift on its later day", OV(row("08:00", "17:00", { endDate: "2026-07-03" }), { date: D2, time: "09:00", endTime: "10:00" }), true);
+eq("OV11 different dates, single-day rows -> false", OV(row("08:00", "17:00"), { date: D2, time: "08:00", endTime: "17:00" }), false);
+
+eq("LV1 empty -> null", LV([]), null);
+eq("LV2 undefined -> null", LV(undefined), null);
+eq("LV3 all other times -> day", LV([{ overlap: false }, { overlap: false }]), "day");
+eq("LV4 mixed -> overlap", LV([{ overlap: false }, { overlap: true }]), "overlap");
+eq("LV5 legacy entry without the flag counts as overlap", LV([{ projectName: "P" }]), "overlap");
+
+eq("CT1 same-day title names the other shift with its times",
+   CT([{ projectName: "P2", schedTitle: "Show", time: "18:00", endTime: "23:00", overlap: false }]),
+   "Same day, no overlap — also on P2 (Show), 6:00 PM – 11:00 PM");
+eq("CT2 overlap title", CT([{ projectName: "P2", schedTitle: "Show", time: "08:00", endTime: "17:00", overlap: true }]),
+   "Time conflict — also on P2 (Show), 8:00 AM – 5:00 PM");
+ok("CT3 mixed list marks each counterpart", (function() {
+  var t = CT([{ projectName: "P2", schedTitle: "Show", time: "08:00", endTime: "17:00", overlap: true },
+              { projectName: "P3", time: "19:00", endTime: "23:00", overlap: false }]);
+  return t.indexOf("Time conflict") === 0 && t.indexOf("P2 (Show), 8:00 AM – 5:00 PM — overlaps") > 0 && t.indexOf("P3, 7:00 PM – 11:00 PM — other times") > 0;
+})());
+ok("CT4 a counterpart without times says so", CT([{ projectName: "P2", overlap: true }]).indexOf("no times set") > 0);
+eq("CT5 no conflict -> empty", CT([]), "");
+
+// The detector stamps `overlap` on every counterpart it lists.
+const P = (id, name, rows) => ({ id: id, name: name, schedule: rows });
+const S = (id, title, t, e, positions, extra) => Object.assign({ id: id, date: D1, title: title, time: t, endTime: e, positions: positions }, extra || {});
+const pos = (id, status, svc) => ({ id: id, crewId: 5, status: status, serviceId: svc });
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "accepted", 1)])]),
+            P(2, "P2", [S("s2", "Show", "18:00", "23:00", [pos("pb", "requested", 1)])])]);
+ok("CC8 cross-project, other times -> still flagged, overlap false both ways",
+   conf.pa && conf.pb && conf.pa.length === 1 && conf.pa[0].overlap === false && conf.pb[0].overlap === false, JSON.stringify(conf));
+eq("CC8b ...and reads as a same-day booking", LV(conf.pa), "day");
+ok("CC8c the counterpart carries its own times for the tooltip", conf.pa[0].time === "18:00" && conf.pa[0].endTime === "23:00" && conf.pa[0].schedTitle === "Show");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "17:00", [pos("pa", "accepted", 1)])]),
+            P(2, "P2", [S("s2", "Show", "16:00", "23:00", [pos("pb", "requested", 1)])])]);
+ok("CC9 cross-project, overlapping times -> overlap true both ways", conf.pa[0].overlap === true && conf.pb[0].overlap === true);
+eq("CC9b ...and reads as a time conflict", LV(conf.pb), "overlap");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "accepted", 1)])]),
+            P(2, "P2", [S("s2", "Show", "", "", [pos("pb", "requested", 1)])])]);
+ok("CC10 other side has no times -> can't rule it out -> overlap", conf.pa[0].overlap === true && LV(conf.pa) === "overlap");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "requested", 1)]),
+                        S("s2", "Show", "13:00", "17:00", [pos("pb", "requested", 2)])])]);
+ok("CC11 same project, two roles at other times -> flagged yellow on both", conf.pa && conf.pb && conf.pa[0].overlap === false && LV(conf.pb) === "day");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "requested", 1)]),
+                        S("s2", "Show", "11:00", "17:00", [pos("pb", "requested", 2)])])]);
+eq("CC12 same project, two roles overlapping -> red", LV(conf.pa), "overlap");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "requested", 1)]),
+                        S("s2", "Show", "11:00", "17:00", [pos("pb", "requested", 1)])])]);
+eq("CC13 same role across items is one day booking even when the times overlap -> not flagged", Object.keys(conf).length, 0);
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "12:00", [pos("pa", "requested", 1)])]),
+            P(2, "P2", [S("s2", "Show", "18:00", "23:00", [pos("pb", "requested", 1)])]),
+            P(3, "P3", [S("s3", "Strike", "11:00", "14:00", [pos("pc", "requested", 1)])])]);
+ok("CC14 one overlapping and one clear counterpart -> red, each marked", LV(conf.pa) === "overlap"
+   && conf.pa.find(function(c) { return c.posId === "pb"; }).overlap === false
+   && conf.pa.find(function(c) { return c.posId === "pc"; }).overlap === true);
+conf = DCC([P(1, "P1", [S("s1", "Night", "22:00", "02:00", [pos("pa", "requested", 1)])]),
+            P(2, "P2", [S("s2", "Day", "08:00", "17:00", [pos("pb", "requested", 1)])])]);
+eq("CC15 overnight call vs a day call the same date -> clear -> yellow", LV(conf.pa), "day");
+conf = DCC([P(1, "P1", [S("s1", "Load-in", "08:00", "17:00", [pos("pa", "confirmed", 1)])]),
+            P(2, "P2", [S("s2", "Show", "16:00", "23:00", [pos("pb", "accepted", 1)])])]);
+ok("CC16 confirmed side still unflagged; the unsettled side is red against it", !conf.pa && LV(conf.pb) === "overlap" && conf.pb[0].posId === "pa");
+
 // ── product pricing variants ─────────────────────────────────────────────────
 const PV = window.LTP_productVariants, FV = window.LTP_findProductVariant, VN = window.LTP_productVariantName;
 const transport = { name: "Transportation", unitPrice: 0, cost: 0, variants: [

@@ -468,6 +468,27 @@ confirmed documents** (`backend/rental_bookings.py`):
   Bookings with `docType: "manual"` (entered through the API) are never touched
   by the engine.
 
+## Double-bookings: same day vs. time conflict
+
+A crew member on two shifts the same day is badged in the schedule editor, the
+builder's side panel and Labor → Assignments. The badge has two levels:
+
+- **Yellow — same day, no overlap.** The person is on another shift that day
+  (another project, or a second role on this one) but the times don't overlap:
+  a morning load-in here and an evening show there. The day can work.
+- **Red — time conflict.** The two shifts' times overlap, or one of them has no
+  times set so the overlap can't be ruled out.
+
+Hover the `!` to see the other shift with its times. The assign-time dialog
+lists the same information per line ("— times overlap" / "— no overlap") before
+you choose *Assign anyway*. Nothing that was flagged before stops being flagged;
+the split only changes the colour. Rules that don't change: a **confirmed**
+position never wears the badge (it is settled on purpose), and the same role
+across several items on one day is one day booking, not a conflict. The logic
+is `LTP_shiftTimesOverlap` / `LTP_conflictLevel` in `components/domain-crew.js`:
+a wrap earlier than its call runs past midnight, `24:00` is end-of-day, and a
+multi-day row ends on its last day.
+
 ## Flat-rate positions (fixed-cost hires)
 
 Some people are hired for the **whole production at a flat fee** and never get

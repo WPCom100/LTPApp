@@ -22,7 +22,7 @@
     return String(h % 24).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  window.ScheduleEditor = function({ schedule, onChange, contacts, services, crewConflicts, checkCrewConflict }) {
+  window.ScheduleEditor = function({ schedule, onChange, contacts, services, checkCrewConflict }) {
     var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [crewSearch, setCrewSearch] = useState("");
@@ -50,12 +50,22 @@
     // the notify tray), grouped per person + type, so one person pulled from
     // several shifts is emailed once instead of once per removal.
 
-    // Live conflict detection from draft schedule (before save)
+    // Live conflict detection from the DRAFT schedule, so an unsaved edit — a
+    // moved shift, a cleared crew, a fresh assignment — is badged at once.
+    // Every counterpart carries `overlap` (its times against this shift's) so
+    // the badge can be red for a real time conflict and yellow for a same-day
+    // booking at other times (LTP_conflictLevel). Same-project counterparts are
+    // read off the draft rows; cross-project ones come from checkCrewConflict
+    // (the other projects' saved shifts) and are judged against the draft row,
+    // whose times may have just moved.
     var liveConflicts = React.useMemo(function() {
       var merged = {};
-      // Copy cross-project conflicts
-      if (crewConflicts) Object.keys(crewConflicts).forEach(function(k) { merged[k] = crewConflicts[k]; });
-      // Detect same-project duplicates from current draft
+      function add(posId, entry) {
+        var list = merged[posId] || (merged[posId] = []);
+        if (!list.some(function(ex) { return ex.posId === entry.posId; })) list.push(entry);
+      }
+      // Same-project: one person in two DIFFERENT roles on a day. The same
+      // role across items is one day booking (load-in and show), never flagged.
       var byCrewDate = {};
       (schedule || []).forEach(function(s) {
         if (!s.date) return;
@@ -63,7 +73,8 @@
           if (!p.crewId || p.status === "declined") return;
           var key = p.crewId + "|" + s.date;
           if (!byCrewDate[key]) byCrewDate[key] = [];
-          byCrewDate[key].push({ posId: p.id, serviceId: p.serviceId, status: p.status, schedTitle: s.title, projectName: "this project" });
+          byCrewDate[key].push({ posId: p.id, serviceId: p.serviceId, status: p.status, schedTitle: s.title, projectName: "this project",
+                                 date: s.date, endDate: s.endDate, time: s.time, endTime: s.endTime });
         });
       });
       Object.keys(byCrewDate).forEach(function(key) {
@@ -75,19 +86,14 @@
         b.forEach(function(bk) {
           // Confirmed = settled/purposeful — never badge the confirmed side
           // (same rule as LTP_detectCrewConflicts); it still shows up in the
-          // unsettled side's list via `others`.
+          // unsettled side's list.
           if (bk.status === "confirmed") return;
-          var others = b.filter(function(o) { return o.posId !== bk.posId; });
-          if (!merged[bk.posId]) merged[bk.posId] = [];
-          others.forEach(function(o) {
-            // Avoid duplicates
-            if (!merged[bk.posId].some(function(ex) { return ex.posId === o.posId; })) {
-              merged[bk.posId].push(o);
-            }
+          b.forEach(function(o) {
+            if (o.posId !== bk.posId) add(bk.posId, Object.assign({}, o, { overlap: window.LTP_shiftTimesOverlap(bk, o) }));
           });
         });
       });
-      // Also check cross-project for newly assigned (unsaved) crew. Confirmed
+      // Cross-project, saved and unsaved assignments alike. Confirmed
       // positions are skipped here too — a settled booking is purposeful, so
       // it never wears the passive badge (the assign-time dialog still warns
       // BEFORE a double-booking is created).
@@ -95,16 +101,15 @@
         (schedule || []).forEach(function(s) {
           if (!s.date) return;
           (s.positions || []).forEach(function(p) {
-            if (!p.crewId || p.status === "declined" || p.status === "confirmed" || merged[p.id]) return;
-            var otherBookings = checkCrewConflict(p.crewId, s.date);
-            if (otherBookings.length > 0) {
-              merged[p.id] = otherBookings.map(function(ob) { return { projectName: ob, posId: "ext" }; });
-            }
+            if (!p.crewId || p.status === "declined" || p.status === "confirmed") return;
+            (checkCrewConflict(p.crewId, s.date) || []).forEach(function(ob) {
+              add(p.id, Object.assign({ posId: "ext" }, ob, { overlap: window.LTP_shiftTimesOverlap(s, ob) }));
+            });
           });
         });
       }
       return merged;
-    }, [schedule, crewConflicts, checkCrewConflict]);
+    }, [schedule, checkCrewConflict]);
 
     function addItem() {
       onChange(schedule.concat([{ id: genId("sch"), title: "", date: "", time: "08:00", endDate: "", endTime: "18:00", showOnCalendar: true, positions: [], breaks: [] }]));
@@ -195,9 +200,18 @@
       }));
     }
 
+    // The other shift's times, and whether they overlap the one being filled,
+    // for the assign-time warning — so the producer can tell a real clash
+    // from a day with room for both before deciding to assign anyway.
+    function conflictTimes(row, other) {
+      var span = other.time ? window.LTP_formatTime(other.time) + (other.endTime ? " \u2013 " + window.LTP_formatTime(other.endTime) : "") : "no times set";
+      return " \u00b7 " + span + (window.LTP_shiftTimesOverlap(row, other) ? " \u2014 times overlap" : " \u2014 no overlap");
+    }
+
     function assignCrewToDay(schedId, pos, crewId) {
       var item = schedule.find(function(s) { return s.id === schedId; });
       var warnings = [];
+      var anyOverlap = false;
 
       // Check for same-project duplicates (same person already on another position this day)
       if (item && item.date && crewId) {
@@ -207,7 +221,10 @@
             if (p.id === pos.id) return; // skip the position being assigned
             if (p.crewId === crewId) {
               var svc = p.serviceId ? (services || []).find(function(sv) { return sv.id === p.serviceId; }) : null;
-              warnings.push("Already assigned as " + (svc ? svc.role + " \u2014 " + svc.description : p.role || "?") + " on " + s.title);
+              // On the same row the times are identical, so it reads as an
+              // overlap; on another row that day it depends on the times.
+              warnings.push("Already assigned as " + (svc ? svc.role + " \u2014 " + svc.description : p.role || "?") + " on " + s.title + conflictTimes(item, s));
+              if (window.LTP_shiftTimesOverlap(item, s)) anyOverlap = true;
             }
           });
         });
@@ -215,15 +232,17 @@
 
       // Check for cross-project conflicts
       if (checkCrewConflict && item && item.date && crewId) {
-        var otherBookings = checkCrewConflict(crewId, item.date);
-        otherBookings.forEach(function(b) { warnings.push(b); });
+        (checkCrewConflict(crewId, item.date) || []).forEach(function(b) {
+          warnings.push(b.projectName + " (" + (b.schedTitle || "Untitled") + ")" + conflictTimes(item, b));
+          if (window.LTP_shiftTimesOverlap(item, b)) anyOverlap = true;
+        });
       }
 
       if (warnings.length > 0) {
         var cm = (contacts || []).find(function(c) { return c.id === crewId; });
         var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
         setConflictWarn({
-          title: "Scheduling Conflict",
+          title: anyOverlap ? "Scheduling Conflict" : "Already Booked That Day",
           message: crewName + " on " + (item && item.date ? fmt(item.date) : "this day") + ":\n\n" + warnings.join("\n") + "\n\nAssign anyway?",
           onConfirm: function() { doAssignCrewToDay(schedId, pos, crewId); setConflictWarn(null); }
         });
@@ -622,12 +641,16 @@
                       var isUnitPrimary = posUnit && unitPrimaryPos[posUnitKey[pos.id]] === pos.id;
                       var pc = POS_COLORS[pos.status] || B.textMut;
                       var posConflicts = (liveConflicts || {})[pos.id];
-                      var hasConflict = posConflicts && posConflicts.length > 0;
+                      // Red when another shift's times overlap this one (or
+                      // can't be ruled out), yellow when the person is merely
+                      // booked elsewhere that day at other times.
+                      var conflictLevel = window.LTP_conflictLevel(posConflicts);
+                      var conflictColor = conflictLevel === "overlap" ? B.danger : B.warn;
 
                       // ── Row controls, built once and laid out per width ──
-                      var conflictDot = hasConflict && h("div", { title: "Double-booked: also on " + posConflicts.map(function(c) { return c.projectName; }).join(", "),
-                        style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
-                        h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!"));
+                      var conflictDot = conflictLevel && h("div", { title: window.LTP_conflictTitle(posConflicts),
+                        style: { width: 16, height: 16, borderRadius: "50%", background: conflictColor + "22", border: "1px solid " + conflictColor, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
+                        h("span", { style: { fontSize: "9px", color: conflictColor, fontWeight: 700 } }, "!"));
                       // Searchable: the rate card grows, and scrolling a bare
                       // <select> for "the L2 role" got old fast.
                       var roleSel = h(window.LTPSearchSelect, {
@@ -761,7 +784,7 @@
                         onMouseOver: function(e) { e.currentTarget.style.color = B.accent; },
                         onMouseOut:  function(e) { e.currentTarget.style.color = M ? B.accent : B.border; } }, "⇩");
 
-                      var rowBg = hasConflict ? B.danger + "08" : B.surface, rowBd = "1px solid " + (hasConflict ? B.danger + "66" : B.border);
+                      var rowBg = conflictLevel ? conflictColor + "08" : B.surface, rowBd = "1px solid " + (conflictLevel ? conflictColor + "66" : B.border);
                       return M
                         // Phone: [!] role · #slot · crew on one line; status ·
                         // MGN · breaks … rate / cost · ⇩ · × on a slim line under.

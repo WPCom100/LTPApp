@@ -1692,16 +1692,22 @@
       if (filter === "conflicts") return !!(crewConflicts || {})[bk.pos.posId];
       return bk.pos.status === filter;
     }
-    var stats = { total: 0, open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0, conflicts: 0 };
+    // `conflicts` counts every double-booked row; `overlaps` the ones whose
+    // times actually clash — the Conflicts tile reads red only for those,
+    // yellow when the day merely has two calls on it.
+    var stats = { total: 0, open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0, conflicts: 0, overlaps: 0 };
     projectGroups.forEach(function(pg) {
       pg.dates.forEach(function(g) {
         (g.dayBookings || []).forEach(function(bk) {
           stats.total++;
           if (stats[bk.pos.status] !== undefined) stats[bk.pos.status]++;
-          if ((crewConflicts || {})[bk.pos.posId]) stats.conflicts++;
+          var lvl = window.LTP_conflictLevel((crewConflicts || {})[bk.pos.posId]);
+          if (lvl) stats.conflicts++;
+          if (lvl === "overlap") stats.overlaps++;
         });
       });
     });
+    var conflictTone = stats.overlaps > 0 ? B.danger : B.warn;
     // What the status tile leaves: the same groups with non-matching rows
     // dropped, then any shift-set, day or project with none left.
     var shownGroups = projectGroups.map(function(pg) {
@@ -1867,7 +1873,10 @@
       // with the one you click).
       var bkPosIds = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
       var conflicts = (crewConflicts || {})[pos.posId];
-      var hasConflict = conflicts && conflicts.length > 0;
+      // Red when another shift's times overlap this one (or can't be ruled
+      // out), yellow when the person is merely booked elsewhere that day.
+      var conflictLevel = window.LTP_conflictLevel(conflicts);
+      var conflictColor = conflictLevel === "overlap" ? B.danger : B.warn;
       // Two-tier crew list for this position's role — shared with the schedule
       // editor and the manual-shift form.
       //
@@ -1890,12 +1899,12 @@
       };
       return h("div", { key: pos.posId + "-" + bi,
         style: { padding: isMobile ? "8px 10px" : "5px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: bi > 0 ? "1px solid " + B.border : "none",
-                 background: hasConflict ? B.danger + "08" : "transparent",
+                 background: conflictLevel ? conflictColor + "08" : "transparent",
                  // Empty slots are the work on this tab — a warm rule marks them.
                  boxShadow: needsCrew ? "inset 3px 0 0 " + B.warn + "80" : "none" } },
-        hasConflict && h("div", { title: "Double-booked: also on " + conflicts.map(function(c) { return c.projectName; }).join(", "),
-          style: { width: 16, height: 16, borderRadius: "50%", background: B.danger + "22", border: "1px solid " + B.danger, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
-          h("span", { style: { fontSize: "9px", color: B.danger, fontWeight: 700 } }, "!")),
+        conflictLevel && h("div", { title: window.LTP_conflictTitle(conflicts),
+          style: { width: 16, height: 16, borderRadius: "50%", background: conflictColor + "22", border: "1px solid " + conflictColor, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "help" } },
+          h("span", { style: { fontSize: "9px", color: conflictColor, fontWeight: 700 } }, "!")),
         h("div", { style: { flex: isMobile ? "1 1 100%" : "1 1 170px", minWidth: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } },
           h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.text } }, pos.svcName),
           // Person # within the role for this day (same numbering as the
@@ -1916,6 +1925,23 @@
               // Check for conflicts before assigning
               if (cid && pos.date) {
                 var otherBookings = [];
+                var anyOverlap = false;
+                // This shift's row, so each other booking can be judged
+                // against its real times (a multi-day row ends on its last day).
+                var thisRow = null;
+                (projects || []).forEach(function(pr) {
+                  if (pr.id === pos.projectId) thisRow = (pr.schedule || []).find(function(sc) { return sc.id === pos.schedItemId; }) || null;
+                });
+                thisRow = thisRow || { date: pos.date, time: pos.callTime, endTime: pos.endTime };
+                // "· 8:00 AM – 5:00 PM — times overlap" / "— no overlap", so
+                // the producer can tell a real clash from a day with room
+                // for both before deciding to assign anyway.
+                var conflictTimes = function(sc) {
+                  var span = sc.time ? ft(sc.time) + (sc.endTime ? " \u2013 " + ft(sc.endTime) : "") : "no times set";
+                  var overlap = window.LTP_shiftTimesOverlap(thisRow, sc);
+                  if (overlap) anyOverlap = true;
+                  return " \u00b7 " + span + (overlap ? " \u2014 times overlap" : " \u2014 no overlap");
+                };
                 // Same-project duplicates
                 (projects || []).forEach(function(pr) {
                   if (pr.id !== pos.projectId) return;
@@ -1924,7 +1950,7 @@
                     (sc.positions || []).forEach(function(ps) {
                       if (ps.crewId === cid && ps.id !== pos.posId) {
                         var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
-                        otherBookings.push("Already assigned as " + (svc ? svc.role + " — " + svc.description : ps.role || "?") + " on " + sc.title);
+                        otherBookings.push("Already assigned as " + (svc ? svc.role + " — " + svc.description : ps.role || "?") + " on " + sc.title + conflictTimes(sc));
                       }
                     });
                   });
@@ -1936,7 +1962,7 @@
                     if (sc.date !== pos.date) return;
                     (sc.positions || []).forEach(function(ps) {
                       if (ps.crewId === cid && ps.status !== "declined") {
-                        otherBookings.push(pr.name + " (" + sc.title + ")");
+                        otherBookings.push(pr.name + " (" + (sc.title || "Untitled") + ")" + conflictTimes(sc));
                       }
                     });
                   });
@@ -1944,7 +1970,7 @@
                 if (otherBookings.length > 0) {
                   var cm = contacts.find(function(c) { return c.id === cid; });
                   var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
-                  setConflictWarn({ title: "Scheduling Conflict", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
+                  setConflictWarn({ title: anyOverlap ? "Scheduling Conflict" : "Already Booked That Day", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
                     onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
                   return;
                 }
@@ -2038,7 +2064,7 @@
         }));
     }
 
-    var tileColor = { all: B.accent, open: B.warn, requested: B.warn, accepted: B.success, confirmed: B.info, declined: B.danger, conflicts: B.danger };
+    var tileColor = { all: B.accent, open: B.warn, requested: B.warn, accepted: B.success, confirmed: B.info, declined: B.danger, conflicts: conflictTone };
     var tileItems = [
       { key: "all",       label: "All",           value: stats.total },
       { key: "open",      label: "Open",          value: stats.open },
@@ -2049,7 +2075,7 @@
       { key: "conflicts", label: "Conflicts",     value: stats.conflicts },
     ].map(function(t) {
       return Object.assign(t, { color: tileColor[t.key], dim: t.key !== "all" && !t.value, active: filter === t.key,
-        onClick: function() { setFilter(t.key); }, title: t.key === "all" ? "Every row on this screen" : t.key === "conflicts" ? "Only the double-booked rows on this screen" : "Only the " + t.key + " rows on this screen" });
+        onClick: function() { setFilter(t.key); }, title: t.key === "all" ? "Every row on this screen" : t.key === "conflicts" ? "Only the double-booked rows on this screen \u2014 red when the shifts' times overlap, yellow when they sit at other times" : "Only the " + t.key + " rows on this screen" });
     });
 
     return h("div", null,
@@ -2062,7 +2088,7 @@
             { label: "Requested", value: stats.requested, color: B.warn },
             { label: "Accepted", value: stats.accepted, color: stats.accepted > 0 ? B.success : B.textMut },
             { label: "Confirmed", value: stats.confirmed, color: B.success },
-            stats.conflicts > 0 && { label: "Conflicts", value: stats.conflicts, color: B.danger } ] })
+            stats.conflicts > 0 && { label: "Conflicts", value: stats.conflicts, color: conflictTone } ] })
         : h(FilterTiles, { items: tileItems }),
       // Toolbar. Phone: the status chips scroll in one strip, then project
       // picker · + Manual Shift (· Send) share a 36px row. Desktop: the tiles
@@ -2072,7 +2098,7 @@
         var chips = ["all", "open", "requested", "accepted", "confirmed", "declined", "conflicts"].map(function(f) {
           var isConflict = f === "conflicts";
           return h("button", { key: f, onClick: function() { setFilter(f); },
-            style: Object.assign({ background: filter === f ? (isConflict ? B.danger : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? B.danger : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? B.danger : B.accent) : (isConflict && stats.conflicts > 0 ? B.danger + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) },
+            style: Object.assign({ background: filter === f ? (isConflict ? conflictTone : B.accent) : B.raised, color: filter === f ? B.btnInk : (isConflict ? conflictTone : B.textMut), border: "1px solid " + (filter === f ? (isConflict ? conflictTone : B.accent) : (isConflict && stats.conflicts > 0 ? conflictTone + "44" : B.border)), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) },
             isConflict ? "Conflicts" + (stats.conflicts > 0 ? " (" + stats.conflicts + ")" : "") : f);
         });
         // Values stay STRINGS: the filter is compared with `Number(projFilter)`
@@ -3879,7 +3905,17 @@
       return window.LTP_detectCrewConflicts(projects);
     }, [projects]);
 
+    // Time conflicts (the shifts' times overlap) vs same-day bookings (two
+    // calls on one day at other times) — the badge is red for the first,
+    // yellow when there are only the second.
     var conflictCount = Object.keys(crewConflicts).length;
+    var overlapCount = Object.keys(crewConflicts).filter(function(k) { return window.LTP_conflictLevel(crewConflicts[k]) === "overlap"; }).length;
+    var sameDayCount = conflictCount - overlapCount;
+    var badgeTone = overlapCount > 0 ? B.danger : B.warn;
+    var badgeText = [
+      overlapCount > 0 && overlapCount + " time conflict" + (overlapCount > 1 ? "s" : ""),
+      sameDayCount > 0 && sameDayCount + " same-day booking" + (sameDayCount > 1 ? "s" : ""),
+    ].filter(Boolean).join(" \u00b7 ");
 
     var tabTitle = tab === "requests" ? "Crew Requests"
       : tab === "roster" ? "Crew Roster"
@@ -3895,8 +3931,8 @@
         // that screen only: Assignments carries its own Conflicts tile, and
         // Crew Requests shows nothing conflicts relate to, so the app-wide
         // badge stays for the other Labor tabs.
-        conflictCount > 0 && tab !== "assignments" && tab !== "requests" && h("div", { style: { fontSize: "10px", fontWeight: 700, color: B.danger, background: B.danger + "22", border: "1px solid " + B.danger + "44", padding: "4px 10px", borderRadius: "6px" } },
-          conflictCount + " scheduling conflict" + (conflictCount > 1 ? "s" : ""))
+        conflictCount > 0 && tab !== "assignments" && tab !== "requests" && h("div", { style: { fontSize: "10px", fontWeight: 700, color: badgeTone, background: badgeTone + "22", border: "1px solid " + badgeTone + "44", padding: "4px 10px", borderRadius: "6px" } },
+          badgeText)
       ),
       tab === "roster" && h(CrewRoster, { contacts: contacts, setContacts: setContacts, services: services, allPositions: allPositions, settings: settings, isAdmin: isAdmin }),
       tab === "assignments" && h(AssignmentsTab, { allPositions: allPositions, contacts: contacts, services: services, projects: projects, setProjects: setProjects, crewConflicts: crewConflicts, settings: settings, reloadCrewRequests: loadCrewRequests, crewRequests: crewRequests, clientRates: clientRates, companies: companies }),

@@ -739,7 +739,95 @@ window.LTP_normalizeScheduleRows = function(rows) {
   });
 };
 
-// Detect crew double-bookings across projects
+// ── Crew double-bookings ─────────────────────────────────────────────────────
+//
+// One person on two shifts the same day is one of two things:
+//   • a SAME-DAY booking — the shifts sit at different times (a morning load-in
+//     here, an evening show on another project), so the day can work;
+//   • a TIME CONFLICT — the spans overlap, so they can't be in both places.
+// LTP_detectCrewConflicts tells them apart by stamping `overlap` on every
+// counterpart it lists, and LTP_conflictLevel folds a position's list into
+// the badge it earns: "overlap" (red) or "day" (yellow). Before this split
+// every same-day pair was red, which buried the real clashes among days that
+// merely had two calls on them.
+
+// "HH:MM" → minutes from midnight, or null when it isn't a real clock time.
+// "24:00" (end-of-day midnight) is the one accepted out-of-range value, as in
+// the labor engine (LTP_calcLaborDay).
+function _hhmmToMinutes(t) {
+  var m = /^(\d{1,2}):([0-5]\d)$/.exec(String(t == null ? "" : t).trim());
+  if (!m) return null;
+  var h = +m[1], mm = +m[2];
+  if (h > 24 || (h === 24 && mm > 0)) return null;
+  return h * 60 + mm;
+}
+// "YYYY-MM-DD" → whole days since the epoch, or null. Built from the parts so
+// the day never shifts with the browser's timezone.
+function _isoDayIndex(d) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(d == null ? "" : d).trim());
+  if (!m) return null;
+  return Math.round(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000);
+}
+
+// A shift's span as absolute minutes, {start, end}, so rows on different dates
+// compare directly. A wrap earlier than (or equal to) the call means the shift
+// runs past midnight (the labor engine's rule); a multi-day row (endDate after
+// date) ends on its last day. Null when the row lacks a date or either time,
+// or one of them is not a real value — the caller decides what "unknown"
+// means (see LTP_shiftTimesOverlap).
+window.LTP_shiftSpan = function(row) {
+  if (!row || !row.date || !row.time || !row.endTime) return null;
+  var day = _isoDayIndex(row.date);
+  var start = _hhmmToMinutes(row.time), end = _hhmmToMinutes(row.endTime);
+  if (day == null || start == null || end == null) return null;
+  var lastDay = (row.endDate && row.endDate > row.date) ? _isoDayIndex(row.endDate) : day;
+  if (lastDay == null) return null;
+  start += day * 1440;
+  end += lastDay * 1440;
+  if (end <= start) end += 1440; // overnight
+  return { start: start, end: end };
+};
+
+// Do two shifts' times overlap? True unless BOTH carry complete times and the
+// spans are disjoint (back-to-back — a 12:00 wrap against a 12:00 call — is
+// not an overlap). The conservative side is deliberate: a shift with no times
+// set can't be shown clear of the other, so it keeps the red badge it always
+// had; the split only ever downgrades a pair the times prove apart.
+window.LTP_shiftTimesOverlap = function(a, b) {
+  var sa = window.LTP_shiftSpan(a), sb = window.LTP_shiftSpan(b);
+  if (!sa || !sb) return true;
+  return sa.start < sb.end && sb.start < sa.end;
+};
+
+// The badge a position's counterpart list earns: "overlap" when at least one
+// counterpart's times overlap this shift (or can't be ruled out), "day" when
+// every counterpart is on the same day at other times, null for no conflict.
+// A counterpart without the flag (an older caller's shape) counts as an
+// overlap, so nothing that used to be red turns yellow by accident.
+window.LTP_conflictLevel = function(list) {
+  if (!list || !list.length) return null;
+  return list.some(function(c) { return !c || c.overlap !== false; }) ? "overlap" : "day";
+};
+
+// Tooltip for a conflict badge: which kind it is, and where else the person is
+// booked with that shift's times, so a glance says whether the day works.
+// When a red list also holds same-day counterparts, each is marked.
+window.LTP_conflictTitle = function(list) {
+  var level = window.LTP_conflictLevel(list);
+  if (!level) return "";
+  var mixed = level === "overlap" && list.some(function(c) { return c && c.overlap === false; });
+  var where = list.map(function(c) {
+    if (!c) return "";
+    var s = (c.projectName || "another project") + (c.schedTitle ? " (" + c.schedTitle + ")" : "");
+    s += c.time ? ", " + window.LTP_formatTime(c.time) + (c.endTime ? " – " + window.LTP_formatTime(c.endTime) : "") : ", no times set";
+    if (mixed) s += c.overlap === false ? " — other times" : " — overlaps";
+    return s;
+  }).filter(Boolean).join("; ");
+  return (level === "overlap" ? "Time conflict — also on " : "Same day, no overlap — also on ") + where;
+};
+
+// Detect crew double-bookings across projects: posId → the other bookings the
+// person holds that day (each with `overlap` against this position's shift).
 window.LTP_detectCrewConflicts = function(projects) {
   var bookings = {};
   (projects || []).forEach(function(proj) {
@@ -749,7 +837,10 @@ window.LTP_detectCrewConflicts = function(projects) {
         if (!p.crewId || p.status === "declined") return;
         var key = p.crewId + "|" + s.date;
         if (!bookings[key]) bookings[key] = [];
-        bookings[key].push({ projectId: proj.id, projectName: proj.name, schedTitle: s.title, schedItemId: s.id, posId: p.id, status: p.status, date: s.date, crewId: p.crewId, serviceId: p.serviceId });
+        bookings[key].push({ projectId: proj.id, projectName: proj.name, schedTitle: s.title, schedItemId: s.id, posId: p.id, status: p.status, date: s.date, crewId: p.crewId, serviceId: p.serviceId,
+                             // The shift's times ride along so a counterpart can be judged
+                             // (and shown) against the position it is listed on.
+                             endDate: s.endDate, time: s.time, endTime: s.endTime });
       });
     });
   });
@@ -779,7 +870,9 @@ window.LTP_detectCrewConflicts = function(projects) {
         // an unsettled position sharing the day with confirmed work keeps its
         // warning until it's confirmed (or released) too.
         if (bk.status === "confirmed") return;
-        conflicts[bk.posId] = b.filter(function(o) { return o.posId !== bk.posId; });
+        conflicts[bk.posId] = b.filter(function(o) { return o.posId !== bk.posId; }).map(function(o) {
+          return Object.assign({}, o, { overlap: window.LTP_shiftTimesOverlap(bk, o) });
+        });
       });
     }
   });
