@@ -314,7 +314,13 @@
 // (domain-rates.js), quote/invoice line generation (domain-crew.js), the
 // Services form and the payout/editor tier labels all changed; the domain
 // files are precached, so the shell must be refetched.
-var CACHE_VERSION = 'ltp-shell-v94';
+// v95: double-bookings split by level. A crew member on two shifts the same
+// day is red only when the shifts' times overlap (or can't be ruled out) and
+// yellow when they merely share the day (components/domain-crew.js
+// LTP_shiftTimesOverlap / LTP_conflictLevel; the schedule editor, the
+// builder's side panel and Labor → Assignments read the level). The domain
+// file is precached, so the shell must be refetched.
+var CACHE_VERSION = 'ltp-shell-v95';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
