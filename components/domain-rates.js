@@ -177,8 +177,21 @@ window.LTP_compareRoleGroups = function(a, b) {
 // to derived ratios (×0.5, ÷10, ÷10×1.5) when not explicitly set. Single
 // source of truth shared by the quote builder and invoice editor so a rate-type
 // switch prices identically in both and converted invoices never drift.
+//
+// An HOURLY role (svc.hourly — see LTP_hourlyTiers in domain-labor.js) runs
+// the other way: the hourly figure is the source of truth and the day and
+// half tiers derive from it (×10, ×5), so a day rate left behind on a role
+// that was flipped to hourly can never price a line on its own. Everything a
+// day-rate role returns is unchanged.
 window.LTP_serviceRateMaps = function(svc) {
   svc = svc || {};
+  if (svc.hourly) {
+    var ht = window.LTP_hourlyTiers(svc);
+    return {
+      priceMap: { day: ht.hourlyRate * 10, half: ht.hourlyRate * 5, hourly: ht.hourlyRate, ot: ht.otRate },
+      costMap:  { day: ht.hourlyCost * 10, half: ht.hourlyCost * 5, hourly: ht.hourlyCost, ot: ht.otCost },
+    };
+  }
   return {
     priceMap: { day: svc.dayRate, half: svc.halfDay || svc.dayRate * 0.5, hourly: svc.hourlyRate || svc.dayRate / 10, ot: svc.otRate || svc.dayRate / 10 * 1.5 },
     costMap:  { day: svc.dayCost, half: svc.halfDayCost || svc.dayCost * 0.5, hourly: svc.hourlyCost || svc.dayCost / 10, ot: svc.otCost || svc.dayCost / 10 * 1.5 },

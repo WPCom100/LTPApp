@@ -317,6 +317,54 @@ const day = (id, date, time, endTime, positions, breaks) =>
   eq("Z7 earlier sections still untouched", twice.slice(0, 2), merged);
 }
 
+{
+  // ── Hourly roles ──────────────────────────────────────────────────────────
+  // A role flagged hourly (Service.hourly) bills its straight hours on ONE
+  // hourly line per role — qty = hours across every person and day, cost
+  // blended per hour — and never a day-rate line. OT pools onto the role's OT
+  // line exactly as it does for a day-rate role.
+  const HSVCS = SVCS.concat([{ id: 3, role: "SH", description: "Shop Hand", department: "Production", hourly: true, hourlyRate: 40, hourlyCost: 25 }]);
+  const schedule = [
+    day("d1", "2026-08-10", "08:00", "11:00", [pos("p1", 3), pos("p2", 3)]),               // two people, 3h each
+    day("d2", "2026-08-11", "08:00", "16:00", [pos("p3", 3, { fullMargin: true })], MEAL),  // 7.5h, owner's own hours
+  ];
+  const out = SECTIONS(schedule, HSVCS, {}, "one", fmtDate, window.LTP_genId);
+  eq("HR0 one hourly line and no day-rate line", out[0].items.map((i) => i.rateType), ["hourly"]);
+  const hl = out[0].items[0];
+  near("HR1 qty is the straight hours across people and days", hl.qty, 13.5);   // 3 + 3 + 7.5
+  near("HR2 unit price is the hourly rate", hl.unitPrice, 40);
+  near("HR3 cost is blended per hour (margin hours cost $0)", hl.cost, 11.11);  // (75 + 75 + 0) / 13.5
+  eq("HR4 notes list the days", hl.notes, "2026-08-10, 2026-08-11");
+  eq("HR5 line name", hl.name, "SH — Shop Hand");
+  eq("HR6 ledger fields start at zero", hl.deliveredQty + hl.invoicedQty, 0);
+
+  // Past 10 hours: the straight line caps at 10 and the rest is the OT line.
+  const ot = SECTIONS([day("d1", "2026-08-10", "08:00", "22:00", [pos("p1", 3)], MEAL2)], HSVCS, {}, "one", fmtDate, window.LTP_genId);
+  eq("HR7 hourly line then OT line", ot[0].items.map((i) => i.rateType), ["hourly", "ot"]);
+  near("HR8 straight hours capped at 10", ot[0].items[0].qty, 10);
+  near("HR9 OT hours", ot[0].items[1].qty, 3);
+  near("HR10 OT rate is hourly × 1.5", ot[0].items[1].unitPrice, 60);
+  near("HR11 OT cost is hourly cost × 1.5", ot[0].items[1].cost, 37.5);
+
+  // Beside a day-rate role on the same day, that role's line is untouched.
+  const mixed = SECTIONS([day("d1", "2026-08-10", "08:00", "16:00", [pos("p1", 1), pos("p2", 3)], MEAL)], HSVCS, {}, "one", fmtDate, window.LTP_genId);
+  const dayLine = mixed[0].items.find((i) => i.rateType === "day"), hrLine = mixed[0].items.find((i) => i.rateType === "hourly");
+  eq("HR12 one day line and one hourly line", mixed[0].items.length, 2);
+  near("HR13 the day-rate line is what it always was", dayLine.unitPrice, 600);
+  eq("HR13 and it is still one person-day", dayLine.qty, 1);
+  near("HR14 hourly line carries the 7.5h", hrLine.qty, 7.5);
+  // Letters-only roles read first (SH before A1), like every other line.
+  eq("HR15 read order", mixed[0].items.map((i) => i.name), ["SH — Shop Hand", "A1 — Audio Lead"]);
+  const split = SECTIONS([day("d1", "2026-08-10", "08:00", "16:00", [pos("p1", 1), pos("p2", 3)], MEAL)], HSVCS, {}, "split", fmtDate, window.LTP_genId);
+  eq("HR16 department split keeps the hourly line in its own section", split.map((s) => s.label).sort(), ["Audio", "Production"]);
+
+  // A client's hour minimum bills the call up to the floor and says so.
+  const HMIN = HSVCS.map((s) => s.id === 3 ? Object.assign({}, s, { minHours: 4 }) : s);
+  const mn = SECTIONS([day("d1", "2026-08-10", "08:00", "10:00", [pos("p1", 3)])], HMIN, {}, "one", fmtDate, window.LTP_genId);
+  near("HR17 billed up to the 4-hour minimum", mn[0].items[0].qty, 4);
+  eq("HR18 the note says so", mn[0].items[0].notes, "2026-08-10 · 4-hour contract minimum applied");
+}
+
 // ── LTP_docHasProject ────────────────────────────────────────────────────────
 // The whole point: a project's Quotes/Invoices tabs must find documents where
 // it's a CONTRIBUTOR, not only ones it's primary on.

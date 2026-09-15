@@ -777,6 +777,141 @@ near("M11 without rates → base half day", po.groups[0].rows[0].current.total, 
 po = PAYOUT([{ id: 7, name: "MinP", companyId: 4, schedule: ms }], CONTACTS, S, "2026-07-01", "2026-07-31", CR_PAY);
 near("M11 another client → base half day", po.groups[0].rows[0].current.total, 400);
 
+// ── N. Hourly roles (per-hour pricing) ───────────────────────────────────────
+// A role flagged `hourly` (backend/models.py::Service.hourly — shop and
+// warehouse work) prices every paid hour at the hourly tier instead of a
+// half/full day. OT and meal penalty stack on top exactly as for a day-rate
+// role, minimums floor the hours the same way, and a day-rate role on the same
+// day must not move by a cent.
+const HS = [
+  { id: 1, role: "L1", dayRate: 1000, dayCost: 800 },                                           // control: a day-rate role
+  { id: 3, role: "SH", hourly: true, hourlyRate: 40, hourlyCost: 25 },                          // hourly, explicit figures
+  { id: 4, role: "WH", hourly: true, dayRate: 300, dayCost: 200 },                              // hourly, only a day rate on file
+  { id: 5, role: "SX", hourly: true, hourlyRate: 40, hourlyCost: 25, otRate: 70, otCost: 50 },  // hourly, restated OT tier
+];
+const HD = (items, mins) => DAY(items, HS, mins);
+const HC = (id, crewId, o) => Object.assign(P(id, o), { crewId: crewId });
+const HPP = (id, crewId) => Object.assign(P(id), { crewId: crewId, status: "confirmed" });
+const TWO_MEALS = [nb("12:00", "12:30"), nb("17:00", "17:30")];
+
+// N1: a 3-hour call is 3 hours, not a half day.
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3)] }]);
+eq("N1 one unit", d.units.length, 1);
+eq("N1 tier is hourly", d.units[0].tier, "hourly"); eq("N1 pay tier is hourly", d.units[0].costTier, "hourly");
+eq("N1 unit is flagged", d.units[0].hourly, true);
+eq("N1 3h straight", d.units[0].straightHours, 3); eq("N1 3h straight on the pay side", d.units[0].costStraightHours, 3);
+near("N1 rate 3 × $40", d.units[0].rateTotal, 120); near("N1 cost 3 × $25", d.units[0].costTotal, 75);
+eq("N1 no OT", d.units[0].otHours, 0);
+near("N1 day rate total", d.rateTotal, 120); near("N1 day cost total", d.costTotal, 75);
+eq("N1 dayRate/dayCost are the per-hour figures", d.units[0].dayRate + "/" + d.units[0].dayCost, "40/25");
+
+// N2: an 8-hour day with a meal is 7.5 straight hours — no full-day rounding.
+d = HD([{ time: "09:00", endTime: "17:00", breaks: [nb("12:00", "12:30")], positions: [P(3)] }]);
+eq("N2 7.5 paid", d.units[0].paidHours, 7.5); eq("N2 all of it straight", d.units[0].straightHours, 7.5);
+near("N2 rate 7.5 × $40", d.units[0].rateTotal, 300);
+
+// N3: past 10 hours is OT at hourly × 1.5, like every other role.
+d = HD([{ time: "08:00", endTime: "20:00", breaks: TWO_MEALS, positions: [P(3)] }]);
+eq("N3 paid 11", d.units[0].paidHours, 11); eq("N3 straight capped at 10", d.units[0].straightHours, 10); eq("N3 1h OT", d.units[0].otHours, 1);
+near("N3 rate 10×40 + 1×60", d.units[0].rateTotal, 460); near("N3 cost 10×25 + 1×37.5", d.units[0].costTotal, 287.5);
+
+// N4: a missed meal is penalty OT on an hourly role too.
+d = HD([{ time: "09:00", endTime: "15:00", breaks: [], positions: [P(3)] }]);
+eq("N4 paid 6", d.units[0].paidHours, 6); eq("N4 meal 1", d.units[0].mealPenaltyHours, 1);
+eq("N4 straight 5", d.units[0].straightHours, 5); eq("N4 OT 1", d.units[0].otHours, 1);
+near("N4 rate 5×40 + 1×60", d.units[0].rateTotal, 260);
+
+// N5: an hourly role with only a day rate on file prices at day ÷ 10.
+d = HD([{ time: "09:00", endTime: "13:00", breaks: [], positions: [P(4)] }]);
+near("N5 rate 4 × (300/10)", d.units[0].rateTotal, 120); near("N5 cost 4 × (200/10)", d.units[0].costTotal, 80);
+eq("N5 per-hour figure on the unit", d.units[0].dayRate, 30);
+
+// N6: a restated OT tier is used verbatim.
+d = HD([{ time: "08:00", endTime: "20:00", breaks: TWO_MEALS, positions: [P(5)] }]);
+near("N6 rate 10×40 + 1×70", d.units[0].rateTotal, 470); near("N6 cost 10×25 + 1×50", d.units[0].costTotal, 300);
+
+// N7: full margin bills the hours and costs nothing.
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3, { fm: true })] }]);
+near("N7 margin hours billed", d.units[0].rateTotal, 120); eq("N7 margin cost 0", d.units[0].costTotal, 0);
+
+// N8: a crew member's negotiated DAY minimum floors their hourly cost at ÷10 (cost only).
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [HC(3, 9)] }], { 9: 300 });
+near("N8 rate untouched by the crew floor", d.units[0].rateTotal, 120);
+near("N8 cost floored at 300/10 × 3h", d.units[0].costTotal, 90); eq("N8 floor flagged", d.units[0].minApplied, true);
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [HC(3, 9)] }], { 9: 200 });
+near("N8 a lower minimum never reduces cost", d.units[0].costTotal, 75); eq("N8 not flagged", d.units[0].minApplied, false);
+
+// N9: a client's hour minimum floors the straight hours, bill and pay separately.
+const HMIN4 = HS.map((s) => s.id === 3 ? Object.assign({}, s, { minHours: 4, minCostHours: 0 }) : s);
+d = DAY([{ time: "09:00", endTime: "11:00", breaks: [], positions: [P(3)] }], HMIN4);
+eq("N9 billed 4h (4h min)", d.units[0].straightHours, 4); eq("N9 paid the 2h worked", d.units[0].costStraightHours, 2);
+near("N9 rate 4 × 40", d.units[0].rateTotal, 160); near("N9 cost 2 × 25", d.units[0].costTotal, 50);
+eq("N9 bill minimum flagged", d.units[0].minHoursApplied, true); eq("N9 pay minimum not", d.units[0].minCostHoursApplied, false);
+const HMIN12 = HS.map((s) => s.id === 3 ? Object.assign({}, s, { minHours: 12 }) : s);
+d = DAY([{ time: "09:00", endTime: "11:00", breaks: [], positions: [P(3)] }], HMIN12);
+eq("N9 a 12h minimum → 10 straight", d.units[0].straightHours, 10); eq("N9 a 12h minimum → 2 OT", d.units[0].otHours, 2);
+near("N9 rate 400 + 2×60", d.units[0].rateTotal, 520);
+
+// N10: people are still tracked as units — two of a role are two people, and
+// one person across contiguous shifts is one.
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3), P(3)] }]);
+eq("N10 two people → two units", d.units.length, 2); near("N10 both billed", d.rateTotal, 240);
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3, { slot: 1 })] }, { time: "12:00", endTime: "14:00", breaks: [], positions: [P(3, { slot: 1 })] }]);
+eq("N10 contiguous shifts, same person → one unit", d.units.length, 1); eq("N10 5h straight", d.units[0].straightHours, 5);
+
+// N11: an hourly role and a day-rate role on the same day — the day-rate unit
+// is byte-for-byte what it was before hourly roles existed.
+d = HD([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3), P(1)] }]);
+const hu = d.units.find((u) => u.serviceId === 3), du = d.units.find((u) => u.serviceId === 1);
+eq("N11 hourly unit", hu.tier, "hourly"); eq("N11 day-rate unit is still a half day", du.tier, "half");
+near("N11 day-rate unit still $500", du.rateTotal, 500);
+ok("N11 day-rate unit carries no hourly fields", du.hourly === undefined && du.straightHours === undefined && du.costStraightHours === undefined);
+near("N11 total", d.rateTotal, 620);
+near("N12 units reconcile with the day total", d.units.reduce((t, u) => t + u.rateTotal, 0), d.rateTotal);
+
+// N13: the pay snapshot of an hourly day reads "hourly", and sign-off freezes it
+// from actual hours — then flows through the Payouts rollup unchanged.
+let hp = window.LTP_crewDayPay([{ time: "09:00", endTime: "12:00", breaks: [], positions: [HPP(3, 9)] }], 9, HS, {});
+eq("N13 snapshot tier", hp.tier, "hourly"); near("N13 snapshot total", hp.total, 75); eq("N13 snapshot hours", hp.paidHours, 3);
+eq("N13 snapshot unit tier", hp.units[0].tier, "hourly");
+let hs = [{ id: "hs1", date: "2026-09-14", time: "09:00", endTime: "12:00", breaks: [], positions: [Object.assign(HPP(3, 9), { id: "hpos" })] }];
+hs = window.LTP_signOffDay(hs, 9, "2026-09-14", { hpos: { state: "adjusted", time: "09:00", endTime: "13:00" } }, HS, {}, "2026-09-14T20:00:00Z", "tester");
+eq("N13 signed pay tier", hs[0].positions[0].work.pay.tier, "hourly");
+near("N13 signed on the actual 4h", hs[0].positions[0].work.pay.total, 100);
+const hpo = window.LTP_payoutRows([{ id: 70, name: "Shop", companyId: null, schedule: hs }],
+  [{ id: 9, isCrew: true, firstName: "Sam", lastName: "Shop" }], HS, "2026-09-01", "2026-09-30");
+near("N13 payout row payable", hpo.groups[0].rows[0].payable, 100);
+eq("N13 payout row tier", hpo.groups[0].rows[0].signed.pay.tier, "hourly");
+
+// N14: the rate maps every quote/invoice line prices off derive an hourly
+// role's tiers from its hourly figure — and leave a day-rate role's alone.
+let mp = window.LTP_serviceRateMaps(HS[1]);
+eq("N14 hourly role price map", [mp.priceMap.day, mp.priceMap.half, mp.priceMap.hourly, mp.priceMap.ot].join(","), "400,200,40,60");
+eq("N14 hourly role cost map", [mp.costMap.day, mp.costMap.half, mp.costMap.hourly, mp.costMap.ot].join(","), "250,125,25,37.5");
+mp = window.LTP_serviceRateMaps({ id: 9, hourly: true, hourlyRate: 40, dayRate: 9999 });
+eq("N14 a stale day rate never prices an hourly role", mp.priceMap.day, 400);
+mp = window.LTP_serviceRateMaps(HS[0]);
+eq("N14 day-rate role map unchanged", [mp.priceMap.day, mp.priceMap.half, mp.priceMap.hourly, mp.priceMap.ot].join(","), "1000,500,100,150");
+
+// N15: a client rate on an hourly role. Restating the hourly figure reprices;
+// restating only the day rate derives ÷10 from it (the same derived-tier rule
+// the day-rate card follows); the role stays hourly either way.
+let cr = window.LTP_applyClientRate(HS[1], { id: 1, hourlyRate: 30, hourlyCost: 20 });
+d = DAY([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3)] }], [cr]);
+near("N15 client hourly rate", d.units[0].rateTotal, 90); near("N15 client hourly cost", d.units[0].costTotal, 60);
+eq("N15 still hourly", d.units[0].tier, "hourly");
+cr = window.LTP_applyClientRate(HS[1], { id: 1, dayRate: 200 });
+d = DAY([{ time: "09:00", endTime: "12:00", breaks: [], positions: [P(3)] }], [cr]);
+near("N15 day-only restatement prices at 200/10 per hour", d.units[0].rateTotal, 60);
+
+// N16: LTP_hourlyTiers edge cases — nothing on file bills nothing; strings coerce.
+let ht = window.LTP_hourlyTiers({ hourly: true });
+eq("N16 empty role prices nothing", [ht.hourlyRate, ht.hourlyCost, ht.otRate, ht.otCost].join(","), "0,0,0,0");
+ht = window.LTP_hourlyTiers({ hourlyRate: "40", hourlyCost: "25" });
+eq("N16 string figures coerce", ht.hourlyRate + "," + ht.otRate, "40,60");
+ht = window.LTP_hourlyTiers(null);
+eq("N16 null is safe", ht.hourlyRate, 0);
+
 // ── report ───────────────────────────────────────────────────────────────────
 console.log("labor-rate suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
