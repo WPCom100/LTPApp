@@ -333,6 +333,39 @@ All three FKs CASCADE, so an override can't outlive its client or its service.
 The engine reads only `minHours` / `minCostHours` off the resolved service; the
 rate/cost columns are ordinary rate-card values by the time they reach it.
 
+## Hourly roles (shop and warehouse work)
+
+Every role has always priced a shift through the day-rate card: up to 5 hours
+is a half day, up to 10 a full day, then overtime. That is wrong for shop work,
+where a 3-hour call is 3 hours. A role can be marked **Hourly** (Quotes →
+Services → the role → **Billing**), and only that role changes; every other
+role is a day-rate role by default and is untouched — the flag is invisible
+until you set it.
+
+- **Pricing** — every paid hour bills the role's hourly rate and pays its
+  hourly cost; there is no half or full day. Overtime is unchanged: meal-penalty
+  hours and hours past 10 in a day go at the OT tier (hourly × 1.5 unless
+  restated), the same rule every other role follows.
+- **The rate card** — an hourly role's hourly figure is its source of truth; the
+  day and half-day tiers derive from it (×10, ×5) rather than the other way
+  round, so a day rate left behind on a role that was flipped to hourly can't
+  price anything. A role flipped with only a day rate on file prices at
+  day ÷ 10 until an hourly rate is typed (the form seeds that number).
+- **Where it shows** — the schedule editor's breakdown reads "SH — Hourly 6h";
+  Send to Quote / Invoice produces one **Hourly** line per role (qty = hours
+  across people and days, OT pooled as usual); the service picker on a quote or
+  invoice starts the line on the Hourly tier; Payouts and the QuickBooks vendor
+  bill label the day "Hourly · 6h".
+- **Minimums still apply** — a client's contract minimum floors the hours (a
+  2-hour call on a 4-hour minimum bills 4 hours), and a crew member's negotiated
+  day minimum floors their hourly cost at ÷10.
+- **Manual shifts** need nothing special: a manual shift with an hourly role
+  prices hourly through the same engine, request and payout pipeline.
+
+`services.hourly` (`backend/models.py::Service`). Engine:
+`components/domain-labor.js::LTP_calcDayLabor` / `LTP_hourlyTiers`, guarded by
+`tests/test_labor_rates.js` (section N) and `tests/test_doc_projects.js`.
+
 ## Cross rentals & vendor pricing
 
 Gear rented **in** from a vendor to cover what we don't stock or don't have

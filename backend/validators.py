@@ -111,6 +111,16 @@ def _nonneg_number(value):
         raise ValueError("must be non-negative")
 
 
+def _bool(value):
+    """Reject anything that is not a real boolean. None passes through (unset
+    → the column default). Guards a flag that changes how money is computed —
+    a truthy string like "false" must never switch a role to hourly pricing."""
+    if value is None:
+        return
+    if not isinstance(value, bool):
+        raise ValueError("must be true or false")
+
+
 def _str_max(maxlen):
     """Reject strings longer than maxlen characters. Length caps match the
     underlying column's declared size; sending more would either truncate or
@@ -295,6 +305,8 @@ def _build_rules():
             "halfDayCost": _nonneg_number,
             "hourlyCost":  _nonneg_number,
             "otCost":      _nonneg_number,
+            # Per-hour pricing switch for one role (models.Service.hourly).
+            "hourly":      _bool,
         },
         # Every rate/cost field is nullable ("inherit the base Service value"),
         # which _nonneg_number already passes through — it only rejects negative

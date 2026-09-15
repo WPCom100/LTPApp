@@ -805,7 +805,8 @@
                     var extras = [];
                     if (u.mealPenaltyHours > 0) extras.push(u.mealPenaltyHours + "h meal penalty");
                     if (regOT > 0) extras.push(regOT + "h OT");
-                    var label = u.svc.role + (roleUnitCount[u.serviceId] > 1 ? " #" + u.slot : "") + " — " + (u.tier === "half" ? "Half" : "Full") + " " + u.paidHours + "h";
+                    // An hourly role's person reads "Hourly 6h" — no half/full step.
+                    var label = u.svc.role + (roleUnitCount[u.serviceId] > 1 ? " #" + u.slot : "") + " — " + (u.tier === "hourly" ? "Hourly" : u.tier === "half" ? "Half" : "Full") + " " + u.paidHours + "h";
                     return h("div", { key: u.serviceId + "#" + u.slot, style: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
                       h("span", { style: { color: B.textMut } }, label),
                       extras.length > 0 && h("span", { style: { color: B.danger, fontWeight: 600 } }, "+ " + extras.join(" + ")),

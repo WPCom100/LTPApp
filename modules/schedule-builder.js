@@ -850,7 +850,7 @@
               return h("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", gap: 6, fontSize: "11px", padding: "2px 0" } },
                 h("span", { style: { color: B.textSec, fontWeight: 600 } }, s.role,
                   s.minHours > 0 && h("span", { style: { color: B.info, fontWeight: 700 } }, " \u00b7 " + s.minHours + "h min")),
-                h("span", { style: { color: B.textMut } }, "$" + Math.round(maps.priceMap.day) + "/day"));
+                h("span", { style: { color: B.textMut } }, (s.hourly ? "$" + maps.priceMap.hourly + "/hr" : "$" + Math.round(maps.priceMap.day) + "/day")));
             })),
           !isMobile && h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: 14 } },
             h("h4", { style: { fontSize: "11px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.12em", margin: "0 0 10px" } }, "Schedule Summary"),
@@ -883,7 +883,7 @@
                 return h("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", gap: 6, fontSize: "10px", padding: "1px 0" } },
                   h("span", { style: { color: B.textSec, fontWeight: 600 } }, s.role,
                     s.minHours > 0 && h("span", { style: { color: B.info, fontWeight: 700 } }, " · " + s.minHours + "h min")),
-                  h("span", { style: { color: B.textMut } }, "$" + Math.round(maps.priceMap.day) + "/day"));
+                  h("span", { style: { color: B.textMut } }, (s.hourly ? "$" + maps.priceMap.hourly + "/hr" : "$" + Math.round(maps.priceMap.day) + "/day")));
               }))
           ),
 

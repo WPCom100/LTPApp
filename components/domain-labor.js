@@ -270,6 +270,34 @@ window.LTP_calcLaborDay = function(dayRate, items) {
   return { rate: rate, paidHours: paidHours, unpaidBreakHours: unpaidBreakHours, paidBreakHours: paidBreakHours, mealPenaltyHours: mealPenaltyHours, regularOTHours: regularOTHours, tier: tier, segments: segments };
 };
 
+// ── Hourly roles ─────────────────────────────────────────────────────────────
+//
+// A role flagged `hourly` (backend/models.py::Service.hourly — shop and
+// warehouse work) is priced BY THE HOUR: every paid hour bills the hourly tier
+// and pays the hourly cost, with no half/full-day step. Overtime follows the
+// same rules as a day-rate role — meal-penalty hours, and hours past 10 in a
+// day, at the OT tier — so the one thing that changes is the base: hours × an
+// hourly rate instead of a day rate. A day-rate role (the default) never
+// reaches this code and prices exactly as it did before the flag existed.
+//
+// For an hourly role the HOURLY figure is the source of truth: the day/half
+// columns are never consulted. hourlyRate falls back to dayRate/10 (so a role
+// flipped to hourly with only a day rate on file still prices, at the same
+// per-hour figure its OT already used), and OT to hourly × 1.5 unless restated.
+// LTP_serviceRateMaps (domain-rates.js) reads this same helper, so a quote
+// line, the schedule editor and a payout can never disagree about what an
+// hour of the role is worth.
+window.LTP_hourlyTiers = function(svc) {
+  svc = svc || {};
+  var hr = Number(svc.hourlyRate) || (Number(svc.dayRate) || 0) / 10;
+  var hc = Number(svc.hourlyCost) || (Number(svc.dayCost) || 0) / 10;
+  return {
+    hourlyRate: hr, hourlyCost: hc,
+    otRate: Number(svc.otRate) || hr * 1.5,
+    otCost: Number(svc.otCost) || hc * 1.5,
+  };
+};
+
 // Effective person-SLOT for each position within ONE shift's positions.
 // A slot is a person-identity within a role for the day: pos.slot when the user
 // has set it (> 0), else the lowest unused integer for that role — so two of the
@@ -320,20 +348,32 @@ window.LTP_effectiveSlots = function(positions) {
 // With no minimums set both sides collapse back to the actual hours and every
 // figure is bit-identical to before the feature existed.
 //
+// HOURLY ROLES. A service with `hourly: true` (see LTP_hourlyTiers) is priced
+// per hour instead of per day: the unit's tier is "hourly", its straight hours
+// (the floored non-penalty hours up to 10) bill at the hourly rate and pay at
+// the hourly cost, and OT — meal penalty plus anything past 10 — stacks on top
+// at the OT tier exactly as it does for a day-rate role. Minimums floor the
+// hours the same way (a 2-hour call on a 4-hour minimum bills 4 hours), and a
+// crew member's negotiated day minimum floors their hourly cost at ÷10.
+//
 // items    = [{ time, endTime, breaks, positions: [{ serviceId, slot?, fullMargin?, crewId? }] }]
 // services = [{ id, dayRate, dayCost, halfDay?, halfDayCost?, otRate?, otCost?,
-//               minHours?, minCostHours? }]
+//               minHours?, minCostHours?, hourly?, hourlyRate?, hourlyCost? }]
 // crewMins = optional { [crewId]: minDayCost } — a crew member's negotiated
 //   payout floor. When set, that person's COST is computed at the greater of the
 //   role's cost and their minimum (the minimum is treated like a normal day rate:
 //   half-day → min*0.5, OT → min/10*1.5). RATE (client billing) is never touched.
 //   Build one with LTP_crewMinMap(contacts). Absent → no floor (back-compat).
 // Returns { units: [{ svc, serviceId, slot, crewId, fullMargin, minApplied,
-//   tier:"half"|"full", paidHours, mealPenaltyHours, otHours, dayRate, dayCost,
+//   tier:"half"|"full"|"hourly", paidHours, mealPenaltyHours, otHours, dayRate, dayCost,
 //   otRate, otCost, rateTotal, costTotal,
 //   costTier, billedHours, costHours, costOtHours,   ← the pay-side mirror
-//   minHours, minCostHours, minHoursApplied, minCostHoursApplied }],
+//   minHours, minCostHours, minHoursApplied, minCostHoursApplied,
+//   hourly?, straightHours?, costStraightHours? }],  ← hourly units only
 //   rateTotal, costTotal }.
+// dayRate / dayCost are the price of ONE unit of the tier: the half-day figure
+// on a half day, the full-day figure on a full day, and on an hourly unit the
+// PER-HOUR figure — multiply by straightHours / costStraightHours there.
 window.LTP_calcDayLabor = function(items, services, crewMins) {
   var svcById = {}; (services || []).forEach(function(s) { svcById[s.id] = s; });
 
@@ -384,12 +424,6 @@ window.LTP_calcDayLabor = function(items, services, crewMins) {
     var bill = side(Number(svc.minHours) || 0);
     var pay  = side(Number(svc.minCostHours) || 0);
     var otHours = bill.ot;
-    var isHalf = bill.half;
-    var tier = isHalf ? "half" : "full";
-    var dayRate = isHalf ? (svc.halfDay || svc.dayRate * 0.5) : svc.dayRate;
-    var dayCost = pay.half ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
-    var otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
-    var otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
     var fullMargin = u.allMargin;
     // Per-crew negotiated minimum: floor this person's COST at their minimum day
     // rate, treated like a normal rate — so the half-day pays min*0.5 and OT pays
@@ -399,23 +433,55 @@ window.LTP_calcDayLabor = function(items, services, crewMins) {
     // is deliberately left untouched — the minimum is a payout cost, not billed.
     var minDay = (crewMins && u.crewId != null && crewMins[u.crewId] > 0) ? crewMins[u.crewId] : 0;
     var minApplied = false;
-    if (minDay > 0 && !fullMargin) {
-      // Floors the PAY tier (which a pay minimum may have promoted to full),
-      // not the billed tier — this is a payout figure.
-      var floorDay = pay.half ? minDay * 0.5 : minDay;
-      var floorOt = minDay / 10 * 1.5;
-      if (floorDay > dayCost) { dayCost = floorDay; minApplied = true; }
-      if (floorOt > otCost) { otCost = floorOt; minApplied = true; }
+    var tier, costTier, dayRate, dayCost, otRate, otCost, unitRate, unitCost;
+    var straightHours, costStraightHours;   // hourly units only
+    if (svc.hourly) {
+      // ── Hourly role: straight hours × hourly rate, OT on top ──────────────
+      // Straight time is whatever the floored hours are once OT is taken out:
+      // bill.hours − bill.ot = min(regular, 10), so a 12-hour call is 10h
+      // straight + 2h OT, and a 6h stretch with no meal is 5h + 1h penalty.
+      var ht = window.LTP_hourlyTiers(svc);
+      tier = costTier = "hourly";
+      straightHours = r2(bill.hours - bill.ot);
+      costStraightHours = r2(pay.hours - pay.ot);
+      dayRate = ht.hourlyRate; dayCost = ht.hourlyCost;   // the unit's PER-HOUR price/cost
+      otRate = ht.otRate; otCost = ht.otCost;
+      if (minDay > 0 && !fullMargin) {
+        // The crew minimum is a DAY figure; read as a day rate its hourly
+        // equivalent is ÷10, its OT ÷10 × 1.5 — the same reading the day-rate
+        // path gives it.
+        var floorHr = minDay / 10, floorHrOt = minDay / 10 * 1.5;
+        if (floorHr > dayCost) { dayCost = floorHr; minApplied = true; }
+        if (floorHrOt > otCost) { otCost = floorHrOt; minApplied = true; }
+      }
+      unitRate = dayRate * straightHours + (bill.ot > 0 ? otRate * bill.ot : 0);
+      unitCost = fullMargin ? 0 : (dayCost * costStraightHours + (pay.ot > 0 ? otCost * pay.ot : 0));
+    } else {
+      var isHalf = bill.half;
+      tier = isHalf ? "half" : "full";
+      costTier = pay.half ? "half" : "full";
+      dayRate = isHalf ? (svc.halfDay || svc.dayRate * 0.5) : svc.dayRate;
+      dayCost = pay.half ? (svc.halfDayCost || svc.dayCost * 0.5) : svc.dayCost;
+      otRate = svc.otRate || (svc.dayRate / 10 * 1.5);
+      otCost = svc.otCost || (svc.dayCost / 10 * 1.5);
+      if (minDay > 0 && !fullMargin) {
+        // Floors the PAY tier (which a pay minimum may have promoted to full),
+        // not the billed tier — this is a payout figure.
+        var floorDay = pay.half ? minDay * 0.5 : minDay;
+        var floorOt = minDay / 10 * 1.5;
+        if (floorDay > dayCost) { dayCost = floorDay; minApplied = true; }
+        if (floorOt > otCost) { otCost = floorOt; minApplied = true; }
+      }
+      // Rate always bills the person; cost is $0 when the unit is full margin.
+      // Each side uses its OWN overtime hours — they differ only when the bill and
+      // pay minimums differ.
+      unitRate = dayRate + (bill.ot > 0 ? otRate * bill.ot : 0);
+      unitCost = fullMargin ? 0 : (dayCost + (pay.ot > 0 ? otCost * pay.ot : 0));
     }
-    // Rate always bills the person; cost is $0 when the unit is full margin.
-    // Each side uses its OWN overtime hours — they differ only when the bill and
-    // pay minimums differ.
-    var unitRate = dayRate + (bill.ot > 0 ? otRate * bill.ot : 0);
-    var unitCost = fullMargin ? 0 : (dayCost + (pay.ot > 0 ? otCost * pay.ot : 0));
     rateTotal += unitRate;
     costTotal += unitCost;
 
-    units.push({
+    var unit = {
       svc: svc, serviceId: svc.id, slot: u.slot, crewId: u.crewId, fullMargin: fullMargin, minApplied: minApplied, tier: tier,
       paidHours: info.paidHours, mealPenaltyHours: info.mealPenaltyHours, otHours: otHours,
       dayRate: dayRate, dayCost: dayCost, otRate: otRate, otCost: otCost,
@@ -423,10 +489,14 @@ window.LTP_calcDayLabor = function(items, services, crewMins) {
       // Pay-side mirror of tier/hours/OT. Identical to the billing fields unless
       // the two minimums differ; payout code (LTP_crewDayPay / LTP_crewDayActuals)
       // reads these so a client's billing minimum never inflates a crew payout.
-      costTier: pay.half ? "half" : "full", billedHours: bill.hours, costHours: pay.hours, costOtHours: pay.ot,
+      costTier: costTier, billedHours: bill.hours, costHours: pay.hours, costOtHours: pay.ot,
       minHours: Number(svc.minHours) || 0, minCostHours: Number(svc.minCostHours) || 0,
       minHoursApplied: bill.applied, minCostHoursApplied: pay.applied,
-    });
+    };
+    // Only an hourly unit carries these, so a day-rate unit's shape is
+    // byte-identical to before hourly roles existed (snapshots included).
+    if (svc.hourly) { unit.hourly = true; unit.straightHours = straightHours; unit.costStraightHours = costStraightHours; }
+    units.push(unit);
   });
   units.sort(function(a, b) { return (a.serviceId - b.serviceId) || (a.slot - b.slot); });
 

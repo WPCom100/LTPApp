@@ -407,7 +407,10 @@
         h("div", { style: { maxHeight: isMobile ? "calc(var(--app-h, 100dvh) - 220px)" : 350, overflowY: "auto", display: "flex", flexDirection: "column", gap: 3 } },
           filterList(window.LTP_sortServices(services), ["role", "department"]).slice(0, 60).map(function(s) {
             return h("div", { key: s.id, onClick: function() {
-                onAdd({ id: genId("item"), type: "service", serviceId: s.id, name: s.role + " \u2014 " + s.description, rateType: "day", qty: 1, unitPrice: s.dayRate || 0, adjustedPrice: null, cost: s.dayCost || 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
+                // An hourly role lands as an hourly line, a day-rate role as a
+                // day line — priced off the maps the rate-type switch uses.
+                var rt = s.hourly ? "hourly" : "day", maps = window.LTP_serviceRateMaps(s);
+                onAdd({ id: genId("item"), type: "service", serviceId: s.id, name: s.role + " \u2014 " + s.description, rateType: rt, qty: 1, unitPrice: maps.priceMap[rt] || 0, adjustedPrice: null, cost: maps.costMap[rt] || 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
               },
               style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "4px", padding: "8px 12px", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 },
               onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
@@ -418,7 +421,7 @@
                   // The price beside this row is already the client's negotiated
                   // rate (the list is resolved) — say where it came from.
                   h(window.ClientRateChip, { svc: s, tiny: true }))),
-              h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, "$" + (s.dayRate || 0) + "/day")
+              h("div", { style: { fontSize: "12px", fontWeight: 700, color: B.accent } }, s.hourly ? "$" + window.LTP_hourlyTiers(s).hourlyRate + "/hr" : "$" + (s.dayRate || 0) + "/day")
             );
           }))
       ),

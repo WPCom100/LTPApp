@@ -309,7 +309,12 @@
 // skips the staff auth probe there; both are precached, so the shell must be
 // refetched. dev had taken v92 for the gear check-out work, so this is the
 // next string above it.
-var CACHE_VERSION = 'ltp-shell-v93';
+// v94: hourly roles (Service.hourly — shop and warehouse work priced by the
+// hour). The pricing engine (components/domain-labor.js), rate maps
+// (domain-rates.js), quote/invoice line generation (domain-crew.js), the
+// Services form and the payout/editor tier labels all changed; the domain
+// files are precached, so the shell must be refetched.
+var CACHE_VERSION = 'ltp-shell-v94';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
