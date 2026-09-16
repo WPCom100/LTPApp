@@ -199,7 +199,7 @@
           subTitle && h("span", { style: { fontSize: "13px", fontWeight: 400, color: MUTE, letterSpacing: "0.02em" } }, subTitle),
           s.department && h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department))
       : null;
-    // Producer's per-shift note (parking, gate code, wardrobe, …) — its own
+    // Production manager's per-shift note (parking, gate code, wardrobe, …) — its own
     // accent-edged line under the call so it reads as an instruction.
     var noteRow = (s.note && String(s.note).trim())
       ? h("div", { style: { marginTop: 10, padding: "8px 12px", background: INSET, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "13px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, s.note)
@@ -299,7 +299,7 @@
   // ── Terminal banner (confirmed / penciled / declined / withdrawn) ──────────
   // `opts`: { crewName, respondedAt, siteAddress, isConfirmed, shifts, projectName }.
   // A crew member's acceptance leaves the request "accepted" but the positions
-  // still need the producer to confirm them — so the accepted banner has two
+  // still need the production manager to confirm them — so the accepted banner has two
   // faces: "penciled in" (awaiting confirmation) and "confirmed" (locked, with
   // the calendar buttons). isConfirmed is derived from the shift statuses.
   function renderBanner(status, opts) {
@@ -444,7 +444,7 @@
             "This request is no longer available"),
           h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
             "It was removed while this page was open, so there is nothing here to accept or " +
-            "decline. Please check with your producer if you were expecting a call."),
+            "decline. Please check with your production manager if you were expecting a call."),
           h("button", {
             type: "button",
             onClick: reload,
@@ -492,11 +492,11 @@
     var terminal = status !== "pending";
     var withdrawn = status === "withdrawn";
 
-    // Confirmation is a SECOND step the producer takes AFTER the crew member
+    // Confirmation is a SECOND step the production manager takes AFTER the crew member
     // accepts: the request stays "accepted", but each position advances
     // accepted → confirmed. So "confirmed" is derived from the shift statuses,
     // not the request status — the page must not claim a hold is confirmed until
-    // the producer has actually confirmed the positions.
+    // the production manager has actually confirmed the positions.
     var activeShifts = shifts.filter(function(s) { return s.status !== "declined"; });
     var isConfirmed = status === "accepted" && activeShifts.length > 0 &&
       activeShifts.every(function(s) { return s.status === "confirmed"; });
@@ -508,7 +508,7 @@
     var projectMeta = [project.venue, dateLine].filter(function(x) { return x; }).join("  ·  ");
 
     // Overline status eyebrow per state. An accepted-but-unconfirmed hold reads
-    // "Awaiting Confirmation" (never "Confirmed") until the producer confirms.
+    // "Awaiting Confirmation" (never "Confirmed") until the production manager confirms.
     var statusEyebrow = status === "accepted"
         ? (isConfirmed ? { t: "Confirmed", c: SUCCESS } : { t: "Awaiting Confirmation", c: ORANGE_SOFT })
       : status === "declined" ? { t: "Declined", c: DECLINE }
@@ -520,7 +520,7 @@
     var what = flatOnly ? "this position" : (hasFlat ? "this project" : "these calls");
     var intent = withdrawn ? null
       : status === "accepted"
-        ? (isConfirmed ? "You're confirmed for the following." : "You've accepted " + what + " — a producer will confirm you shortly.")
+        ? (isConfirmed ? "You're confirmed for the following." : "You've accepted " + what + ". A production manager will confirm you shortly.")
       : status === "declined" ? "Here is what was on this request."
       : (flatOnly ? "You've been requested for the following flat-rate position — a flat fee for the whole project, hours your own."
                   : "You've been requested for the following.");

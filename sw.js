@@ -328,8 +328,9 @@
 // v97: crew portal refresh (modules/crew-portal.js): "production manager"
 // wording, no em dashes, uniform stat tiles, a wider page, the overview
 // reordered (pay period and recent responses up top, next calls last), and
-// week and month views on the Schedule tab beside the list. The module is
-// runtime-cached, so the shell must be refetched.
+// week and month views on the Schedule tab beside the list. The emailed call
+// sheet (modules/crew-view.js) says "production manager" too. Both modules
+// are runtime-cached, so the shell must be refetched.
 var CACHE_VERSION = 'ltp-shell-v97';
 
 var SAME_ORIGIN_PRECACHE = [

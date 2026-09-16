@@ -129,6 +129,7 @@ ok("invitations retry until the new row has synced", /status === 404 && attempt 
 // Crew read "production manager", never "producer", and the portal carries no
 // em dashes: sentences are split, or joined with a comma or colon, instead.
 ok("the portal never says 'producer'", !/producer/i.test(portal));
+ok("the emailed call sheet never says 'producer' either", !/producer/i.test(read("modules/crew-view.js")));
 ok("the portal has no em dashes", portal.indexOf("\u2014") === -1);
 ["list", "week", "month"].forEach((m) => ok("the schedule offers the " + m + " view", portal.indexOf('"' + m + '"') !== -1));
 
