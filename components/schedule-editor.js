@@ -22,7 +22,10 @@
     return String(h % 24).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  window.ScheduleEditor = function({ schedule, onChange, contacts, services, checkCrewConflict }) {
+  // declinedCrewFor([{ schedItemId }]) → crew who declined a request for that
+  // day row (the builder resolves it off LTP_declinedCrewIndex); optional, so
+  // the editor still works without the crew-request feed.
+  window.ScheduleEditor = function({ schedule, onChange, contacts, services, checkCrewConflict, declinedCrewFor }) {
     var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [crewSearch, setCrewSearch] = useState("");
@@ -208,8 +211,27 @@
       return " \u00b7 " + span + (window.LTP_shiftTimesOverlap(row, other) ? " \u2014 times overlap" : " \u2014 no overlap");
     }
 
-    function assignCrewToDay(schedId, pos, crewId) {
+    function assignCrewToDay(schedId, pos, crewId, reaskOk) {
       var item = schedule.find(function(s) { return s.id === schedId; });
+
+      // Someone who already declined a request for this day: a deliberate
+      // re-ask, never a slip of the list — confirm it, quoting their answer,
+      // before the conflict checks below. Re-entered with reaskOk once confirmed.
+      var prior = (!reaskOk && declinedCrewFor && crewId && crewId !== pos.crewId)
+        ? (declinedCrewFor([{ schedItemId: schedId }]) || []).find(function(d) { return d.contactId === crewId; }) : null;
+      if (prior) {
+        var priorCm = (contacts || []).find(function(c) { return c.id === crewId; });
+        var priorWhen = prior.respondedAt ? window.LTP_timeAgo(prior.respondedAt) : "";
+        setConflictWarn({
+          title: "Previously Declined",
+          message: (priorCm ? priorCm.firstName + " " + priorCm.lastName : "This crew member") + " declined this shift" + (priorWhen ? " " + priorWhen : "")
+            + (prior.comment ? ":\n\n\u201c" + prior.comment + "\u201d" : ".")
+            + "\n\nAssign them anyway? They'd be asked again the next time requests are sent.",
+          onConfirm: function() { setConflictWarn(null); assignCrewToDay(schedId, pos, crewId, true); }
+        });
+        return;
+      }
+
       var warnings = [];
       var anyOverlap = false;
 
@@ -700,6 +722,9 @@
                         var co = window.LTP_crewSelectOptions({
                           crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
                           allContacts: contacts, leading: [{ value: "", label: "Crew…" }],
+                          // Crew who declined a request for this day row sit
+                          // under "Previously declined this shift".
+                          declined: declinedCrewFor ? declinedCrewFor([{ schedItemId: s.id }]) : [],
                         });
                         return h(window.LTPSearchSelect, {
                           value: pos.crewId || "",
@@ -712,7 +737,7 @@
                             // "downgrade clears the assignee" invariant intact).
                             else { updatePosition(s.id, pos.id, { crewId: null, status: "open" }); }
                           },
-                          options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+                          options: co.options, sections: co.sections, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
                           searchPlaceholder: "Search crew…",
                           style: { flex: M ? "1 1 52%" : 1, minWidth: 0 },
                           triggerStyle: trig,

@@ -251,6 +251,20 @@ from unassigned — while the booking was still live. The same fix applies to
 **Primary Contact**, which likewise shows the selected person even when the
 narrowed list excludes them, with "Other contacts" as the escape hatch.
 
+**Previously declined this shift.** A crew member who turned down a request
+for a shift is listed under their own heading at the bottom of that shift's
+picker — dated, with the note they left — instead of among the eligible names,
+so nobody is asked twice by accident. Picking someone from that section asks
+you to confirm before they're assigned (and so re-asked on the next send).
+"This shift" is the schedule day: a decline for L2 #1 on the show day also
+marks L2 #2 that day; a flat-rate position is its own shift. The latest ask
+wins, so someone asked again who accepted (or hasn't answered) drops out of
+the section, while a re-ask you withdrew doesn't clear it. Nothing new is
+stored — the record is the crew request itself, read back per shift by
+`LTP_declinedCrewIndex` (`components/domain-crew.js`, covered by
+`tests/test_declined_crew.js`). Labor → Assignments and both Schedule Builder
+pickers (day rows and flat-rate positions) read the same index.
+
 ## Client service rates (contract rates + day minimums)
 
 A client can be on a negotiated rate for **specific roles**, with its own crew
