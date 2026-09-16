@@ -80,6 +80,7 @@ from backend.routes.crew import (
     _ask_label, _crew_shifts, _fixed_list, _project_date_outline, _resolve_site_address, _respond,
 )
 from backend.sanitize import email_html
+from backend.email_validate import is_valid_address
 
 
 CREW_COOKIE = "ltp_crew_session"
@@ -202,7 +203,9 @@ async def _mint_link(db, contact, kind, email, created_by=None) -> tuple[str, "m
     (raw token — for the link, row)."""
     await _retire_tokens(db, contact.id, kind)
     raw, digest = crew_auth.mint_token()
-    life = crew_auth.INVITE_LIFETIME if kind == "invite" else crew_auth.RESET_LIFETIME
+    life = (crew_auth.INVITE_LIFETIME if kind == "invite"
+            else crew_auth.EMAIL_CHANGE_LIFETIME if kind == "email"
+            else crew_auth.RESET_LIFETIME)
     row = models.CrewAuthToken(
         contact_id=contact.id, kind=kind, token_hash=digest, email=email,
         expires_at=_now() + life, created_by_user_id=created_by,
@@ -237,7 +240,7 @@ def _portal_url(path: str) -> str:
     return (crew_origin() or "") + "/#/crew-portal/" + path
 
 
-def _me_payload(account, contact) -> dict:
+def _me_payload(account, contact, pending_email: str = "") -> dict:
     return {
         "id": account.id,
         "contactId": contact.id,
@@ -248,6 +251,8 @@ def _me_payload(account, contact) -> dict:
         # — usually the same; shown side by side on the Account tab when not.
         "email": account.email,
         "contactEmail": contact.email or "",
+        # A new sign-in email waiting on its confirmation link (see /me/email).
+        "pendingEmail": pending_email or "",
         "phone": contact.phone or "",
         "roles": list(contact.crew_roles or []),
         "departments": list(contact.crew_departments or []),
@@ -342,6 +347,14 @@ _PORTAL_FALLBACKS = {
                  "This link expires in {{expiresIn}}. If you didn't ask for a reset, you "
                  "can ignore this email — your password won't change.\n\n{{signature}}"),
     },
+    "crewEmailChange": {
+        "subject": "Confirm your new {{companyName}} crew portal email",
+        "body": ("Hi {{crewName}},\n\nYou asked to change your crew portal sign-in email to "
+                 "{{newEmail}}. Use the button below to confirm it. Once confirmed, this is the "
+                 "address you'll sign in with, and the one crew requests are sent to.\n\n{{header}}\n\n"
+                 "This link expires in {{expiresIn}}. If you didn't ask for this, you can ignore "
+                 "this email and your email won't change.\n\n{{signature}}"),
+    },
 }
 
 _PORTAL_KINDS = {
@@ -353,6 +366,10 @@ _PORTAL_KINDS = {
               "title": "Reset your password", "cta": "Choose a New Password",
               "sub": "This link signs you in once so you can pick a new password.",
               "expires": "1 hour"},
+    "email": {"template": "crewEmailChange", "eyebrow": "Crew portal",
+              "title": "Confirm your new email", "cta": "Confirm New Email",
+              "sub": "Opening this from your new inbox makes it your sign-in email.",
+              "expires": "24 hours"},
 }
 
 
@@ -379,9 +396,10 @@ def _portal_header_html(kind: str, url: str, company: str) -> str:
     )
 
 
-def render_portal_email(kind: str, *, crew_name: str, url: str, sender, settings_data: dict) -> tuple[str, str]:
-    """(subject, final_html) for an invitation or reset email. Pure — no I/O —
-    so tests can pin the rendering without a mailbox."""
+def render_portal_email(kind: str, *, crew_name: str, url: str, sender, settings_data: dict, extra: dict | None = None) -> tuple[str, str]:
+    """(subject, final_html) for an invitation, reset or email-change email.
+    Pure — no I/O — so tests can pin the rendering without a mailbox. `extra`
+    adds kind-specific tokens ({{newEmail}} for an email change)."""
     k = _PORTAL_KINDS[kind]
     tmpl = ((settings_data.get("emailTemplates") or {}).get(k["template"]) or {})
     fallback = _PORTAL_FALLBACKS[k["template"]]
@@ -393,6 +411,7 @@ def render_portal_email(kind: str, *, crew_name: str, url: str, sender, settings
         "{{expiresIn}}": k["expires"],
         "{{portalUrl}}": url,
     }
+    repl.update(extra or {})
 
     def _sub(text):
         for key, val in repl.items():
@@ -430,11 +449,12 @@ async def _system_sender(db):
     return rows[0]
 
 
-async def _send_portal_email(db, sender, contact, kind, url, settings_data) -> dict:
+async def _send_portal_email(db, sender, contact, kind, url, settings_data, to=None, extra=None) -> dict:
     """Best-effort send. NEVER raises — a mail failure must not undo the
     invitation or reset that was just minted (staff can copy the invite
-    link; the crew member can ask again)."""
-    to = crew_auth.normalize_email(contact.email if kind == "invite" else contact.email)
+    link; the crew member can ask again). `to` overrides the roster address
+    (an email change is confirmed at the NEW address)."""
+    to = crew_auth.normalize_email(to or contact.email)
     if not to:
         return {"emailed": False, "noEmail": True, "error": "no email on file"}
     if sender is None:
@@ -444,7 +464,7 @@ async def _send_portal_email(db, sender, contact, kind, url, settings_data) -> d
     try:
         subject, final_html = render_portal_email(
             kind, crew_name=_contact_name(contact) or "there", url=url,
-            sender=sender, settings_data=settings_data,
+            sender=sender, settings_data=settings_data, extra=extra,
         )
         reply_to = (settings_data.get("emailReplyTo") or "").strip() or None
         await gmail.send(
@@ -529,7 +549,7 @@ async def login(body: dict, request: Request, response: Response, db: AsyncSessi
     if crew_auth.needs_rehash(account.password_hash):
         account.password_hash = crew_auth.hash_password(password)
     await _open_session(db, account, response, request)
-    return _me_payload(account, contact)
+    return _me_payload(account, contact, await _pending_email(db, contact.id))
 
 
 @crew_portal_router.post("/auth/logout")
@@ -542,8 +562,8 @@ async def logout(request: Request, response: Response, db: AsyncSession = Depend
 
 
 @crew_portal_router.get("/auth/me")
-async def auth_me(ident: CrewIdentity = Depends(require_crew)):
-    return _me_payload(ident.account, ident.contact)
+async def auth_me(db: AsyncSession = Depends(get_db), ident: CrewIdentity = Depends(require_crew)):
+    return _me_payload(ident.account, ident.contact, await _pending_email(db, ident.contact.id))
 
 
 async def _self_serve(db, email: str) -> None:
@@ -672,7 +692,7 @@ async def signup(body: dict, request: Request, response: Response, db: AsyncSess
     await _retire_tokens(db, contact.id, "invite")
     await _revoke_sessions(db, account.id)
     await _open_session(db, account, response, request)
-    return _me_payload(account, contact)
+    return _me_payload(account, contact, await _pending_email(db, contact.id))
 
 
 @crew_portal_router.post("/auth/reset")
@@ -699,7 +719,7 @@ async def reset_password(body: dict, request: Request, response: Response, db: A
     await _retire_tokens(db, contact.id, "reset")
     await _revoke_sessions(db, account.id)
     await _open_session(db, account, response, request)
-    return _me_payload(account, contact)
+    return _me_payload(account, contact, await _pending_email(db, contact.id))
 
 
 @crew_portal_router.post("/auth/change-password")
@@ -723,14 +743,15 @@ async def change_password(body: dict, request: Request, db: AsyncSession = Depen
 # ── Crew: profile ───────────────────────────────────────────────────────────
 
 @crew_portal_router.get("/me")
-async def me(ident: CrewIdentity = Depends(require_crew)):
-    return _me_payload(ident.account, ident.contact)
+async def me(db: AsyncSession = Depends(get_db), ident: CrewIdentity = Depends(require_crew)):
+    return _me_payload(ident.account, ident.contact, await _pending_email(db, ident.contact.id))
 
 
 @crew_portal_router.put("/me")
 async def update_me(body: dict, db: AsyncSession = Depends(get_db), ident: CrewIdentity = Depends(require_crew)):
-    """The one roster field a crew member keeps current themselves: their
-    phone. Names, roles and the roster email stay staff-owned."""
+    """The roster field a crew member keeps current themselves in one step:
+    their phone. Names and roles stay staff-owned; the email moves through
+    the confirmed change below."""
     body = _body_dict(body)
     if "phone" in body:
         phone = body.get("phone")
@@ -743,7 +764,102 @@ async def update_me(body: dict, db: AsyncSession = Depends(get_db), ident: CrewI
             ident.contact.phone = phone
             await db.flush()
             livesync.mark_dirty(db, "contacts")
+    return _me_payload(ident.account, ident.contact, await _pending_email(db, ident.contact.id))
+
+
+# ── Crew: change of sign-in email ───────────────────────────────────────────
+#
+# The email is the credential AND the roster address requests go to, so a
+# change is two-step: the crew member proves their current password on the
+# Account tab, a confirmation link goes to the NEW address, and nothing
+# changes until that link is opened. A typo can't lock anyone out (the old
+# address keeps working until the link is used), and a stolen session alone
+# can't redirect the account. The link is a CrewAuthToken of kind "email"
+# carrying the new address; unlike a reset, it never signs anyone in.
+
+async def _open_email_token(db, contact_id):
+    """The newest unspent email-change link for the contact, or None."""
+    r = await db.execute(
+        select(models.CrewAuthToken)
+        .where(models.CrewAuthToken.contact_id == contact_id,
+               models.CrewAuthToken.kind == "email",
+               models.CrewAuthToken.used_at.is_(None))
+        .order_by(models.CrewAuthToken.id.desc()).limit(1))
+    return r.scalar_one_or_none()
+
+
+async def _pending_email(db, contact_id) -> str:
+    """The address a still-live email-change link would switch to, or ''."""
+    row = await _open_email_token(db, contact_id)
+    return (row.email or "") if row is not None and _token_state(row) == "live" else ""
+
+
+@crew_portal_router.post("/me/email")
+async def request_email_change(body: dict, db: AsyncSession = Depends(get_db),
+                               ident: CrewIdentity = Depends(require_crew)):
+    body = _body_dict(body)
+    current = body.get("currentPassword")
+    if not isinstance(current, str) or not crew_auth.verify_password(current, ident.account.password_hash):
+        raise HTTPException(status_code=403, detail={"field": "currentPassword", "reason": "bad_credentials", "message": "Your current password isn't right."})
+    email = crew_auth.normalize_email(body.get("email"))
+    if not email or not is_valid_address(email):
+        raise HTTPException(status_code=400, detail={"field": "email", "reason": "invalid", "message": "Enter a valid email address."})
+    if email == crew_auth.normalize_email(ident.account.email):
+        raise HTTPException(status_code=400, detail={"field": "email", "reason": "same", "message": "That's already your sign-in email."})
+    other = await _account_for_email(db, email)
+    if other is not None and other.id != ident.account.id:
+        raise HTTPException(status_code=409, detail={"field": "email", "reason": "email_taken", "message": "That email is already attached to another crew account. Please contact the production team."})
+    recent = await _open_email_token(db, ident.contact.id)
+    if recent is not None and _aware(recent.created_at) and _now() - _aware(recent.created_at) < _SELF_SERVE_COOLDOWN:
+        raise HTTPException(status_code=429, detail={"reason": "cooldown", "message": "We just sent you a confirmation link. Check that inbox, or try again in a couple of minutes."})
+    raw, row = await _mint_link(db, ident.contact, "email", email)
+    url = _portal_url("confirm-email/" + raw)
+    sender = await _system_sender(db)
+    status = await _send_portal_email(db, sender, ident.contact, "email", url, await load_settings(db),
+                                      to=email, extra={"{{newEmail}}": email})
+    if not status.get("emailed"):
+        # No link in any inbox means nothing can ever be confirmed: spend it
+        # rather than leave a phantom pending change on the Account tab.
+        row.used_at = _now()
+        await db.flush()
+        print(f"[LTP] crew portal: email-change link for contact {ident.contact.id} not sent: {status.get('error')}", flush=True)
+        raise HTTPException(status_code=502, detail={"reason": "not_sent", "message": "We couldn't send the confirmation email just now. Try again later, or ask the production team to update your email."})
+    return {"ok": True, "sent": True, "email": email, "expiresAt": _iso(row.expires_at),
+            "me": _me_payload(ident.account, ident.contact, email)}
+
+
+@crew_portal_router.post("/me/email/cancel")
+async def cancel_email_change(db: AsyncSession = Depends(get_db), ident: CrewIdentity = Depends(require_crew)):
+    await _retire_tokens(db, ident.contact.id, "email")
     return _me_payload(ident.account, ident.contact)
+
+
+@crew_portal_router.post("/auth/confirm-email")
+async def confirm_email(body: dict, db: AsyncSession = Depends(get_db)):
+    """Finish an email change: the link (sent to the new address) is the
+    proof, so no session is needed. Moves the sign-in identity AND the
+    roster address, spends the link, and leaves every session as it was."""
+    body = _body_dict(body)
+    row = await _live_token_or_4xx(db, body.get("token"), "email")
+    account = await _account_for_contact(db, row.contact_id)
+    if account is None or account.disabled:
+        raise HTTPException(status_code=410, detail={"reason": "unknown", "message": "This link isn't valid any more."})
+    contact = await _contact(db, account.contact_id)
+    if not _crew_eligible(contact):
+        raise HTTPException(status_code=403, detail={"reason": "inactive", "message": "This crew profile is no longer active. Please contact the production team."})
+    email = crew_auth.normalize_email(row.email)
+    if not email:
+        raise HTTPException(status_code=410, detail={"reason": "unknown", "message": "This link isn't valid any more."})
+    other = await _account_for_email(db, email)
+    if other is not None and other.id != account.id:
+        raise HTTPException(status_code=409, detail={"reason": "email_taken", "message": "That email is now attached to another crew account. Please contact the production team."})
+    account.email = email
+    contact.email = email
+    row.used_at = _now()
+    await db.flush()
+    await _retire_tokens(db, contact.id, "email")
+    livesync.mark_dirty(db, "contacts")
+    return {"ok": True, "email": email}
 
 
 # ── Crew: dashboard ─────────────────────────────────────────────────────────

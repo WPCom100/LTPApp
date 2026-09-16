@@ -50,6 +50,15 @@ class RecipientError(ValueError):
     """Raised when the recipient string can't be parsed or is unsafe."""
 
 
+def is_valid_address(addr) -> bool:
+    """One bare address (no display name), safe and well-formed: the
+    single-address counterpart of parse_recipients, for a sign-in email."""
+    if not isinstance(addr, str):
+        return False
+    addr = addr.strip()
+    return 0 < len(addr) <= 254 and not _BANNED_CHARS.search(addr) and _EMAIL_RE.match(addr) is not None
+
+
 def parse_recipients(raw: str | None, *, allow_empty: bool = True) -> list[str]:
     """Parse a `to` or `cc` field into a list of normalized addresses.
 

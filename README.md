@@ -587,7 +587,7 @@ database read yields nothing usable.
 | **Overview** | Tiles (requests needing an answer · accepted-awaiting-confirmation · confirmed calls · next call), then this pay period beside their recent answers with where each stands (awaiting confirmation → confirmed, declined, released), then the **requests waiting on them** with Accept / I Can't Make It and an optional note right there (the same state machine as the emailed call sheet, which stays one tap away), and the next five calls last. |
 | **Schedule** | Three views of the same calls. **List**: every call from today forward, grouped by date, with role, call/wrap, project, venue, the shift note, a map link, **Add to calendar** on confirmed calls, and a status chip — *Needs your answer*, *Awaiting confirmation*, *Confirmed*; flat-rate positions list as one block with the fee and the schedule outline, and a *Recently worked* view shows the last few weeks' confirmed calls with a *Signed off* marker. **Week**: seven days across (stacked day rows on a phone), each call on its day with the status as a coloured edge. **Month**: a calendar with a line per call (status dots on a phone) and the tapped day's calls in full underneath; a flat-rate job is spread over its project's dates with a dashed edge. |
 | **Pay** | Paid this year, this period, pending, next pay day; then one card per pay period (the next, the current, and the last five): signed-off days with the frozen figure the QuickBooks bill posts (tier, hours, adjustments itemized), confirmed-but-unsigned days as *~estimates* from the pay locked at confirm, the period's pay day, and whether its bill is **Not yet submitted / Submitted / Paid** (from `payout_bills`). Never another crew member's day, never the client's rate. |
-| **Account** | Sign-in email, the roster email requests go to (when different), roles and departments, a **phone** they keep current themselves (it lands on their roster row), change password (signs out other devices), sign out. |
+| **Account** | Sign-in email, the roster email requests go to (when different), roles and departments, a **phone** they keep current themselves (it lands on their roster row), **change email** (they enter the new address and their current password; a confirmation link goes to the new address, and only when it is opened do the sign-in email and the roster address switch, so a typo can't lock anyone out; a pending change shows on the tab and can be cancelled), change password (signs out other devices), sign out. |
 
 The dashboard re-checks itself every ten seconds (the same freshness poll as
 the call sheet) and on every return to the app, and adopts changes silently —
@@ -631,9 +631,10 @@ and per account (10 wrong passwords locks the account for 15 minutes), and a
 wrong email and a wrong password answer identically. Invitations and resets a
 producer sends go out **as that producer** through the Gmail pipeline; the
 self-serve ones go out as `LTP_CREW_PORTAL_SENDER_EMAIL` (else the most
-recently signed-in admin with Gmail connected). Both templates —
-**Crew Portal Invitation** and **Crew Portal Password Reset** — are editable
-under Settings → Email Templates.
+recently signed-in admin with Gmail connected), as does the email-change
+confirmation. The three templates — **Crew Portal Invitation**, **Crew Portal
+Password Reset** and **Crew Portal Email Change** — are editable under
+Settings → Email Templates.
 
 ### Its own domain
 
@@ -652,6 +653,8 @@ PWA installs there as *LTP Crew*. Step by step, with verification and rollback:
 | `POST /api/crew-portal/auth/forgot` · `request-access` | self-serve links (always `{ok: true}`) |
 | `GET /api/crew-portal/auth/token/{token}` | who a link is for, and whether it is still live |
 | `POST /api/crew-portal/auth/signup` · `reset` · `change-password` | set / change the password |
+| `GET /api/crew-portal/me` · `PUT …/me` | their profile; the phone is the one field a PUT changes |
+| `POST /api/crew-portal/me/email` · `…/me/email/cancel` · `POST …/auth/confirm-email` | change the sign-in email: password-gated ask, a 24-hour link to the new address, the switch on confirmation |
 | `GET /api/crew-portal/dashboard?today=` · `…/dashboard/version` | the dashboard payload and its freshness stamp |
 | `POST /api/crew-portal/requests/{id}/respond` | answer one of their own requests |
 | `GET /api/crew-portal/accounts` · `POST …/{contactId}/invite` · `reset` · `disable` · `enable` | staff side (session-gated; disable/enable admin-only) |
