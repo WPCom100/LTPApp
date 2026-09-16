@@ -879,6 +879,97 @@ window.LTP_detectCrewConflicts = function(projects) {
   return conflicts;
 };
 
+// Who has already said no to a shift — so the crew pickers can list them under
+// their own heading instead of leaving the producer to remember, and ask them
+// again by accident.
+//
+// The record is the crew_requests table (backend/models.py::CrewRequest): a
+// declined request stays `declined` for good, its `positionIds` naming the
+// shifts it covered, even after the producer reassigns the slot. This index
+// reads those rows back per SHIFT — the schedule row (day) a position sits on,
+// or the flat-rate position itself — so a decline for "L2 #1 on the show day"
+// also marks "L2 #2 on the show day": the person turned down the day, not the
+// slot number.
+//
+// The LATEST ask wins per (person, shift). Someone who declined, was asked
+// again and accepted (or hasn't answered yet) is not "previously declined";
+// someone who declined and whose later re-ask the producer withdrew still is.
+// A direct book counts as an accepted ask. Requests are ordered by sentAt, id
+// breaking ties.
+//
+//   var idx = LTP_declinedCrewIndex(crewRequests, projects);
+//   idx.declinedFor(projectId, [{ schedItemId: "sch-1" }, { flat: true, posId: "fpos-2" }])
+//     → [{ contactId, respondedAt, comment }], newest decline first, one per person
+//
+// `projects` are the SAVED rows (a request only ever names saved positions);
+// a position id no project holds any more is simply ignored.
+window.LTP_declinedCrewIndex = function(crewRequests, projects) {
+  // (projectId, positionId) → the shift key that position belongs to.
+  var shiftOf = {};
+  (projects || []).forEach(function(proj) {
+    if (!proj) return;
+    var m = shiftOf[proj.id] = {};
+    (proj.schedule || []).forEach(function(s) {
+      (s && s.positions || []).forEach(function(p) { if (p && p.id != null) m[p.id] = "s:" + s.id; });
+    });
+    (proj.fixedPositions || []).forEach(function(p) { if (p && p.id != null) m[p.id] = "f:" + p.id; });
+  });
+  function later(a, b) {      // is request a more recent than b?
+    var x = a.sentAt || "", y = b.sentAt || "";
+    if (x !== y) return x > y;
+    return (a.id || 0) > (b.id || 0);
+  }
+  // projectId → shift key → contactId → the latest request touching that shift.
+  var latest = {};
+  (crewRequests || []).forEach(function(r) {
+    if (!r || r.status === "withdrawn" || r.contactId == null || r.projectId == null) return;
+    var m = shiftOf[r.projectId];
+    if (!m) return;
+    (r.positionIds || []).forEach(function(pid) {
+      var key = m[pid];
+      if (!key) return;
+      var byShift = latest[r.projectId] || (latest[r.projectId] = {});
+      var byCrew = byShift[key] || (byShift[key] = {});
+      var cur = byCrew[r.contactId];
+      if (!cur || later(r, cur)) byCrew[r.contactId] = r;
+    });
+  });
+  function keyFor(e) {
+    if (!e) return null;
+    if (e.flat) return e.posId != null ? "f:" + e.posId : null;
+    return e.schedItemId != null ? "s:" + e.schedItemId : null;
+  }
+  return {
+    declinedFor: function(projectId, entries) {
+      var byShift = latest[projectId];
+      if (!byShift) return [];
+      var seen = {}, out = [];
+      (entries || []).forEach(function(e) {
+        var byCrew = byShift[keyFor(e)];
+        if (!byCrew) return;
+        Object.keys(byCrew).forEach(function(cid) {
+          var r = byCrew[cid];
+          if (r.status !== "declined") return;
+          var prev = seen[cid];
+          // Several shifts in one lookup (a multi-row day booking): keep the
+          // most recent answer for the person.
+          if (prev && !later(r, prev)) return;
+          seen[cid] = r;
+        });
+      });
+      Object.keys(seen).forEach(function(cid) {
+        var r = seen[cid];
+        out.push({ contactId: r.contactId, respondedAt: r.respondedAt || null, comment: r.comment || "" });
+      });
+      out.sort(function(a, b) {
+        var x = a.respondedAt || "", y = b.respondedAt || "";
+        return x < y ? 1 : (x > y ? -1 : 0);
+      });
+      return out;
+    },
+  };
+};
+
 // ── Flat-rate ("fixed cost") positions ───────────────────────────────────────
 //
 // A lighting designer or stage manager hired for the WHOLE project at a flat

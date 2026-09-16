@@ -320,7 +320,12 @@
 // LTP_shiftTimesOverlap / LTP_conflictLevel; the schedule editor, the
 // builder's side panel and Labor → Assignments read the level). The domain
 // file is precached, so the shell must be refetched.
-var CACHE_VERSION = 'ltp-shell-v95';
+// v96: crew pickers list who already declined the shift under their own
+// "Previously declined this shift" heading (components/search-dropdown.js
+// sections, LTP_declinedCrewIndex in domain-crew.js, LTP_timeAgo moved into
+// domain-util.js) and confirm a re-ask. The domain files are precached, so the
+// shell must be refetched.
+var CACHE_VERSION = 'ltp-shell-v96';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

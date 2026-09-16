@@ -658,6 +658,26 @@ eq("QX8 null tolerated", QX(null), false);
 // its own is just as stale as one carrying an explicit date.
 eq("QX9 the sentDate fallback can expire", QX({ status: "sent", sentDate: "2000-01-01" }), true);
 
+// ── timeAgo ──────────────────────────────────────────────────────────────────
+// "how long ago" for the Crew Requests tab and the crew pickers' declined rows.
+{
+  const TA = window.LTP_timeAgo;
+  const realNow = Date.now;
+  const now = Date.parse("2026-09-16T12:00:00Z");
+  Date.now = () => now;
+  const at = (secs) => new Date(now - secs * 1000).toISOString();
+  eq("TA1 under a minute is 'just now'", TA(at(30)), "just now");
+  eq("TA2 minutes", TA(at(5 * 60)), "5m ago");
+  eq("TA3 hours", TA(at(3 * 3600)), "3h ago");
+  eq("TA4 days", TA(at(2 * 86400)), "2d ago");
+  eq("TA5 weeks from a fortnight", TA(at(21 * 86400)), "3w ago");
+  eq("TA6 months past nine weeks", TA(at(90 * 86400)), "3mo ago");
+  eq("TA7 a stamp in the future reads 'just now', never negative", TA(at(-3600)), "just now");
+  eq("TA8 empty → ''", TA(""), "");
+  eq("TA9 garbage → ''", TA("not a date"), "");
+  Date.now = realNow;
+}
+
 console.log("utils suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
