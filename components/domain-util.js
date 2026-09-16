@@ -92,6 +92,23 @@ window.LTP_formatDateRangeShort = function(startStr, endStr, opts) {
   return a + " \u2013 " + b;
 };
 
+// "just now" / "5m ago" / "3h ago" / "2d ago" / "3w ago" / "4mo ago" — how long
+// ago an ISO timestamp was. Lives here so the crew pickers can date a decline
+// the same way the Crew Requests tab dates an answer; an unparseable or missing
+// stamp is "" rather than "NaN ago".
+window.LTP_timeAgo = function(iso) {
+  if (!iso) return "";
+  var t = new Date(iso).getTime();
+  if (isNaN(t)) return "";
+  var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 60) return "just now";
+  var m = Math.round(s / 60); if (m < 60) return m + "m ago";
+  var hh = Math.round(m / 60); if (hh < 24) return hh + "h ago";
+  var d = Math.round(hh / 24); if (d < 14) return d + "d ago";
+  var w = Math.round(d / 7); if (w < 9) return w + "w ago";
+  return Math.round(d / 30) + "mo ago";
+};
+
 // ── Shared Utilities ─────────────────────────────────────────────────────────
 var _idCounter = 0;
 window.LTP_genId = function(prefix) { _idCounter++; return (prefix || "x") + "-" + Date.now() + "-" + _idCounter; };

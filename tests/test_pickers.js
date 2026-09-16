@@ -130,6 +130,58 @@ eq("an unresolvable id is dropped rather than faked",
 eq("empty roster yields an empty list, not a crash",
    crewTiers({ crew: [], role: "L2", allContacts: [] }).options, []);
 
+// ── Previously declined this shift ─────────────────────────────────────────
+// Crew who turned down a request for THIS shift come out of both tiers and
+// into their own always-visible section, dated and quoting their note, so the
+// list itself says who has already said no. LTP_declinedCrewIndex
+// (tests/test_declined_crew.js) feeds it from the crew_requests rows; the
+// builder only has to place the rows.
+window.LTP_timeAgo = function (iso) { return iso ? "3d ago" : ""; };
+const declined = [{ contactId: 10, respondedAt: "2026-09-13T10:00:00Z", comment: "Out of town" }];
+
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone, declined: declined });
+eq("a decliner leaves the role tier", t.options.map((o) => o.label), ["Bo Ray"]);
+eq("...and appears under the declined heading", t.sections.map((s) => s.label), ["Previously declined this shift"]);
+eq("the declined row is the plain name", t.sections[0].options.map((o) => o.label), ["Ann Ng"]);
+eq("...dated and quoting the note underneath", t.sections[0].options[0].sublabel, "Declined 3d ago · “Out of town”");
+ok("...and keeps the real id so a pick resolves", t.sections[0].options[0].value === 10);
+
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone, declined: [{ contactId: 12, respondedAt: null, comment: "" }] });
+eq("an untagged decliner leaves the second tier", t.moreOptions, null);
+eq("...and is listed under the heading instead", t.sections[0].options.map((o) => o.label), ["Cy Vo"]);
+eq("no date and no note reads just 'Declined'", t.sections[0].options[0].sublabel, "Declined");
+
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone });
+eq("with nobody declined there is no section", t.sections, []);
+
+t = crewTiers({ crew: roster, role: "", allContacts: everyone, declined: declined });
+eq("with no role, a decliner still leaves the flat list", t.options.map((o) => o.label), ["Bo Ray", "Cy Vo"]);
+eq("...for the section", t.sections[0].options.map((o) => o.label), ["Ann Ng"]);
+
+// The declined assignee — still attached to the now-declined position — shows
+// under the heading, and is not ALSO pinned into tier 1.
+t = crewTiers({ crew: roster, role: "L2", selectedId: 10, allContacts: everyone, declined: declined });
+eq("a declined assignee isn't pinned twice", t.options.map((o) => o.label), ["Bo Ray"]);
+ok("...they're under the heading", t.sections[0].options.some((o) => o.value === 10));
+
+// A decliner who has since gone inactive isn't offered anywhere, so isn't
+// listed — unless they still hold the slot, when the assignee pin applies as
+// before.
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone, declined: [{ contactId: 13, respondedAt: "2026-09-13T10:00:00Z", comment: "" }] });
+eq("an inactive decliner is not listed", t.sections, []);
+eq("...and the tiers are untouched", t.options.map((o) => o.label), ["Ann Ng", "Bo Ray"]);
+t = crewTiers({ crew: roster, role: "L2", selectedId: 13, allContacts: everyone, declined: [{ contactId: 13, respondedAt: "2026-09-13T10:00:00Z", comment: "" }] });
+eq("an inactive declined assignee is still pinned, flagged", t.options.map((o) => o.label), ["Ann Ng", "Bo Ray", "Di Ux — inactive"]);
+
+// Order is the caller's (newest decline first); a repeated id lists once.
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone, declined: [{ contactId: 11 }, { contactId: 10 }, { contactId: 11 }] });
+eq("declined order is kept and de-duplicated", t.sections[0].options.map((o) => o.label), ["Bo Ray", "Ann Ng"]);
+
+// A long note is cut so the row stays a row.
+t = crewTiers({ crew: roster, role: "L2", allContacts: everyone, declined: [{ contactId: 10, comment: "x".repeat(120) }] });
+ok("a long note is truncated", t.sections[0].options[0].sublabel.length < 100, String(t.sections[0].options[0].sublabel.length));
+ok("...with an ellipsis", /…”$/.test(t.sections[0].options[0].sublabel), t.sections[0].options[0].sublabel);
+
 // ── Contact picker tiers (components/helpers.js) ──────────────────────────
 const linked = { id: 1, firstName: "Ada", lastName: "Lovelace", role: "TD" };
 const other  = { id: 2, firstName: "Bob", lastName: "Stone", role: "PM" };

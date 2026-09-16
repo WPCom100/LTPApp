@@ -33,10 +33,15 @@
   var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
   var ACTIVE_POS = { requested: 1, accepted: 1, confirmed: 1 };
 
-  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, settings, isMobile }) {
+  // declinedFor([{ flat: true, posId }]) → crew who declined a request for that
+  // flat-rate position (the builder resolves it off LTP_declinedCrewIndex).
+  function FixedPositionsPanel({ list, onChange, onRemove, contacts, svcs, project, settings, isMobile, declinedFor }) {
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var money = window.LTP_money;
     var rows = list || [];
+    // "Previously declined — assign anyway?" confirm for a pick from the
+    // declined section of the crew picker.
+    var [reask, setReask] = useState(null);
     function update(id, patch) {
       onChange(rows.map(function(p) { return p.id === id ? Object.assign({}, p, patch) : p; }));
     }
@@ -86,9 +91,13 @@
         var pc = POS_COLORS[p.status] || B.textMut;
         var fee = Number(p.fee) || 0, bill = Number(p.bill) || 0;
         var margin = Math.round((bill - (p.fullMargin ? 0 : fee)) * 100) / 100;
+        // Crew who declined a request for this position sit under
+        // "Previously declined this shift" in the picker.
+        var declined = declinedFor ? declinedFor([{ flat: true, posId: p.id }]) : [];
         var co = window.LTP_crewSelectOptions({
           crew: crew, role: svc ? svc.role : "", selectedId: p.crewId,
           allContacts: contacts, leading: [{ value: "", label: "Crew\u2026" }],
+          declined: declined,
         });
         // ── Row controls, built once and laid out per width ──
         // Role — a rate-card service, required: it routes the fee to that
@@ -114,10 +123,24 @@
           value: p.crewId || "",
           onChange: function(v) {
             var cid = (v === "" || v == null) ? null : Number(v);
-            if (cid) update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" });
-            else update(p.id, { crewId: null, status: "open" });
+            if (!cid) { update(p.id, { crewId: null, status: "open" }); return; }
+            var pick = function() { update(p.id, { crewId: cid, status: cid === p.crewId ? p.status : "open" }); };
+            // Someone who already declined this position: a deliberate
+            // re-ask, never a slip of the list — confirm it, quoting their answer.
+            var prior = cid !== p.crewId ? declined.find(function(d) { return d.contactId === cid; }) : null;
+            if (!prior) { pick(); return; }
+            var priorCm = (contacts || []).find(function(c) { return c.id === cid; });
+            var priorWhen = prior.respondedAt ? window.LTP_timeAgo(prior.respondedAt) : "";
+            setReask({
+              title: "Previously Declined", variant: "danger", confirmLabel: "Assign Anyway",
+              message: h("span", { style: { whiteSpace: "pre-line" } },
+                (priorCm ? (priorCm.firstName + " " + priorCm.lastName).trim() : "This crew member") + " declined this position" + (priorWhen ? " " + priorWhen : "")
+                  + (prior.comment ? ":\n\n\u201c" + prior.comment + "\u201d" : ".")
+                  + "\n\nAssign them anyway? They'd be asked again the next time requests are sent."),
+              onConfirm: function() { setReask(null); pick(); },
+            });
           },
-          options: co.options, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
+          options: co.options, sections: co.sections, moreOptions: co.moreOptions, moreLabel: co.moreLabel,
           searchPlaceholder: "Search crew\u2026",
           style: { flex: M ? "1 1 52%" : "1 1 130px", minWidth: 0 },
           triggerStyle: trig, panelMinWidth: 260,
@@ -169,7 +192,8 @@
               h("div", { style: Object.assign({ marginTop: 6 }, line) }, statusChip, roleWarn, endWarn, moneyBox, delBtn))
           : h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
               roleSel, crewSel, feeField, billField, mgnBtn, noteInput, statusChip, moneyBox, roleWarn, endWarn, delBtn);
-      }));
+      }),
+      h(window.LTPConfirmDialog, { dlg: reask, onCancel: function() { setReask(null); } }));
   }
 
   window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
@@ -190,6 +214,29 @@
     var clientRateRoles = useMemo(function() {
       return svcs.filter(function(s) { return s && s.clientRate; });
     }, [svcs]);
+
+    // Crew who already declined a request on this project — the crew_requests
+    // rows, read back per shift by LTP_declinedCrewIndex — so the pickers here
+    // list them under "Previously declined this shift" exactly as Labor →
+    // Assignments does. Loaded per project and refreshed off the live feed: an
+    // answer is a server-side write no window makes, so nothing else in this
+    // screen would notice it. Only the SAVED project is indexed (a request only
+    // ever names saved positions); a position added in the draft has no history.
+    var [crewRequests, setCrewRequests] = useState([]);
+    useEffect(function() {
+      var alive = true;
+      function load() {
+        fetch("/api/crew-requests?projectId=" + encodeURIComponent(project.id), { credentials: "include" })
+          .then(function(r) { return r.ok ? r.json() : []; })
+          .then(function(d) { if (alive) setCrewRequests(Array.isArray(d) ? d : []); })
+          .catch(function() {});
+      }
+      load();
+      var unsubscribe = window.LTP_LIVE ? window.LTP_LIVE.subscribe("crew-requests", load) : null;
+      return function() { alive = false; if (unsubscribe) unsubscribe(); };
+    }, [project.id]);
+    var declinedIdx = useMemo(function() { return window.LTP_declinedCrewIndex(crewRequests, [project]); }, [crewRequests, project]);
+    function declinedCrewFor(entries) { return declinedIdx.declinedFor(project.id, entries); }
 
     // Deep clone schedule with positions. Named rather than inlined because the
     // live-refresh effect below has to build the same shape from a project that
@@ -818,8 +865,9 @@
         h("div", { style: { flex: isMobile ? "0 0 auto" : 1, overflowY: isMobile ? "visible" : "auto", minWidth: 0, padding: isMobile ? "0 6px" : 0 } },
           summaryStrip,
           h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
-            contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile }),
+            contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile, declinedFor: declinedCrewFor }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
+            declinedCrewFor: declinedCrewFor,
             // The person's saved shifts on OTHER projects that day — any status
             // but declined, the rule LTP_detectCrewConflicts applies (a
             // pencilled-in "open" booking still takes the day). Each carries

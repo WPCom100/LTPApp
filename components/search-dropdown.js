@@ -33,6 +33,15 @@
 //   the second one, so the qualified people aren't buried under a name match
 //   from another department.
 //
+// SECTIONS — `sections`
+//   Labeled groups that are part of the open list rather than behind a click:
+//   `[{ label, options, color? }]`, rendered after the primary tier under a
+//   small heading. They are searched with the primary tier, a heading only
+//   shows while something under it matches, and the keyboard runs straight
+//   through them. Crew drove this one too: the people who already declined
+//   this shift sit under "Previously declined this shift" so nobody is asked
+//   twice by accident — visible, but never mixed in with the eligible names.
+//
 // THINGS THAT WOULD BITE A NAIVER VERSION
 //   * The panel is PORTALED to <body> with fixed coords. Several call sites sit
 //     inside `overflow:hidden` cards (the Assignments booking rows) that would
@@ -87,6 +96,7 @@
   window.LTPSearchSelect = function (props) {
     var options = props.options || [];
     var moreOptions = props.moreOptions || null;
+    var sections = props.sections || [];
     var value = props.value;
     var disabled = !!props.disabled;
     var isMobile = window.LTP_useIsMobile();
@@ -106,6 +116,11 @@
 
     var q = query.trim().toLowerCase();
     var primary = options.filter(function (o) { return matches(o, q); });
+    // Sections are searched with the primary tier; a heading only shows while
+    // something under it matches, so a query never leaves an empty heading.
+    var sectionRows = sections.map(function (s) {
+      return { label: s.label, color: s.color, rows: (s.options || []).filter(function (o) { return matches(o, q); }) };
+    });
     var secondary = (moreOpen && moreOptions) ? moreOptions.filter(function (o) { return matches(o, q); }) : [];
 
     // Whatever is currently selected stays on screen even when the query would
@@ -117,13 +132,24 @@
     // holding them in a filtered list is just clutter. And the pinned row goes
     // at the END, never the top, so the keyboard cursor still starts on a
     // genuine match and Enter can't commit a no-op.
-    var selected = findOpt(options, value) || findOpt(moreOptions, value);
+    var homeSection = -1;
+    var selected = findOpt(options, value);
+    for (var si = 0; si < sections.length && !selected; si++) {
+      selected = findOpt(sections[si].options, value);
+      if (selected) homeSection = si;
+    }
+    if (!selected) selected = findOpt(moreOptions, value);
     var valueIsSentinel = same(value, "") || (selected && selected.sentinel);
     if (selected && !valueIsSentinel && q && !matches(selected, q)) {
-      primary = primary.concat([selected]);
+      // Pinned under its own heading when it has one, so the reason it is
+      // listed there (a decline, say) stays attached to the row.
+      if (homeSection >= 0) sectionRows[homeSection].rows = sectionRows[homeSection].rows.concat([selected]);
+      else primary = primary.concat([selected]);
     }
 
-    var flat = primary.concat(secondary);
+    var sectionFlat = [];
+    sectionRows.forEach(function (s) { sectionFlat = sectionFlat.concat(s.rows); });
+    var flat = primary.concat(sectionFlat).concat(secondary);
 
     // A value with no matching option at all must not render blank — that reads
     // as "nothing selected" while the state still holds an id.
@@ -157,9 +183,12 @@
       if (open) { close(); return; }
       measure();
       setOpen(true); setQuery(""); setMoreOpen(false);
-      // Start on the selected row so ↓ moves from where you are.
+      // Start on the selected row so ↓ moves from where you are. With no
+      // query yet the open list is the options followed by every section.
+      var openList = options;
+      sections.forEach(function (s) { openList = openList.concat(s.options || []); });
       var idx = 0;
-      for (var i = 0; i < options.length; i++) { if (same(options[i].value, value)) { idx = i; break; } }
+      for (var i = 0; i < openList.length; i++) { if (same(openList[i].value, value)) { idx = i; break; } }
       setActive(idx);
     }
 
@@ -271,6 +300,21 @@
         }),
         h("div", { ref: listRef, style: { maxHeight: Math.min(280, rect.space), overflowY: "auto" } },
           primary.map(function (o, i) { return row(o, i); }),
+          // Labeled groups that are part of the open list (not behind a
+          // click): heading, then rows, numbered on from the primary tier so
+          // the keyboard cursor runs straight through them.
+          (function () {
+            var base = primary.length, out = [];
+            sectionRows.forEach(function (s, i) {
+              if (!s.rows.length) return;
+              var start = base;
+              base += s.rows.length;
+              out.push(h(React.Fragment, { key: "_sec" + i },
+                h("div", { style: { padding: "6px 12px", fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: s.color || B.textMut, background: B.raised, borderBottom: "1px solid " + B.border } }, s.label),
+                s.rows.map(function (o, j) { return row(o, start + j); })));
+            });
+            return out;
+          })(),
           // The second tier's header doubles as the reveal control, so the
           // roster behind it is always one deliberate click away and never
           // mixed into the primary results.
@@ -278,7 +322,7 @@
             ? h("div", {
                 key: "_more",
                 onMouseDown: function (e) { e.preventDefault(); },
-                onClick: function () { setMoreOpen(true); setActive(primary.length); if (inputRef.current) inputRef.current.focus(); },
+                onClick: function () { setMoreOpen(true); setActive(primary.length + sectionFlat.length); if (inputRef.current) inputRef.current.focus(); },
                 style: {
                   padding: "10px 12px", fontSize: "12px", cursor: "pointer",
                   color: B.accent, fontWeight: 600, background: B.accentMuted,
@@ -292,7 +336,7 @@
             ? h("div", { key: "_morehdr", style: { padding: "6px 12px", fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: B.textMut, background: B.raised, borderBottom: "1px solid " + B.border } },
                 props.moreLabel || "Other…")
             : null,
-          secondary.map(function (o, i) { return row(o, primary.length + i); }),
+          secondary.map(function (o, i) { return row(o, primary.length + sectionFlat.length + i); }),
           flat.length === 0 && !(moreOptions && moreOptions.length > 0 && !moreOpen)
             ? h("div", { key: "_none", style: { padding: "14px 12px", fontSize: "12px", color: B.textMut, fontStyle: "italic", textAlign: "center" } },
                 (options.length === 0 && props.emptyText) ? props.emptyText : (props.noMatchText || "No matches."))
@@ -338,8 +382,14 @@
   //   opts.leading     entries pinned above the list ("Crew…", "Unassigned")
   //   opts.selectedId  who is currently assigned (see below)
   //   opts.allContacts every contact, used to resolve selectedId
+  //   opts.declined    [{ contactId, respondedAt, comment }] — crew who declined
+  //                    a request covering THIS shift (LTP_declinedCrewIndex),
+  //                    newest first. They come out of both tiers and into their
+  //                    own always-visible "Previously declined this shift"
+  //                    section, dated and with the note they left, so the list
+  //                    itself says who has already said no.
   //
-  // Returns { options, moreOptions, moreLabel }. Everyone NOT tagged with the
+  // Returns { options, sections, moreOptions, moreLabel }. Everyone NOT tagged with the
   // role goes in moreOptions, behind a click, so a name match from another
   // department can't bury the people actually qualified. With no role being
   // filled, everyone is "matching" and there's no second tier — an unfiltered
@@ -366,32 +416,61 @@
     }
     function tagged(c) { return !!role && (c.crewRoles || []).indexOf(role) !== -1; }
 
-    var list = (opts.crew || []).slice().sort(function (a, b) {
+    var roster = (opts.crew || []).slice().sort(function (a, b) {
       return H.contactName(a).localeCompare(H.contactName(b));
     });
     var lead = (opts.leading || []).slice();
 
     var picked = (selectedId != null && selectedId !== "") ? selectedId : null;
 
+    // Crew who already declined this shift: out of the tiers and under their
+    // own heading, in the order given (newest decline first). The row reads
+    // "Declined 3d ago · “the note they left”" rather than roles — under this
+    // heading the question is whether to ask again, not whether they qualify.
+    // Someone no longer on the roster (inactive) isn't offered anywhere, so
+    // isn't listed here either; the assignee pin below still shows them if
+    // they hold the slot.
+    var declinedById = {};
+    var declinedRows = [];
+    (opts.declined || []).forEach(function (d) {
+      if (!d || d.contactId == null || declinedById[d.contactId]) return;
+      var c = H.findById(roster, d.contactId);
+      if (!c) return;
+      declinedById[d.contactId] = true;
+      var when = d.respondedAt ? window.LTP_timeAgo(d.respondedAt) : "";
+      var note = String(d.comment || "").trim();
+      if (note.length > 80) note = note.slice(0, 79).trim() + "…";
+      declinedRows.push({
+        value: c.id,
+        label: H.contactName(c),
+        sublabel: "Declined" + (when ? " " + when : "") + (note ? " · “" + note + "”" : ""),
+      });
+    });
+    var sections = declinedRows.length
+      ? [{ label: "Previously declined this shift", color: B.danger, options: declinedRows }]
+      : [];
+    var list = roster.filter(function (c) { return !declinedById[c.id]; });
+
     if (!role) {
       var flat = list.map(function (c) { return opt(c); });
       // Nobody is filtered out, so the only way to be missing is to have left
       // the roster entirely (gone inactive).
-      if (picked && !list.some(function (c) { return c.id === picked; })) {
+      if (picked && !roster.some(function (c) { return c.id === picked; })) {
         var goneWho = H.findById(opts.allContacts, picked);
         if (goneWho) flat = flat.concat([opt(goneWho, "inactive")]);
       }
-      return { options: lead.concat(flat), moreOptions: null, moreLabel: null };
+      return { options: lead.concat(flat), sections: sections, moreOptions: null, moreLabel: null };
     }
 
     var hit = list.filter(tagged).map(function (c) { return opt(c); });
     var rest = list.filter(function (c) { return !tagged(c); }).map(function (c) { return opt(c); });
 
-    // Whoever is currently assigned belongs in the FIRST tier, whatever the
-    // role filter says — opening the list must show who holds the position
-    // without first expanding "Other crew". They're flagged so it's clear why
-    // they're there, and lifted out of the second tier so they appear once.
-    if (picked && !hit.some(function (o) { return o.value === picked; })) {
+    // Whoever is currently assigned belongs in the FIRST tier — or under the
+    // declined heading, which is just as visible — whatever the role filter
+    // says: opening the list must show who holds the position without first
+    // expanding "Other crew". They're flagged so it's clear why they're
+    // there, and lifted out of the second tier so they appear once.
+    if (picked && !declinedById[picked] && !hit.some(function (o) { return o.value === picked; })) {
       var inRest = null;
       rest = rest.filter(function (o) {
         if (o.value !== picked) return true;
@@ -407,6 +486,7 @@
 
     return {
       options: lead.concat(hit),
+      sections: sections,
       moreOptions: rest.length ? rest : null,
       moreLabel: "Other crew (" + rest.length + ") — not tagged for this role",
     };

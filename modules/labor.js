@@ -37,19 +37,9 @@
   // Schedule items in date order (a dateless one sorts first, as in aggregatePositions).
   function byShiftDate(a, b) { var x = (a && a.date) || "", y = (b && b.date) || ""; return x < y ? -1 : (x > y ? 1 : 0); }
 
-  // "just now" / "5m ago" / "3h ago" / "2d ago" — how long a request has waited.
-  function timeAgo(iso) {
-    if (!iso) return "";
-    var t = new Date(iso).getTime();
-    if (isNaN(t)) return "";
-    var s = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (s < 60) return "just now";
-    var m = Math.round(s / 60); if (m < 60) return m + "m ago";
-    var hh = Math.round(m / 60); if (hh < 24) return hh + "h ago";
-    var d = Math.round(hh / 24); if (d < 14) return d + "d ago";
-    var w = Math.round(d / 7); if (w < 9) return w + "w ago";
-    return Math.round(d / 30) + "mo ago";
-  }
+  // "just now" / "5m ago" / "3h ago" / "2d ago" — how long a request has
+  // waited. Shared with the crew pickers, which date a decline the same way.
+  var timeAgo = window.LTP_timeAgo;
   function daysSince(iso) {
     if (!iso) return 0;
     var t = new Date(iso).getTime();
@@ -1227,6 +1217,11 @@
     var [projFilter, setProjFilter] = useState("all");
     var [statusDlg, setStatusDlg] = useState(null);
     var [showSendPanel, setShowSendPanel] = useState(false);
+    // Who has already declined each shift, read back from the crew_requests
+    // rows (LTP_declinedCrewIndex): the crew picker lists them under
+    // "Previously declined this shift", and a pick from that section is
+    // confirmed before it goes through.
+    var declinedIdx = useMemo(function() { return window.LTP_declinedCrewIndex(crewRequests, projects); }, [crewRequests, projects]);
     var [sendSelection, setSendSelection] = useState({});
     var [bookDlg, setBookDlg] = useState(null);   // groups awaiting a direct-book (no email) confirmation
     var [conflictWarn, setConflictWarn] = useState(null);
@@ -1888,9 +1883,14 @@
       // matches nobody either. No service linked means no role is being
       // filled, so offer everyone.
       var posSvc = pos.serviceId ? (services || []).find(function(sv) { return sv.id === pos.serviceId; }) : null;
+      // Crew who declined a request for any shift this booking spans (its day
+      // row(s), or the flat-rate position) — listed under their own heading
+      // so they aren't asked again by accident.
+      var declined = declinedIdx.declinedFor(pos.projectId, booking.allPosIds || []);
       var crewOpts = window.LTP_crewSelectOptions({
         crew: crew, role: posSvc ? posSvc.role : "", selectedId: pos.crewId,
         allContacts: contacts, leading: [{ value: "", label: "Assign crew…" }],
+        declined: declined,
       });
       var needsCrew = pos.status === "open" && !pos.crewId;
       var ctlBtn = { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "3px 8px", color: B.textMut, fontSize: "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
@@ -1918,9 +1918,25 @@
             style: { fontSize: "9px", color: B.accent, background: B.accent + "18", border: "1px solid " + B.accent + "44", padding: "1px 5px", borderRadius: "3px", fontWeight: 700, cursor: "help", whiteSpace: "nowrap" } },
             "Flat $" + window.LTP_money(pos.fee))),
         h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: isMobile ? 0 : "auto", flexWrap: isMobile ? "wrap" : "nowrap", flex: isMobile ? "1 1 100%" : "0 0 auto", justifyContent: isMobile ? "flex-start" : "flex-end", minWidth: 0 } },
-          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function(v) {
+          h(window.LTPSearchSelect, { value: pos.crewId || "", onChange: function pickCrew(v, reaskOk) {
             var cid = (v === "" || v == null) ? null : Number(v);
             if (!cid && pos.crewId && (SEVERITY[pos.status] || 0) >= 2) { handleStatusChange(Object.assign({}, pos), "open", bkPosIds); return; }
+            // Someone from the "Previously declined this shift" section: a
+            // deliberate re-ask, never a slip of the list — confirm it first,
+            // quoting their answer. Re-entered with reaskOk once confirmed.
+            var prior = (!reaskOk && cid && cid !== pos.crewId) ? declined.find(function(d) { return d.contactId === cid; }) : null;
+            if (prior) {
+              var priorCm = contacts.find(function(c) { return c.id === cid; });
+              var priorWhen = prior.respondedAt ? timeAgo(prior.respondedAt) : "";
+              setConflictWarn({
+                title: "Previously Declined",
+                message: (priorCm ? (priorCm.firstName + " " + priorCm.lastName).trim() : "This crew member") + " declined this shift" + (priorWhen ? " " + priorWhen : "")
+                  + (prior.comment ? ":\n\n\u201c" + prior.comment + "\u201d" : ".")
+                  + "\n\nAssign them anyway? They'd be asked again the next time you send requests.",
+                onConfirm: function() { setConflictWarn(null); pickCrew(v, true); }
+              });
+              return;
+            }
             function doAssign() {
               // Check for conflicts before assigning
               if (cid && pos.date) {
@@ -2005,7 +2021,7 @@
             // Only crew tagged with this role are listed; the rest sit behind a
             // deliberate "Other crew" click. Crew is PICKED from the roster
             // here, never authored — this field has no inline-create, by design.
-            options: crewOpts.options, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
+            options: crewOpts.options, sections: crewOpts.sections, moreOptions: crewOpts.moreOptions, moreLabel: crewOpts.moreLabel,
             searchPlaceholder: "Search crew…",
             style: { width: isMobile ? "100%" : 150, flex: isMobile ? "1 1 140px" : undefined, minWidth: 0 },
             triggerStyle: { borderRadius: "4px", padding: isMobile ? "8px" : "3px 6px", fontSize: "10px", minHeight: 0 },
