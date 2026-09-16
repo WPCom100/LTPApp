@@ -584,15 +584,18 @@ database read yields nothing usable.
 
 | Tab | What's on it |
 |---|---|
-| **Overview** | Tiles (requests needing an answer · accepted-awaiting-confirmation · confirmed calls · next call), the **requests waiting on them** with Accept / I Can't Make It and an optional note right there (the same state machine as the emailed call sheet, which stays one tap away), the next five calls, this pay period, and their recent answers with where each stands (awaiting confirmation → confirmed, declined, released). |
-| **Schedule** | Every call they're on from today forward, grouped by date: role, call/wrap, project, venue, the producer's shift note, a map link, **Add to calendar** on confirmed calls, and a status chip — *Needs your answer*, *Awaiting confirmation*, *Confirmed*. Flat-rate positions list as one block with the fee and the schedule outline. A *Recently worked* view shows the last few weeks' confirmed calls with a *Signed off* marker. |
+| **Overview** | Tiles (requests needing an answer · accepted-awaiting-confirmation · confirmed calls · next call), then this pay period beside their recent answers with where each stands (awaiting confirmation → confirmed, declined, released), then the **requests waiting on them** with Accept / I Can't Make It and an optional note right there (the same state machine as the emailed call sheet, which stays one tap away), and the next five calls last. |
+| **Schedule** | Three views of the same calls. **List**: every call from today forward, grouped by date, with role, call/wrap, project, venue, the shift note, a map link, **Add to calendar** on confirmed calls, and a status chip — *Needs your answer*, *Awaiting confirmation*, *Confirmed*; flat-rate positions list as one block with the fee and the schedule outline, and a *Recently worked* view shows the last few weeks' confirmed calls with a *Signed off* marker. **Week**: seven days across (stacked day rows on a phone), each call on its day with the status as a coloured edge. **Month**: a calendar with a line per call (status dots on a phone) and the tapped day's calls in full underneath; a flat-rate job is spread over its project's dates with a dashed edge. |
 | **Pay** | Paid this year, this period, pending, next pay day; then one card per pay period (the next, the current, and the last five): signed-off days with the frozen figure the QuickBooks bill posts (tier, hours, adjustments itemized), confirmed-but-unsigned days as *~estimates* from the pay locked at confirm, the period's pay day, and whether its bill is **Not yet submitted / Submitted / Paid** (from `payout_bills`). Never another crew member's day, never the client's rate. |
 | **Account** | Sign-in email, the roster email requests go to (when different), roles and departments, a **phone** they keep current themselves (it lands on their roster row), change password (signs out other devices), sign out. |
 
 The dashboard re-checks itself every ten seconds (the same freshness poll as
 the call sheet) and on every return to the app, and adopts changes silently —
 a producer moving a call, confirming them, or signing off a day shows up
-without a reload.
+without a reload. Crew-facing copy says **production manager** (never
+"producer") and carries no em dashes; the stat tiles share one grid with the
+figures on a common baseline; and the page runs up to 1180px wide on a
+desktop so the two-column sections hold more before anything scrolls.
 
 ### Getting crew in
 

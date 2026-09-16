@@ -634,7 +634,7 @@ async def _live_token_or_4xx(db, raw, kind):
     if state != "live":
         raise HTTPException(status_code=410, detail={
             "reason": state,
-            "message": "This link has already been used." if state == "used" else "This link has expired — ask for a new one."})
+            "message": "This link has already been used." if state == "used" else "This link has expired. Ask for a new one."})
     return row
 
 
