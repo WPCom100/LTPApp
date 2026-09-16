@@ -33,6 +33,8 @@ eq("signup token lands in id, untouched", parse("#/crew-portal/signup/" + tok),
    { module: "crew-portal", sub: "signup", id: tok, action: null, query: {} });
 eq("reset token lands in id, untouched", parse("#/crew-portal/reset/" + tok),
    { module: "crew-portal", sub: "reset", id: tok, action: null, query: {} });
+eq("confirm-email token lands in id, untouched", parse("#/crew-portal/confirm-email/" + tok),
+   { module: "crew-portal", sub: "confirm-email", id: tok, action: null, query: {} });
 eq("query survives", parse("#/crew-portal/login?next=payouts").query, { next: "payouts" });
 // The neighbours keep parsing as before.
 eq("#/crew/<token> is still the call sheet", parse("#/crew/" + tok), { module: "crew", sub: null, id: tok, action: null, query: {} });
@@ -94,13 +96,13 @@ ok("the module talks only to /api/crew-portal", /var API = "\/api\/crew-portal"/
 ok("every fetch sends the crew cookie", /credentials: "include"/.test(portal));
 ok("no render-time router writes (replace/navigate only inside handlers or effects)",
    !/return h\([^;]*LTPRouter\.replace/.test(portal));
-["login", "forgot", "request-access", "signup", "reset", "overview", "schedule", "payouts", "account"].forEach((screen) => {
+["login", "forgot", "request-access", "signup", "reset", "confirm-email", "overview", "schedule", "payouts", "account"].forEach((screen) => {
   ok("the module handles the " + screen + " screen", portal.indexOf('"' + screen + '"') !== -1);
 });
 
 // ── Templates ────────────────────────────────────────────────────────────────
 const data = read("data/settings.js");
-["crewInvite", "crewPasswordReset"].forEach((key) => {
+["crewInvite", "crewPasswordReset", "crewEmailChange"].forEach((key) => {
   ok("data/settings.js ships the " + key + " template", new RegExp(key + ":\\s*\\{").test(data));
   const tv = data.split("window.LTP_TEMPLATE_VARIABLES")[1];
   const m = new RegExp(key + ":\\s*\\[([^\\]]*)\\]").exec(tv);
@@ -114,7 +116,7 @@ const data = read("data/settings.js");
   }
 });
 const settingsUi = read("modules/settings.js");
-ok("Settings lists the portal templates for editing", /"crewInvite", "crewPasswordReset"/.test(settingsUi));
+ok("Settings lists the portal templates for editing", /"crewInvite", "crewPasswordReset", "crewEmailChange"/.test(settingsUi));
 
 // ── Roster ───────────────────────────────────────────────────────────────────
 const labor = read("modules/labor.js");
@@ -131,6 +133,7 @@ ok("invitations retry until the new row has synced", /status === 404 && attempt 
 ok("the portal never says 'producer'", !/producer/i.test(portal));
 ok("the emailed call sheet never says 'producer' either", !/producer/i.test(read("modules/crew-view.js")));
 ok("the portal has no em dashes", portal.indexOf("\u2014") === -1);
+ok("the header carries no sign-out link (the Account tab has the button)", !/"Sign out"/.test(portal) && /"Sign Out"/.test(portal));
 ["list", "week", "month"].forEach((m) => ok("the schedule offers the " + m + " view", portal.indexOf('"' + m + '"') !== -1));
 
 // ── Calendar math (the Schedule tab's week and month views) ──────────────────

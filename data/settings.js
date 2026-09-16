@@ -266,6 +266,19 @@ window.LTP_DATA_SETTINGS = {
       subject: "Reset your {{companyName}} crew portal password",
       body: "Hi {{crewName}},\n\nWe received a request to reset your crew portal password. Use the button below to choose a new one.\n\n{{header}}\n\nThis link expires in {{expiresIn}}. If you didn't ask for a reset, you can ignore this email — your password won't change.\n\n{{signature}}"
     },
+    crewEmailChange: {
+      label: "Crew Portal Email Change",
+      cc: "",
+      // Sent to the NEW address when a crew member changes their sign-in email
+      // from the portal's Account tab. {{header}} renders the "Confirm your new
+      // email" card + button linking to #/crew-portal/confirm-email/{token};
+      // {{newEmail}} is the address being confirmed; {{expiresIn}} is "24
+      // hours". Nothing changes until the link is opened. The backend fallback
+      // in routes/crew_portal.py::_PORTAL_FALLBACKS must match this body
+      // byte-for-byte.
+      subject: "Confirm your new {{companyName}} crew portal email",
+      body: "Hi {{crewName}},\n\nYou asked to change your crew portal sign-in email to {{newEmail}}. Use the button below to confirm it. Once confirmed, this is the address you'll sign in with, and the one crew requests are sent to.\n\n{{header}}\n\nThis link expires in {{expiresIn}}. If you didn't ask for this, you can ignore this email and your email won't change.\n\n{{signature}}"
+    },
   },
 };
 
@@ -299,4 +312,5 @@ window.LTP_TEMPLATE_VARIABLES = {
   // link's life.
   crewInvite:        ["companyName", "crewName", "header", "portalUrl", "expiresIn", "signature"],
   crewPasswordReset: ["companyName", "crewName", "header", "portalUrl", "expiresIn", "signature"],
+  crewEmailChange:   ["companyName", "crewName", "newEmail", "header", "portalUrl", "expiresIn", "signature"],
 };

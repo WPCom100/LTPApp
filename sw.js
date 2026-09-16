@@ -331,7 +331,12 @@
 // week and month views on the Schedule tab beside the list. The emailed call
 // sheet (modules/crew-view.js) says "production manager" too. Both modules
 // are runtime-cached, so the shell must be refetched.
-var CACHE_VERSION = 'ltp-shell-v97';
+// v98: crew change their sign-in email from the portal's Account tab (a
+// confirmation link to the new address makes it take effect); the header's
+// sign-out link is gone (the Account tab has the button). modules/
+// crew-portal.js, data/settings.js (the crewEmailChange template) and
+// modules/settings.js are runtime-cached, so the shell must be refetched.
+var CACHE_VERSION = 'ltp-shell-v98';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

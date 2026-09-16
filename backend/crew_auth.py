@@ -51,6 +51,9 @@ PASSWORD_MAX = 128
 
 INVITE_LIFETIME = timedelta(days=7)
 RESET_LIFETIME = timedelta(hours=1)
+# An email-change confirmation never signs anyone in, so it can wait for the
+# crew member to check the new inbox.
+EMAIL_CHANGE_LIFETIME = timedelta(hours=24)
 
 # Failed-login lockout: after this many wrong passwords in a row the account
 # refuses sign-in for LOCKOUT_MINUTES. Per-account, on top of the per-IP rate

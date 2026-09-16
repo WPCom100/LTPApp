@@ -61,6 +61,7 @@ C_ACCESS = 9108 # crew — request-access flow
 C_OFF = 9109    # crew — disable/enable
 C_PW = 9110     # crew — change password / phone
 C_GUARD = 9111  # crew — invite guards (already active)
+C_MAIL = 9112   # crew — change of sign-in email
 S1 = 8101       # service L1
 
 P_DASH = 7101   # A and B share this project
@@ -118,6 +119,7 @@ def _setup():
                 db.add(models.Contact(id=C_OFF, first_name="Ollie", last_name="Off", email="ollie@crew.com", is_crew=True, crew_status="active"))
                 db.add(models.Contact(id=C_PW, first_name="Pat", last_name="Password", email="pat@crew.com", is_crew=True, crew_status="active"))
                 db.add(models.Contact(id=C_GUARD, first_name="Gus", last_name="Guard", email="gus@crew.com", is_crew=True, crew_status="active"))
+                db.add(models.Contact(id=C_MAIL, first_name="Em", last_name="Ail", email="em@crew.com", is_crew=True, crew_status="active"))
                 db.add(models.Service(id=S1, role="L1", description="Lead Lighting Tech", department="Lighting"))
 
                 db.add(models.Project(id=P_DASH, name="Portal Gala", venue="Grand Hall",
@@ -661,6 +663,56 @@ def test_change_password_and_phone():
     assert r.status_code == 200 and r.json()["firstName"] == "Pat" and r.json()["email"] == "pat@crew.com"
 
 
+def test_change_email_needs_the_password_and_a_confirmed_link():
+    """The sign-in email moves only after a link sent to the NEW address is
+    opened: password-gated to ask, nothing changes until confirmed, the roster
+    address follows, and the old address keeps working in between."""
+    client, tok = _setup()
+    cookie, me = _signup(client, C_MAIL, "a fine passphrase")
+    assert me["pendingEmail"] == ""
+    _a_cookie(client)   # avery@crew.com holds an account, for the "taken" case
+    post = lambda body: client.post("/api/crew-portal/me/email", json=body, cookies=_crew(cookie))
+    assert post({"email": "em.new@crew.com", "currentPassword": "nope nope"}).status_code == 403
+    assert post({"email": "em@crew.com", "currentPassword": "a fine passphrase"}).status_code == 400        # already theirs
+    assert post({"email": "not an email", "currentPassword": "a fine passphrase"}).status_code == 400
+    assert post({"email": "avery@crew.com", "currentPassword": "a fine passphrase"}).status_code == 409     # another account's
+    before = len(SENT)
+    r = post({"email": " Em.New@Crew.com ", "currentPassword": "a fine passphrase"})
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] == "em.new@crew.com" and r.json()["me"]["pendingEmail"] == "em.new@crew.com"
+    # The link goes to the NEW address, from the system sender; nothing has moved yet.
+    assert len(SENT) == before + 1 and SENT[-1]["to"] == ["em.new@crew.com"] and SENT[-1]["user"].email == "cp-admin@biz.com"
+    assert "Confirm New Email" in SENT[-1]["html_body"] and "em.new@crew.com" in SENT[-1]["html_body"] and "24 hours" in SENT[-1]["html_body"]
+    token = _link_token("confirm-email")
+    r = client.get("/api/crew-portal/auth/token/" + token)
+    assert r.json()["kind"] == "email" and r.json()["valid"] is True and r.json()["email"] == "em.new@crew.com"
+    assert client.get("/api/crew-portal/auth/me", cookies=_crew(cookie)).json()["pendingEmail"] == "em.new@crew.com"
+    assert _login(client, "em@crew.com", "a fine passphrase").status_code == 200
+    assert _login(client, "em.new@crew.com", "a fine passphrase").status_code == 401
+    # Asking again straight away is refused outright, not silently dropped.
+    assert post({"email": "em.other@crew.com", "currentPassword": "a fine passphrase"}).status_code == 429
+    # Cancelling retires the link.
+    r = client.post("/api/crew-portal/me/email/cancel", json={}, cookies=_crew(cookie))
+    assert r.status_code == 200 and r.json()["pendingEmail"] == ""
+    assert client.post("/api/crew-portal/auth/confirm-email", json={"token": token}).status_code == 410
+    # A cancelled link no longer counts against the cool-down; ask again and confirm.
+    r = post({"email": "em.new@crew.com", "currentPassword": "a fine passphrase"})
+    assert r.status_code == 200, r.text
+    token = _link_token("confirm-email")
+    # An email-change link is not a reset link, and vice versa.
+    assert client.post("/api/crew-portal/auth/reset", json={"token": token, "password": "brand new passphrase"}).status_code == 404
+    r = client.post("/api/crew-portal/auth/confirm-email", json={"token": token})
+    assert r.status_code == 200 and r.json() == {"ok": True, "email": "em.new@crew.com"}
+    # The sign-in identity and the roster address both moved; this session is untouched.
+    me = client.get("/api/crew-portal/me", cookies=_crew(cookie)).json()
+    assert me["email"] == "em.new@crew.com" and me["contactEmail"] == "em.new@crew.com" and me["pendingEmail"] == ""
+    assert client.get(f"/api/contacts/{C_MAIL}", cookies=_staff()).json()["email"] == "em.new@crew.com"
+    assert _login(client, "em@crew.com", "a fine passphrase").status_code == 401
+    assert _login(client, "em.new@crew.com", "a fine passphrase").status_code == 200
+    # The link is spent.
+    assert client.post("/api/crew-portal/auth/confirm-email", json={"token": token}).status_code == 410
+
+
 # ── Emails ──────────────────────────────────────────────────────────────────
 
 def test_portal_email_fallbacks_match_the_frontend_defaults():
@@ -668,14 +720,14 @@ def test_portal_email_fallbacks_match_the_frontend_defaults():
     so a fresh deploy sends exactly what the Settings editor shows."""
     from backend.routes.crew_portal import _PORTAL_FALLBACKS
     src = open(os.path.join(_root, "data", "settings.js"), encoding="utf-8").read()
-    for key in ("crewInvite", "crewPasswordReset"):
+    for key in ("crewInvite", "crewPasswordReset", "crewEmailChange"):
         block = src.split(key + ": {")[1].split("\n    },")[0]
         subject = re.search(r'subject: "([^"]*)"', block).group(1)
         body = json.loads('"' + re.search(r'body: "((?:[^"\\]|\\.)*)"', block).group(1) + '"')
         assert subject == _PORTAL_FALLBACKS[key]["subject"], key
         assert body == _PORTAL_FALLBACKS[key]["body"], key
     tv = src.split("window.LTP_TEMPLATE_VARIABLES")[1]
-    for key in ("crewInvite", "crewPasswordReset"):
+    for key in ("crewInvite", "crewPasswordReset", "crewEmailChange"):
         assert re.search(key + r":\s*\[", tv), key + " needs a variable list"
 
 
