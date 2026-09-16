@@ -1,10 +1,10 @@
-// Crew portal — a crew member's own sign-in and dashboard.
+// Crew portal: a crew member's own sign-in and dashboard.
 //
 // Rendered by app.js's outer LTPApp when route.module === "crew-portal",
 // bypassing the staff auth gate: the crew member has no staff session. Their
 // credential is the ltp_crew_session cookie set by /api/crew-portal/auth/*
 // (backend/routes/crew_portal.py), a separate credential system from the
-// Google sign-in the staff app uses — see backend/crew_auth.py.
+// Google sign-in the staff app uses (see backend/crew_auth.py).
 //
 //   #/crew-portal                   → overview when signed in, else sign-in
 //   #/crew-portal/login             → sign-in
@@ -16,7 +16,7 @@
 //
 // Visual language is the crew call sheet's (modules/crew-view.js): slate
 // field, masthead hero on the brand rule, mono time/money columns, orange
-// accents. Phone first — crew live on their phones — so under 600px the tabs
+// accents. Phone first, since crew live on their phones: under 600px the tabs
 // become a bottom bar and every control is finger-sized; above it the same
 // tabs sit under the masthead.
 (function() {
@@ -48,7 +48,7 @@
   ];
   var PUBLIC = { login: 1, forgot: 1, "request-access": 1, signup: 1, reset: 1 };
 
-  // ── Date / time / money helpers (deterministic — no toLocaleString) ────────
+  // ── Date / time / money helpers (deterministic, no toLocaleString) ─────────
   var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   var _MONTHS = ["January", "February", "March", "April", "May", "June",
                  "July", "August", "September", "October", "November", "December"];
@@ -119,7 +119,7 @@
     return "";
   }
 
-  // ── API helper — cookie-authenticated, JSON in/out, never throws ──────────
+  // ── API helper: cookie-authenticated, JSON in/out, never throws ───────────
   function api(path, opts) {
     opts = opts || {};
     var init = { method: opts.method || "GET", credentials: "include", headers: {} };
@@ -138,16 +138,33 @@
     });
   }
   function errMessage(res, fallback) {
-    if (res && res.network) return "Can't reach the server — check your connection and try again.";
+    if (res && res.network) return "Can't reach the server. Check your connection and try again.";
     var d = res && res.data && res.data.detail;
     if (typeof d === "string") return d;
     if (d && d.message) return d.message;
     if (d && d.reason) return String(d.reason);
     if (res && res.data && res.data.error) return String(res.data.error);
-    if (res && res.status === 429) return "Too many attempts — please wait a minute and try again.";
+    if (res && res.status === 429) return "Too many attempts. Please wait a minute and try again.";
     return fallback || "Something went wrong. Please try again.";
   }
   function go(path) { window.LTPRouter.navigate("crew-portal" + (path ? "/" + path : "")); }
+
+  // The server joins a role's code and description with an em dash. The
+  // portal carries none, so every role label is rewritten to "L2 · Lighting
+  // Tech" once, when the dashboard arrives, rather than at each place it is
+  // shown.
+  function roleText(label) { return String(label || "").replace(/\s*\u2014\s*/g, " · "); }
+  function tidyDashboard(d) {
+    if (!d || typeof d !== "object") return d;
+    function fix(e) { return (e && typeof e === "object") ? Object.assign({}, e, { roleLabel: roleText(e.roleLabel) }) : e; }
+    var out = Object.assign({}, d, {
+      upcoming: (d.upcoming || []).map(fix),
+      past: (d.past || []).map(fix),
+      requests: (d.requests || []).map(function(r) { return Object.assign({}, r, { shifts: (r.shifts || []).map(fix) }); }),
+    });
+    if (d.stats && d.stats.nextCall) out.stats = Object.assign({}, d.stats, { nextCall: fix(d.stats.nextCall) });
+    return out;
+  }
 
   // ── One-time stylesheet (hover lifts, shimmer, focus rings) ───────────────
   function injectStyle() {
@@ -241,23 +258,34 @@
     return h("span", { style: { display: "inline-block", fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: c.fg, background: c.bg, border: "1px solid " + c.bd, padding: "3px 8px", borderRadius: 4, whiteSpace: "nowrap" } }, label);
   }
   // Position status → what the crew member reads. "requested" means the ask is
-  // in their inbox; "accepted" means they said yes and a producer still has to
-  // confirm; "confirmed" is locked in.
+  // in their inbox; "accepted" means they said yes and a production manager
+  // still has to confirm; "confirmed" is locked in.
   function statusChip(status) {
     if (status === "confirmed") return Chip("Confirmed", "success");
     if (status === "accepted") return Chip("Awaiting confirmation", "amber");
     if (status === "requested") return Chip("Needs your answer", "info");
     if (status === "declined") return Chip("Declined", "danger");
-    return Chip(status || "—");
+    return Chip(status || "Unknown");
   }
   function Card(children, style) {
     return h("div", { style: Object.assign({ background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 18 }, style || {}) }, children);
   }
+  // Stat tiles: one grid of equal columns and equal heights (four across,
+  // two on a phone). Inside each tile the label sits at the top and the
+  // figure with its caption sits on a shared bottom line, so the figures line
+  // up across the row whether or not a label wraps. The caption row is always
+  // rendered, so a tile without one is the same height as its neighbours. A
+  // figure too long for the tile is cut with an ellipsis and carried in full
+  // on the tooltip.
+  function TileGrid(isMobile) {
+    var tiles = Array.prototype.slice.call(arguments, 1);
+    return h.apply(null, ["div", { style: { display: "grid", gridTemplateColumns: "repeat(" + (isMobile ? 2 : 4) + ", minmax(0, 1fr))", gridAutoRows: "1fr", gap: 10, alignItems: "stretch" } }].concat(tiles));
+  }
   function Tile(label, value, sub, color) {
-    return h("div", { style: { flex: "1 1 120px", minWidth: 0, background: INSET, border: "1px solid " + HAIR, borderRadius: 12, padding: "14px 16px" } },
-      h("div", { style: { fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: MUTE } }, label),
-      h("div", { style: { fontSize: "22px", fontWeight: 800, color: color || WHITE, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", marginTop: 4, lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, value),
-      sub && h("div", { style: { fontSize: "11px", color: FAINT, marginTop: 4, lineHeight: 1.4 } }, sub));
+    return h("div", { style: { display: "flex", flexDirection: "column", minWidth: 0, minHeight: 100, background: INSET, border: "1px solid " + HAIR, borderRadius: 12, padding: "14px 16px", boxSizing: "border-box" } },
+      h("div", { style: { fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: MUTE, lineHeight: 1.3 } }, label),
+      h("div", { title: value, style: { fontSize: "22px", fontWeight: 800, color: color || WHITE, letterSpacing: "-0.02em", fontVariantNumeric: "tabular-nums", marginTop: "auto", paddingTop: 10, lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, value),
+      h("div", { title: sub || undefined, style: { fontSize: "11px", color: FAINT, marginTop: 4, lineHeight: 1.4, minHeight: 15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, sub || "\u00a0"));
   }
   function Empty(text) {
     return h("div", { style: { padding: "18px 0", fontSize: "13px", fontStyle: "italic", color: MUTE, lineHeight: 1.5 } }, text);
@@ -270,7 +298,7 @@
       h("line", { x1: 5, y1: 1.6, x2: 5, y2: 4, stroke: color, strokeWidth: 1.4, strokeLinecap: "round" }),
       h("line", { x1: 11, y1: 1.6, x2: 11, y2: 4, stroke: color, strokeWidth: 1.4, strokeLinecap: "round" }));
   }
-  // Google-Calendar link for one call (confirmed only) — same event shape the
+  // Google-Calendar link for one call (confirmed only), the same event shape the
   // call sheet builds, so the crew member's calendar reads identically.
   function calHref(e) {
     if (!window.LTP_gcalUrl) return null;
@@ -357,10 +385,10 @@
       footer: LinkBtn({ onClick: function() { go("login"); } }, "← Back to sign in") }),
       done
         ? h("div", null,
-            Notice("success", "If " + email.trim() + " is on our crew roster, an email is on its way. Check your inbox — and your spam folder — for a link from us."),
+            Notice("success", "If " + email.trim() + " is on our crew roster, an email is on its way. Check your inbox, and your spam folder, for a link from us."),
             h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6 } }, isForgot
-              ? "The link works for one hour. If nothing arrives, the address may not be the one we have on file — get in touch with the production team."
-              : "The invitation link works for seven days. If nothing arrives, the address may not match the roster — get in touch with the production team."))
+              ? "The link works for one hour. If nothing arrives, the address may not be the one we have on file. Get in touch with the production team."
+              : "The invitation link works for seven days. If nothing arrives, the address may not match the roster. Get in touch with the production team."))
         : h("div", null,
             Notice("error", err),
             h(Field, { id: "cp-email2", label: "Email", type: "email", value: email, onChange: setEmail, autoComplete: "username", inputMode: "email", placeholder: "you@example.com", onEnter: submit }),
@@ -405,13 +433,13 @@
     } else if (!info.valid) {
       var why = info.reason === "used" ? "This link has already been used."
         : info.reason === "expired" ? "This link has expired."
-        : info.reason === "inactive" ? "This crew profile is no longer active — please contact the production team."
+        : info.reason === "inactive" ? "This crew profile is no longer active. Please contact the production team."
         : "This link isn't valid any more.";
       body = h("div", null,
         Notice("error", why),
         info.reason !== "inactive" && (info.kind === "invite"
           ? h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
-              h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6 } }, "Already set up? Sign in instead. Otherwise ask for a fresh invitation — it's sent to " + (info.email || "your roster email") + "."),
+              h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6 } }, "Already set up? Sign in instead. Otherwise ask for a fresh invitation. It's sent to " + (info.email || "your roster email") + "."),
               PrimaryBtn({ onClick: function() { go("login"); } }, "Sign In"),
               QuietBtn({ onClick: function() { props.onPresetEmail(info.email || ""); go("request-access"); } }, "Request a New Invitation"))
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
@@ -422,7 +450,7 @@
         Notice("error", err),
         h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6, marginBottom: 16 } },
           isSignup
-            ? h("span", null, "You'll sign in as ", h("strong", { style: { color: WHITE } }, info.email), ". Pick a password that's at least 8 characters — a few words you'll remember work best.")
+            ? h("span", null, "You'll sign in as ", h("strong", { style: { color: WHITE } }, info.email), ". Pick a password that's at least 8 characters. A few words you'll remember work best.")
             : h("span", null, "Choose a new password for ", h("strong", { style: { color: WHITE } }, info.email), ". Any other device signed in as you will be signed out.")),
         // A hidden username field lets password managers pair the new password
         // with the right login.
@@ -432,7 +460,7 @@
         PrimaryBtn({ onClick: submit, disabled: busy, style: { width: "100%" } }, busy ? "Saving…" : (isSignup ? "Create My Account" : "Save New Password")));
     }
     return h(AuthShell, Object.assign({}, props.shell, {
-      title: (info && info.valid && info.firstName ? "Hi " + info.firstName + " — " : "") + title,
+      title: (info && info.valid && info.firstName ? "Hi " + info.firstName + ", " + title.charAt(0).toLowerCase() + title.slice(1) : title),
       intro: isSignup && info && info.valid
         ? "Your account gives you one place for your upcoming calls, the requests waiting on you, and what you're owed."
         : null,
@@ -462,22 +490,22 @@
       return api("/dashboard?today=" + today).then(function(res) {
         if (res.status === 401) { props.onSignedOut(); return; }
         if (!res.ok) { setLoadErr(errMessage(res, "Couldn't load your dashboard.")); return; }
-        setData(res.data); setLoadErr(null);
+        setData(tidyDashboard(res.data)); setLoadErr(null);
       });
     }
     useEffect(function() { reload(); }, [user && user.id]);
-    // Refresh whenever the phone comes back to the app — the moment it is
-    // most likely to be wrong — and on the freshness poll below.
+    // Refresh whenever the phone comes back to the app (the moment it is
+    // most likely to be wrong) and on the freshness poll below.
     useEffect(function() {
       function onVisible() { if (!document.hidden) reload(); }
       document.addEventListener("visibilitychange", onVisible);
       window.addEventListener("focus", onVisible);
       return function() { document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible); };
     }, []);
-    // A producer moving a call, confirming them, or signing off a day changes
-    // this page under them; the dashboard has no live feed, so it polls the
-    // same way the call sheet does (components/domain-util.js) and adopts the
-    // change silently — nothing here is mid-edit.
+    // A production manager moving a call, confirming them, or signing off a
+    // day changes this page under them; the dashboard has no live feed, so it
+    // polls the same way the call sheet does (components/domain-util.js) and
+    // adopts the change silently: nothing here is mid-edit.
     var freshness = window.LTP_useDocFreshness(
       user ? API + "/dashboard/version?today=" + today : null, data && data._v);
     useEffect(function() { if (freshness === "stale") reload(); }, [freshness]);
@@ -536,7 +564,7 @@
     var websiteHref = settings.website ? (/^https?:\/\//i.test(settings.website) ? settings.website : "https://" + settings.website) : null;
 
     return h("div", { style: { minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, padding: "0 0 " + (isMobile ? 96 : 48) + "px" } },
-      h("div", { style: { maxWidth: 820, margin: "0 auto", padding: isMobile ? "24px 20px 0" : "36px 32px 0" } },
+      h("div", { style: { maxWidth: 1180, margin: "0 auto", padding: isMobile ? "24px 20px 0" : "36px 32px 0" } },
         h("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 } },
           h("div", { style: { flex: 1, minWidth: 0 } }, h(Masthead, { failed: props.mastheadFailed, onFail: props.onMastheadFail, companyName: settings.companyName, maxWidth: isMobile ? 220 : 300 })),
           !isMobile && LinkBtn({ onClick: signOut, style: { color: MUTE, textDecoration: "none", fontSize: "12px", paddingBottom: 8 } }, "Sign out")),
@@ -572,7 +600,7 @@
       api("/requests/" + r.id + "/respond", { method: "POST", body: { decision: mode, comment: note.trim() } }).then(function(res) {
         setBusy(false);
         if (!res.ok) { setErr(errMessage(res)); return; }
-        props.showToast(mode === "accept" ? "Accepted — a producer will confirm you shortly." : "Thanks for letting us know.");
+        props.showToast(mode === "accept" ? "Accepted. A production manager will confirm you shortly." : "Thanks for letting us know.");
         props.reload();
       });
     }
@@ -603,7 +631,7 @@
           style: { flex: "1 1 120px", minHeight: 46, display: "inline-flex", alignItems: "center", justifyContent: "center", color: ORANGE_SOFT, fontSize: "13px", fontWeight: 700, textDecoration: "none", border: "1.5px dashed " + HAIR, borderRadius: 10, boxSizing: "border-box" } }, "Full call sheet ↗")),
       mode && h("div", { className: "ltp-cp-pop", style: { marginTop: 14 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: mode === "accept" ? SUCCESS : DANGER } },
-          mode === "accept" ? "Confirming — leave a note (optional)" : "Letting us know — what's the conflict? (optional)"),
+          mode === "accept" ? "Confirming. Leave a note (optional)" : "Letting us know. What's the conflict? (optional)"),
         h("textarea", { value: note, maxLength: 1000, onChange: function(e) { setNote(e.target.value); },
           placeholder: mode === "accept" ? "Anything the team should know" : "e.g. I can't do the Saturday load-in but the rest works",
           style: { width: "100%", minHeight: 76, background: BG, border: "1px solid " + HAIR, borderRadius: 8, padding: 12, color: TEXT, fontSize: "16px", fontFamily: "inherit", outline: "none", resize: "vertical", boxSizing: "border-box", marginTop: 10 } }),
@@ -651,8 +679,12 @@
   }
 
   // ── Overview ───────────────────────────────────────────────────────────────
+  // Top to bottom: the four tiles; this pay period beside the recent answers
+  // (the two things a crew member checks most often); whatever is waiting on
+  // their answer; and the next few calls last, with the full schedule one tap
+  // away on its own tab.
   function OverviewTab(props) {
-    var d = props.data, today = props.today;
+    var d = props.data, today = props.today, isMobile = props.isMobile;
     var stats = d.stats || {};
     var requests = d.requests || [];
     var upcoming = d.upcoming || [];
@@ -660,92 +692,287 @@
     var pay = d.payouts || {};
     var current = (pay.periods || []).find(function(p) { return p.current; });
     var next = stats.nextCall;
-    var nextLabel = next ? (next.flat ? fmtRange(next.projectStart, next.projectEnd) : (relDay(next.date, today) || fmtDateShort(next.date))) : "—";
+    var nextLabel = next ? (next.flat ? fmtRange(next.projectStart, next.projectEnd) : (relDay(next.date, today) || fmtDateShort(next.date))) : "None";
+
+    var payCard = pay.configured === false || !current
+      ? Card(Empty("Pay periods aren't set up yet."))
+      : Card(h("div", null,
+          h("div", { style: { fontSize: "12px", color: MUTE } }, current.label),
+          h("div", { style: { display: "flex", alignItems: "baseline", gap: 10, marginTop: 6, flexWrap: "wrap" } },
+            h("div", { style: { fontSize: "26px", fontWeight: 800, color: WHITE, fontFamily: MONO, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" } }, fmtMoney(current.signedTotal)),
+            h("div", { style: { fontSize: "12px", color: MUTE } }, "signed off" + (current.pendingEstimate > 0 ? " · ~" + fmtMoney(current.pendingEstimate) + " pending" : ""))),
+          h("div", { style: { fontSize: "12px", color: MUTE, marginTop: 8 } }, "Pay day " + fmtDateShort(current.payDay)),
+          h("div", { style: { marginTop: 10 } }, billChip(current.bill))));
+
+    var recentCard = recent.length === 0
+      ? Card(Empty("Your answers to recent requests show up here."))
+      : Card(h("div", null, recent.slice(0, 5).map(function(r, i) {
+          var tone = r.status === "declined" ? "danger" : r.released ? "neutral" : r.confirmed ? "success" : "amber";
+          var label = r.status === "declined" ? "Declined" : r.released ? "Released" : r.confirmed ? "Confirmed" : "Awaiting confirmation";
+          return h("div", { key: r.id, style: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: i === Math.min(recent.length, 5) - 1 ? "none" : "1px solid " + HAIR } },
+            h("div", { style: { minWidth: 0 } },
+              h("div", { style: { fontSize: "13px", fontWeight: 600, color: WHITE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.projectName),
+              h("div", { style: { fontSize: "11px", color: FAINT, marginTop: 2 } }, fmtStamp(r.respondedAt))),
+            Chip(label, tone));
+        })));
 
     return h("div", null,
-      h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+      TileGrid(isMobile,
         Tile("Needs your answer", String(stats.pendingRequests || 0), (stats.pendingRequests || 0) === 1 ? "open request" : "open requests", (stats.pendingRequests || 0) > 0 ? ORANGE_SOFT : WHITE),
-        Tile("Awaiting confirmation", String(stats.awaitingConfirmation || 0), "accepted, not yet confirmed"),
+        Tile("Awaiting confirmation", String(stats.awaitingConfirmation || 0), "accepted, unconfirmed"),
         Tile("Confirmed calls", String(stats.confirmedUpcoming || 0), "coming up"),
-        Tile("Next call", nextLabel, next ? (next.roleLabel || "") + " · " + (next.projectName || "") : "nothing confirmed yet")),
+        Tile("Next call", nextLabel, next ? (next.role || next.roleLabel || "Crew") + " · " + (next.projectName || "") : "nothing confirmed yet")),
+
+      h("div", { style: { marginTop: 30, display: "grid", gridTemplateColumns: isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 14 } },
+        h("div", null,
+          SectionTitle("This pay period", LinkBtn({ onClick: function() { go("payouts"); } }, "All pay →")),
+          payCard),
+        h("div", null,
+          SectionTitle("Recent responses"),
+          recentCard)),
 
       h("div", { style: { marginTop: 30 } },
         SectionTitle("Needs your answer"),
         requests.length === 0
-          ? Empty("No requests are waiting on you. When a producer sends one it appears here — and in your email.")
+          ? Empty("No requests are waiting on you. When a production manager sends one it appears here and in your email.")
           : h("div", { style: { display: "flex", flexDirection: "column", gap: 14 } },
               requests.map(function(r) { return h(RequestCard, { key: r.id, request: r, reload: props.reload, showToast: props.showToast }); }))),
 
       h("div", { style: { marginTop: 30 } },
         SectionTitle("Next up", LinkBtn({ onClick: function() { go("schedule"); } }, "Full schedule →")),
-        callList(upcoming.slice(0, 5), today, { compact: true, empty: "No upcoming calls yet." })),
-
-      h("div", { style: { marginTop: 30, display: "grid", gridTemplateColumns: props.isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 14 } },
-        h("div", null,
-          SectionTitle("This pay period", LinkBtn({ onClick: function() { go("payouts"); } }, "All pay →")),
-          pay.configured === false || !current
-            ? Card(Empty("Pay periods aren't set up yet."))
-            : Card(h("div", null,
-                h("div", { style: { fontSize: "12px", color: MUTE } }, current.label),
-                h("div", { style: { display: "flex", alignItems: "baseline", gap: 10, marginTop: 6, flexWrap: "wrap" } },
-                  h("div", { style: { fontSize: "26px", fontWeight: 800, color: WHITE, fontFamily: MONO, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" } }, fmtMoney(current.signedTotal)),
-                  h("div", { style: { fontSize: "12px", color: MUTE } }, "signed off" + (current.pendingEstimate > 0 ? " · ~" + fmtMoney(current.pendingEstimate) + " pending" : ""))),
-                h("div", { style: { fontSize: "12px", color: MUTE, marginTop: 8 } }, "Pay day " + fmtDateShort(current.payDay)),
-                h("div", { style: { marginTop: 10 } }, billChip(current.bill))))),
-        h("div", null,
-          SectionTitle("Recent responses"),
-          recent.length === 0
-            ? Card(Empty("Your answers to recent requests show up here."))
-            : Card(h("div", null, recent.slice(0, 5).map(function(r, i) {
-                var tone = r.status === "declined" ? "danger" : r.released ? "neutral" : r.confirmed ? "success" : "amber";
-                var label = r.status === "declined" ? "Declined" : r.released ? "Released" : r.confirmed ? "Confirmed" : "Awaiting confirmation";
-                return h("div", { key: r.id, style: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "center", padding: "8px 0", borderBottom: i === Math.min(recent.length, 5) - 1 ? "none" : "1px solid " + HAIR } },
-                  h("div", { style: { minWidth: 0 } },
-                    h("div", { style: { fontSize: "13px", fontWeight: 600, color: WHITE, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, r.projectName),
-                    h("div", { style: { fontSize: "11px", color: FAINT, marginTop: 2 } }, fmtStamp(r.respondedAt))),
-                  Chip(label, tone));
-              }))))));
+        callList(upcoming.slice(0, 5), today, { compact: true, empty: "No upcoming calls yet." })));
   }
 
+  // ── Schedule: calendar math ────────────────────────────────────────────────
+  // Pure ISO-date helpers (exported on LTPCrewPortal._cal for the tests).
+  // Weeks run Sunday to Saturday, like the Labor calendar.
+  function addDaysISO(iso, n) {
+    var d = parseISO(iso);
+    if (!d) return iso;
+    d.setDate(d.getDate() + n);
+    return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  }
+  function weekStartISO(iso) { var d = parseISO(iso); return d ? addDaysISO(iso, -d.getDay()) : iso; }
+  function monthStartISO(iso) { return String(iso || "").slice(0, 7) + "-01"; }
+  function addMonthsISO(iso, n) {
+    var d = parseISO(iso);
+    if (!d) return iso;
+    var m = d.getMonth() + n, y = d.getFullYear() + Math.floor(m / 12);
+    m = ((m % 12) + 12) % 12;
+    return y + "-" + pad2(m + 1) + "-01";
+  }
+  // The seven ISO dates of the week holding `iso`.
+  function weekDays(iso) {
+    var start = weekStartISO(iso), out = [];
+    for (var i = 0; i < 7; i++) out.push(addDaysISO(start, i));
+    return out;
+  }
+  // The month grid: whole weeks from the Sunday on or before the 1st to the
+  // Saturday on or after the last day (four to six rows of seven), each cell
+  // { iso, inMonth }.
+  function monthGrid(iso) {
+    var first = monthStartISO(iso), d = parseISO(first);
+    if (!d) return [];
+    var last = addDaysISO(first, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate() - 1);
+    var cur = weekStartISO(first), stop = addDaysISO(weekStartISO(last), 6), month = first.slice(0, 7), out = [];
+    while (cur <= stop && out.length < 42) { out.push({ iso: cur, inMonth: cur.slice(0, 7) === month }); cur = addDaysISO(cur, 1); }
+    return out;
+  }
+  // Calls keyed by ISO date, timed calls first by call time. A flat-rate
+  // position has no call times, so the calendar lays it onto every day of its
+  // project's date range (capped at 62 days, the spread Labor's Weekly
+  // Schedule uses) to show the job is running; the list view keeps it as one
+  // block.
+  function entriesByDate(entries) {
+    var map = {};
+    function add(iso, e) { if (iso) (map[iso] = map[iso] || []).push(e); }
+    (entries || []).forEach(function(e) {
+      if (!e) return;
+      if (!e.flat) { add(e.date, e); return; }
+      var start = e.projectStart || e.date, end = e.projectEnd || start;
+      if (!parseISO(start)) return;
+      if (!parseISO(end) || end < start) end = start;
+      var cur = start, n = 0;
+      while (cur <= end && n < 62) { add(cur, e); cur = addDaysISO(cur, 1); n++; }
+    });
+    Object.keys(map).forEach(function(k) {
+      map[k].sort(function(a, b) { return (a.flat ? 1 : 0) - (b.flat ? 1 : 0) || String(a.startTime || "").localeCompare(String(b.startTime || "")); });
+    });
+    return map;
+  }
+  function statusColor(status) {
+    return status === "confirmed" ? SUCCESS : status === "accepted" ? AMBER : status === "requested" ? INFO : status === "declined" ? DANGER : NEUTRAL;
+  }
+  // "8:00a" / "4:30p": the compact clock for calendar cells.
+  function fmtTimeShort(t) { return fmtTime(t).replace(" AM", "a").replace(" PM", "p"); }
+
   // ── Schedule ───────────────────────────────────────────────────────────────
+  // Three ways to read the same calls: the list (upcoming, or recently
+  // worked), a week, or a month. The calendars hold every upcoming call plus
+  // the last few weeks of confirmed work, the same span the list covers.
   function ScheduleTab(props) {
-    var d = props.data, today = props.today;
-    var viewState = useState("upcoming"), view = viewState[0], setView = viewState[1];
+    var d = props.data, today = props.today, isMobile = props.isMobile;
+    var modeState = useState("list"), mode = modeState[0], setMode = modeState[1];          // list | week | month
+    var viewState = useState("upcoming"), view = viewState[0], setView = viewState[1];     // list only: upcoming | past
+    var anchorState = useState(today), anchor = anchorState[0], setAnchor = anchorState[1]; // a day inside the shown week or month
+    var pickState = useState(today), picked = pickState[0], setPicked = pickState[1];     // month view: the day whose calls are listed
     var upcoming = d.upcoming || [], past = d.past || [];
     var confirmedCal = upcoming.filter(function(e) { return e.status === "confirmed"; });
-    var seg = function(id, label, n) {
-      var active = view === id;
-      return h("button", { key: id, type: "button", className: "ltp-cp-tap", onClick: function() { setView(id); },
-        style: { flex: 1, minHeight: 36, background: active ? "rgba(239,88,34,0.16)" : "transparent", color: active ? ORANGE_SOFT : MUTE, border: "1px solid " + (active ? "rgba(239,88,34,0.5)" : HAIR), borderRadius: 8, fontFamily: "inherit", fontSize: "12px", fontWeight: 700, cursor: "pointer" } },
-        label + " (" + n + ")");
-    };
-    var list = view === "upcoming" ? upcoming : past;
-    // Group by date so a multi-call day reads as one block.
-    var groups = [];
-    list.forEach(function(e) {
-      var key = e.flat ? "flat:" + e.projectId : e.date;
-      var g = groups.length && groups[groups.length - 1].key === key ? groups[groups.length - 1] : null;
-      if (!g) { g = { key: key, entries: [] }; groups.push(g); }
-      g.entries.push(e);
-    });
-    return h("div", null,
-      h("div", { style: { display: "flex", gap: 8 } }, seg("upcoming", "Upcoming", upcoming.length), seg("past", "Recently worked", past.length)),
-      h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 10, lineHeight: 1.5 } },
-        view === "upcoming"
-          ? "Every call you're on, from today forward. A call is only locked in once it says Confirmed — until then a producer still has to confirm you."
-          : "Confirmed calls from the last few weeks. Signed off means the day's pay has been finalized and is on its way through payroll."),
-      h("div", { style: { marginTop: 18 } },
+    var byDate = entriesByDate(upcoming.concat(past));
+
+    function segRow(items, active, onPick) {
+      return h("div", { style: { display: "flex", gap: 8, flex: "1 1 220px", minWidth: 0 } }, items.map(function(it) {
+        var on = it.id === active;
+        return h("button", { key: it.id, type: "button", className: "ltp-cp-tap", "aria-pressed": on, onClick: function() { onPick(it.id); },
+          style: { flex: 1, minHeight: 36, background: on ? "rgba(239,88,34,0.16)" : "transparent", color: on ? ORANGE_SOFT : MUTE, border: "1px solid " + (on ? "rgba(239,88,34,0.5)" : HAIR), borderRadius: 8, fontFamily: "inherit", fontSize: "12px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+          it.label);
+      }));
+    }
+    function navBtn(label, onClick, aria) {
+      return h("button", { type: "button", className: "ltp-cp-quiet ltp-cp-tap", "aria-label": aria, onClick: onClick,
+        style: { minWidth: 40, minHeight: 36, padding: "0 12px", background: "transparent", color: TEXT, border: "1px solid " + HAIR, borderRadius: 8, fontFamily: "inherit", fontSize: "13px", fontWeight: 700, cursor: "pointer" } }, label);
+    }
+    function navBar(title, onPrev, onNext) {
+      return h("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 16 } },
+        navBtn("‹", onPrev, "Previous"), navBtn("›", onNext, "Next"),
+        h("div", { style: { flex: 1, minWidth: 0, fontSize: "15px", fontWeight: 800, color: WHITE, letterSpacing: "-0.01em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", paddingLeft: 4 } }, title),
+        navBtn("Today", function() { setAnchor(today); setPicked(today); }, "Jump to today"));
+    }
+    // Where a month lands you: today when it is in that month, else the 1st.
+    function pickFor(monthIso) { return monthIso.slice(0, 7) === today.slice(0, 7) ? today : monthStartISO(monthIso); }
+
+    // One call inside a calendar cell: call time, role, project. The left
+    // edge carries the status colour; a dashed edge is a flat-rate job.
+    function calBlock(e, i, iso, first) {
+      var c = statusColor(e.status);
+      var time = e.flat ? "Flat rate" : (e.startTime ? fmtTimeShort(e.startTime) + (e.endTime ? " – " + fmtTimeShort(e.endTime) : "") : "Time TBD");
+      var tip = (e.roleLabel || "Crew") + " · " + (e.projectName || "") + (e.shiftTitle ? " · " + e.shiftTitle : "") + (e.venue ? " · " + e.venue : "") + " · " + (e.status === "confirmed" ? "Confirmed" : e.status === "accepted" ? "Awaiting confirmation" : e.status === "requested" ? "Needs your answer" : e.status || "");
+      return h("div", { key: (e.positionId || i) + ":" + iso, title: tip,
+        style: { marginTop: first ? 0 : 6, padding: "6px 8px", background: PANEL, borderRadius: 6, borderLeft: "3px " + (e.flat ? "dashed" : "solid") + " " + c, minWidth: 0 } },
+        h("div", { style: { fontSize: "11px", fontWeight: 700, color: c, fontFamily: MONO, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, time),
+        h("div", { style: { fontSize: "12px", fontWeight: 700, color: WHITE, lineHeight: 1.25, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, e.roleLabel || "Crew"),
+        h("div", { style: { fontSize: "11px", color: MUTE, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, (e.projectName || "") + (e.shiftTitle ? " · " + e.shiftTitle : "")));
+    }
+    function dayHead(iso, isToday, big) {
+      var dd = parseISO(iso) || new Date();
+      return [
+        h("div", { key: "w", style: { fontSize: "10px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: isToday ? ORANGE : MUTE } }, _WEEKDAYS[dd.getDay()]),
+        h("div", { key: "n", style: { fontSize: big ? "16px" : "13px", fontWeight: 800, color: isToday ? ORANGE : WHITE, fontVariantNumeric: "tabular-nums", lineHeight: 1.1, marginTop: 1 } }, dd.getDate()),
+      ];
+    }
+    function weekTitle(days) {
+      var a = days[0], b = days[6];
+      return fmtRange(a, b) + (a.slice(0, 4) === b.slice(0, 4) ? ", " + a.slice(0, 4) : "");
+    }
+
+    // Week: seven columns on a desktop, seven stacked day rows on a phone.
+    function weekView() {
+      var days = weekDays(anchor);
+      var bar = navBar(weekTitle(days), function() { setAnchor(addDaysISO(anchor, -7)); }, function() { setAnchor(addDaysISO(anchor, 7)); });
+      if (isMobile) {
+        return h("div", null, bar,
+          h("div", { style: { marginTop: 12, marginLeft: -6, marginRight: -6, background: PANEL, borderTop: "1px solid " + ORANGE, borderBottom: "1px solid " + ORANGE, padding: "0 6px" } },
+            days.map(function(iso, di) {
+              var list = byDate[iso] || [], isToday = iso === today;
+              return h("div", { key: iso, style: { display: "flex", gap: 12, padding: "10px 0", borderBottom: di === 6 ? "none" : "1px solid " + HAIR } },
+                h("div", { style: { width: 44, flexShrink: 0 } }, dayHead(iso, isToday, true)),
+                h("div", { style: { flex: 1, minWidth: 0 } },
+                  list.length === 0
+                    ? h("div", { style: { fontSize: "12px", color: FAINT, fontStyle: "italic", paddingTop: 6 } }, "No calls")
+                    : list.map(function(e, i) { return calBlock(e, i, iso, i === 0); })));
+            })));
+      }
+      return h("div", null, bar,
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 6, marginTop: 12 } },
+          days.map(function(iso) {
+            var list = byDate[iso] || [], isToday = iso === today;
+            return h("div", { key: iso, style: { minHeight: 150, background: INSET, border: "1px solid " + (isToday ? "rgba(239,88,34,0.6)" : HAIR), borderRadius: 10, padding: "8px 8px 10px", minWidth: 0, boxSizing: "border-box" } },
+              h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 4 } }, dayHead(iso, isToday, false)),
+              list.length === 0
+                ? h("div", { style: { fontSize: "11px", color: FAINT, fontStyle: "italic", marginTop: 10 } }, "No calls")
+                : h("div", { style: { marginTop: 8 } }, list.map(function(e, i) { return calBlock(e, i, iso, i === 0); })));
+          })));
+    }
+
+    // Month: a grid of days (a short line per call on a desktop, status dots
+    // on a phone), then the picked day's calls in full underneath.
+    function monthView() {
+      var cells = monthGrid(anchor), md = parseISO(monthStartISO(anchor)) || new Date();
+      var maxLines = 3;
+      var bar = navBar(_MONTHS[md.getMonth()] + " " + md.getFullYear(),
+        function() { var m = addMonthsISO(anchor, -1); setAnchor(m); setPicked(pickFor(m)); },
+        function() { var m = addMonthsISO(anchor, 1); setAnchor(m); setPicked(pickFor(m)); });
+      var pickedList = byDate[picked] || [];
+      return h("div", null, bar,
+        h("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, minmax(0, 1fr))", gap: 4, marginTop: 12 } },
+          _WEEKDAYS.map(function(w) {
+            return h("div", { key: w, style: { textAlign: "center", fontSize: "10px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: MUTE, padding: "4px 0" } }, isMobile ? w.charAt(0) : w);
+          }),
+          cells.map(function(c) {
+            var list = byDate[c.iso] || [], isToday = c.iso === today, isPicked = c.iso === picked, dd = parseISO(c.iso) || new Date();
+            return h("button", { key: c.iso, type: "button", className: "ltp-cp-tap", onClick: function() { setPicked(c.iso); },
+              "aria-label": fmtDate(c.iso) + (list.length ? ", " + list.length + (list.length === 1 ? " call" : " calls") : ", no calls"), "aria-pressed": isPicked,
+              style: { minHeight: isMobile ? 46 : 92, textAlign: "left", background: isPicked ? "rgba(239,88,34,0.14)" : INSET, border: "1px solid " + (isPicked ? "rgba(239,88,34,0.6)" : (isToday ? "rgba(249,185,152,0.55)" : HAIR)), borderRadius: 8, padding: isMobile ? "6px 2px" : "6px 8px", color: TEXT, fontFamily: "inherit", cursor: "pointer", opacity: c.inMonth ? 1 : 0.45, minWidth: 0, display: "flex", flexDirection: "column", alignItems: isMobile ? "center" : "stretch", boxSizing: "border-box" } },
+              h("span", { style: { fontSize: isMobile ? "13px" : "12px", fontWeight: 800, color: isToday ? ORANGE : (c.inMonth ? WHITE : MUTE), fontVariantNumeric: "tabular-nums" } }, dd.getDate()),
+              isMobile
+                ? (list.length ? h("span", { style: { display: "flex", gap: 3, marginTop: 4 } },
+                    list.slice(0, 3).map(function(e, i) { return h("span", { key: i, style: { width: 6, height: 6, borderRadius: "50%", background: statusColor(e.status), border: e.flat ? "1px dashed " + statusColor(e.status) : "none", boxSizing: "border-box" } }); })) : null)
+                : list.slice(0, maxLines).map(function(e, i) {
+                    var col = statusColor(e.status);
+                    return h("span", { key: (e.positionId || i) + ":" + c.iso, title: (e.roleLabel || "Crew") + " · " + (e.projectName || ""),
+                      style: { display: "block", marginTop: 3, fontSize: "10px", fontWeight: 600, color: WHITE, background: PANEL, borderLeft: "2px " + (e.flat ? "dashed" : "solid") + " " + col, borderRadius: 3, padding: "2px 5px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },
+                      (e.flat ? "Flat" : (e.startTime ? fmtTimeShort(e.startTime) : "")) + " " + (e.role || e.roleLabel || "Crew"));
+                  }),
+              !isMobile && list.length > maxLines && h("span", { style: { fontSize: "10px", color: FAINT, marginTop: 2 } }, "+" + (list.length - maxLines) + " more"));
+          })),
+        h("div", { style: { marginTop: 18 } },
+          h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 8 } },
+            h("div", { style: { fontSize: "13px", fontWeight: 700, color: ORANGE_SOFT } }, fmtDate(picked)),
+            relDay(picked, today) && h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: relDay(picked, today) === "Today" ? ORANGE : MUTE } }, relDay(picked, today))),
+          callList(pickedList, today, { empty: "No calls on this day." })));
+    }
+
+    // List: grouped by date so a multi-call day reads as one block.
+    function listView() {
+      var list = view === "upcoming" ? upcoming : past;
+      var groups = [];
+      list.forEach(function(e) {
+        var key = e.flat ? "flat:" + e.projectId : e.date;
+        var g = groups.length && groups[groups.length - 1].key === key ? groups[groups.length - 1] : null;
+        if (!g) { g = { key: key, entries: [] }; groups.push(g); }
+        g.entries.push(e);
+      });
+      return h("div", { style: { marginTop: 18 } },
         groups.length === 0
-          ? Empty(view === "upcoming" ? "No upcoming calls. When a producer books you, your calls appear here." : "No recent calls to show.")
+          ? Empty(view === "upcoming" ? "No upcoming calls. When a production manager books you, your calls appear here." : "No recent calls to show.")
           : groups.map(function(g) {
               return h("div", { key: g.key, style: { marginBottom: 22 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 8 } },
                   h("div", { style: { fontSize: "13px", fontWeight: 700, color: ORANGE_SOFT } }, g.entries[0].flat ? "Flat-rate · " + g.entries[0].projectName : fmtDate(g.key)),
                   !g.entries[0].flat && relDay(g.key, today) && h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: relDay(g.key, today) === "Today" ? ORANGE : MUTE } }, relDay(g.key, today))),
                 callList(g.entries, today));
-            })),
-      view === "upcoming" && confirmedCal.length > 1 && h("div", { style: { marginTop: 8, fontSize: "12px", color: FAINT, lineHeight: 1.5 } },
-        "Each confirmed call has its own Add to calendar button — one tap drops the date, times, role and address into your calendar."));
+            }),
+        view === "upcoming" && confirmedCal.length > 1 && h("div", { style: { marginTop: 8, fontSize: "12px", color: FAINT, lineHeight: 1.5 } },
+          "Each confirmed call has its own Add to calendar button. One tap drops the date, times, role and address into your calendar."));
+    }
+
+    var intro = mode === "week"
+      ? "Seven days at a glance. The coloured edge is the status: green is confirmed, amber is awaiting confirmation, blue still needs your answer. A dashed edge is a flat-rate job running that day."
+      : mode === "month"
+        ? "Tap a day to see its calls underneath. Past days show the last few weeks of confirmed work."
+        : view === "upcoming"
+          ? "Every call you're on, from today forward. A call is only locked in once it says Confirmed. Until then a production manager still has to confirm you."
+          : "Confirmed calls from the last few weeks. Signed off means the day's pay has been finalized and is on its way through payroll.";
+
+    return h("div", null,
+      h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
+        segRow([{ id: "list", label: "List" }, { id: "week", label: "Week" }, { id: "month", label: "Month" }], mode, function(id) {
+          setMode(id);
+          if (id !== "list") { setAnchor(today); setPicked(today); }
+        }),
+        mode === "list" && segRow([{ id: "upcoming", label: "Upcoming (" + upcoming.length + ")" }, { id: "past", label: "Recently worked (" + past.length + ")" }], view, setView)),
+      h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 10, lineHeight: 1.5 } }, intro),
+      mode === "week" ? weekView() : mode === "month" ? monthView() : listView());
   }
 
   // ── Pay ────────────────────────────────────────────────────────────────────
@@ -797,7 +1024,7 @@
             h("div", { style: { minWidth: 0 } },
               h("div", { style: { fontSize: "13px", fontWeight: 600, color: TEXT } }, fmtDateShort(day.date) + "  ·  " + day.projectName),
               h("div", { style: { fontSize: "11px", color: AMBER, marginTop: 2 } }, day.flat ? "Flat rate · awaiting completion sign-off" : "Awaiting sign-off")),
-            h("div", { style: { fontSize: "13px", fontWeight: 600, color: AMBER, fontFamily: MONO, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, day.estimate != null ? "~" + fmtMoney(day.estimate) : "—"));
+            h("div", { style: { fontSize: "13px", fontWeight: 600, color: AMBER, fontFamily: MONO, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, day.estimate != null ? "~" + fmtMoney(day.estimate) : "TBD"));
         })));
   }
 
@@ -807,16 +1034,16 @@
     var current = periods.find(function(p) { return p.current; });
     var nextPayDay = current ? current.payDay : "";
     if (pay.configured === false) {
-      return Card(Empty("Pay periods aren't configured yet — the production team sets the payroll calendar in the app. Your signed-off days will show here once they do."));
+      return Card(Empty("Pay periods aren't configured yet. The production team sets the payroll calendar in the app. Your signed-off days will show here once they do."));
     }
     return h("div", null,
-      h("div", { style: { display: "flex", gap: 10, flexWrap: "wrap" } },
+      TileGrid(props.isMobile,
         Tile("Paid this year", fmtMoney(pay.ytdPaid || 0), "bills paid through payroll"),
-        Tile("This period", fmtMoney(current ? current.signedTotal : 0), current ? "signed off so far" : ""),
+        Tile("This period", fmtMoney(current ? current.signedTotal : 0), current ? "signed off so far" : "no current period"),
         Tile("Pending", "~" + fmtMoney(pay.pendingEstimate || 0), "confirmed, awaiting sign-off", AMBER),
-        Tile("Next pay day", nextPayDay ? fmtMonthDay(nextPayDay) : "—", nextPayDay ? fmtDate(nextPayDay).split(",")[0] : "")),
+        Tile("Next pay day", nextPayDay ? fmtMonthDay(nextPayDay) : "Not set", nextPayDay ? fmtDate(nextPayDay).split(",")[0] : "no pay period yet")),
       h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 14, lineHeight: 1.55 } },
-        "A day's pay is finalized when the producer signs it off after the call. Each pay period is paid on its pay day: ",
+        "A day's pay is finalized when the production manager signs it off after the call. Each pay period is paid on its pay day: ",
         h("strong", { style: { color: MUTE } }, "Submitted"), " means the period has gone to payroll, ",
         h("strong", { style: { color: MUTE } }, "Paid"), " means it has been paid. Pending figures are estimates from your booking and can change at sign-off."),
       h("div", { style: { marginTop: 22, display: "flex", flexDirection: "column", gap: 12 } },
@@ -867,7 +1094,7 @@
     var row = function(label, value) {
       return h("div", { style: { display: "flex", justifyContent: "space-between", gap: 12, padding: "9px 0", borderBottom: "1px solid " + HAIR, fontSize: "13px" } },
         h("span", { style: { color: MUTE, flexShrink: 0 } }, label),
-        h("span", { style: { color: WHITE, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" } }, value || "—"));
+        h("span", { style: { color: WHITE, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" } }, value || "Not set"));
     };
     return h("div", { style: { display: "grid", gridTemplateColumns: props.isMobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)", gap: 16 } },
       h("div", null,
@@ -878,9 +1105,9 @@
           user.contactEmail && user.contactEmail.toLowerCase() !== (user.email || "").toLowerCase() && row("Requests go to", user.contactEmail),
           h("div", { style: { padding: "9px 0", borderBottom: "1px solid " + HAIR } },
             h("div", { style: { fontSize: "13px", color: MUTE, marginBottom: 6 } }, "Roles & departments"),
-            roleChips.length ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, roleChips) : h("div", { style: { fontSize: "13px", color: FAINT } }, "—")),
+            roleChips.length ? h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } }, roleChips) : h("div", { style: { fontSize: "13px", color: FAINT } }, "None on file")),
           h("div", { style: { paddingTop: 14 } },
-            h(Field, { id: "cp-phone", label: "Phone", type: "tel", value: phone, onChange: setPhone, autoComplete: "tel", inputMode: "tel", placeholder: "(555) 555-5555", onEnter: savePhone, hint: "The number producers reach you on for day-of changes. Everything else on your profile is kept by the production team — let them know if something's wrong." }),
+            h(Field, { id: "cp-phone", label: "Phone", type: "tel", value: phone, onChange: setPhone, autoComplete: "tel", inputMode: "tel", placeholder: "(555) 555-5555", onEnter: savePhone, hint: "The number production managers reach you on for day-of changes. Everything else on your profile is kept by the production team. Let them know if something's wrong." }),
             Notice("error", pErr),
             QuietBtn({ onClick: savePhone, disabled: pBusy || phone.trim() === (user.phone || "") }, pBusy ? "Saving…" : "Save Phone")))),
         h("div", { style: { marginTop: 22 } },
@@ -924,7 +1151,7 @@
     var sub = route.sub || null;
     // Signed in and on a sign-in route (a bookmarked #/crew-portal/login, the
     // back button): land on the dashboard. An effect, not a render-time
-    // replace — the router's hashchange would re-render the outer app while
+    // replace, since the router's hashchange would re-render the outer app while
     // this component is still rendering.
     useEffect(function() {
       if (user && sub && PUBLIC[sub] && sub !== "signup" && sub !== "reset") {
@@ -941,7 +1168,7 @@
         h("div", { className: "ltp-cp-shimmer", style: { height: 4, width: 120, borderRadius: 2 } }),
         h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 16 } }, "Loading…"));
     }
-    // One-time links work whether or not someone is signed in on this device —
+    // One-time links work whether or not someone is signed in on this device:
     // a shared phone must still be able to accept an invitation.
     if (sub === "signup" || sub === "reset") {
       return h(TokenScreen, { kind: sub, token: route.id, shell: shell, onSignedIn: signedIn, onPresetEmail: setPresetEmail });
@@ -957,4 +1184,6 @@
     var portalRoute = (!sub || PUBLIC[sub]) ? { sub: "overview" } : route;
     return h(Portal, { user: user, route: portalRoute, isMobile: isMobile, mastheadFailed: mastheadFailed, onMastheadFail: function() { setMastheadFailed(true); }, onSignedOut: signedOut, onUser: setUser });
   };
+  // The Schedule tab's calendar math, exposed for tests/test_crew_portal_routes.js.
+  window.LTPCrewPortal._cal = { addDaysISO: addDaysISO, weekStartISO: weekStartISO, addMonthsISO: addMonthsISO, weekDays: weekDays, monthGrid: monthGrid, entriesByDate: entriesByDate };
 })();

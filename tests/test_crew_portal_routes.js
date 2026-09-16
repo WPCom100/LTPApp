@@ -125,6 +125,64 @@ ok("invitations retry until the new row has synced", /status === 404 && attempt 
   ok("the roster offers the " + a + " action", labor.indexOf('"' + a + '"') !== -1);
 });
 
+// ── Wording and typography ───────────────────────────────────────────────────
+// Crew read "production manager", never "producer", and the portal carries no
+// em dashes: sentences are split, or joined with a comma or colon, instead.
+ok("the portal never says 'producer'", !/producer/i.test(portal));
+ok("the portal has no em dashes", portal.indexOf("\u2014") === -1);
+["list", "week", "month"].forEach((m) => ok("the schedule offers the " + m + " view", portal.indexOf('"' + m + '"') !== -1));
+
+// ── Calendar math (the Schedule tab's week and month views) ──────────────────
+// The module is loaded under a shim: at load it only aliases React and
+// publishes window.LTPCrewPortal, whose ._cal carries the pure helpers.
+{
+  const savedWindow = global.window, savedReact = global.React;
+  global.window = {};
+  global.React = { createElement() { return null; }, useState() {}, useEffect() {}, useRef() {} };
+  (0, eval)(portal);
+  const cal = global.window.LTPCrewPortal._cal;
+  global.window = savedWindow; global.React = savedReact;
+
+  eq("addDaysISO crosses a month end", cal.addDaysISO("2026-09-30", 1), "2026-10-01");
+  eq("addDaysISO steps back across a year", cal.addDaysISO("2026-01-01", -1), "2025-12-31");
+  eq("addDaysISO leaves garbage alone", cal.addDaysISO("nope", 3), "nope");
+  eq("weekStartISO is the Sunday on or before (a Wednesday)", cal.weekStartISO("2026-09-16"), "2026-09-13");
+  eq("a Sunday is its own week start", cal.weekStartISO("2026-09-13"), "2026-09-13");
+  eq("weekDays runs Sunday to Saturday", cal.weekDays("2026-09-16"),
+     ["2026-09-13", "2026-09-14", "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19"]);
+  eq("addMonthsISO wraps the year forward", cal.addMonthsISO("2026-12-16", 1), "2027-01-01");
+  eq("addMonthsISO wraps the year backward", cal.addMonthsISO("2026-01-16", -1), "2025-12-01");
+
+  const grid = cal.monthGrid("2026-09-16");
+  eq("September 2026 starts on Sunday Aug 30", grid[0].iso, "2026-08-30");
+  eq("...and ends on Saturday Oct 3", grid[grid.length - 1].iso, "2026-10-03");
+  ok("...in whole weeks", grid.length % 7 === 0, String(grid.length));
+  eq("...with 30 in-month cells", grid.filter((c) => c.inMonth).length, 30);
+  eq("...the padding cells flagged out of month", grid[0].inMonth, false);
+  eq("February 2026 (a Sunday 1st, 28 days) is exactly four rows", cal.monthGrid("2026-02-10").length, 28);
+  eq("a bad date yields an empty grid", cal.monthGrid("nope"), []);
+
+  const flat = { flat: true, projectStart: "2026-10-05", projectEnd: "2026-10-08", roleLabel: "LD", status: "confirmed" };
+  const by = cal.entriesByDate([
+    { date: "2026-09-16", startTime: "14:00", roleLabel: "L2", status: "confirmed" },
+    { date: "2026-09-16", startTime: "08:00", roleLabel: "A1", status: "accepted" },
+    flat,
+  ]);
+  eq("timed calls sort by call time", by["2026-09-16"].map((e) => e.roleLabel), ["A1", "L2"]);
+  eq("a flat-rate job lands on every day of its range",
+     ["2026-10-05", "2026-10-06", "2026-10-07", "2026-10-08"].map((k) => (by[k] || []).length), [1, 1, 1, 1]);
+  ok("...and not beyond it", !by["2026-10-09"] && !by["2026-10-04"]);
+  eq("a flat-rate spread is capped at 62 days",
+     Object.keys(cal.entriesByDate([{ flat: true, projectStart: "2026-01-01", projectEnd: "2026-12-31" }])).length, 62);
+  eq("a flat-rate job with no dates is skipped", cal.entriesByDate([{ flat: true }]), {});
+  eq("a reversed range collapses to its start day",
+     Object.keys(cal.entriesByDate([{ flat: true, projectStart: "2026-10-08", projectEnd: "2026-10-05" }])), ["2026-10-08"]);
+  eq("a timed call beside a flat job puts the flat job last",
+     cal.entriesByDate([flat, { date: "2026-10-06", startTime: "09:00", roleLabel: "L2" }])["2026-10-06"].map((e) => e.roleLabel), ["L2", "LD"]);
+  eq("null input yields an empty map", cal.entriesByDate(null), {});
+  eq("a dateless timed call is dropped, not keyed under ''", cal.entriesByDate([{ date: "", roleLabel: "L2" }]), {});
+}
+
 console.log("crew-portal routes suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

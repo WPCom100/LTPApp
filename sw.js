@@ -325,7 +325,12 @@
 // sections, LTP_declinedCrewIndex in domain-crew.js, LTP_timeAgo moved into
 // domain-util.js) and confirm a re-ask. The domain files are precached, so the
 // shell must be refetched.
-var CACHE_VERSION = 'ltp-shell-v96';
+// v97: crew portal refresh (modules/crew-portal.js): "production manager"
+// wording, no em dashes, uniform stat tiles, a wider page, the overview
+// reordered (pay period and recent responses up top, next calls last), and
+// week and month views on the Schedule tab beside the list. The module is
+// runtime-cached, so the shell must be refetched.
+var CACHE_VERSION = 'ltp-shell-v97';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
