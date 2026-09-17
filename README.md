@@ -449,6 +449,17 @@ and both the section margin and the two summary margins are net of it. It is
 resolved live from the orders, never stored on the line, so it follows a cross
 rental being confirmed, re-priced or cancelled.
 
+**A cross rental shared across projects is split, not counted whole against
+each.** One order line has a single fixed cost however many jobs borrow its
+units across the period, so that cost is spread over every live (non-declined)
+quote that draws cross-rented units from it, weighted by **unit-days** — units
+drawn times that line's own rental days. Only used days count: a piece rented
+Mon–Fri two weeks running with the weekend idle splits 50/50 between the two
+jobs, never by the ten-day span, and the idle gap is nobody's cost. A job that
+uses more units, or holds them longer, pays proportionally more. A sole user
+bears the whole line. The engine (`modules/rentals-utils.js::crossRentalMargin`)
+runs over every quote so an edit anywhere re-splits immediately.
+
 **When it can't be resolved** — nothing covers those dates, what does is
 already spoken for, or the item is gone from the catalog — the unresolved units
 are *not* silently treated as free. A small **⚠ UNCOSTED** chip sits beside the

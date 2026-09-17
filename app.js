@@ -184,7 +184,7 @@ function LTPSignedInApp(props) {
   var [containers,  setContainers,  containersReady]  = usePersistentState("containers",  window.LTP_DATA_CONTAINERS);
   var [kits,        setKits,        kitsReady]        = usePersistentState("kits",        window.LTP_DATA_KITS);
   // Cross rentals — what each vendor charges us per item, and the orders of
-  // gear rented in (docs/CROSS_RENTAL_PLAN.md). Confirmed orders count as
+  // gear rented in (README.md "Cross rentals & vendor pricing"). Confirmed orders count as
   // inventory in every availability surface (rentals-utils.js::totalQty).
   var [vendorRates,  setVendorRates,  vendorRatesReady]  = usePersistentState("vendor-rates",  window.LTP_DATA_VENDOR_RATES);
   var [crossRentals, setCrossRentals, crossRentalsReady] = usePersistentState("cross-rentals", window.LTP_DATA_CROSS_RENTALS);

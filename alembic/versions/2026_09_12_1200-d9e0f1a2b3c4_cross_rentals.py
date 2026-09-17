@@ -6,7 +6,7 @@ Revises: c8d9e0f1a2b3
 Create Date: 2026-09-12 12:00:00.000000
 
 Gear rented IN from a vendor to cover what we don't stock or don't have free on
-the dates (docs/CROSS_RENTAL_PLAN.md):
+the dates (README.md "Cross rentals & vendor pricing"):
 
   vendor_rates    what one vendor charges us for one catalog item — the price
                   memory. One row per (vendor, item); both FKs CASCADE like
