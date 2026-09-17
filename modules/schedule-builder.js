@@ -405,7 +405,7 @@
         var d = e && e.detail;
         if (!d || d.collection !== "projects" || d.id !== project.id) return;
         setPaidWarn((d.days || []).map(function(day) {
-          return { crewId: day.contactId, date: day.date, ds: { docNumber: day.docNumber } };
+          return { crewId: day.contactId, date: day.date, ds: { docNumber: day.docNumber, zero: !!day.zero } };
         }));
       }
       window.addEventListener("ltp-paid-day-conflict", onConflict);
@@ -1031,11 +1031,16 @@
       // Paid-day change guard (warn + confirm; confirming records the override).
       paidWarn && h(window.LTPModal, { title: "Changing a paid day", onClose: function() { setPaidWarn(null); } },
         h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 10 } },
-          "This save changes " + paidWarn.length + " day" + (paidWarn.length > 1 ? "s" : "") + " already paid in QuickBooks. The paid QuickBooks bill" + (paidWarn.length > 1 ? "s" : "") + " won't update automatically — adjust " + (paidWarn.length > 1 ? "them" : "it") + " in QuickBooks to stay in sync."),
+          // A day settled at $0 on export (full margin / no-show) has no bill
+          // to fall out of sync with — the ask there is a re-export.
+          paidWarn.every(function(cp) { return cp.ds && cp.ds.zero; })
+            ? "This save changes " + paidWarn.length + " day" + (paidWarn.length > 1 ? "s" : "") + " settled at $0 on export (nothing owed, no QuickBooks bill). If " + (paidWarn.length > 1 ? "they" : "it") + " now pay" + (paidWarn.length > 1 ? "" : "s") + ", re-export the pay period afterwards to post the bill."
+            : "This save changes " + paidWarn.length + " day" + (paidWarn.length > 1 ? "s" : "") + " already paid in QuickBooks. The paid QuickBooks bill" + (paidWarn.length > 1 ? "s" : "") + " won't update automatically — adjust " + (paidWarn.length > 1 ? "them" : "it") + " in QuickBooks to stay in sync."),
         h("ul", { style: { margin: "0 0 14px", paddingLeft: 18, fontSize: "11px", color: B.text } },
           paidWarn.map(function(cp, i) {
             var c = contacts.find(function(x) { return x.id === cp.crewId; });
-            return h("li", { key: i, style: { marginBottom: 3 } }, (c ? (c.firstName + " " + c.lastName).trim() : "Crew") + " · " + fmt(cp.date) + (cp.ds && cp.ds.docNumber ? " (" + cp.ds.docNumber + ")" : ""));
+            return h("li", { key: i, style: { marginBottom: 3 } }, (c ? (c.firstName + " " + c.lastName).trim() : "Crew") + " · " + fmt(cp.date)
+              + (cp.ds && cp.ds.docNumber ? " (" + cp.ds.docNumber + ")" : cp.ds && cp.ds.zero ? " (settled at $0)" : ""));
           })),
         h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end" } },
           h(window.Btn, { variant: "ghost", onClick: function() { setPaidWarn(null); } }, "Cancel"),

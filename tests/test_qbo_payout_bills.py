@@ -306,17 +306,157 @@ async def test_negative_total_blocked():
             assert raised
 
 
-async def test_no_billable_days_skipped():
+async def test_no_signed_days_skipped():
     async with _db() as db:
         c = await _seed_contact(db)
-        day = _day(payable=0.0, units=[])     # signed but $0 -> nothing to bill
         with _patch():
             raised = False
             try:
-                await qbo_payouts.push_payout_bill(db, c, _draft(5, [day]), _period(), _ACCTS, client_id="x", client_secret="y")
-            except qbo_payouts.PayoutNotBillable:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, []), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable as e:
                 raised = True
+                assert "no signed" in str(e)
             assert raised
+
+
+# ── $0 periods: settled locally, no bill, no QuickBooks call ─────────────────
+#
+# Someone on a full-margin position only (the owner filling a role) signs off
+# days that pay $0. There is nothing to post, but the period is done — the
+# export settles it: ledger lines + paid stamp, so the days read exported and
+# paid on the Payouts tab, and QuickBooks is never touched.
+
+_QB_CALLS = ("query", "create_vendor", "get_vendor", "update_vendor", "create_bill", "update_bill", "get_bill")
+
+
+def _zero_day(date="2026-07-08"):
+    return _day(date=date, payable=0.0, units=[])   # a full-margin unit drops out as $0
+
+
+async def test_zero_period_settles_locally_without_quickbooks():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        with _patch() as m:
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res == {"ok": True, "action": "settled", "contactId": 5, "qbBillId": None, "amount": 0.0, "zero": True}, res
+        for name in _QB_CALLS:
+            assert m[name].await_count == 0, name      # not one QuickBooks round-trip
+        assert c.qb_vendor_id is None                  # no vendor created either
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert qbo_payouts.is_zero_settled(pb)
+        assert pb.qb_bill_id is None and pb.doc_number is None and pb.amount == 0.0
+        assert pb.qb_sync_status == "synced" and pb.qb_paid_at is not None and pb.line_signature
+        assert pb.qb_total_amt is None and pb.qb_last_error is None
+        lines = (await db.execute(select(models.PayoutBillLine))).scalars().all()
+        assert len(lines) == 1 and lines[0].date == "2026-07-08" and lines[0].amount == 0.0
+        assert [a["type"] for a in pb.activity] == ["qbo_payout_settled"]
+
+
+async def test_zero_settlement_idempotent_then_grows_with_a_new_zero_day():
+    async with _db() as db:
+        c = await _seed_contact(db)
+        with _patch() as m:
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+            first_paid = pb.qb_paid_at
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            assert res["action"] == "unchanged" and res["zero"] is True, res
+            # A second margin day signed off later in the same period joins the ledger.
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day(), _zero_day("2026-07-09")]),
+                                                     _period(), _ACCTS, client_id="x", client_secret="y")
+            assert res["action"] == "settled", res
+            for name in _QB_CALLS:
+                assert m[name].await_count == 0, name
+        dates = sorted(ln.date for ln in (await db.execute(select(models.PayoutBillLine))).scalars().all())
+        assert dates == ["2026-07-08", "2026-07-09"]
+        assert pb.qb_paid_at == first_paid            # the original paid stamp survives a re-settle
+        assert [a["type"] for a in pb.activity] == ["qbo_payout_settled", "qbo_payout_settled"]
+
+
+async def test_zero_settlement_reopens_into_a_real_bill():
+    # The $0 settlement is a local marker only. Once the payout becomes billable
+    # (a margin flag cleared, a paid day signed off), the export posts a real
+    # bill and the paid marker clears — a real bill is unpaid until QuickBooks
+    # says otherwise.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        # QuickBooks echoes the real total back, so no amount-mismatch stamp
+        # muddies the activity trail asserted below.
+        with _patch(create_bill=AsyncMock(return_value={"Bill": {"Id": "B1", "SyncToken": "0", "TotalAmt": 600.0}})) as m:
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            res = await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+        assert res["action"] == "created" and res["qbBillId"] == "B1" and res["amount"] == 600.0, res
+        assert m["create_bill"].await_count == 1
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert not qbo_payouts.is_zero_settled(pb)
+        assert pb.qb_bill_id == "B1" and pb.qb_paid_at is None and pb.qb_balance is None
+        assert pb.amount == 600.0 and pb.doc_number == "PAY-26-14" and pb.qb_sync_status == "synced"
+        lines = (await db.execute(select(models.PayoutBillLine))).scalars().all()
+        assert len(lines) == 1 and lines[0].amount == 600.0
+        assert [a["type"] for a in pb.activity] == ["qbo_payout_settled", "qbo_payout_synced"]
+        assert any(ch.get("cat") == "Reopened" for ch in pb.activity[-1]["changes"])
+
+
+async def test_zero_after_a_real_bill_is_refused():
+    # A real bill was exported, then the payout dropped to $0: the money on that
+    # bill is QuickBooks' to void or adjust — never silently settled over.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        with _patch() as m:
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            raised = False
+            try:
+                await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(), _ACCTS, client_id="x", client_secret="y")
+            except qbo_payouts.PayoutNotBillable as e:
+                raised = True
+                assert "void or adjust" in str(e)
+            assert raised
+            assert m["update_bill"].await_count == 0
+        pb = (await db.execute(select(models.PayoutBill))).scalar_one()
+        assert pb.qb_bill_id == "B1" and pb.amount == 600.0 and pb.qb_paid_at is None
+        lines = (await db.execute(select(models.PayoutBillLine))).scalars().all()
+        assert len(lines) == 1 and lines[0].amount == 600.0      # ledger untouched
+
+
+async def test_zero_settlement_is_double_pay_guarded():
+    # A day settled at $0 on one period can't be settled — or billed — again on
+    # another, exactly like a billed day.
+    async with _db() as db:
+        c = await _seed_contact(db)
+        period_b = {"start": "2026-07-20", "end": "2026-08-02", "index": 1,
+                    "pay_day": "2026-08-07", "label": "next"}
+        with _patch():
+            await qbo_payouts.push_payout_bill(db, c, _draft(5, [_zero_day()]), _period(0), _ACCTS, client_id="x", client_secret="y")
+            for draft in (_draft(5, [_zero_day()]), _draft(5, [_day()])):
+                raised = False
+                try:
+                    await qbo_payouts.push_payout_bill(db, c, draft, period_b, _ACCTS, client_id="x", client_secret="y")
+                except qbo_payouts.PayoutNotBillable as e:
+                    raised = True
+                    assert "already billed" in str(e)
+                assert raised, "expected double-pay guard to fire"
+
+
+def test_plan_bill_zero_plan_shape():
+    plan = qbo_payouts.plan_bill(5, _draft(5, [_zero_day(), _zero_day("2026-07-09")]), _period(), _ACCTS)
+    assert plan["zero"] is True and plan["total"] == 0.0 and plan["lines"] == [] and plan["doc_number"] is None
+    assert [d["date"] for d in plan["billable"]] == ["2026-07-08", "2026-07-09"]   # the ledger set
+    # The signature tracks WHICH days are covered (there are no lines to hash).
+    one = qbo_payouts.plan_bill(5, _draft(5, [_zero_day()]), _period(), _ACCTS)["signature"]
+    assert one != plan["signature"]
+    assert one == qbo_payouts.plan_bill(5, _draft(5, [_zero_day()]), _period(), _ACCTS)["signature"]
+    # One billable day among $0 ones is an ordinary bill: the $0 day carries no line.
+    mixed = qbo_payouts.plan_bill(5, _draft(5, [_zero_day(), _day(date="2026-07-10")]), _period(), _ACCTS)
+    assert not mixed.get("zero") and mixed["total"] == 600.0 and [d["date"] for d in mixed["billable"]] == ["2026-07-10"]
+
+
+def test_is_zero_settled_marker():
+    from types import SimpleNamespace as NS
+    now = datetime.now(timezone.utc)
+    assert qbo_payouts.is_zero_settled(NS(qb_paid_at=now, qb_bill_id=None))
+    assert not qbo_payouts.is_zero_settled(NS(qb_paid_at=now, qb_bill_id="B1"))     # a real paid bill
+    assert not qbo_payouts.is_zero_settled(NS(qb_paid_at=None, qb_bill_id=None))    # never posted / error
+    assert not qbo_payouts.is_zero_settled(None)
 
 
 async def test_qbo_error_returns_failure_and_no_ledger():
