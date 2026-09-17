@@ -174,6 +174,41 @@ has("Q14 a half-set custom range reads as 'Not set', not as a blank arrow",
     QC(quote(), qSecHalf, PROJECTS, COMPANIES), "Audio Rental Period", "Not set");
 has("Q15 turning custom section dates back off is reported",
     QC(qSecOn, clone(quote()), PROJECTS, COMPANIES), "Audio Rental Period", "Reset to quote dates");
+// A section still on the quote's dates, re-priced for a new window because the
+// project's dates moved after the quote was priced and the editor chose
+// "Update" (components/domain-docs.js::LTP_staleRentalSections). Both snapshots
+// resolve the project's CURRENT dates, so this per-section row is the only
+// trace of that decision in the log.
+const qStampOld = clone(quote());
+qStampOld.sections[0].pricedStartDate = "2026-09-01"; qStampOld.sections[0].pricedEndDate = "2026-09-02";
+const qStampNew = clone(qStampOld);
+qStampNew.sections[0].pricedStartDate = "2026-09-01"; qStampNew.sections[0].pricedEndDate = "2026-09-03";
+has("Q16a a following section re-priced for a new window is reported",
+    QC(qStampOld, qStampNew, PROJECTS, COMPANIES), "Audio Rental Period", "Repriced for");
+ok("Q16b ...naming both windows",
+   /September 3rd/.test(QC(qStampOld, qStampNew, PROJECTS, COMPANIES)[0].detail) && /September 2nd/.test(QC(qStampOld, qStampNew, PROJECTS, COMPANIES)[0].detail),
+   JSON.stringify(QC(qStampOld, qStampNew, PROJECTS, COMPANIES)));
+// A quote's first save after the stamp existed writes one where there was
+// none — that is bookkeeping, not a change the editor made.
+noRow("Q16c a section gaining its first stamp is not reported",
+      QC(quote(), qStampOld, PROJECTS, COMPANIES), "Audio Rental Period");
+// When the quote's own window moved between the snapshots (custom dates edited
+// on an unlinked quote), the "Quote Dates" row already says so; repeating it on
+// every section would drown the log.
+const qUnlinkedOld = clone(qStampOld); qUnlinkedOld.projectId = null; qUnlinkedOld.customStartDate = "2026-09-01"; qUnlinkedOld.customEndDate = "2026-09-02";
+const qUnlinkedNew = clone(qUnlinkedOld); qUnlinkedNew.customEndDate = "2026-09-03"; qUnlinkedNew.sections[0].pricedEndDate = "2026-09-03";
+has("Q16d editing an unlinked quote's dates is reported once, as Quote Dates",
+    QC(qUnlinkedOld, qUnlinkedNew, PROJECTS, COMPANIES), "Quote Dates", "September 3rd");
+noRow("Q16e ...not again per section", QC(qUnlinkedOld, qUnlinkedNew, PROJECTS, COMPANIES), "Audio Rental Period");
+// A custom-dated section's stamp just follows its own dates; the custom-dates
+// rows above cover it.
+const qCustomOld = clone(qStampOld); qCustomOld.sections[0].customDates = true; qCustomOld.sections[0].startDate = "2026-09-01"; qCustomOld.sections[0].endDate = "2026-09-02";
+const qCustomNew = clone(qCustomOld); qCustomNew.sections[0].endDate = "2026-09-03"; qCustomNew.sections[0].pricedEndDate = "2026-09-03";
+ok("Q16f a custom section's own date edit is reported as its rental period, not as a re-price",
+   (function() { const rows = QC(qCustomOld, qCustomNew, PROJECTS, COMPANIES).filter((r) => r.cat === "Audio Rental Period");
+     return rows.length === 1 && rows[0].detail.indexOf("Repriced") === -1; })(),
+   JSON.stringify(QC(qCustomOld, qCustomNew, PROJECTS, COMPANIES)));
+
 has("Q16 a section rename is reported",
     QC(quote(), clone(quote({ sections: [Object.assign({}, quote().sections[0], { label: "Lighting" })] })),
        PROJECTS, COMPANIES), "Section Renamed", "Audio");

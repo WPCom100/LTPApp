@@ -44,6 +44,32 @@
     return h("span", { style: { background: c.bg, color: c.text, border: "1px solid " + c.bd, padding: "2px 8px", borderRadius: "4px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", whiteSpace: "nowrap" } }, status);
   };
 
+  // "Dates changed" chip for a quote whose project moved its dates after the
+  // quote's equipment was priced — the list-level half of the notice the quote
+  // builder shows in full (components/domain-docs.js::LTP_staleRentalSections).
+  // Live quotes only: a locked one can't be fixed and a declined one is over.
+  // Renders nothing when there's nothing to say, so it can sit in any row.
+  window.LTPRentalDriftChip = function({ doc, projects }) {
+    if (!doc || (doc.status !== "draft" && doc.status !== "sent")) return null;
+    var stale = window.LTP_staleRentalSections(doc, projects);
+    if (!stale.length) return null;
+    return h("span", {
+      title: "The project's dates moved after this quote was priced. Open it to update each section to the new dates or keep its old rental period.",
+      style: { fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap" } },
+      "Dates changed");
+  };
+
+  // After a project save: when its dates moved, tell whoever moved them which
+  // live quotes price their equipment on those dates. The quotes themselves
+  // notice on their next open (stamps, see LTPRentalDriftChip); this is the
+  // heads-up at the moment of the change. A no-op when the dates didn't move.
+  window.LTP_toastRentalDrift = function(before, after, quotes) {
+    if (!before || !after) return;
+    if ((before.startDate || "") === (after.startDate || "") && (before.endDate || "") === (after.endDate || "")) return;
+    var n = window.LTP_rentalDriftNotice(after, quotes);
+    if (n && window.LTP_toast) window.LTP_toast(n.title, { message: n.message, variant: "warn", duration: 12000 });
+  };
+
   // Primary buttons wear the brand gradient + hover lift from the customer
   // views (classes ltp-btn-primary / ltp-btn-quiet live in index.html).
   window.Btn = function({ children, onClick, variant, small, disabled, style: sx }) {

@@ -750,6 +750,21 @@ window.LTP_quoteChanges = function(before, after, projects, companies) {
         changes.push({ cat: aSec.label + " Rental Period", detail: "Reset to quote dates" });
       }
     }
+    // A section still following the quote's dates, re-priced for a different
+    // window: the project's dates moved after the quote was priced and the
+    // editor chose "Update" (see LTP_staleRentalSections). This row is the only
+    // trace of that decision — both snapshots resolve the project's CURRENT
+    // dates, so the "Quote Dates" row above can't see it. Skipped when the
+    // quote's own window moved between the snapshots (custom dates edited, a
+    // different project linked): that row already says so, and every following
+    // section would otherwise repeat it.
+    else if (!aSec.customDates && bDates.start === aDates.start && bDates.end === aDates.end
+             && bSec.pricedStartDate && bSec.pricedEndDate && aSec.pricedStartDate && aSec.pricedEndDate
+             && (bSec.pricedStartDate !== aSec.pricedStartDate || bSec.pricedEndDate !== aSec.pricedEndDate)) {
+      changes.push({ cat: aSec.label + " Rental Period", detail: "Repriced for "
+        + window.LTP_formatDate(aSec.pricedStartDate) + " \u2192 " + window.LTP_formatDate(aSec.pricedEndDate)
+        + " (was " + window.LTP_formatDate(bSec.pricedStartDate) + " \u2192 " + window.LTP_formatDate(bSec.pricedEndDate) + ")" });
+    }
 
     // Section subtotal
     var stB = 0, stA = 0;
@@ -1085,6 +1100,124 @@ window.LTP_sectionDateStamp = function(doc, project, projects) {
   var end   = prim ? (prim.endDate   || "") : ((doc && doc.customEndDate)   || "");
   if (start === project.startDate && end === project.endDate) return null;
   return { customDates: true, startDate: project.startDate, endDate: project.endDate };
+};
+
+// ── Rental periods vs. the project's dates ───────────────────────────────────
+//
+// A quote's rental window is read LIVE from its primary project, and every
+// section that doesn't set its own dates follows it. Equipment lines, though,
+// are priced once — for the window in force when they were added or last
+// repriced — and the builder deliberately never re-derives those prices on open
+// (see the date-recalc effect in modules/quotes-builder.js). So when a project's
+// dates move after a quote exists, the quote silently reads the NEW dates over
+// prices computed for the OLD ones, and nobody is told.
+//
+// Each section therefore remembers the window its equipment was priced for
+// (`pricedStartDate` / `pricedEndDate`, stamped by the builder whenever it
+// reprices a section and again on save). A section following the quote's dates
+// whose stamp no longer matches the project is "stale": the builder shows it,
+// and the editor decides per section — re-price it for the new dates, or keep
+// the old dates as that section's own custom rental period. Neither happens on
+// its own. A section without a stamp (written before this existed, or appended
+// by the schedule builder) can't be judged and is treated as in sync.
+
+// The document's own rental window: the primary project's dates when it is
+// linked, else its custom dates. null when it has neither.
+window.LTP_docRentalWindow = function(doc, projects) {
+  if (!doc) return null;
+  var start = "", end = "";
+  if (doc.projectId != null) {
+    var p = (projects || []).find(function(pr) { return pr.id === doc.projectId; });
+    start = p ? (p.startDate || "") : "";
+    end   = p ? (p.endDate   || "") : "";
+  } else {
+    start = doc.customStartDate || "";
+    end   = doc.customEndDate   || "";
+  }
+  return (start && end) ? { start: start, end: end } : null;
+};
+
+// The window one section actually prices on: its own dates when it sets them
+// (and both are filled in), else the document's.
+window.LTP_sectionRentalWindow = function(sec, docWindow) {
+  if (sec && sec.customDates && sec.startDate && sec.endDate) return { start: sec.startDate, end: sec.endDate };
+  return docWindow || null;
+};
+
+function _sectionHasEquipment(sec) {
+  return (sec && sec.items || []).some(function(it) { return it && it.type === "equipment"; });
+}
+
+// The sections whose equipment is priced for a window the project has since
+// moved away from. Each entry is { id, label, pricedStart, pricedEnd } — the
+// old window is what "keep" turns into the section's custom dates. Empty when
+// the document has no linked project, the project has no dates, or nothing
+// disagrees. Only sections that FOLLOW the document's dates and carry an
+// equipment line count: a custom-dated section prices on its own window, and a
+// section with no equipment has nothing priced by the dates at all.
+window.LTP_staleRentalSections = function(doc, projects) {
+  if (!doc || doc.projectId == null) return [];
+  var win = window.LTP_docRentalWindow(doc, projects);
+  if (!win) return [];
+  var out = [];
+  (doc.sections || []).forEach(function(sec) {
+    if (!sec || sec.customDates) return;
+    if (!sec.pricedStartDate || !sec.pricedEndDate) return;
+    if (sec.pricedStartDate === win.start && sec.pricedEndDate === win.end) return;
+    if (!_sectionHasEquipment(sec)) return;
+    out.push({ id: sec.id, label: sec.label || "", pricedStart: sec.pricedStartDate, pricedEnd: sec.pricedEndDate });
+  });
+  return out;
+};
+
+// The sections with their priced window brought up to date — every section
+// that is NOT stale gets stamped with the window it currently prices on. Stale
+// ones are left exactly as they are: stamping them would declare the editor's
+// decision made when it wasn't, and the notice would vanish on save with the
+// prices still wrong. Called by the builder on save so a section that was
+// never stamped (legacy, or appended from a schedule) starts being watched
+// from its next save. Returns the same array when nothing changes.
+window.LTP_stampRentalWindows = function(doc, projects) {
+  var sections = (doc && doc.sections) || [];
+  var win = window.LTP_docRentalWindow(doc, projects);
+  var staleIds = {};
+  window.LTP_staleRentalSections(doc, projects).forEach(function(s) { staleIds[s.id] = true; });
+  var changed = false;
+  var out = sections.map(function(sec) {
+    if (!sec || staleIds[sec.id]) return sec;
+    var eff = window.LTP_sectionRentalWindow(sec, win);
+    if (!eff) return sec;
+    if (sec.pricedStartDate === eff.start && sec.pricedEndDate === eff.end) return sec;
+    changed = true;
+    return Object.assign({}, sec, { pricedStartDate: eff.start, pricedEndDate: eff.end });
+  });
+  return changed ? out : sections;
+};
+
+// What to tell whoever just moved a project's dates: which live quotes price
+// their equipment on those dates. Draft and sent only — an accepted or
+// converted quote is locked, and a declined one is over. Counts every quote
+// with a section that follows the dates and holds equipment, stamped or not:
+// the stamp is how the BUILDER notices later, but the person changing the
+// dates deserves the full count now. Returns null when there's nothing to say,
+// else { count, refs, title, message } ready for a toast.
+window.LTP_rentalDriftNotice = function(project, quotes) {
+  if (!project) return null;
+  var hits = (quotes || []).filter(function(q) {
+    if (!q || q.projectId !== project.id) return false;
+    if (q.status !== "draft" && q.status !== "sent") return false;
+    return (q.sections || []).some(function(sec) { return sec && !sec.customDates && _sectionHasEquipment(sec); });
+  });
+  if (!hits.length) return null;
+  var refs = hits.map(function(q) { return window.LTP_QUOTE_REF(q); });
+  var n = hits.length;
+  return {
+    count: n,
+    refs: refs,
+    title: n === 1 ? "1 quote follows these dates" : n + " quotes follow these dates",
+    message: refs.join(", ") + (n === 1 ? " prices its equipment on the old rental period." : " price their equipment on the old rental period.")
+      + " Open " + (n === 1 ? "it" : "each") + " to update the sections to the new dates or keep the old ones.",
+  };
 };
 
 // Append sections to a document WITHOUT touching what's already in it.

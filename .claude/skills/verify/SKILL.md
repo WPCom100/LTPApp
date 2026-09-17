@@ -70,3 +70,12 @@ camelCase JSON in/out, auth via the cookie. Field values are validated
   `div:has(> label:text-is("Day Rate ($)")) input`.
 - Literal `…` in UI strings (option labels like "Crew…") — match the ellipsis
   character, not three dots.
+- Playwright's `text=foo` selector is case-insensitive and matches substrings,
+  so counting occurrences with it over-counts ("Priced for" also hits "still
+  priced for" in a banner). Count something unambiguous instead, e.g. a button
+  by its full label, or use a regex `text=/^…/`.
+- The desktop calendar field (LTPDateField) is a TEXT input, `input[aria-label="<label>"]`,
+  typed as `mm/dd/yyyy` and committed on blur — `fill(...)` then `press("Tab")`.
+- Seeding writes with `curl` needs `-H "Origin: http://127.0.0.1:8000"` next
+  to the cookie (backend/csrf.py checks it); a PUT also needs `If-Match: <_rev>`
+  from a fresh GET of the row.

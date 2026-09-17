@@ -250,6 +250,12 @@ class Quote(Base):
                                                         # by every consumer but no longer written by any UI.
     sections = Column(JSON, default=list)               # list[{id: str, label: str, customDates: bool,
                                                         #       startDate: str, endDate: str,
+                                                        #       pricedStartDate: str, pricedEndDate: str,
+                                                        #         (the rental window the section's equipment lines
+                                                        #         were last priced for — "" = never stamped. Written
+                                                        #         by the quote builder; it is how a later move of the
+                                                        #         project's dates is noticed and put to the editor.
+                                                        #         See components/domain-docs.js::LTP_staleRentalSections)
                                                         #       projectId: int|null,   (set on sections appended from
                                                         #         another project; the label also names it, because
                                                         #         label is what survives the public-view scrub —
