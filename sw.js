@@ -336,7 +336,15 @@
 // sign-out link is gone (the Account tab has the button). modules/
 // crew-portal.js, data/settings.js (the crewEmailChange template) and
 // modules/settings.js are runtime-cached, so the shell must be refetched.
-var CACHE_VERSION = 'ltp-shell-v98';
+// v99: the schedule editor's crew picker fills only the clicked position
+// (it used to also pencil the person into every open same-role slot that
+// date, components/schedule-editor.js), and a pay period that nets $0 (full
+// margin only) is settled as exported + paid on export with no QuickBooks
+// bill: the Payouts tab's export modal, day chips and paid-day dialog
+// (modules/labor.js) and the builder's paid-day dialog
+// (modules/schedule-builder.js). All three are cached, so the shell must be
+// refetched.
+var CACHE_VERSION = 'ltp-shell-v99';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
