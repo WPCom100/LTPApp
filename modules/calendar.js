@@ -13,7 +13,7 @@ window.CalendarView = function({ projects }) {
     calMonth: calMonth,
     setCalMonth: setCalMonth,
     setSelectedProjectId: function(id, tab) {
-      if (!id) return nav("projects");
+      if (!id) return window.LTPRouter.goBack();   // deselect = close: one step back
       nav("projects/" + id + (tab ? "/" + tab : ""));
     },
   };

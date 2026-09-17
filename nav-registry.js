@@ -137,8 +137,30 @@
   // Keyed by the router's entryKey (sid:idx) in sessionStorage, so Back to an
   // entry restores what that entry had; a replaced entry drops its state.
   var STORE_KEY = "ltp.nav.store";
-  function readStore() { try { return JSON.parse(window.sessionStorage.getItem(STORE_KEY) || "{}") || {}; } catch (e) { return {}; } }
-  function writeStore(s) { try { window.sessionStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* best effort */ } }
+  var MAX_ENTRIES = 60;          // deepest-N kept; a session rarely goes near this
+  // Parsed once and kept: this tab is the only writer, and the alternative is a
+  // JSON.parse of the whole store on every render of every list hook — which on
+  // a search box is once per keystroke per field.
+  var cache = null;
+  function readStore() {
+    if (cache) return cache;
+    try { cache = JSON.parse(window.sessionStorage.getItem(STORE_KEY) || "{}") || {}; }
+    catch (e) { cache = {}; }
+    return cache;
+  }
+  function writeStore(s) {
+    cache = s;
+    // Drop the shallowest entries when the session has wandered far. Keys are
+    // "<sid>:<idx>", so the depth orders them; the entries a Back could still
+    // reach are the deep ones.
+    var keys = Object.keys(s);
+    if (keys.length > MAX_ENTRIES) {
+      keys.sort(function(a, b) { return (parseInt(a.split(":")[1], 10) || 0) - (parseInt(b.split(":")[1], 10) || 0); })
+          .slice(0, keys.length - MAX_ENTRIES)
+          .forEach(function(k) { delete s[k]; });
+    }
+    try { window.sessionStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* quota or blocked: the in-memory cache still serves this tab */ }
+  }
   function entryState(key) { return key ? (readStore()[key] || null) : null; }
   function setEntryField(key, name, value) {
     if (!key) return;
@@ -186,6 +208,12 @@
       ref.current = next; pair[1](next);
       setEntryField(window.LTPRouter.entryKey(), name, next);
     }, [name]);
+    // After a replace the entry's state is dropped, but this value is still
+    // what is on screen — write it back so the entry stays a full record of it.
+    React.useEffect(function() {
+      var k = window.LTPRouter.entryKey(), s = entryState(k);
+      if (k && (!s || !(name in s))) setEntryField(k, name, ref.current);
+    });
     // Same component instance, different entry (a tab replace, or Back within
     // one module): adopt that entry's remembered value, or the default.
     React.useEffect(function() {
@@ -194,6 +222,30 @@
       if (JSON.stringify(want) !== JSON.stringify(ref.current)) { ref.current = want; pair[1](want); }
     }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
     return [pair[0], setBoth];
+  };
+
+  // ── A route naming a record that is not there ────────────────────────────
+  // A stale bookmark, a link to something since deleted, an id typed by hand,
+  // or an ancestor seeded for a record that has since gone. Sitting on a dead
+  // URL is worse than it looks: Back walks back through it, a reload lands
+  // nowhere, and both document builders quietly present a BLANK draft under
+  // the dead id, which a user can type into and save.
+  //
+  // `fallback` is the path to land on. Pass it whenever the declared parent
+  // could name the same dead record (`…/:id/edit` → `…/:id`): the list always
+  // exists, so one replace settles it instead of a cascade.
+  //
+  // Callers holding an editable draft pass a verdict taken WHEN THE SCREEN
+  // OPENED, not a live one. A record that vanishes while the screen is up
+  // (another window deleted it) may have unsaved work on it, and yanking the
+  // user out would destroy it with no explanation — modules/projects.js shows
+  // a written explanation for exactly that case instead.
+  window.LTP_useMissingRecord = function(isMissing, fallback) {
+    React.useEffect(function() {
+      if (!isMissing) return;
+      var R = window.LTPRouter;
+      R.replace(fallback || parentOf(R.getRoute()) || R.defaultRoute);
+    }, [isMissing, fallback]);
   };
 
   window.LTP_NAV_REGISTRY = {

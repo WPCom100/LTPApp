@@ -30,12 +30,15 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     nav("projects/" + id + (tab ? "/" + tab : ""));
   }
 
-  var [projectFilter,   setProjectFilter]   = useState("all");
-  var [searchQuery,     setSearchQuery]     = useState("");
+  // Filter / sort / search deliberately stay OUT of the URL, but Back must
+  // still put this list back the way the user left it — so they hang off the
+  // history entry instead (nav-registry.js::LTP_useNavState).
+  var [projectFilter,   setProjectFilter]   = window.LTP_useNavState("filter", "all");
+  var [searchQuery,     setSearchQuery]     = window.LTP_useNavState("search", "");
   // ONE sort state for both viewports — { key, dir } naming a column in COLS
   // below. The phone chips and the desktop column headers set the same state.
-  var [sort,            setSort]            = useState({ key: "start", dir: "asc" });
-  var [showCompleted,   setShowCompleted]   = useState(false);
+  var [sort,            setSort]            = window.LTP_useNavState("sort", { key: "start", dir: "asc" });
+  var [showCompleted,   setShowCompleted]   = window.LTP_useNavState("showCompleted", false);
   var [showAddMeeting,  setShowAddMeeting]  = useState(null);
   var [showAddNote,     setShowAddNote]     = useState(null);
   var [viewNote,        setViewNote]        = useState(null);
@@ -59,6 +62,14 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       if (v.toggles && "showCompleted" in v.toggles) setShowCompleted(!!v.toggles.showCompleted);
     },
   });
+
+  // A dead project id in the URL — see LTP_useMissingRecord (nav-registry.js).
+  // MUST sit with the hooks above, before the early return below. The schedule
+  // route is deliberately excluded: it carries an open, possibly dirty builder
+  // and has its own written explanation a few lines down.
+  window.LTP_useMissingRecord(
+    !!(urlId && urlAction !== "schedule" && !projects.some(function(p) { return p.id === urlId; })),
+    "projects");
 
   // Full-screen schedule builder. This conditional return MUST stay below every
   // hook above: an early return placed before the useState calls changes the

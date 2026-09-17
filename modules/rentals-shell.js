@@ -60,6 +60,19 @@
     var editKit       = editKitId      ? kits.find(function(k) { return k.id === editKitId; })             : null;
     var openCross     = openCrossId    ? (crossRentals || []).find(function(o) { return o.id === openCrossId; }) : null;
     var editCross     = editCrossId    ? (crossRentals || []).find(function(o) { return o.id === editCrossId; }) : null;
+    // The record this URL names is gone (deleted here or in another window, or
+    // a stale link): the modal simply does not render, leaving the list under a
+    // dead URL that Back would then walk through. The list always exists, so it
+    // is the fallback rather than the declared parent (…/:id for an edit form,
+    // which is just as dead).
+    var listPath = "rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment");
+    window.LTP_useMissingRecord(!!(
+      (openEqId && !openEq) || (editEqId && !editEq) || (scanEqId && !scanEq) ||
+      (openContainerId && !openContainer) || (editContainerId && !editContainer) ||
+      (openKitId && !openKit) || (editKitId && !editKit) ||
+      (openCrossId && !openCross) || (editCrossId && !editCross)
+    ), listPath);
+
     // The checker and the quote picker open a new order with the item, the
     // dates and a chosen vendor already filled in (router.js parses the query).
     var crossPrefill = showAddCross ? (function(qs) {
@@ -69,7 +82,6 @@
     })(route.query) : null;
 
     // ── Navigation helpers ───────────────────────────────────────────────────
-    function goList()        { nav("rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment")); }
     // The checker's shortage hint opens a new order with everything filled in.
     function crossRentFor(eid, start, end, vendorId) {
       nav("rentals/cross-rentals/new?equipmentId=" + eid + (start ? "&start=" + start : "") + (end ? "&end=" + end : "") + (vendorId ? "&vendorId=" + vendorId : ""));

@@ -140,7 +140,16 @@ if (!window.LTP_useSortable) window.LTP_useSortable = function () {
 };
 if (!window.LTP_deriveRecipients) window.LTP_deriveRecipients = function () { return []; };
 if (!window.LTP_toast) window.LTP_toast = function () {};
-if (!window.LTPRouter) window.LTPRouter = { navigate: function () {}, current: function () { return {}; } };
+if (!window.LTPRouter) window.LTPRouter = { navigate: function () {}, replace: function () {}, goBack: function () {},
+  current: function () { return {}; }, getRoute: function () { return {}; }, entryKey: function () { return null; },
+  defaultRoute: "dashboard" };
+// Navigation hooks (nav-registry.js) — the builders call these at render time.
+// Stubbed rather than loaded: the registry wants a live history, and what this
+// suite asserts is the render tree, not navigation. LTP_useNavState keeps the
+// plain-useState behaviour so the trees stay comparable; the redirect hook is
+// inert because no scenario here names a missing record.
+if (!window.LTP_useNavState) window.LTP_useNavState = function (name, initial) { return React.useState(initial); };
+if (!window.LTP_useMissingRecord) window.LTP_useMissingRecord = function () {};
 if (!window.LTP_HELPERS) window.LTP_HELPERS = {};
 window.LTP_CURRENT_USER = "Test User";
 window.LTP_CURRENT_USER_ID = "u1";

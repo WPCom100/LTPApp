@@ -376,10 +376,13 @@
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var fmt = window.LTP_formatDate;
     var isMobile = window.LTP_useIsMobile();
-    var [statusFilter, setStatusFilter] = useState("open");
-    var [vendorFilter, setVendorFilter] = useState("all");
-    var [search, setSearch] = useState("");
-    var [sort, setSort] = useState({ key: "dates", dir: "asc" });
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [statusFilter, setStatusFilter] = window.LTP_useNavState("filter", "open");
+    var [vendorFilter, setVendorFilter] = window.LTP_useNavState("vendorFilter", "all");
+    var [search, setSearch] = window.LTP_useNavState("search", "");
+    var [sort, setSort] = window.LTP_useNavState("sort", { key: "dates", dir: "asc" });
     // Per-user saved views — sort + the status + vendor filters.
     var vw = window.LTP_useTableView({
       tableKey: "rentals-cross",

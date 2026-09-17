@@ -19,13 +19,16 @@
 
   window.QuotesList = function({ quotes, setQuotes, companies, contacts, projects }) {
     var isMobile = window.LTP_useIsMobile();
-    var [filter, setFilter]     = useState("all");
-    var [search, setSearch]     = useState("");
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [filter, setFilter]     = window.LTP_useNavState("filter", "all");
+    var [search, setSearch]     = window.LTP_useNavState("search", "");
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
     // below. The phone chips and the desktop column headers set the same state
     // and order through the same accessors, so they cannot disagree.
-    var [sort, setSort] = useState({ key: "created", dir: "desc" });
-    var [showConverted, setShowConverted] = useState(false);
+    var [sort, setSort] = window.LTP_useNavState("sort", { key: "created", dir: "desc" });
+    var [showConverted, setShowConverted] = window.LTP_useNavState("showConverted", false);
 
     // Resolve the client label — either a company or a contact's full name.
     function clientLabel(qt) {

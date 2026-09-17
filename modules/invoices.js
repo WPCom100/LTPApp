@@ -79,14 +79,17 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function InvoiceList({ invoices, companies, contacts, projects, quotes }) {
     var isMobile = window.LTP_useIsMobile();
-    var [filter, setFilter] = useState("all");
-    var [search, setSearch] = useState("");
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [filter, setFilter] = window.LTP_useNavState("filter", "all");
+    var [search, setSearch] = window.LTP_useNavState("search", "");
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
     // below. The phone's Newest / Oldest / Ref chips set the same state the
     // desktop column headers do, and both order through the same accessors, so
     // the two viewports can never disagree about what "Newest" means.
-    var [sort, setSort] = useState({ key: "date", dir: "desc" });
-    var [hidePaid, setHidePaid] = useState(false);
+    var [sort, setSort] = window.LTP_useNavState("sort", { key: "date", dir: "desc" });
+    var [hidePaid, setHidePaid] = window.LTP_useNavState("hidePaid", false);
     // Per-user saved views — sort + status chip + the Hide Paid toggle.
     var vw = window.LTP_useTableView({
       tableKey: "invoices",
@@ -829,6 +832,14 @@
       var inv = invoices.find(function(x) { return x.id === invoiceId; });
       return inv ? cloneInvoice(inv) : emptyInvoice();
     }, [invoiceId, isNew]);
+
+    // The invoice this URL names does not exist — see the matching guard in
+    // modules/quotes-builder.js. Without it the screen is a blank builder under
+    // a dead id that a save would turn into a real invoice.
+    var missingAtOpen = useMemo(function() {
+      return !isNew && invoiceId != null && !invoices.some(function(x) { return x.id === invoiceId; });
+    }, [invoiceId, isNew]);
+    window.LTP_useMissingRecord(missingAtOpen, "invoices");
 
     var [draft, setDraftRaw] = useState(initial);
     // Owns dirty state AND mirrors to window.__LTP_UNSAVED synchronously

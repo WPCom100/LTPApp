@@ -524,15 +524,38 @@ self.addEventListener('push', function(event) {
   );
 });
 
-// Tapping a notification focuses an open app window (navigating it to the
-// target route) or opens a new one if none is around.
+// Public surfaces a notification must never navigate away from: the client's
+// quote/invoice share view and the crew call sheet are somebody else's page,
+// reached by token, and the crew portal is a different app on its own cookie.
+// Every push target is a staff route (backend/webpush.py callers), so sending
+// one into those windows would steal the tab and show a sign-in screen.
+function isPublicSurface(href) {
+  var hash;
+  try { hash = new URL(href).hash.replace(/^#\/?/, ''); } catch (e) { return true; }
+  return hash.indexOf('view/') === 0 || hash.indexOf('crew/') === 0
+      || hash === 'crew-portal' || hash.indexOf('crew-portal/') === 0 || hash.indexOf('crew-portal?') === 0;
+}
+
+// Tapping a notification focuses an open STAFF app window (navigating it to
+// the target route) or opens a new one. A window showing a public page is
+// left alone — it gets a new window rather than being navigated away.
 self.addEventListener('notificationclick', function(event) {
   event.notification.close();
   var target = (event.notification.data && event.notification.data.url) || '/#/dashboard';
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function(list) {
-      for (var i = 0; i < list.length; i++) {
-        var c = list[i];
+      // Same-origin staff windows only; a controlled one (this worker is
+      // driving it, so it is a live app tab) wins over an uncontrolled one.
+      var eligible = list.filter(function(c) {
+        return c.url && c.url.indexOf(self.location.origin) === 0 && !isPublicSurface(c.url);
+      });
+      eligible.sort(function(a, b) {
+        var ca = a.frameType === 'top-level' ? 0 : 1, cb = b.frameType === 'top-level' ? 0 : 1;
+        if (ca !== cb) return ca - cb;
+        return (b.focused ? 1 : 0) - (a.focused ? 1 : 0);
+      });
+      for (var i = 0; i < eligible.length; i++) {
+        var c = eligible[i];
         if ('focus' in c) {
           if ('navigate' in c) { try { c.navigate(target); } catch (e) {} }
           return c.focus();

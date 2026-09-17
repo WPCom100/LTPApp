@@ -1134,6 +1134,16 @@
       return q ? cloneDraft(q) : emptyDraft();
     }, [quoteId, isNew]);
 
+    // The quote this URL names does not exist — a stale link, or deleted before
+    // we got here. `initial` above fell back to a blank draft, so without this
+    // the screen is an empty builder under #/quotes/<dead id> that a save would
+    // turn into a real quote. Same deps as `initial` on purpose: a delete that
+    // lands later is a different situation (see LTP_useMissingRecord).
+    var missingAtOpen = useMemo(function() {
+      return !isNew && quoteId != null && !quotes.some(function(q) { return q.id === quoteId; });
+    }, [quoteId, isNew]);
+    window.LTP_useMissingRecord(missingAtOpen, "quotes");
+
     // Two-tier setter:
     //   setDraftRaw — internal, does NOT mark dirty (used by reset and post-save sync)
     //   setDraft    — public wrapper used by all mutators, automatically marks dirty
@@ -1940,7 +1950,11 @@
       cleanRef.current = updatedQuote;
       setIsDirty(false);
 
-      setTimeout(function() { nav("invoices/" + targetId); }, 100);
+      // Push, not replace: the quote still exists and Back must return to it.
+      // This used to sit in a 100 ms setTimeout, which let a Back pressed in
+      // that window race the navigation; the state writes above are already
+      // committed by React before this line runs.
+      nav("invoices/" + targetId);
     }
 
     // ── Derived data ───────────────────────────────────────────────────────────
