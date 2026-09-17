@@ -16,6 +16,13 @@ one pay period onto a QuickBooks Vendor Bill and pushes it idempotently:
 
 The money never comes from the client — the route re-derives it from the frozen
 schedule snapshots (backend/payouts.py) before calling push_payout_bill.
+
+A period whose signed days ALL pay $0 — someone on a full-margin position only
+(the owner filling a role), or a plain no-show — has nothing to post, but it is
+still a finished period. Rather than skipping it (which left those days with no
+export or paid state at all), the push SETTLES it locally: the ledger lines are
+written and the row is stamped paid, with no QuickBooks call and no bill. See
+``is_zero_settled`` for the marker and ``_settle_zero`` for the write.
 """
 import asyncio
 import hashlib
@@ -56,6 +63,17 @@ def _bill_is_paid(qb_bill: dict) -> bool:
     return (qb_bill.get("Balance") is not None
             and _num(qb_bill.get("Balance")) <= _PAID_EPSILON
             and _num(qb_bill.get("TotalAmt")) > 0)
+
+
+def is_zero_settled(pb) -> bool:
+    """True for a PayoutBill row that was SETTLED AT $0 instead of posted: the
+    period had signed days but every one paid nothing, so no bill went to
+    QuickBooks and nothing was paid out — the row just carries the ledger lines
+    and a paid stamp so the days read exported + paid everywhere. The marker is
+    the combination "paid, but no QuickBooks bill id": a real bill always has
+    its qb_bill_id before it can be paid (the poller and both paid-adopt paths
+    require one), so the two never collide."""
+    return pb is not None and pb.qb_paid_at is not None and not pb.qb_bill_id
 
 
 def _adopt_paid_and_refuse(pb, qb_bill):
@@ -369,14 +387,34 @@ def _line_signature(doc_no, period, lines) -> str:
     return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
+def _zero_signature(period, days) -> str:
+    """Signature of a $0 settlement: the period plus WHICH days it covers (there
+    are no bill lines to hash). A margin day signed off later in the same period
+    changes it, so the re-export re-settles and the new day joins the ledger."""
+    parts = ["zero", period["start"], period["end"], period.get("pay_day") or ""]
+    for d in sorted(days, key=lambda x: (x["date"], str(x.get("project_id")))):
+        parts.append("%s|%s" % (d.get("project_id"), d["date"]))
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
 def plan_bill(contact_id, draft, period, accounts) -> dict:
     """Pure: turn a payout draft into the bill's billable days, total, lines,
     DocNumber, and line-signature — or raise PayoutNotBillable. Shared by the
     preview (report what would post) and push (what actually posts) so the two
-    can never disagree."""
-    billable = [d for d in draft["days"] if int(round(d["payable"] * 100)) != 0]
+    can never disagree.
+
+    A period whose signed days ALL pay $0 returns a ZERO plan instead
+    (``zero: True``, no lines, ``billable`` = those $0 days so the ledger and
+    double-pay guard still cover them): nothing to post, but the period is
+    done — the push settles it locally with no QuickBooks call
+    (``_settle_zero``) so the days read exported and paid."""
+    signed = draft["days"]
+    billable = [d for d in signed if int(round(d["payable"] * 100)) != 0]
     if not billable:
-        raise PayoutNotBillable("no signed, non-zero payout days in this period")
+        if signed:
+            return {"zero": True, "billable": list(signed), "total": 0.0, "lines": [],
+                    "doc_number": None, "signature": _zero_signature(period, signed)}
+        raise PayoutNotBillable("no signed payout days in this period")
     total = js_round2(sum(d["payable"] for d in billable))
     if total <= 0:
         raise PayoutNotBillable(
@@ -513,10 +551,14 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
     conn = await quickbooks.load_connection(db)
 
     plan = plan_bill(contact.id, draft, period, accounts)   # raises PayoutNotBillable
+    pb = await _find_or_create_payout_bill(db, contact.id, period)
+
+    # Every signed day pays $0 -> settle locally, no bill, no QuickBooks call.
+    if plan.get("zero"):
+        return await _settle_zero(db, pb, contact, plan, period, user)
+
     billable, total, lines = plan["billable"], plan["total"], plan["lines"]
     doc_no, sig = plan["doc_number"], plan["signature"]
-
-    pb = await _find_or_create_payout_bill(db, contact.id, period)
 
     # Unchanged + already synced -> skip the QuickBooks round-trip entirely.
     if pb.qb_bill_id and pb.qb_sync_status == "synced" and pb.line_signature == sig:
@@ -525,8 +567,15 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
 
     # Already paid in QuickBooks + the payout has since changed -> never overwrite
     # a paid bill. The producer must void/adjust the bill in QB (or issue a credit).
+    # A $0 settlement is the one exception: it is a local marker only (no bill
+    # was posted, nothing was paid out), so a payout that has since become
+    # billable — a margin flag cleared, a paid day signed off — simply reopens
+    # it and posts the real bill. The marker is cleared once that bill is in.
+    reopen = False
     if pb.qb_paid_at is not None:
-        raise PayoutNotBillable("already paid in QuickBooks — changes were not pushed")
+        if not is_zero_settled(pb):
+            raise PayoutNotBillable("already paid in QuickBooks — changes were not pushed")
+        reopen = True
 
     await _assert_not_double_billed(db, contact.id, pb.id, billable)
 
@@ -593,6 +642,9 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
         return {"ok": False, "action": "error", "contactId": contact.id, "error": e.safe_message}
 
     _apply_bill_result(pb, resp_bill, total, sig, doc_no, period)
+    if reopen:
+        pb.qb_paid_at = None   # the $0 settlement is superseded by a real, unpaid bill
+        pb.qb_balance = None
     # Reconcile QuickBooks' returned total against ours (QB derives it from the
     # same lines, so a mismatch signals a bug worth surfacing — flag, don't block).
     if pb.qb_total_amt is not None and abs(pb.qb_total_amt - total) > 0.01:
@@ -623,7 +675,55 @@ async def push_payout_bill(db, contact, draft, period, accounts, user=None, *,
            f"Payout bill {action} for {period.get('label') or period['end']} — ${total:.2f}",
            [{"cat": "QB Bill Id", "detail": pb.qb_bill_id or "?"},
             {"cat": "Action", "detail": action},
-            {"cat": "DocNumber", "detail": doc_no}])
+            {"cat": "DocNumber", "detail": doc_no}]
+           + ([{"cat": "Reopened", "detail": "was settled at $0 (no bill) — now billed"}] if reopen else []))
     await db.flush()
     return {"ok": True, "action": action, "contactId": contact.id,
             "qbBillId": pb.qb_bill_id, "amount": pb.amount}
+
+
+async def _settle_zero(db, pb, contact, plan, period, user) -> dict:
+    """Settle a period that nets $0 with no QuickBooks call: write the ledger
+    lines for its signed $0 days and stamp the row paid, so the days read
+    exported + paid on the Payouts tab and are protected like any paid day
+    (double-pay ledger, paid-day edit guard). Idempotent on the zero signature.
+    Refuses when a real bill was already exported for the period — the money
+    on it is QuickBooks' to void or adjust, never silently overwritten."""
+    days, sig = plan["billable"], plan["signature"]
+    if pb.qb_bill_id:
+        raise PayoutNotBillable("the payout now nets $0 but a vendor bill was already exported "
+                                "for this period — void or adjust it in QuickBooks")
+    if is_zero_settled(pb) and pb.line_signature == sig:
+        return {"ok": True, "action": "unchanged", "contactId": contact.id,
+                "qbBillId": None, "amount": 0.0, "zero": True}
+
+    await _assert_not_double_billed(db, contact.id, pb.id, days)
+    try:
+        async with db.begin_nested():   # same isolation as the real push's ledger write
+            await _replace_ledger(db, pb, contact.id, days)
+    except IntegrityError:
+        pb.qb_sync_status = "error"
+        pb.qb_last_error = "double-pay ledger conflict — a day here is already billed on another push"
+        _stamp(pb, user, "qbo_payout_failed",
+               f"Payout ledger conflict for {period.get('label') or period['end']}",
+               [{"cat": "Error", "detail": pb.qb_last_error}])
+        await db.flush()
+        return {"ok": False, "action": "error", "contactId": contact.id, "error": pb.qb_last_error}
+
+    now = datetime.now(timezone.utc)
+    pb.amount = 0.0
+    pb.line_signature = sig
+    pb.doc_number = None          # no QuickBooks document exists for this period
+    pb.period_index = period.get("index")
+    pb.qb_sync_status = "synced"
+    pb.qb_synced_at = now
+    pb.qb_last_error = None
+    if pb.qb_paid_at is None:     # re-settling (a new $0 day) keeps the original paid stamp
+        pb.qb_paid_at = now
+    _stamp(pb, user, "qbo_payout_settled",
+           f"Settled at $0 for {period.get('label') or period['end']} — no QuickBooks bill",
+           [{"cat": "Days", "detail": ", ".join(d["date"] for d in days)},
+            {"cat": "Amount", "detail": "$0.00 — nothing owed (full margin / no-show)"}])
+    await db.flush()
+    return {"ok": True, "action": "settled", "contactId": contact.id,
+            "qbBillId": None, "amount": 0.0, "zero": True}

@@ -1253,6 +1253,13 @@ class PayoutBill(Base):
     # qb_balance is the last observed outstanding balance (0 = paid); qb_paid_at
     # is set once Balance hits 0 — non-null means the bill is PAID (polling stops,
     # and its days are protected from silent re-pricing).
+    #
+    # One row shape has NO QuickBooks bill at all: a period whose signed days
+    # every one paid $0 (a full-margin position, a no-show) is settled locally
+    # by the export — ledger lines written, qb_paid_at stamped, amount 0,
+    # qb_bill_id/doc_number NULL. "Paid with no bill id" is that marker
+    # (backend/qbo_payouts.py::is_zero_settled); the poller never sees it
+    # (it selects on qb_bill_id) and a later non-zero payout reopens it.
     qb_total_amt = Column(Float, nullable=True)
     qb_balance = Column(Float, nullable=True)
     qb_paid_at = Column(DateTime(timezone=True), nullable=True)

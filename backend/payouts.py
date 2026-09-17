@@ -541,7 +541,10 @@ async def paid_day_conflicts(db, project_id, stored_schedule, incoming_schedule,
         if before.get(key) == after.get(key):
             continue
         hits.append({"contactId": line.contact_id, "date": line.date,
-                     "docNumber": bill.doc_number, "amount": line.amount, "name": ""})
+                     "docNumber": bill.doc_number, "amount": line.amount, "name": "",
+                     # Settled at $0 on export (no QuickBooks bill) rather than
+                     # paid through one — the dialogs word the two differently.
+                     "zero": not bill.qb_bill_id})
     if not hits:
         return []
 
