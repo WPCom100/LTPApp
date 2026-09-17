@@ -368,7 +368,12 @@
 // the user's account (new components/table-views.js; GET/PUT /api/me/preferences).
 // The Name column on Contacts and the Crew Roster now sorts by the name as
 // shown (first name first). New + changed cached files, so the shell refetches.
-var CACHE_VERSION = 'ltp-shell-v103';
+// v104: predictable Back. router.js stamps every in-app history entry, a
+// cold deep link is seeded with its declared ancestors (new nav-registry.js),
+// tabs replace instead of push, modal close / save / delete step back, and
+// the requested screen survives the Google sign-in hop. New boot file plus
+// index.html, app.js and every module with a navigation call.
+var CACHE_VERSION = 'ltp-shell-v104';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -379,6 +384,7 @@ var SAME_ORIGIN_PRECACHE = [
   // Boot chain — the scripts index.html loads before the app can render.
   '/components/viewport-height.js',
   '/router.js',
+  '/nav-registry.js',
   '/theme.js',
   // The domain layer split out of theme.js. Precached for the same reason
   // theme.js is: it is boot-chain code, and a cold offline launch that has to

@@ -128,7 +128,7 @@ function LTPSignInScreen() {
       h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: B.accentSoft, marginBottom: 10 } }, "Business Suite"),
       h("div", { style: { fontSize: "18px", fontWeight: 700, color: B.text, marginBottom: 6, letterSpacing: "-0.01em" } }, "Welcome back"),
       h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 28, lineHeight: 1.5 } }, "Sign in with your Google account to continue."),
-      h("a", { href: "/auth/login",
+      h("a", { href: "/auth/login", onClick: function() { window.LTP_NAV_REGISTRY.stashReturnTo(); },
         style: { display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 10, background: "#fff", color: "#1f1f1f", border: "1px solid #dadce0", borderRadius: "6px", padding: "10px 24px", fontSize: "13px", fontWeight: 600, textDecoration: "none", fontFamily: "inherit", cursor: "pointer", minWidth: 220 } },
         // Inline Google "G" mark
         h("svg", { width: 18, height: 18, viewBox: "0 0 48 48" },
@@ -263,6 +263,18 @@ function LTPSignedInApp(props) {
   // ref so successive calls within the same render advance correctly. We
   // lose "monotonic across deletes" (a deleted highest-id can be reused);
   // acceptable for solo use, and the user already lost that on every DB reset.
+  // Navigation (docs/NAVIGATION_DESIGN.md): canonicalise a bad or bare URL by
+  // replace, seed a cold entry's ancestors now that auth has resolved, and put
+  // a list back where the user left it when they return to it with Back.
+  useEffect(function() {
+    var REG = window.LTP_NAV_REGISTRY;
+    var canon = REG.canonical(route);
+    if (canon) { window.LTPRouter.replace(canon); return; }
+    if (REG.seedIfCold()) return;          // re-fires hashchange; the next run restores scroll
+    var raf = window.requestAnimationFrame || function(f) { return setTimeout(f, 0); };
+    raf(REG.restoreScroll);
+  }, [route]);
+
   var counterRef = useRef(0);
   useEffect(function() {
     var maxId = (quotes || []).reduce(function(m, q) {
@@ -479,7 +491,7 @@ function LTPSignedInApp(props) {
       case "settings":
         if (!isAdmin) return h(LTPPermissionDenied, { what: "Settings" });
         return h(window.LTPErrorBoundary, { name: "Settings" }, h(window.SettingsView, { settings: settings, setSettings: setSettings, invoices: invoices, quotes: quotes, services: services }));
-      default: nav("dashboard"); return null;
+      default: return null;   // canonicalised to home by the navigation effect (replace, never a push in render)
     }
   }
 
@@ -548,7 +560,7 @@ function LTPSignedInApp(props) {
         }).map(function(m) {
           var isActive = activeModule === m.id;
           var rows = [
-            h("button", { key: m.id, onClick: function() { nav(m.id); },
+            h("button", { key: m.id, onClick: function() { window.LTP_NAV_REGISTRY.goTab(m.id); },
               style: { display: "flex", alignItems: "center", gap: 10, padding: sidebarOpen ? "9px 11px" : "9px 0", justifyContent: sidebarOpen ? "flex-start" : "center", background: isActive ? B.raised : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: isActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%" } },
               h("span", { style: { width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 } },
                 window.LTP_NAV_ICON(m.id, 18, isActive ? B.accent : B.textMut)),
@@ -563,7 +575,7 @@ function LTPSignedInApp(props) {
             ];
             crmSubs.forEach(function(sub) {
               var subActive = route.module === "crm" && (route.sub === sub.path.split("/")[1] || (!route.sub && sub.path === "crm/companies"));
-              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { window.LTP_NAV_REGISTRY.goTab(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
             });
@@ -576,7 +588,7 @@ function LTPSignedInApp(props) {
               var subActive = sub.path === "rentals"
                 ? (route.module === "rentals" && !route.sub)
                 : (route.module === "rentals" && route.sub === sub.path.split("/")[1]);
-              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { window.LTP_NAV_REGISTRY.goTab(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
             });
@@ -598,7 +610,7 @@ function LTPSignedInApp(props) {
               var subActive = sub.path === "quotes"
                 ? (route.module === "quotes" && !QUOTE_TABS[route.sub])
                 : (route.module === "quotes" && ("quotes/" + route.sub) === sub.path);
-              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { window.LTP_NAV_REGISTRY.goTab(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
             });
@@ -618,7 +630,7 @@ function LTPSignedInApp(props) {
               var subKey = sub.path.split("/")[1];
               // Bare `labor` (no sub) defaults to Assignments — highlight it then too.
               var subActive = route.module === "labor" && (route.sub === subKey || (!route.sub && subKey === "assignments"));
-              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { nav(sub.path); },
+              rows.push(h("button", { key: "sub-" + sub.path, onClick: function() { window.LTP_NAV_REGISTRY.goTab(sub.path); },
                 style: { display: "flex", alignItems: "center", gap: 10, padding: "6px 11px 6px 32px", background: subActive ? B.accent + "18" : "transparent", border: "none", borderRadius: "6px", cursor: "pointer", borderLeft: subActive ? "2px solid " + B.accent : "2px solid transparent", width: "100%", textAlign: "left" } },
                 h("span", { style: { fontSize: "11px", fontWeight: subActive ? 600 : 400, color: subActive ? B.accent : B.textMut, whiteSpace: "nowrap" } }, sub.label)));
             });
@@ -675,7 +687,7 @@ function LTPSignedInApp(props) {
       // scrolling flex container, so the inner-column approach fails in Safari.
       // The mobile tab bar is a sibling flex row below (not overlaying), so no
       // extra bottom clearance is needed here for it.
-      h("div", { style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? (isMobile ? "10px 4px 12px" : "10px 16px 16px") : (isMobile ? "14px 14px 16px" : "22px") } }, renderModule())
+      h("div", { id: "ltp-content", style: { flex: 1, overflow: isQuoteBuilder ? "hidden" : "auto", padding: isQuoteBuilder ? (isMobile ? "10px 4px 12px" : "10px 16px 16px") : (isMobile ? "14px 14px 16px" : "22px") } }, renderModule())
     ),
     // Mobile bottom tab bar — an in-flow row at the bottom of the shell COLUMN,
     // deliberately NOT position:fixed. A fixed bottom:0 bar in an iOS standalone
@@ -767,7 +779,7 @@ function LTPBottomNav(props) {
   var tabs = LTP_PRIMARY_TABS.map(function(t) {
     var m = MODULES.find(function(x) { return x.id === t.id; }) || { id: t.id, label: t.id };
     var isActive = active === t.id;
-    return tab(t.id, t.label || m.label, function() { props.nav(t.id); },
+    return tab(t.id, t.label || m.label, function() { window.LTP_NAV_REGISTRY.goTab(t.id); },
       isActive, window.LTP_NAV_ICON(t.id, 20, isActive ? B.accent : B.textMut));
   });
   // "More" — a hamburger-style trio, tinted active when in an overflow module.
@@ -809,7 +821,7 @@ function LTPMoreSheet(props) {
   var h = React.createElement;
   var B = window.LTP_THEME, MODULES = window.LTP_MODULES;
   var route = props.route;
-  function go(path) { props.nav(path); props.onClose(); }
+  function go(path) { window.LTP_NAV_REGISTRY.goTab(path); props.onClose(); }   // tabs replace, area entry pushes
 
   var items = MODULES.filter(function(m) {
     return !(m.id === "settings" && !props.isAdmin);

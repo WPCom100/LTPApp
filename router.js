@@ -149,18 +149,107 @@
     return parsePath(window.location.hash);
   }
 
-  function navigate(path) {
+  // ── In-app history tracking ──────────────────────────────────────────────
+  // Every entry this router writes carries history.state.ltp = { sid, idx }.
+  // sid is a per-tab session id (sessionStorage: survives a reload, fresh on
+  // a new tab / PWA launch); idx counts entries within that session. An entry
+  // without our stamp is "foreign" — reached by URL, bookmark, notification,
+  // or created before the app loaded — and goBack() never calls
+  // history.back() from one. See docs/NAVIGATION_DESIGN.md.
+  var SID_KEY = "ltp.nav.sid";
+  var memSid = null;
+  function sessionId() {
+    if (memSid) return memSid;
+    var s = null;
+    try { s = window.sessionStorage && window.sessionStorage.getItem(SID_KEY); } catch (e) { /* blocked storage */ }
+    if (!s) {
+      s = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      try { window.sessionStorage && window.sessionStorage.setItem(SID_KEY, s); } catch (e) { /* in-memory only */ }
+    }
+    memSid = s;
+    return s;
+  }
+  function stateOf() {
+    var st = null;
+    try { st = window.history && window.history.state; } catch (e) { /* no history */ }
+    return (st && st.ltp && st.ltp.sid === sessionId()) ? st.ltp : null;
+  }
+  function stamp(idx, extra) {
+    var ltp = { sid: sessionId(), idx: idx };
+    if (extra) Object.keys(extra).forEach(function(k) { ltp[k] = extra[k]; });
+    return { ltp: ltp };
+  }
+  function currentIndex() { var s = stateOf(); return s ? s.idx : null; }
+  function hasInAppPrev() { var s = stateOf(); return !!(s && s.idx > 0); }
+  // Stable key for per-entry state (scroll, filters): null on a foreign entry.
+  function entryKey() { var s = stateOf(); return s ? s.sid + ":" + s.idx : null; }
+
+  function urlFor(path) { return String(window.location.href || "").split("#")[0] + "#/" + path; }
+  function fireHashChange() {
+    try { window.dispatchEvent(new HashChangeEvent("hashchange")); }
+    catch (e) { try { window.dispatchEvent(new Event("hashchange")); } catch (e2) { /* no DOM */ } }
+  }
+  function canPush() { return !!(window.history && typeof window.history.pushState === "function"); }
+  function canReplace() { return !!(window.history && typeof window.history.replaceState === "function"); }
+  function guardUnsaved() {
     if (window.__LTP_UNSAVED) {
-      if (!window.confirm("You have unsaved changes. Leave without saving?")) return;
+      if (!window.confirm("You have unsaved changes. Leave without saving?")) return false;
       window.__LTP_UNSAVED = false;
     }
-    window.location.hash = "/" + path;
+    return true;
+  }
+  // Leave listeners: (entryKey, kind) with kind ∈ "push" | "replace" | "back",
+  // fired just before the URL changes. nav-registry.js saves scroll/filter
+  // state for the entry being left ("push"/"back") or drops it ("replace").
+  var leaveFns = [];
+  function onLeave(fn) { leaveFns.push(fn); return function() { leaveFns = leaveFns.filter(function(f) { return f !== fn; }); }; }
+  function emitLeave(kind) { var key = entryKey(); leaveFns.forEach(function(fn) { try { fn(key, kind); } catch (e) { /* listener bug must not block nav */ } }); }
+
+  // Drill in: a new history entry. The rule table in docs/NAVIGATION_DESIGN.md
+  // says which actions push; tabs, redirects and post-save use replace/goBack.
+  function navigate(path) {
+    if (!guardUnsaved()) return;
+    if (window.location.hash === "#/" + path) return;   // same target: no-op, as location.hash= was
+    emitLeave("push");
+    if (!canPush()) { window.location.hash = "/" + path; return; }
+    var idx = currentIndex();
+    window.history.pushState(stamp(idx === null ? 1 : idx + 1), "", urlFor(path));
+    fireHashChange();
   }
 
+  // Swap the current entry: redirects, canonicalisation, tab changes, the
+  // /new → /:id hop after a create. Keeps the entry's index.
   function replace(path) {
-    var base = window.location.href.split("#")[0];
-    window.history.replaceState(null, "", base + "#/" + path);
-    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    emitLeave("replace");
+    if (!canReplace()) { window.location.hash = "/" + path; return; }
+    var idx = currentIndex();
+    window.history.replaceState(stamp(idx === null ? 0 : idx), "", urlFor(path));
+    fireHashChange();
+  }
+
+  // The one Back for every in-app back control: one real step if this session
+  // created the previous entry, else the declared logical parent (never the
+  // browser's previous site, never an unrelated area).
+  function goBack() {
+    if (!guardUnsaved()) return;
+    if (hasInAppPrev()) { emitLeave("back"); window.history.back(); return; }
+    var reg = window.LTP_NAV_REGISTRY;
+    var parent = reg ? reg.parentOf(getRoute()) : null;
+    replace(parent || DEFAULT_ROUTE);
+  }
+
+  // Rewrite the current (cold) entry into [chain..., current] so Back walks
+  // the declared hierarchy. Synchronous, one hashchange at the end: React
+  // renders the final route once and the ancestor screens never mount.
+  function seed(chain, currentPath) {
+    if (!canPush() || !canReplace()) return false;
+    var paths = (chain || []).concat([currentPath]);
+    window.history.replaceState(stamp(0, { seeded: true }), "", urlFor(paths[0]));
+    for (var i = 1; i < paths.length; i++) {
+      window.history.pushState(stamp(i, { seeded: true }), "", urlFor(paths[i]));
+    }
+    fireHashChange();
+    return true;
   }
 
   function useRoute() {
@@ -175,11 +264,18 @@
   }
 
   // Default redirect on a bare load — the dashboard, or the crew portal on its
-  // own host (see defaultRoute above). DOES NOT fire when the user arrives at a
-  // #view/... URL (that hash is non-empty).
+  // own host (see defaultRoute above). A replace, not a push: the bare "/"
+  // must not linger under the first screen as a dead Back stop. DOES NOT fire
+  // when the user arrives at a #view/... URL (that hash is non-empty).
   if (!window.location.hash || window.location.hash === "#") {
-    window.location.hash = "/" + DEFAULT_ROUTE;
+    if (canReplace()) window.history.replaceState(null, "", urlFor(DEFAULT_ROUTE));
+    else window.location.hash = "/" + DEFAULT_ROUTE;
   }
 
-  window.LTPRouter = { getRoute: getRoute, navigate: navigate, replace: replace, useRoute: useRoute };
+  window.LTPRouter = {
+    getRoute: getRoute, parsePath: parsePath, useRoute: useRoute,
+    navigate: navigate, replace: replace, goBack: goBack,
+    hasInAppPrev: hasInAppPrev, currentIndex: currentIndex, entryKey: entryKey,
+    seed: seed, onLeave: onLeave, defaultRoute: DEFAULT_ROUTE,
+  };
 })();

@@ -1459,7 +1459,7 @@
         setDraftRaw(toSave);
         cleanRef.current = toSave;
         setIsDirty(false);
-        nav("quotes/" + newId);
+        window.LTPRouter.replace("quotes/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       } else {
         // Backfill shareToken on existing-but-tokenless quotes (older rows
         // from before the share_token column was added). Once minted on
@@ -1787,7 +1787,7 @@
         onConfirm: function() {
           setQuotes(function(prev) { return prev.filter(function(q) { return q.id !== draft.id; }); });
           setDlg(null);
-          nav("quotes");
+          window.LTPRouter.goBack();   // deleted: never back to the dead item
         },
       });
     }
@@ -2166,7 +2166,7 @@
       // Sticky header bar
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: isMobile ? 8 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, flex: 1, minWidth: 0 } },
-          h("button", { onClick: function() { nav("quotes"); },
+          h("button", { onClick: function() { window.LTPRouter.goBack(); },
             style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", { style: { minWidth: 0 } },
             h("div", { style: { fontSize: isMobile ? "17px" : "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, refDisplay),

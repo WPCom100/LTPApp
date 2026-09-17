@@ -26,7 +26,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var showAddProject    = (!urlId && urlAction === "new");
 
   function setSelectedProjectId(id, tab) {
-    if (!id) return nav("projects");
+    if (!id) return window.LTPRouter.goBack();
     nav("projects/" + id + (tab ? "/" + tab : ""));
   }
 
@@ -113,7 +113,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     selectedProject: selectedProject,
     setSelectedProjectId: setSelectedProjectId,
     setEditProjectId: function(id) {
-      id ? nav("projects/" + id + "/edit") : nav("projects/" + (selectedProjectId || ""));
+      id ? nav("projects/" + id + "/edit") : window.LTPRouter.goBack();
     },
     projectOpenTab: urlTab, setProjectOpenTab: function() {},
     showAddMeeting: showAddMeeting, setShowAddMeeting: setShowAddMeeting,
@@ -181,7 +181,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         return;
       }
       setProjects(function(p) { return p.filter(function(x) { return x.id !== dc.id; }); });
-      if (selectedProjectId === dc.id) nav("projects");
+      if (selectedProjectId === dc.id) window.LTPRouter.goBack();
     }
     setDeleteConfirm(null);
   }
@@ -253,7 +253,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   function wizardFinalDelete() {
     if (!deleteWizard) return;
     setProjects(function(p) { return p.filter(function(x) { return x.id !== deleteWizard.projectId; }); });
-    if (selectedProjectId === deleteWizard.projectId) nav("projects");
+    if (selectedProjectId === deleteWizard.projectId) window.LTPRouter.goBack();
     setDeleteWizard(null);
   }
 
@@ -387,11 +387,11 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     selectedProject && !editProjectId && h(window.CRMProjectDetail, { ctx: ctx }),
 
     showAddProject && h(window.CRMProjectForm, { ctx: ctx, initial: null,
-      onClose: function() { nav("projects"); },
+      onClose: function() { window.LTPRouter.goBack(); },
       onSave: function(d) {
         var newId = Math.max.apply(null, projects.map(function(x) { return x.id; }).concat([0])) + 1;
         setProjects(function(p) { return p.concat([Object.assign({ id: newId, notes: [], meetings: [] }, d, { schedule: d.schedule || [] })]); });
-        nav("projects/" + newId);
+        window.LTPRouter.replace("projects/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       }}),
 
     editProjectId && h(window.CRMProjectForm, { ctx: ctx, initial: projects.find(function(p) { return p.id === editProjectId; }),
@@ -402,7 +402,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         // Moved the dates? The quotes pricing on them are told in the builder
         // when next opened; this is the heads-up now (components/ui.js).
         window.LTP_toastRentalDrift(before, Object.assign({}, before, d), quotes);
-        nav("projects/" + editProjectId);
+        window.LTPRouter.goBack();   // saved: back to the detail this form sat over
       }}),
 
     showAddMeeting && h(window.CRMAddMeeting, { ctx: ctx }),
