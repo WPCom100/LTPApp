@@ -82,6 +82,19 @@
     });
     var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
+    // Per-user saved views — sort + which status chip + the Show Converted
+    // toggle, saved to the account and restored on the next visit.
+    var DEFAULT_VIEW = { sort: { key: "created", dir: "desc" }, filters: { status: "all" }, toggles: { showConverted: false } };
+    var vw = window.LTP_useTableView({
+      tableKey: "quotes", defaults: DEFAULT_VIEW,
+      snapshot: { sort: sort, filters: { status: filter }, toggles: { showConverted: showConverted } },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "status" in v.filters) setFilter(v.filters.status);
+        if (v.toggles && "showConverted" in v.toggles) setShowConverted(!!v.toggles.showConverted);
+      },
+    });
+
     var filters = ["all", "draft", "sent", "accepted", "declined"];
     var sorts = [{ l: "Newest", s: { key: "created", dir: "desc" } },
                  { l: "Oldest", s: { key: "created", dir: "asc"  } },
@@ -104,6 +117,22 @@
                    padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
       }));
 
+    // Shared toolbar slots (components/table-views.js LTPTableToolbar): the
+    // status chips, the search box, the saved-view menu, and the create action.
+    var filterChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      filters.map(function(f) {
+        var active = filter === f;
+        return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
+          style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
+                   border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px",
+                   padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
+      }));
+    var searchEl = h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
+      style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 240, maxWidth: "100%" } });
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+    var createBtn = h("button", { onClick: function() { nav("quotes/new"); },
+      style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } }, "+ New Quote");
+
     return h("div", null,
       // Mobile: page title + search share the top row (the shell hides its own
       // title/tabs on mobile; the top bar already reads "QUOTES").
@@ -112,30 +141,19 @@
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search…",
           style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } })),
 
-      // Filter chips; Show Converted rides the right (+ New Quote on desktop).
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 14, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          filters.map(function(f) {
-            var active = filter === f;
-            return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut,
-                       border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px",
-                       padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
-          })
-        ),
-        h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } },
-          showConvertedBtn,
-          !isMobile && h("button", { onClick: function() { nav("quotes/new"); },
-            style: { background: B.accent, color: B.btnInk, border: "none", borderRadius: "6px", padding: "7px 16px", fontSize: "12px", fontWeight: 700, cursor: "pointer" } }, "+ New Quote"))
-      ),
-
-      // Sort row. The phone gets the chips; desktop keeps only the search here,
-      // because its column headers do the sorting.
+      // Desktop: one standardized toolbar — status chips │ Show Converted · search
+      // … (right) saved-view menu · + New Quote. Mobile: chips + Show Converted,
+      // then the sort chips with the view menu on the right.
       isMobile
-        ? h("div", { style: { display: "flex", marginBottom: 10 } }, sortBtnsEl)
-        : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
-            h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search by ref, company, or project…",
-              style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 260 } })),
+        ? h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12, flexWrap: "nowrap", gap: 8 } },
+            filterChips,
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexShrink: 0 } }, showConvertedBtn))
+        : h(window.LTPTableToolbar, { isMobile: false, filters: filterChips, toggles: showConvertedBtn, search: searchEl, view: viewMenu, action: createBtn }),
+
+      // Mobile sort row — the phone has no column headers, so the sort chips live
+      // here, with the saved-view menu on the right.
+      isMobile && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
+        sortBtnsEl, viewMenu),
 
       isMobile
         // ── Phone: the stacked ledger rows, unchanged ──────────────────────

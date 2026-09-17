@@ -356,7 +356,15 @@
 // changed" chip, and a project save that moved the dates toasts the quotes
 // concerned. quotes-builder.js, quotes-list.js, crm-projects.js, projects.js,
 // domain-docs.js, ui.js, entity-quick-form.js, app.js.
-var CACHE_VERSION = 'ltp-shell-v101';
+// v102: per-user saved table views + the standardized list toolbar. Every
+// desktop record list (Projects, Quotes, Invoices, CRM Companies/Contacts,
+// Crew Roster, Rentals Inventory/Containers/Kits/Cross Rentals) now carries the
+// same controls in one row — filter chips │ Show/Hide toggles · search — with a
+// saved-view dropdown on the right that stores the sort + filter arrangement to
+// the user's account (new components/table-views.js; GET/PUT /api/me/preferences).
+// The Name column on Contacts and the Crew Roster now sorts by the name as
+// shown (first name first). New + changed cached files, so the shell refetches.
+var CACHE_VERSION = 'ltp-shell-v102';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

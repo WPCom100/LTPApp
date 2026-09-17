@@ -13,6 +13,16 @@
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
     // below. The phone chips and the desktop column headers set the same state.
     var [sort,      setSort]      = useState({ key: "name", dir: "asc" });
+    // Per-user saved views — sort + the category chip.
+    var vw = window.LTP_useTableView({
+      tableKey: "rentals-inventory",
+      defaults: { sort: { key: "name", dir: "asc" }, filters: { cat: "all" }, toggles: {} },
+      snapshot: { sort: sort, filters: { cat: catFilter }, toggles: {} },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "cat" in v.filters) setCatFilter(v.filters.cat);
+      },
+    });
 
     var cats = ["all"].concat(Array.from(new Set(equipment.map(function(e) { return e.category; }))));
     var q = search.toLowerCase();
@@ -88,28 +98,34 @@
     var totalCost  = equipment.reduce(function(s, e) { return s + (e.purchaseCost || 0) * e.qty; }, 0);
     var checkedOut = allocations.filter(function(a) { return a.state === "checked-out"; }).length;
 
+    // Shared toolbar slots (components/table-views.js LTPTableToolbar).
+    var catChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      cats.map(function(c) {
+        return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
+          style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, c);
+      }));
+    var searchEl = h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search inventory...", style: Object.assign({}, R.INP, isMobile ? { width: "100%", borderRadius: "8px", padding: "9px 12px" } : { width: 180 }) });
+    var sortChipsEl = h("div", { style: { display: "flex", gap: 6 } },
+      [{ l: "A\u2192Z", s: { key: "name", dir: "asc" } },
+       { l: "Z\u2192A", s: { key: "name", dir: "desc" } },
+       { l: "$ \u2191", s: { key: "rate", dir: "asc" } },
+       { l: "$ \u2193", s: { key: "rate", dir: "desc" } }].map(function(o) {
+        var active = sort.key === o.s.key && sort.dir === o.s.dir;
+        return h("button", { key: o.l, onClick: function() { setSort(o.s); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      }));
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
     return h("div", null,
 
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          cats.map(function(c) {
-            return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, c);
-          })
-        ),
-        h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search inventory...", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 180 }, isMobile ? { borderRadius: "8px", padding: "9px 12px" } : {}) }),
-          // Sort chips \u2014 PHONE ONLY; the desktop table sorts from its headers.
-          isMobile && [{ l: "A\u2192Z", s: { key: "name", dir: "asc" } },
-                       { l: "Z\u2192A", s: { key: "name", dir: "desc" } },
-                       { l: "$ \u2191", s: { key: "rate", dir: "asc" } },
-                       { l: "$ \u2193", s: { key: "rate", dir: "desc" } }].map(function(o) {
-            var active = sort.key === o.s.key && sort.dir === o.s.dir;
-            return h("button", { key: o.l, onClick: function() { setSort(o.s); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
-          })
-        )
-      ),
+      // Desktop: standardized toolbar \u2014 category chips \u2502 search \u2026 (right)
+      // saved-view menu. Mobile: chips, then search + sort chips + view.
+      isMobile
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 } },
+            catChips,
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+              h("div", { style: { flex: 1, minWidth: 140 } }, searchEl), sortChipsEl, viewMenu))
+        : h(window.LTPTableToolbar, { isMobile: false, filters: catChips, search: searchEl, view: viewMenu }),
 
       ordered.length === 0 ? h(window.EmptyState, { text: "No equipment matches your search." }) :
       isMobile

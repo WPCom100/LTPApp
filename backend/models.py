@@ -883,6 +883,15 @@ class User(Base):
     # Admin-edited per-user profile fields used by the email signature template.
     title = Column(String(255), nullable=True)
     phone = Column(String(50), nullable=True)
+    # Per-user UI preferences — private to this user, never shown to anyone else.
+    # Free-form JSON so the frontend owns the shape; the server only reads/writes
+    # it wholesale (GET /api/me/preferences, PUT the table-views subtree). Current
+    # shape (components/table-views.js):
+    #   {"tableViews": {"<tableKey>": {"active": "<viewName>",
+    #                                  "views": {"<name>": {sort, filters, toggles}}}}}
+    # null = the user has never saved a view; every table falls back to its
+    # built-in "Default" ordering.
+    preferences = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     def cached_photo_path(self) -> str | None:

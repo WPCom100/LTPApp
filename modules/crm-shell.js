@@ -39,6 +39,25 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   var [deleteConfirm,  setDeleteConfirm]  = useState(null);
   var [deleteWizard,   setDeleteWizard]   = useState(null);
 
+  // Per-user saved views — one per tab, since companies and contacts sort and
+  // filter independently. A view restores the column sort (and, for companies,
+  // the status + type chips) on the next visit.
+  var compVw = window.LTP_useTableView({
+    tableKey: "crm-companies",
+    defaults: { sort: { key: "name", dir: "asc" }, filters: { status: "all", type: "all" }, toggles: {} },
+    snapshot: { sort: compSort, filters: { status: companyFilter, type: typeFilter }, toggles: {} },
+    apply: function(v) {
+      if (v.sort) setCompSort(v.sort);
+      if (v.filters) { if ("status" in v.filters) setCompanyFilter(v.filters.status); if ("type" in v.filters) setTypeFilter(v.filters.type); }
+    },
+  });
+  var contVw = window.LTP_useTableView({
+    tableKey: "crm-contacts",
+    defaults: { sort: { key: "name", dir: "asc" }, filters: {}, toggles: {} },
+    snapshot: { sort: contSort, filters: {}, toggles: {} },
+    apply: function(v) { if (v.sort) setContSort(v.sort); },
+  });
+
   var selectedCompany = selectedCompanyId ? companies.find(function(c) { return c.id === selectedCompanyId; }) : null;
 
   // ctx for CRMCompanyDetail/Form + CRMContactDetail/Form. Keep in sync with
@@ -131,8 +150,9 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   }
 
   function switchTab(t) {
+    // Clear the transient search on a tab switch, but leave each tab's sort
+    // alone — the two tabs sort independently and a saved view owns the order.
     nav("crm/" + t); setSearchQuery("");
-    setCompSort({ key: "name", dir: "asc" }); setContSort({ key: "name", dir: "asc" });
   }
 
   var q = searchQuery.toLowerCase();
@@ -143,8 +163,9 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   function contactCount(c) { return contacts.filter(function(ct) { return ct.companyIds.includes(c.id); }).length; }
   function projectCount(c) { return projects.filter(function(p) { return p.companyId === c.id; }).length; }
   function typeLabel(c) { return [c.isClient ? "Client" : "", c.isVendor ? "Vendor" : ""].filter(Boolean).join(" "); }
-  // Contacts file under last name, the way a directory reads.
-  function contactSortName(c) { return (c.lastName || "") + " " + (c.firstName || ""); }
+  // Name sorts by the name as it's shown on the row — first name first — so the
+  // order matches what the eye reads down the column.
+  function contactSortName(c) { return (c.firstName || "") + " " + (c.lastName || ""); }
   function contactCompanies(c) { return companies.filter(function(co) { return c.companyIds.includes(co.id); }); }
 
   var COMPANY_COLS = [
@@ -195,32 +216,40 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
       }));
   }
 
+  // Shared toolbar slots (components/table-views.js LTPTableToolbar). Companies
+  // carry status + type chips; contacts have no filter chips (search only).
+  var companyChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", alignItems: "center", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
+    ["all", "active", "inactive", "one-time", "prospect"].map(function(f) {
+      var active = companyFilter === f;
+      return h("button", { key: f, onClick: function() { setCompanyFilter(f); }, className: "ltp-tap",
+        style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
+    }),
+    h("span", { style: { flexShrink: 0, width: 1, background: B.border, margin: "0 4px", height: 20 } }),
+    ["all", "client", "vendor", "both"].map(function(f) {
+      var active = typeFilter === f;
+      return h("button", { key: "t" + f, onClick: function() { setTypeFilter(f); }, className: "ltp-tap",
+        style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
+    }));
+  var compViewMenu = h(window.LTPViewMenu, { vw: compVw });
+  var contViewMenu = h(window.LTPViewMenu, { vw: contVw });
+
   return h("div", null,
     h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: "0 0 16px" } }, "CRM"),
 
     // ── Companies ─────────────────────────────────────────────────────────────
     crmTab === "companies" && h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", alignItems: "center", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" } },
-          ["all", "active", "inactive", "one-time", "prospect"].map(function(f) {
-            var active = companyFilter === f;
-            return h("button", { key: f, onClick: function() { setCompanyFilter(f); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
-          }),
-          h("span", { style: { flexShrink: 0, width: 1, background: B.border, margin: "0 4px", height: 20 } }),
-          ["all", "client", "vendor", "both"].map(function(f) {
-            var active = typeFilter === f;
-            return h("button", { key: "t" + f, onClick: function() { setTypeFilter(f); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
-          })
-        ),
-        !isMobile && h(window.Btn, { small: true, onClick: function() { nav("crm/companies/new"); } }, "+ Add Company")
-      ),
+      // Desktop: standardized toolbar — status+type chips │ search … (right)
+      // saved-view menu · + Add Company. Mobile: chips, the FAB, then a search +
+      // sort + view row.
+      isMobile
+        ? h("div", { style: { display: "flex", marginBottom: 10 } }, companyChips)
+        : h(window.LTPTableToolbar, { isMobile: false, filters: companyChips, search: searchBar,
+            view: compViewMenu, action: h(window.Btn, { small: true, onClick: function() { nav("crm/companies/new"); } }, "+ Add Company") }),
       isMobile && h(window.LTPFab, { label: "Add company", onClick: function() { nav("crm/companies/new"); } }),
-      h("div", { style: { display: "flex", flexDirection: isMobile ? "column" : "row", justifyContent: "space-between", alignItems: isMobile ? "stretch" : "center", marginBottom: 10, gap: 8 } },
-        isMobile ? h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search companies...",
-          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }) : searchBar,
-        isMobile && sortBtns(compSort, setCompSort)),
+      isMobile && h("div", { style: { display: "flex", flexDirection: "column", marginBottom: 10, gap: 8 } },
+        h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search companies...",
+          style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, sortBtns(compSort, setCompSort), compViewMenu)),
       isMobile
         // \u2500\u2500 Phone: the stacked card rows, unchanged \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
         ? h(window.LTPList, null,
@@ -273,15 +302,15 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
 
     // ── Contacts ──────────────────────────────────────────────────────────────
     crmTab === "contacts" && h("div", null,
+      // Desktop: standardized toolbar — (no filter chips) search … (right)
+      // saved-view menu · + Add Contact. Mobile: search, then sort + view.
       isMobile
         ? h("div", { style: { display: "flex", flexDirection: "column", marginBottom: 10, gap: 8 } },
             h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search contacts...",
               style: { width: "100%", background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
-            sortBtns(contSort, setContSort))
-        : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 8 } },
-            h("div", { style: { display: "flex", gap: 8, alignItems: "center" } }, searchBar),
-            h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact")
-          ),
+            h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, sortBtns(contSort, setContSort), contViewMenu))
+        : h(window.LTPTableToolbar, { isMobile: false, search: searchBar, view: contViewMenu,
+            action: h(window.Btn, { small: true, onClick: function() { nav("crm/contacts/new"); } }, "+ Add Contact") }),
       isMobile && h(window.LTPFab, { label: "Add contact", onClick: function() { nav("crm/contacts/new"); } }),
       isMobile
         // \u2500\u2500 Phone: the stacked rows with tap-to-call / tap-to-email \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

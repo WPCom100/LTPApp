@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import secrets
 from datetime import datetime, timezone
 
@@ -799,6 +800,63 @@ async def update_settings(data: dict, db: AsyncSession = Depends(get_db)):
     await db.flush()
     livesync.mark_dirty(db, "settings")
     return row.data
+
+
+# ── Per-user preferences (private saved table views) ──────────────────────
+#
+# Each user's own UI state — the saved sort/filter "views" for the record
+# lists (components/table-views.js). PRIVATE to the caller: read and written
+# only against their own User row, so there's no admin gate and no livesync
+# broadcast (nobody else sees another user's views). Stored as a free-form
+# JSON blob whose shape the frontend owns; the server only bounds its size and
+# the per-table envelope. Not part of /auth/me so a view save can't force a
+# re-render of the whole app shell.
+
+_TABLE_KEY_RE = re.compile(r"^[a-z0-9-]{1,40}$")
+_MAX_PREFS_BYTES = 128 * 1024        # generous ceiling; a saved-view set is ~1-4 KB
+_MAX_VIEWS_PER_TABLE = 50
+
+
+@router.get("/me/preferences")
+async def get_my_preferences(user: models.User = Depends(require_session)):
+    """This user's private UI preferences, or {} when none are saved yet."""
+    return user.preferences or {}
+
+
+@router.put("/me/preferences/table-views/{table_key}")
+async def put_my_table_views(
+    table_key: str,
+    data: dict,
+    db: AsyncSession = Depends(get_db),
+    user: models.User = Depends(require_session),
+):
+    """Replace this user's saved views for ONE table. Namespaced by table so
+    two lists saved from different tabs can't clobber each other's entry. Body:
+    {"active": "<viewName>", "views": {"<name>": {"sort", "filters", "toggles"}}}.
+    Returns the stored per-table object."""
+    if not _TABLE_KEY_RE.match(table_key or ""):
+        raise HTTPException(status_code=400, detail={"field": "table_key", "reason": "invalid table key"})
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=400, detail={"field": "body", "reason": "must be an object"})
+    views = data.get("views")
+    if not isinstance(views, dict):
+        raise HTTPException(status_code=400, detail={"field": "views", "reason": "must be an object"})
+    if len(views) > _MAX_VIEWS_PER_TABLE:
+        raise HTTPException(status_code=400, detail={"field": "views", "reason": f"at most {_MAX_VIEWS_PER_TABLE} views"})
+    active = data.get("active")
+    entry = {"active": active if isinstance(active, str) else "", "views": views}
+    # Reassign the whole attribute (not an in-place mutation) so SQLAlchemy
+    # flags the JSON column dirty and get_db commits it.
+    prefs = dict(user.preferences or {})
+    table_views = dict(prefs.get("tableViews") or {})
+    table_views[table_key] = entry
+    prefs["tableViews"] = table_views
+    # Bound total size defensively — this is user-writable free-form JSON.
+    if len(json.dumps(prefs)) > _MAX_PREFS_BYTES:
+        raise HTTPException(status_code=413, detail={"field": "preferences", "reason": "preferences too large"})
+    user.preferences = prefs
+    await db.flush()
+    return entry
 
 
 # ── Live sync: what changed, and a push channel that says so ──────────────
