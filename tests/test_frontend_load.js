@@ -100,6 +100,7 @@ if (loaded) {
     "LTP_docTerms", "LTP_quoteExpiry", "LTP_displayStatus", "LTP_money",
     "LTP_sectionTotals", "LTP_applySortMove", "LTP_SECTIONS",
     "LTP_quoteChanges", "LTP_invoiceChanges",
+    "LTP_staleRentalSections", "LTP_stampRentalWindows", "LTP_rentalDriftNotice",
     "LTP_renderHeader", "LTP_renderSignature", "LTP_textToHtml",
     "LTP_genId", "LTP_genShareToken", "LTP_formatDate", "LTP_safeUrl",
   ].forEach(function (k) {

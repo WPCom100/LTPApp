@@ -231,7 +231,8 @@
                       h("span", { style: { color: B.accent } }, ref),
                       h("span", { style: { color: B.textMut } }, "\u00b7"),
                       h("span", { style: { color: B.text } }, project.name),
-                      sharedChip(qt)
+                      sharedChip(qt),
+                      h(window.LTPRentalDriftChip, { doc: qt, projects: ctx.projects })
                     ),
                     h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, itemCount + " line items \u00b7 " + (qt.sections || []).length + " sections \u00b7 " + fmt(qt.createdDate))
                   ),

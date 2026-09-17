@@ -698,6 +698,9 @@ function LTPSignedInApp(props) {
      companies: companies, setCompanies: setCompanies,
      contacts:  contacts,  setContacts:  setContacts,
      projects:  projects,  setProjects:  setProjects,
+     // Read-only: names the live quotes affected when a project's dates move
+     // (window.LTP_toastRentalDrift).
+     quotes:    quotes,
    })
   );
 }

@@ -301,7 +301,6 @@
 // item popup lists its bookings with a per-booking state. The Allocations tab
 // is gone. quotes-builder.js, rentals-inventory.js, rentals-equipment.js,
 // rentals-shell.js, app.js.
-// (v91 was taken by the crew portal on dev while this shipped as v91 on its
 // branch, so the merge takes the next string above both.)
 // v93: the crew portal's own domain (docs/CREW_DOMAIN.md). router.js lands a
 // bare visit on the route the page names (<meta name="ltp-default-route">,
@@ -344,7 +343,20 @@
 // (modules/labor.js) and the builder's paid-day dialog
 // (modules/schedule-builder.js). All three are cached, so the shell must be
 // refetched.
-// v100: per-user saved table views + the standardized list toolbar. Every
+// v100: a quote's margin now carries the cost of the gear it has to rent in.
+// Equipment lines are costed live from the cross rentals covering their dates
+// (rentals-utils.js::lineGearCost) — owned units are free, cross-rented ones
+// cost the vendor's price — and units nothing covers are flagged with an
+// UNCOSTED chip beside the section and summary margins rather than counted as
+// profit. rentals-utils.js, quotes-builder.js.
+// v101: a quote whose project moved its dates after the equipment was priced
+// now says so instead of showing the new dates over the old prices. Each
+// section remembers the window it was priced for; the builder shows an "out of
+// sync" notice with Update / Keep per section, the quote lists carry a "Dates
+// changed" chip, and a project save that moved the dates toasts the quotes
+// concerned. quotes-builder.js, quotes-list.js, crm-projects.js, projects.js,
+// domain-docs.js, ui.js, entity-quick-form.js, app.js.
+// v102: per-user saved table views + the standardized list toolbar. Every
 // desktop record list (Projects, Quotes, Invoices, CRM Companies/Contacts,
 // Crew Roster, Rentals Inventory/Containers/Kits/Cross Rentals) now carries the
 // same controls in one row — filter chips │ Show/Hide toggles · search — with a
@@ -352,7 +364,7 @@
 // the user's account (new components/table-views.js; GET/PUT /api/me/preferences).
 // The Name column on Contacts and the Crew Roster now sorts by the name as
 // shown (first name first). New + changed cached files, so the shell refetches.
-var CACHE_VERSION = 'ltp-shell-v100';
+var CACHE_VERSION = 'ltp-shell-v102';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

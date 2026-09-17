@@ -178,7 +178,9 @@
               )
             ),
             // Full-width project name below \u2014 shows in full (wraps if very long).
-            h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 2 } }, name),
+            h("div", { style: { fontSize: "14px", fontWeight: 600, color: B.text, marginTop: 2, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+              name,
+              h(window.LTPRentalDriftChip, { doc: qt, projects: projects })),
             // Joined from the parts that exist, so a quote with no created date
             // does not trail a lone separator. Short dates too: the long form is
             // most of a phone row on its own.
@@ -202,7 +204,8 @@
               var grow = { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
               return { key: qt.id, onClick: function() { nav("quotes/" + qt.id); }, cells: [
                 h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent, letterSpacing: "0.01em" } }, displayRef(qt)),
-                h("span", { style: Object.assign({ fontSize: "13px", fontWeight: 600, color: B.text }, grow) }, jobName(qt) || "Untitled Quote"),
+                [h("span", { key: "j", style: Object.assign({ fontSize: "13px", fontWeight: 600, color: B.text }, grow) }, jobName(qt) || "Untitled Quote"),
+                 h(window.LTPRentalDriftChip, { key: "d", doc: qt, projects: projects })],
                 [h("span", { key: "c", style: Object.assign({ fontSize: "12px", color: B.textSec }, grow) }, clientLabel(qt)),
                  contact && h("span", { key: "p", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, contact)],
                 h("span", { style: { fontSize: "11px", color: B.textSec } }, fmtS(qt.createdDate)),

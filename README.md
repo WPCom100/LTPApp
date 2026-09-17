@@ -405,6 +405,7 @@ free on the dates. The whole thing rests on three ideas:
 | **Rentals → Cross Rentals** | The orders list (filters for open / status / vendor, overdue flag), the order form, and the detail popup with each line's cost and what other vendors price the item at. |
 | **Rentals → Availability Checker** | Totals include confirmed cross-rented units for the range, with an *incl. ×N cross-rented · Vendor* chip; quoted orders show as *×N quoted*. When an item is short, the row lists the vendors who price it (preferred first, then cheapest) and **+ Cross rental** opens the order form already filled in with the item, the dates and the vendor. |
 | **Quote builder → Add Item** | Same totals and chips. An item with nothing free offers **Cross-rent**, which opens the order form *over* the picker so the draft stays put. |
+| **Quote builder → margin** | Equipment margin is net of what the gear costs to rent in — see *Margin on rented-in gear* below. |
 | **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), the open cross rentals naming it, and its **Bookings** — which job, which document, when, and a per-booking state. The checker opens this popup when you click an item. |
 | **Rentals → Equipment List** | **Where** says which jobs each item is on ("Autumn Gala ×3 (out)"), and the status reads *out* (physically checked out), *reserved* (booked for today or later), *available*, or *cross-rental*. |
 | **CRM → a vendor** | **Rental Rates** — every item this vendor prices — and the orders placed with them, with the year's spend. |
@@ -426,6 +427,35 @@ Status runs `quoted → confirmed → picked-up → returned`, or `cancelled`. I
 never moves on its own; an order past its end date and still out shows as
 **overdue**.
 
+### Margin on rented-in gear
+
+A quote's margin used to treat every equipment line as pure profit, because we
+own what we send out and an owned unit costs nothing extra on a job. That stops
+being true the moment a line needs more than we own. For each equipment line,
+over its own rental dates:
+
+- Units are taken from **owned stock first** — those cost nothing.
+- What is left is taken from the **confirmed cross rentals** covering those
+  dates, and costs the vendor's price for that order (a line's flat total, or
+  its 3-day / week / month rate priced by the same engine as everything else).
+  Several orders can supply one item; each is costed at its own price.
+- Bookings **other documents** hold over the same dates are charged against
+  owned stock first, so whatever they spill onto the cross rentals is not
+  available to this quote. The quote's own bookings are excluded, or an
+  accepted quote would read as competing with itself.
+
+The cost shows in the Totals panel as **incl. cross rentals** under Total Cost,
+and both the section margin and the two summary margins are net of it. It is
+resolved live from the orders, never stored on the line, so it follows a cross
+rental being confirmed, re-priced or cancelled.
+
+**When it can't be resolved** — nothing covers those dates, what does is
+already spoken for, or the item is gone from the catalog — the unresolved units
+are *not* silently treated as free. A small **⚠ UNCOSTED** chip sits beside the
+section margin and both summary margins, and its tooltip names the units. A
+merely *quoted* cross rental never counts as cost, for the same reason it never
+counts as stock.
+
 ### Counting rule
 
 A cross rental counts toward a date range only when its period **covers the
@@ -443,6 +473,56 @@ vendor and project FKs SET NULL so the cost record outlives either.
 shares live in `modules/rentals-utils.js` (`crossRentedQty`, `crossQuotedQty`,
 `totalQty`, `vendorOptions`, `lineCost`, `orderCost`), guarded by
 `tests/test_rentals_cross.js` and `tests/test_quote_availability.py`.
+
+## Quote rental periods when a project's dates move
+
+A quote's rental window is its primary project's dates, read live, and every
+section that doesn't set its own dates follows it. Equipment lines, though, are
+priced once — for the window in force when they were added or last repriced —
+and opening a quote never silently reprices them (that would overwrite the
+snapshot a sent quote was priced at whenever a rate card changed since). So
+when a project's dates moved after a quote existed, the quote showed the new
+dates over prices computed for the old ones, and nobody was told.
+
+Each section now remembers the window its equipment was priced for
+(`pricedStartDate` / `pricedEndDate` in the section JSON — stamped by the
+builder whenever it reprices a section and again on save; a one-off migration
+stamped every existing quote with its window at the time). When that window
+no longer matches the project, nothing is repriced on its own. The editor is
+told, and decides:
+
+- **In the builder**, a *Rental periods are out of sync* notice under Quote
+  Details names the stale sections, with **Update all to new dates** and
+  **Keep old dates on all**. Each stale section shows the same choice on its
+  own row. **Update to new dates** reprices its equipment for the project's
+  dates from the current rate card. **Keep <old dates>** turns the old window
+  into that section's custom rental period, prices untouched — the same thing
+  as ticking *Custom rental period* and typing the old dates. A line added to
+  a stale section prices on the window the section is still on, so "keep"
+  never leaves one line on the new dates.
+- **The quotes list and the project's Quotes tab** show a *Dates changed* chip
+  on the draft and sent quotes concerned, so they can be found without opening
+  each one.
+- **Saving a project** whose dates moved toasts which live quotes price their
+  equipment on them — from the CRM edit form and from the inline project edit
+  on a quote's Linked Projects chip alike.
+- The save log records an update as *<Section> Rental Period: Repriced for …*;
+  a keep shows as the section switching to its own rental period.
+
+Only draft and sent quotes are flagged (accepted and converted are locked;
+declined is over), only sections that follow the quote's dates (a custom-dated
+section prices on its own window), and only sections holding an equipment
+line (nothing else is priced by the dates). A section never stamped —
+appended from a schedule, or one the migration could not resolve a window
+for — is treated as in sync and starts being watched from its next save.
+Custom-dated quotes (no project) can't drift: their dates are edited in the
+builder itself, which reprices as you type, as before. One consequence of the
+stamp: a date edit on one section no longer reprices every other section from
+today's rate card — a section already priced for its window is left alone.
+
+The helpers are pure and tested (`components/domain-docs.js`:
+`LTP_staleRentalSections`, `LTP_stampRentalWindows`, `LTP_rentalDriftNotice`;
+`tests/test_rental_drift.js`, `tests/test_quote_priced_window_migration.py`).
 
 ## Bookings (allocations)
 

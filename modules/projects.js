@@ -397,7 +397,11 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     editProjectId && h(window.CRMProjectForm, { ctx: ctx, initial: projects.find(function(p) { return p.id === editProjectId; }),
       onClose: function() { ctx.setEditProjectId(null); },
       onSave: function(d) {
+        var before = projects.find(function(x) { return x.id === editProjectId; });
         setProjects(function(p) { return p.map(function(x) { return x.id === editProjectId ? Object.assign({}, x, d, { schedule: d.schedule || x.schedule }) : x; }); });
+        // Moved the dates? The quotes pricing on them are told in the builder
+        // when next opened; this is the heads-up now (components/ui.js).
+        window.LTP_toastRentalDrift(before, Object.assign({}, before, d), quotes);
         nav("projects/" + editProjectId);
       }}),
 

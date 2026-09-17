@@ -1,7 +1,7 @@
 """users.preferences — per-user UI preferences (saved table views)
 
 Revision ID: b7c1d2e3f4a5
-Revises: 9c4e2a7b1d58
+Revises: b2d4f6a8c0e2
 Create Date: 2026-09-17 12:00:00.000000
 
 Private, per-user UI state: saved table views (column sort + filter/toggle
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'b7c1d2e3f4a5'
-down_revision: Union[str, None] = '9c4e2a7b1d58'
+down_revision: Union[str, None] = 'b2d4f6a8c0e2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

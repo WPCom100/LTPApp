@@ -29,6 +29,25 @@
   var S = window.LTP_SECTIONS;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (violet — distinct from EQ/PR/SV)
 
+  // Margin whose cost could not be fully resolved. An equipment line costs us
+  // nothing while we own the units; the moment it needs more than we own, the
+  // cost is whatever the cross rental covering those dates charges — and when
+  // there is no such order (or what there is, is already spoken for) the cost
+  // simply is not known, so the margin beside it is not the whole story.
+  // Deliberately a chip and a tooltip, not a sentence: it sits inline with a
+  // number on a dense line. `short` is the unit count that went uncosted.
+  function UncostedChip({ short, items, tiny }) {
+    if (!short) return null;
+    var names = (items || []).map(function(x) { return x.name + " \u00d7" + x.short; }).join(", ");
+    return h("span", {
+      title: short + " unit" + (short === 1 ? "" : "s") + " with no cross rental covering these dates"
+        + (names ? " (" + names + ")" : "") + " — margin may be overstated.",
+      style: { display: "inline-flex", alignItems: "center", gap: 3, background: B.warn + "1c", border: "1px solid " + B.warn + "55",
+               color: B.warn, borderRadius: "3px", padding: tiny ? "0 3px" : "1px 5px", fontSize: tiny ? "8px" : "9px",
+               fontWeight: 700, whiteSpace: "nowrap", cursor: "help", flexShrink: 0 } },
+      "\u26a0 UNCOSTED");
+  }
+
   // QuickBooks tax change-signature: a compact fingerprint of everything that
   // affects the QB-computed sales tax for a quote (line amounts + per-line
   // taxability + customer taxable flag + customer billing address). The stored
@@ -81,7 +100,7 @@
       status: "draft", createdDate: todayISO(), sentDate: null,
       expiryDate: resolvedExpiry(null),
       globalDiscount: { type: "none", value: 0 },
-      sections: [{ id: genId("sec"), label: "Equipment", items: [], customDates: false, startDate: "", endDate: "" }],
+      sections: [{ id: genId("sec"), label: "Equipment", items: [], customDates: false, startDate: "", endDate: "", pricedStartDate: "", pricedEndDate: "" }],
       notes: window.LTP_DEFAULT_QUOTE_NOTES || "",
       // "" = follow the workspace / built-in terms. Only set once a producer
       // edits this document's own wording. See window.LTP_docTerms in theme.js.
@@ -116,6 +135,10 @@
       sections: (q.sections || []).map(function(s) {
         return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
                  projectId: s.projectId != null ? s.projectId : null,
+                 // The window its equipment was last priced for — how a later
+                 // change to the project's dates is noticed. See
+                 // components/domain-docs.js::LTP_staleRentalSections.
+                 pricedStartDate: s.pricedStartDate || "", pricedEndDate: s.pricedEndDate || "",
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
       }),
       notes: q.notes || "",
@@ -867,7 +890,8 @@
 
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           sortable, sectionIndex, sectionCount, onSectionMove,
-                          sectionSubtotal, sectionMargin, services, products, equipment, fees, customerTaxable }) {
+                          sectionSubtotal, sectionMargin, sectionGear, services, products, equipment, fees, customerTaxable,
+                          stale, onBump, onKeep }) {
     var isMobile = window.LTP_useIsMobile();
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
@@ -900,7 +924,9 @@
               style: { flex: isMobile ? "1 1 60%" : 1, minWidth: 0, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
         h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", marginLeft: isMobile ? "auto" : undefined } },
           h("div", null, "$" + window.LTP_money(sectionSubtotal)),
-          h("div", { style: { fontSize: "9px" } }, "margin: $" + window.LTP_money(sectionMargin))
+          h("div", { style: { fontSize: "9px", display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" } },
+            h("span", null, "margin: $" + window.LTP_money(sectionMargin)),
+            h(UncostedChip, { short: sectionGear && sectionGear.short, items: sectionGear && sectionGear.items, tiny: true }))
         ),
         !isLocked && h("button", { onClick: function() { onDelete(section.id); },
           style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: isMobile ? "6px 12px" : "3px 8px" } }, "Delete Section")
@@ -917,6 +943,12 @@
               // blank (a blank date field renders as a tiny box on iOS).
               if (on && !section.startDate) patch.startDate = todayISO();
               if (on && !section.endDate)   patch.endDate   = todayISO();
+              // Back onto the quote's dates: forget the window this section
+              // was priced for, so the date-recalc effect re-prices it for the
+              // quote's. Left in place, a stamp from its custom period would
+              // read as "the project moved" and park it behind the stale
+              // notice instead.
+              if (!on) { patch.pricedStartDate = ""; patch.pricedEndDate = ""; }
               onUpdate(section.id, patch);
             },
             style: { accentColor: B.accent } }),
@@ -931,8 +963,25 @@
             h(window.LTPInput, { label: "End", value: section.endDate || "",
               onChange: function(v) { onUpdate(section.id, { endDate: v }); }, type: "date" }))
         ),
+        // The project's dates moved after this section's equipment was priced
+        // (components/domain-docs.js::LTP_staleRentalSections). Nothing is
+        // re-priced on its own: the editor either updates the lines for the
+        // new dates or keeps the old window as this section's own rental
+        // period. The quote-level notice in Quote Details does the same for
+        // every stale section at once.
+        !isLocked && stale && h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: "10px", color: B.warn } },
+          h("span", { style: { fontWeight: 600 } },
+            "\u26a0 Priced for " + fmt(stale.pricedStart) + " \u2192 " + fmt(stale.pricedEnd)
+            + " \u00b7 project dates are now " + fmt(quoteDates.start) + " \u2192 " + fmt(quoteDates.end)),
+          h("button", { onClick: function() { onBump && onBump(section.id); },
+            style: { background: "transparent", border: "1px solid " + B.warn, borderRadius: "4px", color: B.warn, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "2px 8px", fontFamily: "inherit" } },
+            "Update to new dates"),
+          h("button", { onClick: function() { onKeep && onKeep(section.id); },
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "2px 8px", fontFamily: "inherit" } },
+            "Keep " + fmt(stale.pricedStart) + " \u2192 " + fmt(stale.pricedEnd))
+        ),
         // Always show the effective dates as info text when locked or when using quote dates
-        (isLocked || !section.customDates) && effectiveDates && effectiveDates.start && h("span", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
+        !(stale && !isLocked) && (isLocked || !section.customDates) && effectiveDates && effectiveDates.start && h("span", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } },
           (section.customDates ? "Rental period: " : "Using quote dates: ") + fmt(effectiveDates.start) + " \u2192 " + fmt(effectiveDates.end))
       ),
 
@@ -958,7 +1007,7 @@
   //   TOTALS PANEL
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function TotalsPanel({ draft, isLocked, onDiscountChange, customerTaxable, qbConnected, isAdmin, taxFresh, calcTax, onCalcTax }) {
+  function TotalsPanel({ draft, isLocked, onDiscountChange, customerTaxable, qbConnected, isAdmin, taxFresh, calcTax, onCalcTax, gear }) {
     var t = window.LTP_QUOTE_TOTALS(draft);
     var hasTax = draft.qbTaxTotal != null;
     var canCalcTax = isAdmin && qbConnected && (customerTaxable || hasTax) && !isLocked;
@@ -968,7 +1017,13 @@
     // (discount − tax) — a negative amount on an undiscounted quote the moment
     // tax was calculated — and inflated margin by tax the business never keeps.
     var globalDiscountAmount = t.adjusted - t.preTax;
-    var marginTotal = t.preTax - t.cost;
+    // Equipment lines carry no stored cost — what they cost us is whatever
+    // has to be cross-rented in for their dates, resolved live from the orders
+    // (modules/rentals-utils.js::sectionGearCost). Uncosted units are flagged
+    // rather than counted as profit.
+    var gearCost = (gear && gear.cost) || 0;
+    var totalCost = t.cost + gearCost;
+    var marginTotal = t.preTax - totalCost;
     var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
     var gd = draft.globalDiscount || { type: "none", value: 0 };
 
@@ -1033,10 +1088,16 @@
       h("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "2px dashed " + B.border } },
         h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
           h("span", null, "Total Cost"),
-          h("span", null, "$" + window.LTP_money(t.cost))
+          h("span", null, "$" + window.LTP_money(totalCost))
         ),
-        h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
-          h("span", null, "Margin"),
+        gearCost > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "0 0 2px 10px" } },
+          h("span", null, "incl. cross rentals"),
+          h("span", null, "$" + window.LTP_money(gearCost))
+        ),
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: "12px", color: B.textMut, padding: "2px 0" } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
+            h("span", null, "Margin"),
+            h(UncostedChip, { short: gear && gear.short, items: gear && gear.items })),
           h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
         )
       )
@@ -1225,7 +1286,7 @@
     }
     function addSection() {
       setDraft(function(d) {
-        return Object.assign({}, d, { sections: d.sections.concat([{ id: genId("sec"), label: "New Section", items: [], customDates: false, startDate: "", endDate: "" }]) });
+        return Object.assign({}, d, { sections: d.sections.concat([{ id: genId("sec"), label: "New Section", items: [], customDates: false, startDate: "", endDate: "", pricedStartDate: "", pricedEndDate: "" }]) });
       });
     }
     function deleteSection(secId) {
@@ -1374,8 +1435,15 @@
         showAlert("Missing Information", "Please link a project or enter a custom quote name before saving.");
         return;
       }
+      // Every section that isn't waiting on a stale-dates decision records the
+      // window it's priced for, so the next move of the project's dates is
+      // noticed (components/domain-docs.js::LTP_stampRentalWindows). Stale
+      // sections keep their old stamp — and their notice — until the editor
+      // decides.
+      var stampedSections = window.LTP_stampRentalWindows(draft, projects);
+      var toSaveDraft = stampedSections === draft.sections ? draft : Object.assign({}, draft, { sections: stampedSections });
       // Compute changes vs last saved state for the activity log
-      var changes = window.LTP_quoteChanges(cleanRef.current, draft, projects, companies);
+      var changes = window.LTP_quoteChanges(cleanRef.current, toSaveDraft, projects, companies);
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Quote saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
@@ -1386,7 +1454,7 @@
         // client-supplied token (only mints when absent), so this is the
         // source of truth and matches the same value on the server.
         var newToken = draft.shareToken || window.LTP_genShareToken();
-        var toSave = Object.assign({}, draft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
+        var toSave = Object.assign({}, toSaveDraft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
         setQuotes(function(prev) { return prev.concat([toSave]); });
         setDraftRaw(toSave);
         cleanRef.current = toSave;
@@ -1398,7 +1466,7 @@
         // first save, the token persists via the standard spread.
         var existingPatch = { activity: (draft.activity || []).concat([saveEntry]) };
         if (!draft.shareToken) existingPatch.shareToken = window.LTP_genShareToken();
-        var updated = Object.assign({}, draft, existingPatch);
+        var updated = Object.assign({}, toSaveDraft, existingPatch);
         setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
         setDraftRaw(updated);
         cleanRef.current = updated;
@@ -1919,6 +1987,19 @@
         ? { start: draft.customStartDate, end: draft.customEndDate }
         : null;
 
+    // Sections whose equipment is priced for a window the project has since
+    // moved away from — components/domain-docs.js::LTP_staleRentalSections.
+    // They wait for the editor: the recalc effect below leaves them alone, the
+    // picker prices a new line for the window they're still on, and the notice
+    // in Quote Details (plus one on each section) offers the two ways out —
+    // re-price for the new dates, or keep the old window as the section's own
+    // custom rental period. A locked quote can't be edited, so nothing is
+    // flagged on it.
+    var isLockedQuote = draft.status === "accepted" || draft.status === "converted";
+    var staleSections = isLockedQuote ? [] : window.LTP_staleRentalSections(draft, projects);
+    var staleById = {};
+    staleSections.forEach(function(s) { staleById[s.id] = s; });
+
     // ── Recompute equipment prices when dates change ───────────────────────────
     // Equipment unitPrice and rateType are derived from the effective rental dates
     // for each section. When project dates, custom dates, or section custom dates
@@ -1941,24 +2022,46 @@
       sections: draft.sections.map(function(sec) { return { cd: sec.customDates, s: sec.startDate, e: sec.endDate }; })
     });
 
+    // Re-price one section's equipment lines for `dates` (current inventory
+    // rates; adjustedPrice overrides survive) and stamp the section with the
+    // window it is now priced for. Returns the section itself when nothing
+    // moves, so callers can tell a no-op from an edit.
+    function repriceSection(sec, dates) {
+      var start = dates ? dates.start : null, end = dates ? dates.end : null;
+      var itemsChanged = false;
+      var newItems = sec.items.map(function(it) {
+        if (it.type !== "equipment") return it;
+        var eq = equipLookup[it.equipmentId];
+        if (!eq) return it;
+        var rp = calcRentalPrice(start, end, eq.rates);
+        if (it.rateType === rp.rateType && it.unitPrice === rp.totalPrice && it.rentalLabel === rp.label) return it;
+        itemsChanged = true;
+        return Object.assign({}, it, { rateType: rp.rateType, rentalLabel: rp.label, unitPrice: rp.totalPrice });
+      });
+      var stampChanged = !!(start && end) && (sec.pricedStartDate !== start || sec.pricedEndDate !== end);
+      if (!itemsChanged && !stampChanged) return sec;
+      return Object.assign({}, sec,
+        stampChanged ? { pricedStartDate: start, pricedEndDate: end } : {},
+        { items: itemsChanged ? newItems : sec.items });
+    }
+
     useEffect(function() {
       // Skip the load/quote-switch pass — only react to in-session date edits.
       if (skipDateRecalcRef.current) { skipDateRecalcRef.current = false; return; }
       var changed = false;
       var newSections = draft.sections.map(function(sec) {
-        var effDates = sec.customDates && sec.startDate && sec.endDate
-          ? { start: sec.startDate, end: sec.endDate }
-          : quoteDates;
-        var newItems = sec.items.map(function(it) {
-          if (it.type !== "equipment") return it;
-          var eq = equipLookup[it.equipmentId];
-          if (!eq) return it;
-          var rp = calcRentalPrice(effDates ? effDates.start : null, effDates ? effDates.end : null, eq.rates);
-          if (it.rateType === rp.rateType && it.unitPrice === rp.totalPrice && it.rentalLabel === rp.label) return it;
-          changed = true;
-          return Object.assign({}, it, { rateType: rp.rateType, rentalLabel: rp.label, unitPrice: rp.totalPrice });
-        });
-        return Object.assign({}, sec, { items: newItems });
+        // The project moved underneath this section: the editor decides
+        // (bumpSection / keepSection below), never this effect.
+        if (staleById[sec.id]) return sec;
+        var effDates = window.LTP_sectionRentalWindow(sec, quoteDates);
+        // Already priced for exactly this window — leave the snapshot alone.
+        // Before the stamp existed, a date edit anywhere on the quote
+        // re-priced EVERY section from today's rate card, including ones
+        // whose window never moved.
+        if (effDates && sec.pricedStartDate === effDates.start && sec.pricedEndDate === effDates.end) return sec;
+        var next = repriceSection(sec, effDates);
+        if (next !== sec) changed = true;
+        return next;
       });
       if (changed) {
         var updated = Object.assign({}, draft, { sections: newSections });
@@ -1967,6 +2070,37 @@
         if (!isDirty) cleanRef.current = updated;
       }
     }, [dateKey]);
+
+    // The editor's two ways out of a stale section (see staleSections above).
+    // Update: re-price its equipment for the project's dates now, from the
+    // current rate card. Keep: make the window it was priced for the section's
+    // own custom rental period — its prices already match that window, and
+    // the effect above leaves a section whose stamp equals its window alone,
+    // so nothing is re-priced. Both go through setDraft: they are edits, and
+    // on a sent quote they earn the same "resend" reminder as any other.
+    function bumpSection(secId) {
+      setDraft(function(d) {
+        return Object.assign({}, d, { sections: d.sections.map(function(s) { return s.id === secId ? repriceSection(s, quoteDates) : s; }) });
+      });
+    }
+    function keepSection(secId) {
+      var st = staleById[secId];
+      if (!st) return;
+      updateSection(secId, { customDates: true, startDate: st.pricedStart, endDate: st.pricedEnd });
+    }
+    function bumpAllStale() {
+      setDraft(function(d) {
+        return Object.assign({}, d, { sections: d.sections.map(function(s) { return staleById[s.id] ? repriceSection(s, quoteDates) : s; }) });
+      });
+    }
+    function keepAllStale() {
+      setDraft(function(d) {
+        return Object.assign({}, d, { sections: d.sections.map(function(s) {
+          var st = staleById[s.id];
+          return st ? Object.assign({}, s, { customDates: true, startDate: st.pricedStart, endDate: st.pricedEnd }) : s;
+        }) });
+      });
+    }
 
     var refDisplay = draft.id != null ? window.LTP_QUOTE_REF(draft) : "Q-" + (draft.createdDate || "").substring(0, 4) + "-NEW";
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "Untitled Quote");
@@ -1981,6 +2115,32 @@
     // Shared with modules/invoices.js — see components/domain-docs.js. Returns
     // { subtotal, cost, margin }; this builder reads subtotal and margin.
     var sectionTotals = window.LTP_sectionTotals;
+
+    // ── What this quote's gear costs us ──────────────────────────────────────
+    // Owned units cost nothing extra to send out, so an equipment line only
+    // costs what has to be cross-rented in for its dates. Resolved live from
+    // the orders rather than stored on the line, so it follows the cross
+    // rentals instead of going stale — and this quote's OWN bookings are
+    // excluded from the demand it is measured against, or an accepted quote
+    // would read as competing with itself.
+    var gear = (function() {
+      var R = window.LTP_RENTALS;
+      var ownIds = {};
+      R.quoteBookings(draft.id, allocations, invoices).forEach(function(a) { ownIds[a.id] = true; });
+      var ctx = { equipment: equipment || [], allocations: allocations || [], crossRentals: crossRentals || [], ownIds: ownIds };
+      var bySection = {}, total = { cost: 0, short: 0, items: [] };
+      (draft.sections || []).forEach(function(sec) {
+        var d = sec.customDates && sec.startDate && sec.endDate
+          ? { start: sec.startDate, end: sec.endDate }
+          : quoteDates;
+        var g = R.sectionGearCost(sec.items, d, ctx);
+        bySection[sec.id] = g;
+        total.cost += g.cost;
+        total.short += g.short;
+        total.items = total.items.concat(g.items);
+      });
+      return { bySection: bySection, total: total };
+    })();
 
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
@@ -2029,16 +2189,7 @@
           // Returned when it is back, early or not, so it is quotable again.
           (function() {
             if (!(draft.status === "accepted" || draft.status === "converted") || draft.id == null) return null;
-            var rows = (allocations || []).filter(function(a) { return a.docType === "quote" && a.docId === draft.id; });
-            (invoices || []).forEach(function(inv) {
-              (inv.sections || []).forEach(function(sec) {
-                (sec.items || []).forEach(function(it) {
-                  if (it && it.type === "equipment" && it.sourceQuoteId === draft.id) {
-                    rows = rows.concat((allocations || []).filter(function(a) { return a.docType === "invoice" && a.docId === inv.id && a.lineId === it.id; }));
-                  }
-                });
-              });
-            });
+            var rows = window.LTP_RENTALS.quoteBookings(draft.id, allocations, invoices);
             if (rows.length === 0) return null;
             var held = rows.filter(function(a) { return a.state === "reserved" || a.state === "allocated"; }).length;
             var out  = rows.filter(function(a) { return a.state === "checked-out"; }).length;
@@ -2299,7 +2450,21 @@
                 // per-section custom dates \u2014 which the send flows stamp
                 // automatically \u2014 not a re-interpretation of the quote's window.
                 docProjects.length > 1 && h("div", { style: { marginTop: 4, color: B.info } },
-                  "Other linked jobs keep their own dates on their own sections."))
+                  "Other linked jobs keep their own dates on their own sections.")),
+              // The project's dates moved after this quote's equipment was
+              // priced. Nothing is re-priced on its own — the editor decides,
+              // here for every stale section at once or on each section below.
+              staleSections.length > 0 && h("div", { style: { marginTop: 8, padding: "10px 12px", background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: "6px", fontSize: "11px", color: B.text } },
+                h("div", { style: { fontWeight: 700, color: B.warn, marginBottom: 4 } }, "\u26a0 Rental periods are out of sync with the project"),
+                h("div", { style: { color: B.textSec, lineHeight: 1.5 } },
+                  (staleSections.length === 1
+                    ? "\u201c" + staleSections[0].label + "\u201d is still priced for " + fmt(staleSections[0].pricedStart) + " \u2192 " + fmt(staleSections[0].pricedEnd)
+                    : staleSections.length + " sections (" + staleSections.map(function(s) { return s.label; }).join(", ") + ") are still priced for the previous dates")
+                  + ", but the project now runs " + fmt(quoteDates.start) + " \u2192 " + fmt(quoteDates.end)
+                  + ". Update " + (staleSections.length === 1 ? "it" : "them") + " to the new dates, or keep the old dates as a custom rental period."),
+                h("div", { style: { display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" } },
+                  h(window.Btn, { small: true, onClick: bumpAllStale }, staleSections.length === 1 ? "Update to new dates" : "Update all to new dates"),
+                  h(window.Btn, { small: true, variant: "ghost", onClick: keepAllStale }, staleSections.length === 1 ? "Keep old dates" : "Keep old dates on all")))
             )
       ),
 
@@ -2307,6 +2472,7 @@
       h("div", null,
         draft.sections.map(function(sec, secIdx) {
           var t = sectionTotals(sec);
+          var g = gear.bySection[sec.id] || { cost: 0, short: 0, items: [] };
           // Per-section effective dates (for availability checks in the picker)
           var secDates = sec.customDates && sec.startDate && sec.endDate
             ? { start: sec.startDate, end: sec.endDate }
@@ -2314,7 +2480,8 @@
           return h(SectionBlock, { key: sec.id, section: sec, sortable: sortable,
             sectionIndex: secIdx, sectionCount: draft.sections.length, onSectionMove: moveSectionAnimated,
             quoteDates: quoteDates, quoteStatus: draft.status,
-            sectionSubtotal: t.subtotal, sectionMargin: t.margin,
+            stale: staleById[sec.id] || null, onBump: bumpSection, onKeep: keepSection,
+            sectionSubtotal: t.subtotal, sectionMargin: t.margin - g.cost, sectionGear: g,
             services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
@@ -2331,7 +2498,8 @@
 
       // Totals
       h(TotalsPanel, { draft: draft, isLocked: draft.status === "accepted" || draft.status === "converted", onDiscountChange: function(gd) { patchDraft({ globalDiscount: gd }); },
-        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax }),
+        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax,
+        gear: gear.total }),
 
       // Terms & Conditions — collapsed, directly under the totals, because that
       // is where they print on the document itself.
@@ -2368,7 +2536,7 @@
               var t = window.LTP_QUOTE_TOTALS(draft);
               // Pre-tax, like the Totals panel — sales tax is collected for the
               // state, not revenue, so it must not count toward margin.
-              var marginTotal = t.preTax - t.cost;
+              var marginTotal = t.preTax - t.cost - gear.total.cost;
               var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
               return h("div", { style: { marginTop: 8 } },
                 Math.abs(t.subtotal - t.adjusted) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
@@ -2387,8 +2555,10 @@
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
                   h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))
                 ),
-                h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
-                  h("span", null, "Margin"),
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, fontSize: "10px", color: B.textMut, padding: "2px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+                    h("span", null, "Margin"),
+                    h(UncostedChip, { short: gear.total.short, items: gear.total.items, tiny: true })),
                   h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
                 )
               );
@@ -2516,9 +2686,15 @@
       // Modals (outside layout — overlays)
       pickerForSection && function() {
         var pickerSec = draft.sections.find(function(s) { return s.id === pickerForSection; });
-        var pickerDates = pickerSec && pickerSec.customDates && pickerSec.startDate && pickerSec.endDate
-          ? { start: pickerSec.startDate, end: pickerSec.endDate }
-          : quoteDates;
+        // A stale section (see staleSections) is still priced for the window
+        // it was stamped with, so a line added now prices on THAT window —
+        // otherwise "keep old dates" would leave one line on the new dates.
+        var pickerStale = pickerSec ? staleById[pickerSec.id] : null;
+        var pickerDates = pickerStale
+          ? { start: pickerStale.pricedStart, end: pickerStale.pricedEnd }
+          : pickerSec && pickerSec.customDates && pickerSec.startDate && pickerSec.endDate
+            ? { start: pickerSec.startDate, end: pickerSec.endDate }
+            : quoteDates;
         return h(AddItemPicker, {
           sectionId: pickerForSection,
           sectionLabel: (pickerSec || {}).label || "",
