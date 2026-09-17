@@ -293,7 +293,13 @@
 // item popup lists its bookings with a per-booking state. The Allocations tab
 // is gone. quotes-builder.js, rentals-inventory.js, rentals-equipment.js,
 // rentals-shell.js, app.js.
-var CACHE_VERSION = 'ltp-shell-v91';
+// v93: a quote's margin now carries the cost of the gear it has to rent in.
+// Equipment lines are costed live from the cross rentals covering their dates
+// (rentals-utils.js::lineGearCost) — owned units are free, cross-rented ones
+// cost the vendor's price — and units nothing covers are flagged with an
+// UNCOSTED chip beside the section and summary margins rather than counted as
+// profit. rentals-utils.js, quotes-builder.js.
+var CACHE_VERSION = 'ltp-shell-v93';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

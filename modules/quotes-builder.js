@@ -29,6 +29,25 @@
   var S = window.LTP_SECTIONS;
   var FEE_COLOR = "#B794F6";  // "FEE" line/badge accent (violet — distinct from EQ/PR/SV)
 
+  // Margin whose cost could not be fully resolved. An equipment line costs us
+  // nothing while we own the units; the moment it needs more than we own, the
+  // cost is whatever the cross rental covering those dates charges — and when
+  // there is no such order (or what there is, is already spoken for) the cost
+  // simply is not known, so the margin beside it is not the whole story.
+  // Deliberately a chip and a tooltip, not a sentence: it sits inline with a
+  // number on a dense line. `short` is the unit count that went uncosted.
+  function UncostedChip({ short, items, tiny }) {
+    if (!short) return null;
+    var names = (items || []).map(function(x) { return x.name + " \u00d7" + x.short; }).join(", ");
+    return h("span", {
+      title: short + " unit" + (short === 1 ? "" : "s") + " with no cross rental covering these dates"
+        + (names ? " (" + names + ")" : "") + " — margin may be overstated.",
+      style: { display: "inline-flex", alignItems: "center", gap: 3, background: B.warn + "1c", border: "1px solid " + B.warn + "55",
+               color: B.warn, borderRadius: "3px", padding: tiny ? "0 3px" : "1px 5px", fontSize: tiny ? "8px" : "9px",
+               fontWeight: 700, whiteSpace: "nowrap", cursor: "help", flexShrink: 0 } },
+      "\u26a0 UNCOSTED");
+  }
+
   // QuickBooks tax change-signature: a compact fingerprint of everything that
   // affects the QB-computed sales tax for a quote (line amounts + per-line
   // taxability + customer taxable flag + customer billing address). The stored
@@ -862,7 +881,7 @@
 
   function SectionBlock({ section, quoteDates, quoteStatus, onLabelChange, onUpdate, onDelete, onAddItem, onItemUpdate, onItemDelete, onItemMove,
                           sortable, sectionIndex, sectionCount, onSectionMove,
-                          sectionSubtotal, sectionMargin, services, products, equipment, fees, customerTaxable }) {
+                          sectionSubtotal, sectionMargin, sectionGear, services, products, equipment, fees, customerTaxable }) {
     var isMobile = window.LTP_useIsMobile();
     var isLocked = quoteStatus === "accepted" || quoteStatus === "converted";
     var effectiveDates = section.customDates && section.startDate && section.endDate
@@ -895,7 +914,9 @@
               style: { flex: isMobile ? "1 1 60%" : 1, minWidth: 0, background: "transparent", border: "none", borderBottom: "1px solid " + B.border, color: B.text, fontSize: "14px", fontWeight: 700, outline: "none", padding: "4px 0" } }),
         h("div", { style: { fontSize: "11px", color: B.textMut, textAlign: "right", marginLeft: isMobile ? "auto" : undefined } },
           h("div", null, "$" + window.LTP_money(sectionSubtotal)),
-          h("div", { style: { fontSize: "9px" } }, "margin: $" + window.LTP_money(sectionMargin))
+          h("div", { style: { fontSize: "9px", display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" } },
+            h("span", null, "margin: $" + window.LTP_money(sectionMargin)),
+            h(UncostedChip, { short: sectionGear && sectionGear.short, items: sectionGear && sectionGear.items, tiny: true }))
         ),
         !isLocked && h("button", { onClick: function() { onDelete(section.id); },
           style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "4px", color: B.textMut, cursor: "pointer", fontSize: "11px", padding: isMobile ? "6px 12px" : "3px 8px" } }, "Delete Section")
@@ -953,7 +974,7 @@
   //   TOTALS PANEL
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function TotalsPanel({ draft, isLocked, onDiscountChange, customerTaxable, qbConnected, isAdmin, taxFresh, calcTax, onCalcTax }) {
+  function TotalsPanel({ draft, isLocked, onDiscountChange, customerTaxable, qbConnected, isAdmin, taxFresh, calcTax, onCalcTax, gear }) {
     var t = window.LTP_QUOTE_TOTALS(draft);
     var hasTax = draft.qbTaxTotal != null;
     var canCalcTax = isAdmin && qbConnected && (customerTaxable || hasTax) && !isLocked;
@@ -963,7 +984,13 @@
     // (discount − tax) — a negative amount on an undiscounted quote the moment
     // tax was calculated — and inflated margin by tax the business never keeps.
     var globalDiscountAmount = t.adjusted - t.preTax;
-    var marginTotal = t.preTax - t.cost;
+    // Equipment lines carry no stored cost — what they cost us is whatever
+    // has to be cross-rented in for their dates, resolved live from the orders
+    // (modules/rentals-utils.js::sectionGearCost). Uncosted units are flagged
+    // rather than counted as profit.
+    var gearCost = (gear && gear.cost) || 0;
+    var totalCost = t.cost + gearCost;
+    var marginTotal = t.preTax - totalCost;
     var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
     var gd = draft.globalDiscount || { type: "none", value: 0 };
 
@@ -1028,10 +1055,16 @@
       h("div", { style: { marginTop: 12, paddingTop: 10, borderTop: "2px dashed " + B.border } },
         h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
           h("span", null, "Total Cost"),
-          h("span", null, "$" + window.LTP_money(t.cost))
+          h("span", null, "$" + window.LTP_money(totalCost))
         ),
-        h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "12px", color: B.textMut, padding: "2px 0" } },
-          h("span", null, "Margin"),
+        gearCost > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "0 0 2px 10px" } },
+          h("span", null, "incl. cross rentals"),
+          h("span", null, "$" + window.LTP_money(gearCost))
+        ),
+        h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, fontSize: "12px", color: B.textMut, padding: "2px 0" } },
+          h("div", { style: { display: "flex", alignItems: "center", gap: 5 } },
+            h("span", null, "Margin"),
+            h(UncostedChip, { short: gear && gear.short, items: gear && gear.items })),
           h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
         )
       )
@@ -1977,6 +2010,32 @@
     // { subtotal, cost, margin }; this builder reads subtotal and margin.
     var sectionTotals = window.LTP_sectionTotals;
 
+    // ── What this quote's gear costs us ──────────────────────────────────────
+    // Owned units cost nothing extra to send out, so an equipment line only
+    // costs what has to be cross-rented in for its dates. Resolved live from
+    // the orders rather than stored on the line, so it follows the cross
+    // rentals instead of going stale — and this quote's OWN bookings are
+    // excluded from the demand it is measured against, or an accepted quote
+    // would read as competing with itself.
+    var gear = (function() {
+      var R = window.LTP_RENTALS;
+      var ownIds = {};
+      R.quoteBookings(draft.id, allocations, invoices).forEach(function(a) { ownIds[a.id] = true; });
+      var ctx = { equipment: equipment || [], allocations: allocations || [], crossRentals: crossRentals || [], ownIds: ownIds };
+      var bySection = {}, total = { cost: 0, short: 0, items: [] };
+      (draft.sections || []).forEach(function(sec) {
+        var d = sec.customDates && sec.startDate && sec.endDate
+          ? { start: sec.startDate, end: sec.endDate }
+          : quoteDates;
+        var g = R.sectionGearCost(sec.items, d, ctx);
+        bySection[sec.id] = g;
+        total.cost += g.cost;
+        total.short += g.short;
+        total.items = total.items.concat(g.items);
+      });
+      return { bySection: bySection, total: total };
+    })();
+
     // ── Render ─────────────────────────────────────────────────────────────────
     return h("div", { style: { display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" } },
       // Sticky header bar
@@ -2024,16 +2083,7 @@
           // Returned when it is back, early or not, so it is quotable again.
           (function() {
             if (!(draft.status === "accepted" || draft.status === "converted") || draft.id == null) return null;
-            var rows = (allocations || []).filter(function(a) { return a.docType === "quote" && a.docId === draft.id; });
-            (invoices || []).forEach(function(inv) {
-              (inv.sections || []).forEach(function(sec) {
-                (sec.items || []).forEach(function(it) {
-                  if (it && it.type === "equipment" && it.sourceQuoteId === draft.id) {
-                    rows = rows.concat((allocations || []).filter(function(a) { return a.docType === "invoice" && a.docId === inv.id && a.lineId === it.id; }));
-                  }
-                });
-              });
-            });
+            var rows = window.LTP_RENTALS.quoteBookings(draft.id, allocations, invoices);
             if (rows.length === 0) return null;
             var held = rows.filter(function(a) { return a.state === "reserved" || a.state === "allocated"; }).length;
             var out  = rows.filter(function(a) { return a.state === "checked-out"; }).length;
@@ -2302,6 +2352,7 @@
       h("div", null,
         draft.sections.map(function(sec, secIdx) {
           var t = sectionTotals(sec);
+          var g = gear.bySection[sec.id] || { cost: 0, short: 0, items: [] };
           // Per-section effective dates (for availability checks in the picker)
           var secDates = sec.customDates && sec.startDate && sec.endDate
             ? { start: sec.startDate, end: sec.endDate }
@@ -2309,7 +2360,7 @@
           return h(SectionBlock, { key: sec.id, section: sec, sortable: sortable,
             sectionIndex: secIdx, sectionCount: draft.sections.length, onSectionMove: moveSectionAnimated,
             quoteDates: quoteDates, quoteStatus: draft.status,
-            sectionSubtotal: t.subtotal, sectionMargin: t.margin,
+            sectionSubtotal: t.subtotal, sectionMargin: t.margin - g.cost, sectionGear: g,
             services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable,
             onLabelChange: function(sid, v) { updateSection(sid, { label: v }); },
             onUpdate: updateSection,
@@ -2326,7 +2377,8 @@
 
       // Totals
       h(TotalsPanel, { draft: draft, isLocked: draft.status === "accepted" || draft.status === "converted", onDiscountChange: function(gd) { patchDraft({ globalDiscount: gd }); },
-        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax }),
+        customerTaxable: customerTaxable, qbConnected: qbConnected, isAdmin: isAdmin, taxFresh: taxFresh, calcTax: calcTax, onCalcTax: calcQuoteTax,
+        gear: gear.total }),
 
       // Terms & Conditions — collapsed, directly under the totals, because that
       // is where they print on the document itself.
@@ -2363,7 +2415,7 @@
               var t = window.LTP_QUOTE_TOTALS(draft);
               // Pre-tax, like the Totals panel — sales tax is collected for the
               // state, not revenue, so it must not count toward margin.
-              var marginTotal = t.preTax - t.cost;
+              var marginTotal = t.preTax - t.cost - gear.total.cost;
               var marginPct = t.preTax > 0 ? Math.round((marginTotal / t.preTax) * 100) : 0;
               return h("div", { style: { marginTop: 8 } },
                 Math.abs(t.subtotal - t.adjusted) > 0.01 && h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0" } },
@@ -2382,8 +2434,10 @@
                   h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.text } }, "Total"),
                   h("span", { style: { fontSize: "14px", fontWeight: 700, color: B.accent } }, "$" + window.LTP_money(t.total))
                 ),
-                h("div", { style: { display: "flex", justifyContent: "space-between", fontSize: "10px", color: B.textMut, padding: "2px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
-                  h("span", null, "Margin"),
+                h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, fontSize: "10px", color: B.textMut, padding: "2px 0", borderTop: "1px dashed " + B.border, marginTop: 2 } },
+                  h("div", { style: { display: "flex", alignItems: "center", gap: 4 } },
+                    h("span", null, "Margin"),
+                    h(UncostedChip, { short: gear.total.short, items: gear.total.items, tiny: true })),
                   h("span", { style: { color: marginPct >= 40 ? B.success : marginPct >= 20 ? B.warn : B.danger, fontWeight: 700 } }, "$" + window.LTP_money(marginTotal) + " (" + marginPct + "%)")
                 )
               );

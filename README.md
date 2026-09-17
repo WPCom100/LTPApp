@@ -356,6 +356,7 @@ free on the dates. The whole thing rests on three ideas:
 | **Rentals → Cross Rentals** | The orders list (filters for open / status / vendor, overdue flag), the order form, and the detail popup with each line's cost and what other vendors price the item at. |
 | **Rentals → Availability Checker** | Totals include confirmed cross-rented units for the range, with an *incl. ×N cross-rented · Vendor* chip; quoted orders show as *×N quoted*. When an item is short, the row lists the vendors who price it (preferred first, then cheapest) and **+ Cross rental** opens the order form already filled in with the item, the dates and the vendor. |
 | **Quote builder → Add Item** | Same totals and chips. An item with nothing free offers **Cross-rent**, which opens the order form *over* the picker so the draft stays put. |
+| **Quote builder → margin** | Equipment margin is net of what the gear costs to rent in — see *Margin on rented-in gear* below. |
 | **Rentals → an item's popup** | A *Cross-rented* tile, the item's **Vendor Pricing** list (editable in place), the open cross rentals naming it, and its **Bookings** — which job, which document, when, and a per-booking state. The checker opens this popup when you click an item. |
 | **Rentals → Equipment List** | **Where** says which jobs each item is on ("Autumn Gala ×3 (out)"), and the status reads *out* (physically checked out), *reserved* (booked for today or later), *available*, or *cross-rental*. |
 | **CRM → a vendor** | **Rental Rates** — every item this vendor prices — and the orders placed with them, with the year's spend. |
@@ -376,6 +377,35 @@ mark it returned never re-dates a price.
 Status runs `quoted → confirmed → picked-up → returned`, or `cancelled`. It
 never moves on its own; an order past its end date and still out shows as
 **overdue**.
+
+### Margin on rented-in gear
+
+A quote's margin used to treat every equipment line as pure profit, because we
+own what we send out and an owned unit costs nothing extra on a job. That stops
+being true the moment a line needs more than we own. For each equipment line,
+over its own rental dates:
+
+- Units are taken from **owned stock first** — those cost nothing.
+- What is left is taken from the **confirmed cross rentals** covering those
+  dates, and costs the vendor's price for that order (a line's flat total, or
+  its 3-day / week / month rate priced by the same engine as everything else).
+  Several orders can supply one item; each is costed at its own price.
+- Bookings **other documents** hold over the same dates are charged against
+  owned stock first, so whatever they spill onto the cross rentals is not
+  available to this quote. The quote's own bookings are excluded, or an
+  accepted quote would read as competing with itself.
+
+The cost shows in the Totals panel as **incl. cross rentals** under Total Cost,
+and both the section margin and the two summary margins are net of it. It is
+resolved live from the orders, never stored on the line, so it follows a cross
+rental being confirmed, re-priced or cancelled.
+
+**When it can't be resolved** — nothing covers those dates, what does is
+already spoken for, or the item is gone from the catalog — the unresolved units
+are *not* silently treated as free. A small **⚠ UNCOSTED** chip sits beside the
+section margin and both summary margins, and its tooltip names the units. A
+merely *quoted* cross rental never counts as cost, for the same reason it never
+counts as stock.
 
 ### Counting rule
 

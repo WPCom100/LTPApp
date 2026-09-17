@@ -508,6 +508,118 @@
     });
   }
 
+  // ── Margin: what an equipment line COSTS us ──────────────────────────────
+  // We own most of what we send out, and an owned unit costs nothing extra on
+  // a job — so the only real cost on a quote's equipment line is the units
+  // that have to be rented in. Over the line's rental dates:
+  //
+  //   supply = owned rentable stock + confirmed cross-rented units
+  //   taken  = bookings from OTHER documents overlapping the same dates
+  //   this line's units come off owned stock first, then off cross rentals
+  //
+  // Other demand is charged against owned stock first, so whatever it spills
+  // onto the cross rentals is what this line cannot have.
+  //
+  // Returns {cost, fromOwned, fromCross, short, used}. `short` > 0 means the
+  // dates cannot supply the line — no cross rental covers them, what does is
+  // already spoken for, or the item is gone from the catalog — so `cost` holds
+  // only the units that resolved and the caller must flag the margin as
+  // incomplete rather than quietly report it as profit.
+  function lineGearCost(opts) {
+    opts = opts || {};
+    var equipment = opts.equipment || [], allocations = opts.allocations || [], crossRentals = opts.crossRentals || [];
+    var id = opts.equipmentId, own = opts.ownIds || {};
+    var qty = Math.max(0, Number(opts.qty) || 0);
+    var start = opts.startDate || "", end = opts.endDate || "";
+    var out = { cost: 0, fromOwned: 0, fromCross: 0, short: 0, used: [] };
+    if (qty <= 0) return out;
+    var eq = (id == null) ? null : equipment.find(function(e) { return e.id === id; });
+    var owned = eq ? eqQty(eq) : 0;   // no row at all → nothing of ours to draw on
+    // Without dates there is no range to check a booking or a cross rental
+    // against, so only what we own can be counted on.
+    if (!start || !end) {
+      out.fromOwned = Math.min(qty, owned);
+      out.short = qty - out.fromOwned;
+      return out;
+    }
+    var otherDemand = allocations.reduce(function(sum, a) {
+      if (!a || a.equipmentId !== id || own[a.id]) return sum;
+      if (a.state === "returned" || a.state === "under-maintenance") return sum;
+      if (!(a.startDate <= end && a.endDate >= start)) return sum;
+      return sum + (Number(a.qty) || 0);
+    }, 0);
+    var supply = crossLinesFor(crossRentals, id, start, end, CROSS_COUNTS);
+    var crossTotal = supply.reduce(function(sum, x) { return sum + x.qty; }, 0);
+
+    var ownedFree = Math.max(0, owned - otherDemand);
+    var takenFromCross = Math.max(0, otherDemand - owned);
+    var crossFree = Math.max(0, crossTotal - takenFromCross);
+
+    out.fromOwned = Math.min(qty, ownedFree);
+    var need = qty - out.fromOwned;
+    out.fromCross = Math.min(need, crossFree);
+    out.short = need - out.fromCross;
+
+    // Walk the covering cross-rental lines, stepping over the units other
+    // documents already hold, and price what this line takes at each line's
+    // own cost — several orders can supply one item.
+    var skip = takenFromCross, take = out.fromCross;
+    for (var i = 0; i < supply.length && take > 0; i++) {
+      var x = supply[i], avail = x.qty;
+      if (skip > 0) { var s = Math.min(skip, avail); skip -= s; avail -= s; }
+      if (avail <= 0) continue;
+      var n = Math.min(avail, take);
+      var per = x.qty > 0 ? lineCost(x.order, x.line) / x.qty : 0;
+      out.cost += per * n;
+      out.used.push({ order: x.order, line: x.line, qty: n, unitCost: per });
+      take -= n;
+    }
+    return out;
+  }
+
+  // Every equipment line in one document section, costed over `dates`
+  // ({start, end}). Returns {cost, short, items} — `items` names what could not
+  // be costed, for the margin chip's tooltip.
+  function sectionGearCost(items, dates, ctx) {
+    ctx = ctx || {};
+    var out = { cost: 0, short: 0, items: [] };
+    (items || []).forEach(function(it) {
+      if (!it || it.type !== "equipment" || it.equipmentId == null) return;
+      var r = lineGearCost({
+        equipment: ctx.equipment, allocations: ctx.allocations, crossRentals: ctx.crossRentals, ownIds: ctx.ownIds,
+        equipmentId: it.equipmentId, qty: it.qty,
+        startDate: dates && dates.start, endDate: dates && dates.end,
+      });
+      out.cost += r.cost;
+      if (r.short > 0) {
+        out.short += r.short;
+        out.items.push({ name: it.name || "item", short: r.short, equipmentId: it.equipmentId });
+      }
+    });
+    return out;
+  }
+
+  // Every booking behind ONE quote's gear: the rows keyed to the quote itself,
+  // plus the rows its invoices took over when it converted. Mirrors
+  // backend/rental_bookings.py::gear_rows_for_quote — the quote's own bookings
+  // are what its Check Out / Mark Returned buttons move, and what its margin
+  // must not count as somebody else's claim on the same units.
+  function quoteBookings(quoteId, allocations, invoices) {
+    if (quoteId == null) return [];
+    var rows = (allocations || []).filter(function(a) { return a.docType === "quote" && a.docId === quoteId; });
+    (invoices || []).forEach(function(inv) {
+      ((inv && inv.sections) || []).forEach(function(sec) {
+        ((sec && sec.items) || []).forEach(function(it) {
+          if (!it || it.type !== "equipment" || it.sourceQuoteId !== quoteId) return;
+          (allocations || []).forEach(function(a) {
+            if (a.docType === "invoice" && a.docId === inv.id && a.lineId === it.id) rows.push(a);
+          });
+        });
+      });
+    });
+    return rows;
+  }
+
   window.LTP_RENTALS = {
     SerialSearch:  SerialSearch,
     VendorSearch:  VendorSearch,
@@ -537,6 +649,9 @@
     orderCost:        orderCost,
     vendorOptions:    vendorOptions,
     crossOverdue:     crossOverdue,
+    lineGearCost:      lineGearCost,
+    sectionGearCost:   sectionGearCost,
+    quoteBookings:     quoteBookings,
     upsertCrossRental:  upsertCrossRental,
     rememberVendorRates: rememberVendorRates,
     crossBadge:       crossBadge,
