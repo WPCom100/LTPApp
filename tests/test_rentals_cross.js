@@ -117,6 +117,100 @@ ok("D3 not before the end", !R.crossOverdue(order("picked-up", []), "2026-10-10"
 ok("D4 returned never overdue", !R.crossOverdue(order("returned", []), "2026-12-01"));
 ok("D5 quoted never overdue", !R.crossOverdue(order("quoted", []), "2026-12-01"));
 
+// ── lineGearCost: what an equipment line costs us ───────────────────────────
+// Owned units are free to send out; only cross-rented ones cost anything, and
+// what cannot be sourced is reported as `short` rather than counted as profit.
+const GEQ = { id: 5, name: "Mover", qty: 4, serialized: false, rates: RATES, maintenanceLogs: [] };
+// One confirmed order, Oct 1-10, 6 units at 50/100/250 → 150 per unit for the
+// order period (1x week + 1x 3-day), so 900 for the line.
+const GORDER = order("confirmed", [line(5, 6)]);
+function gc(extra) {
+  return R.lineGearCost(Object.assign({ equipment: [GEQ], allocations: [], crossRentals: [GORDER],
+    equipmentId: 5, qty: 1, startDate: "2026-10-02", endDate: "2026-10-05" }, extra || {}));
+}
+eq("G0 per-unit cost is the cross-rental line's own price", R.lineCost(GORDER, GORDER.lines[0]) / 6, 150);
+
+let g = gc({ qty: 4 });
+eq("G1 owned units cost nothing", g.cost, 0);
+eq("G1b …and all come from stock", g.fromOwned, 4);
+eq("G1c …with nothing uncosted", g.short, 0);
+
+g = gc({ qty: 6 });
+eq("G2 units past what we own are cross-rented", g.fromCross, 2);
+eq("G2b …and cost the vendor's price", g.cost, 300);
+eq("G2c …nothing short", g.short, 0);
+
+g = gc({ qty: 6, crossRentals: [] });
+eq("G3 no cross rental at all → the deficit is uncosted", g.short, 2);
+eq("G3b …and no cost is invented", g.cost, 0);
+
+g = gc({ qty: 6, crossRentals: [order("quoted", [line(5, 6)])] });
+eq("G4 a quoted order does not cost (it is not ours yet)", g.short, 2);
+for (const st of ["returned", "cancelled"]) {
+  eq("G4b a " + st + " order does not supply", gc({ qty: 6, crossRentals: [order(st, [line(5, 6)])] }).short, 2);
+}
+
+// Another document's booking eats owned stock first, then spills onto the cross
+// rental — so what it spills is what this line cannot have.
+const OTHER = { id: 1, equipmentId: 5, qty: 5, startDate: "2026-10-03", endDate: "2026-10-04", state: "reserved", docType: "quote", docId: 99 };
+g = gc({ qty: 6, allocations: [OTHER] });
+eq("G5 other demand takes owned stock first", g.fromOwned, 0);
+eq("G5b …then part of the cross rental", g.fromCross, 5);
+eq("G5c …leaving the rest uncosted", g.short, 1);
+eq("G5d …costed at the vendor price for what it got", g.cost, 750);
+eq("G6 this quote's own booking is not competition", gc({ qty: 6, allocations: [OTHER], ownIds: { 1: true } }).cost, 300);
+eq("G6b …and leaves nothing short", gc({ qty: 6, allocations: [OTHER], ownIds: { 1: true } }).short, 0);
+eq("G7 a returned booking never counts as demand", gc({ qty: 6, allocations: [Object.assign({}, OTHER, { state: "returned" })] }).short, 0);
+eq("G8 a booking outside the dates never counts", gc({ qty: 6, allocations: [Object.assign({}, OTHER, { startDate: "2026-11-01", endDate: "2026-11-02" })] }).short, 0);
+
+eq("G9 an item no longer in the catalog owns nothing, so nothing is free", gc({ qty: 2, equipment: [], crossRentals: [] }).short, 2);
+eq("G9b …though an order still covering it is still costed", gc({ qty: 2, equipment: [] }).cost, 300);
+eq("G10 with no dates only what we own counts", gc({ qty: 6, startDate: "", endDate: "" }).short, 2);
+eq("G10b …and owned units still cost nothing", gc({ qty: 4, startDate: "", endDate: "" }).cost, 0);
+eq("G11 qty 0 costs nothing", gc({ qty: 0 }).cost, 0);
+
+// Several orders can supply one item; each is costed at its own price.
+const ORDER_B = order("confirmed", [line(5, 3, { rates: { threeDay: 60, week: 120, month: 0 } })], { id: 2 });
+g = gc({ qty: 8, crossRentals: [order("confirmed", [line(5, 2)]), ORDER_B] });
+eq("G12 supply is drawn from each order in turn", g.fromCross, 4);
+eq("G12b …at each order's own price (2x150 + 2x180)", g.cost, 660);
+g = gc({ qty: 5, crossRentals: [order("confirmed", [line(5, 3, { costOverride: 90 })])] });
+eq("G13 a flat line total prices per unit (90 / 3)", g.cost, 30);
+
+// ── sectionGearCost ─────────────────────────────────────────────────────────
+const SEC_ITEMS = [
+  { id: "a", type: "equipment", equipmentId: 5, name: "Mover", qty: 6 },
+  { id: "b", type: "equipment", equipmentId: 9, name: "Gone", qty: 2 },
+  { id: "c", type: "service", serviceId: 1, name: "L1", qty: 1 },
+  { id: "d", type: "note", name: "hi" },
+  { id: "e", type: "equipment", equipmentId: null, name: "No item", qty: 3 },
+];
+const SCTX = { equipment: [GEQ], allocations: [], crossRentals: [GORDER], ownIds: {} };
+const sg = R.sectionGearCost(SEC_ITEMS, { start: "2026-10-02", end: "2026-10-05" }, SCTX);
+eq("S-1 the section costs only its cross-rented units", sg.cost, 300);
+eq("S-2 an item with no catalog row is short", sg.short, 2);
+eq("S-3 …and is named for the chip", sg.items.length === 1 && sg.items[0].name, "Gone");
+eq("S-4 services, notes and item-less lines are ignored", R.sectionGearCost(SEC_ITEMS.slice(2), { start: "2026-10-02", end: "2026-10-05" }, SCTX).cost, 0);
+eq("S-5 an empty section costs nothing", R.sectionGearCost([], null, SCTX).cost, 0);
+
+// ── quoteBookings ───────────────────────────────────────────────────────────
+const ALLOCS = [
+  { id: 1, docType: "quote", docId: 7, lineId: "q7-a" },
+  { id: 2, docType: "quote", docId: 8, lineId: "q8-a" },
+  { id: 3, docType: "invoice", docId: 3, lineId: "i3-a" },
+  { id: 4, docType: "invoice", docId: 3, lineId: "i3-b" },
+  { id: 5, docType: "manual", docId: null, lineId: "" },
+];
+const INVS = [{ id: 3, sections: [{ id: "s", items: [
+  { id: "i3-a", type: "equipment", equipmentId: 5, sourceQuoteId: 7 },
+  { id: "i3-b", type: "equipment", equipmentId: 5, sourceQuoteId: 8 },
+] }] }];
+const qb7 = R.quoteBookings(7, ALLOCS, INVS).map(function (a) { return a.id; }).sort();
+eq("Q1 a quote's own rows plus the ones its invoice took over", qb7.join(","), "1,3");
+eq("Q2 another quote's rows are not included", R.quoteBookings(8, ALLOCS, INVS).map(function (a) { return a.id; }).sort().join(","), "2,4");
+eq("Q3 no id, no rows", R.quoteBookings(null, ALLOCS, INVS).length, 0);
+eq("Q4 tolerates a document with no sections", R.quoteBookings(7, ALLOCS, [{ id: 3 }]).length, 1);
+
 // ── Structural guards ───────────────────────────────────────────────────────
 const qb = fs.readFileSync(path.join(root, "modules", "quotes-builder.js"), "utf8");
 ok("S1 quote builder no longer defines its own pricing engine", !/function calcRentalPrice\(/.test(qb));
@@ -153,6 +247,11 @@ const eqm = fs.readFileSync(path.join(root, "modules", "rentals-equipment.js"), 
 ok("S19 equipment popup lists bookings with their source and an inline state", /Bookings/.test(eqm) && /onSetBookingState\(/.test(eqm) && /Quote #/.test(eqm));
 const inv = fs.readFileSync(path.join(root, "modules", "rentals-inventory.js"), "utf8");
 ok("S20 inventory list says where each item is", /Where/.test(inv) && /"checked-out"/.test(inv));
+// Margin reads the live cross-rental cost, and says so when it could not.
+ok("S21 quote builder costs each section through the shared helper", /R\.sectionGearCost\(/.test(qb) && /R\.quoteBookings\(/.test(qb));
+ok("S22 the section margin subtracts that cost", /sectionMargin:\s*t\.margin - g\.cost/.test(qb));
+ok("S23 both summaries subtract it too", /var totalCost = t\.cost \+ gearCost/.test(qb) && /t\.preTax - t\.cost - gear\.total\.cost/.test(qb));
+ok("S24 an uncosted unit is flagged by a chip, not a sentence", /UncostedChip/.test(qb) && (qb.match(/h\(UncostedChip,/g) || []).length >= 3);
 // The order form only ever counts confirmed/picked-up as inventory.
 ok("S17 CROSS_COUNTS is exactly confirmed + picked-up", Object.keys(R.CROSS_COUNTS).sort().join(",") === "confirmed,picked-up");
 

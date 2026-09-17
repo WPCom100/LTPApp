@@ -301,7 +301,6 @@
 // item popup lists its bookings with a per-booking state. The Allocations tab
 // is gone. quotes-builder.js, rentals-inventory.js, rentals-equipment.js,
 // rentals-shell.js, app.js.
-// (v91 was taken by the crew portal on dev while this shipped as v91 on its
 // branch, so the merge takes the next string above both.)
 // v93: the crew portal's own domain (docs/CREW_DOMAIN.md). router.js lands a
 // bare visit on the route the page names (<meta name="ltp-default-route">,
@@ -344,7 +343,13 @@
 // (modules/labor.js) and the builder's paid-day dialog
 // (modules/schedule-builder.js). All three are cached, so the shell must be
 // refetched.
-var CACHE_VERSION = 'ltp-shell-v99';
+// v100: a quote's margin now carries the cost of the gear it has to rent in.
+// Equipment lines are costed live from the cross rentals covering their dates
+// (rentals-utils.js::lineGearCost) — owned units are free, cross-rented ones
+// cost the vendor's price — and units nothing covers are flagged with an
+// UNCOSTED chip beside the section and summary margins rather than counted as
+// profit. rentals-utils.js, quotes-builder.js.
+var CACHE_VERSION = 'ltp-shell-v100';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
