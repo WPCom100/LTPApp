@@ -2694,18 +2694,22 @@
           var failed = res.filter(function(x) { return x.action === "error"; });
           var errs = failed.length;
           var skipped = res.filter(function(x) { return x.action === "skipped"; }).length;
+          // A period that nets $0 (full margin / no-show) is settled locally —
+          // marked exported and paid with no bill — and counted on its own.
+          var settled = res.filter(function(x) { return x.action === "settled"; }).length;
+          var settledNote = settled ? ", " + settled + " marked paid at $0" : "";
           if (errs) {
             // Clear error toast with a sample message; the full per-bill list is in
             // Settings → Error Log (QuickBooks Faults), fed from /api/qbo/status.
             var firstErr = (failed[0] && failed[0].error) ? (" — " + failed[0].error) : "";
             window.LTP_toast("Export finished with errors", {
               message: errs + " bill" + (errs === 1 ? "" : "s") + " failed"
-                + (posted ? ", " + posted + " posted" : "") + (skipped ? ", " + skipped + " skipped" : "")
+                + (posted ? ", " + posted + " posted" : "") + settledNote + (skipped ? ", " + skipped + " skipped" : "")
                 + firstErr + (errs > 1 ? " · see Settings → Error Log" : ""),
               variant: "error" });
           } else {
             window.LTP_toast("Payouts exported to QuickBooks", {
-              message: posted + " bill" + (posted === 1 ? "" : "s") + " posted" + (skipped ? ", " + skipped + " skipped" : ""),
+              message: posted + " bill" + (posted === 1 ? "" : "s") + " posted" + settledNote + (skipped ? ", " + skipped + " skipped" : ""),
               variant: "success" });
           }
           loadPreview(true);   // refresh statuses but KEEP the per-person result pills visible
@@ -2718,10 +2722,13 @@
       up_to_date: { label: "Up to date", color: B.success }, error: { label: "Error", color: B.danger },
       paid: { label: "Paid", color: B.success }, paid_changed: { label: "Paid · changed", color: B.danger },
       blocked: { label: "Blocked", color: B.danger },
+      // Nets $0 — settled on export (ledger + paid), no QuickBooks bill.
+      zero: { label: "$0 · mark paid", color: B.info },
     };
     var RESULT = {
       created: { label: "Created", color: B.success }, updated: { label: "Updated", color: B.success },
       unchanged: { label: "No change", color: B.textMut }, skipped: { label: "Skipped", color: B.warn },
+      settled: { label: "Marked paid", color: B.success },
       error: { label: "Failed", color: B.danger },
     };
     function pill(text, color) {
@@ -2771,8 +2778,9 @@
                     r ? pill((RESULT[r.action] || { label: r.action }).label, (RESULT[r.action] || { color: B.textMut }).color) : pill(st.label, st.color)),
                   h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 2 } },
                     c.blocked ? c.reason
+                      : c.zero ? "Nets $0 (full margin / no-show) \u2014 no QuickBooks bill; marked exported and paid on export"
                       : (c.lineCount + " line" + (c.lineCount === 1 ? "" : "s")
-                         + (c.existingBill && c.existingBill.docNumber ? "  ·  " + c.existingBill.docNumber : "")))),
+                         + (c.existingBill && c.existingBill.docNumber ? "  \u00b7  " + c.existingBill.docNumber : "")))),
                 h("span", { style: { fontSize: "13px", fontWeight: 700, color: c.blocked ? B.textMut : B.accent } }, fmtMoney(c.total))),
               // Per-contact warnings + push error detail.
               ((c.warnings && c.warnings.length) || (r && r.action === "error")) && h("div", { style: { marginTop: 6, paddingLeft: 25 } },
@@ -2915,7 +2923,7 @@
         var first = d.days[0];
         setPaidGuard({
           row: { crewId: first.contactId, projectId: d.id, date: first.date },
-          ds: { docNumber: first.docNumber, paid: true },
+          ds: { docNumber: first.docNumber, paid: true, zero: !!first.zero },
           run: function() {
             if (window.LTP_STATE && window.LTP_STATE.armWrite) {
               window.LTP_STATE.armWrite("projects", d.id, { "X-LTP-Paid-Day-Override": "1" });
@@ -3301,7 +3309,12 @@
                       (function() {
                         var ds = dayStatusOf(r);
                         if (!ds) return null;
-                        var S = {
+                        // A $0 settlement (full margin / no-show, no bill) only
+                        // ever reads paid — there is nothing in QuickBooks.
+                        var S = ds.zero ? {
+                          paid: { t: "paid · $0", c: B.success, title: "Settled at $0 on export — nothing owed, no QuickBooks bill" },
+                          paid_changed: { t: "paid · $0 ⚠", c: B.danger, title: "Settled at $0, but this day changed since — re-export the pay period if it now pays" },
+                        }[ds.status] : {
                           exported: { t: "QB ✓", c: B.info, title: "Exported to QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
                           needs_reexport: { t: "QB ↻", c: B.warn, title: "Exported, then changed — re-export to update QuickBooks" },
                           paid: { t: "QB paid", c: B.success, title: "Paid in QuickBooks" + (ds.docNumber ? " (" + ds.docNumber + ")" : "") },
@@ -3424,6 +3437,8 @@
         h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } },
           paidGuard.unverified
             ? (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + ": couldn't check whether this day has been paid in QuickBooks. If it has, editing it here won't update the paid bill. Continue anyway?")
+            : paidGuard.ds && paidGuard.ds.zero
+            ? (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was settled at $0 on export (nothing owed, no QuickBooks bill). If this change makes the day payable, re-export the pay period afterwards to post the bill. Continue?")
             : (crewLabel(paidGuard.row.crewId) + " · " + fmt(paidGuard.row.date) + " was already paid in QuickBooks"
                + (paidGuard.ds && paidGuard.ds.docNumber ? " (bill " + paidGuard.ds.docNumber + ")" : "")
                + ". Changing it here will NOT update the paid QuickBooks bill — adjust the bill in QuickBooks to keep the two in sync. Continue?")),

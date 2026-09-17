@@ -15,6 +15,7 @@ import asyncio
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from cryptography.fernet import Fernet
@@ -48,11 +49,28 @@ def _signed_schedule(crew_id):
     }]
 
 
+def _margin_schedule(crew_id):
+    """A signed-off day on a FULL-MARGIN position (the owner filling a role):
+    the snapshot's one unit costs $0, so the day pays $0."""
+    pay = {"total": 0.0, "paidHours": 10, "otHours": 0, "mealPenaltyHours": 0, "tier": "full",
+           "units": [{"serviceId": 1, "tier": "full", "paidHours": 10, "otHours": 0,
+                      "dayCost": 600, "otCost": 90, "minApplied": False, "fullMargin": True, "total": 0.0}]}
+    return [{
+        "id": "s1", "date": "2026-07-08", "time": "08:00", "endTime": "18:00", "breaks": [],
+        "positions": [{"id": "p1", "crewId": crew_id, "serviceId": 1, "role": "L1",
+                       "status": "confirmed", "fullMargin": True,
+                       "work": {"state": "worked", "signedAt": "2026-07-08T20:00:00Z",
+                                "signedBy": "tester", "pay": pay}}],
+    }]
+
+
 def _setup(**settings):
     """Seed admin+member sessions, a crew member with a signed payout day, a
-    Service, and the given payout settings. Returns (client, admin_tok, member_tok, crew_id)."""
+    Service, and the given payout settings. Returns (client, admin_tok, member_tok, crew_id).
+    ``_schedule`` (a callable of crew_id) swaps the seeded project's schedule."""
     global _client, _ctr
     _ctr += 1
+    schedule_for = settings.pop("_schedule", _signed_schedule)
     tag = f"p{_ctr}"
     base = 930000 + _ctr * 10
     crew_id = base + 1
@@ -80,7 +98,7 @@ def _setup(**settings):
                                expires_at=datetime.now(timezone.utc) + timedelta(days=7)),
                 models.Contact(id=crew_id, first_name="Alex", last_name=f"Crew{_ctr}", is_crew=True),
                 models.Service(id=base + 3, role="L1", day_rate=1000, day_cost=600),
-                models.Project(id=base + 2, name=f"Fest{_ctr}", schedule=_signed_schedule(crew_id)),
+                models.Project(id=base + 2, name=f"Fest{_ctr}", schedule=schedule_for(crew_id)),
             ])
             await db.flush()
             # Payout settings (merge — never clobber other keys).
@@ -154,6 +172,68 @@ def test_push_not_connected_aborts_batch():
     # No QboConnection row seeded -> load_connection raises QboNotConnected -> 409.
     r = client.post("/api/qbo/payouts/push", json=_PERIOD, cookies={"ltp_session": admin})
     assert r.status_code == 409 and r.json()["reason"] == "not_connected"
+
+
+# ── $0 periods (full margin only): settled on export, no QuickBooks call ─────
+
+def test_preview_zero_period_is_selectable_not_blocked():
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06", qboPayoutExpenseAccountId="80",
+                                       _schedule=_margin_schedule)
+    r = client.post("/api/qbo/payouts/preview", json=_PERIOD, cookies={"ltp_session": admin})
+    assert r.status_code == 200, r.text
+    card = next(c for c in r.json()["contacts"] if c["contactId"] == crew_id)
+    assert card["zero"] is True and card["blocked"] is False and card["billStatus"] == "zero", card
+    assert card["total"] == 0.0 and card["lineCount"] == 0
+    assert card["days"] == [{"date": "2026-07-08", "projectName": f"Fest{_ctr}", "tier": "full", "amount": 0.0}]
+
+
+def test_push_settles_zero_period_without_quickbooks_then_reads_paid():
+    client, admin, _, crew_id = _setup(payPeriodAnchor="2026-07-06", payPeriodPayDayOffsetDays=5,
+                                       qboPayoutExpenseAccountId="80", _schedule=_margin_schedule)
+    proj_id = crew_id + 1
+    # "Connected", but every QuickBooks call is a hard failure: the settle path
+    # must not make one.
+    names = ("load_connection", "query", "create_vendor", "get_vendor", "update_vendor",
+             "create_bill", "update_bill", "get_bill")
+    saved = {n: getattr(quickbooks, n) for n in names}
+    quickbooks.load_connection = AsyncMock(return_value=SimpleNamespace(realm_id="1", environment="sandbox"))
+    for n in names[1:]:
+        setattr(quickbooks, n, AsyncMock(side_effect=AssertionError("QuickBooks must not be called for a $0 period")))
+    try:
+        r = client.post("/api/qbo/payouts/push", json=dict(_PERIOD, contactIds=[crew_id]),
+                        cookies={"ltp_session": admin})
+    finally:
+        for n, fn in saved.items():
+            setattr(quickbooks, n, fn)
+    assert r.status_code == 200, r.text
+    assert r.json()["results"] == [{"ok": True, "action": "settled", "contactId": crew_id,
+                                    "qbBillId": None, "amount": 0.0, "zero": True}]
+
+    # The day now reads exported + paid on the Payouts tab, flagged as a $0 settlement.
+    r = client.post("/api/qbo/payouts/day-status", json=_PERIOD, cookies={"ltp_session": admin})
+    assert r.status_code == 200, r.text
+    d = r.json()["days"]["%s|%s|2026-07-08" % (crew_id, proj_id)]
+    assert d["status"] == "paid" and d["paid"] is True and d["zero"] is True
+    assert d["qbBillId"] is None and d["docNumber"] is None and d["paidAt"]
+
+    # And the preview shows it settled — paid, nothing more to export.
+    r = client.post("/api/qbo/payouts/preview", json=_PERIOD, cookies={"ltp_session": admin})
+    card = next(c for c in r.json()["contacts"] if c["contactId"] == crew_id)
+    assert card["billStatus"] == "paid" and card["blocked"] is True and "Settled at $0" in card["reason"]
+    assert card["existingBill"]["paidAt"] and card["existingBill"]["qbBillId"] is None
+
+    # Editing that day in the schedule now trips the paid-day guard like any paid day.
+    from backend.database import async_session
+
+    async def edit_under_settlement():
+        async with async_session() as db:
+            proj = await db.get(models.Project, proj_id)
+            moved = [dict(proj.schedule[0], time="09:00")]
+            from backend import payouts
+            return await payouts.paid_day_conflicts(db, proj_id, proj.schedule, moved)
+    hits = asyncio.run(edit_under_settlement())
+    assert len(hits) == 1 and hits[0]["date"] == "2026-07-08" and hits[0]["zero"] is True
+    assert hits[0]["docNumber"] is None and hits[0]["amount"] == 0.0
 
 
 # ── Per-shift day-status ─────────────────────────────────────────────────────

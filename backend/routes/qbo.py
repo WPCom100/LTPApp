@@ -194,7 +194,7 @@ async def status(
     # Payout vendor-bill payment state (from the bill-payment poller).
     paid_bills = await db.scalar(
         select(func.count()).select_from(models.PayoutBill)
-        .where(models.PayoutBill.qb_paid_at.isnot(None))
+        .where(models.PayoutBill.qb_bill_id.isnot(None), models.PayoutBill.qb_paid_at.isnot(None))
     )
     unpaid_bills = await db.scalar(
         select(func.count()).select_from(models.PayoutBill)
@@ -727,7 +727,37 @@ async def payout_preview_route(
             contacts_out.append(card)
             continue
 
-        paid = pb is not None and pb.qb_paid_at is not None
+        existing_out = ({"docNumber": pb.doc_number, "qbBillId": pb.qb_bill_id,
+                         "syncedAt": pb.qb_synced_at.isoformat() if pb.qb_synced_at else None,
+                         "paidAt": pb.qb_paid_at.isoformat() if pb.qb_paid_at else None,
+                         "amount": pb.amount, "status": pb.qb_sync_status} if pb else None)
+
+        # Every signed day pays $0: nothing posts to QuickBooks, but the export
+        # settles the period locally (ledger + paid stamp) so the days read
+        # exported and paid. Selectable like a bill; "paid" once settled.
+        if plan.get("zero"):
+            card.update({"total": 0.0, "lineCount": 0, "days": days_out, "zero": True,
+                         "existingBill": existing_out, "warnings": cwarn})
+            if pb is not None and pb.qb_bill_id:
+                card.update({"blocked": True, "billStatus": "blocked",
+                             "reason": "The payout now nets $0 but a vendor bill"
+                                       + (f" ({pb.doc_number})" if pb.doc_number else "")
+                                       + " was already exported for this period — void or adjust it in QuickBooks."})
+            elif qbo_payouts.is_zero_settled(pb) and pb.line_signature == plan["signature"]:
+                card.update({"blocked": True, "billStatus": "paid",
+                             "reason": "Settled at $0 — marked paid on export; no QuickBooks bill."})
+            elif qbo_payouts.is_zero_settled(pb):
+                card.update({"blocked": False, "billStatus": "needs_update", "reason": None})
+            else:
+                card.update({"blocked": False, "billStatus": "zero", "reason": None})
+            contacts_out.append(card)
+            continue
+
+        # A $0 settlement is a local marker only — a payout that has since become
+        # billable reopens it and posts a real bill (see push_payout_bill).
+        if qbo_payouts.is_zero_settled(pb):
+            cwarn.append("Previously settled at $0 — this export posts a real bill.")
+        paid = pb is not None and pb.qb_paid_at is not None and not qbo_payouts.is_zero_settled(pb)
         if pb is None or not pb.qb_bill_id:
             bill_status = "new"
         elif paid:
@@ -747,11 +777,7 @@ async def payout_preview_route(
         card.update({
             "blocked": paid, "reason": reason, "total": plan["total"],
             "lineCount": len(plan["lines"]), "days": days_out, "billStatus": bill_status,
-            "existingBill": ({"docNumber": pb.doc_number, "qbBillId": pb.qb_bill_id,
-                              "syncedAt": pb.qb_synced_at.isoformat() if pb.qb_synced_at else None,
-                              "paidAt": pb.qb_paid_at.isoformat() if pb.qb_paid_at else None,
-                              "amount": pb.amount, "status": pb.qb_sync_status} if pb else None),
-            "warnings": cwarn,
+            "existingBill": existing_out, "warnings": cwarn,
         })
         contacts_out.append(card)
 
@@ -776,7 +802,9 @@ async def payout_push_route(
     pay period. Re-derives the money server-side (never trusts the client), pushes
     each contact in isolation (one failure doesn't abort the rest), and returns a
     per-contact result. QuickBooks errors are captured per contact and returned;
-    only a lost/expired CONNECTION aborts the whole batch (409)."""
+    only a lost/expired CONNECTION aborts the whole batch (409). A crew member
+    whose signed days all pay $0 is SETTLED locally (action "settled": ledger +
+    paid stamp, no bill, no QuickBooks call) — see qbo_payouts._settle_zero."""
     period, perr = await _resolve_period(db, body.periodStart, body.periodEnd)
     if period is None:
         return JSONResponse(status_code=400, content={"reason": "bad_period", "error": perr})
@@ -823,11 +851,13 @@ async def payout_day_status_route(
     _user: models.User = Depends(require_session),
 ):
     """Per-shift export/paid status for the Payouts tab. Returns a map keyed
-    "{contactId}|{projectId}|{date}" -> {status, paid, paidAt, docNumber, qbBillId}
+    "{contactId}|{projectId}|{date}" -> {status, paid, paidAt, docNumber, qbBillId, zero}
     for every day that's been exported (i.e. is in the bill ledger) within the
     requested date range. status ∈ exported | needs_reexport | paid | paid_changed
     (a day absent from the map is simply not exported). Staleness is computed per
     overlapping bill by re-deriving its period and comparing the live signature.
+    A day settled at $0 (qbo_payouts.is_zero_settled — no QuickBooks bill) reads
+    paid with ``zero: true``.
 
     The range is caller-supplied (a project's date span, so it can't be forced
     onto a single pay period) — but it is strictly validated and span-bounded so a
@@ -882,8 +912,11 @@ async def payout_day_status_route(
     days = {}
     for ln in lines:
         b = bills.get(ln.payout_bill_id)
-        if b is None or not b.qb_bill_id:
+        if b is None:
             continue
+        zero = qbo_payouts.is_zero_settled(b)
+        if not b.qb_bill_id and not zero:
+            continue   # a row that never posted (error before the first bill)
         stale = b.id in live_sig and live_sig[b.id] != b.line_signature
         if b.qb_paid_at is not None:
             status = "paid_changed" if stale else "paid"
@@ -892,7 +925,7 @@ async def payout_day_status_route(
         days["%s|%s|%s" % (ln.contact_id, ln.project_id, ln.date)] = {
             "status": status, "paid": b.qb_paid_at is not None,
             "paidAt": b.qb_paid_at.isoformat() if b.qb_paid_at else None,
-            "docNumber": b.doc_number, "qbBillId": b.qb_bill_id,
+            "docNumber": b.doc_number, "qbBillId": b.qb_bill_id, "zero": zero,
         }
     return {"days": days}
 

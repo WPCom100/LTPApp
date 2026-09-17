@@ -181,26 +181,14 @@
     function reassignStatus(pos, crewId) {
       return (crewId && crewId === pos.crewId) ? pos.status : "open";
     }
-    // Auto-assign crew to matching roles on all items the same day
-    function doAssignCrewToDay(schedId, pos, crewId) {
-      var item = schedule.find(function(s) { return s.id === schedId; });
-      if (!item || !item.date || !pos.serviceId) {
-        updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
-        return;
-      }
-      var sameDayItems = schedule.filter(function(s) { return s.date === item.date; });
-      if (sameDayItems.length <= 1) {
-        updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
-        return;
-      }
-      onChange(schedule.map(function(s) {
-        if (s.date !== item.date) return s;
-        return Object.assign({}, s, { positions: (s.positions || []).map(function(p) {
-          if (s.id === schedId && p.id === pos.id) return Object.assign({}, p, { crewId: crewId, status: reassignStatus(pos, crewId) });
-          if (p.serviceId === pos.serviceId && !p.crewId && p.status === "open") return Object.assign({}, p, { crewId: crewId });
-          return p;
-        })});
-      }));
+    // Put the picked person on the ONE position that was clicked. This used to
+    // also pencil them into every open, unfilled slot of the same role on every
+    // other row that day ("assign to the day"), which read as the app assigning
+    // people the producer never picked — a load-in and a show row with the same
+    // role both filled from one pick — so that spread is gone. Each shift is
+    // filled by its own pick, the same as the Labor tab's assignment path.
+    function doAssignCrew(schedId, pos, crewId) {
+      updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
     }
 
     // The other shift's times, and whether they overlap the one being filled,
@@ -211,7 +199,7 @@
       return " \u00b7 " + span + (window.LTP_shiftTimesOverlap(row, other) ? " \u2014 times overlap" : " \u2014 no overlap");
     }
 
-    function assignCrewToDay(schedId, pos, crewId, reaskOk) {
+    function assignCrew(schedId, pos, crewId, reaskOk) {
       var item = schedule.find(function(s) { return s.id === schedId; });
 
       // Someone who already declined a request for this day: a deliberate
@@ -227,7 +215,7 @@
           message: (priorCm ? priorCm.firstName + " " + priorCm.lastName : "This crew member") + " declined this shift" + (priorWhen ? " " + priorWhen : "")
             + (prior.comment ? ":\n\n\u201c" + prior.comment + "\u201d" : ".")
             + "\n\nAssign them anyway? They'd be asked again the next time requests are sent.",
-          onConfirm: function() { setConflictWarn(null); assignCrewToDay(schedId, pos, crewId, true); }
+          onConfirm: function() { setConflictWarn(null); assignCrew(schedId, pos, crewId, true); }
         });
         return;
       }
@@ -266,12 +254,12 @@
         setConflictWarn({
           title: anyOverlap ? "Scheduling Conflict" : "Already Booked That Day",
           message: crewName + " on " + (item && item.date ? fmt(item.date) : "this day") + ":\n\n" + warnings.join("\n") + "\n\nAssign anyway?",
-          onConfirm: function() { doAssignCrewToDay(schedId, pos, crewId); setConflictWarn(null); }
+          onConfirm: function() { doAssignCrew(schedId, pos, crewId); setConflictWarn(null); }
         });
         return;
       }
 
-      doAssignCrewToDay(schedId, pos, crewId);
+      doAssignCrew(schedId, pos, crewId);
     }
 
     function removePosition(schedId, posId) {
@@ -730,7 +718,7 @@
                           value: pos.crewId || "",
                           onChange: function(v) {
                             var cid = (v === "" || v == null) ? null : Number(v);
-                            if (cid) { assignCrewToDay(s.id, pos, cid); }
+                            if (cid) { assignCrew(s.id, pos, cid); }
                             // Clearing the crew reopens the slot — an unassigned position
                             // can't stay requested/accepted/confirmed (same reason as
                             // reassignStatus, and it keeps the stale-write guard's
