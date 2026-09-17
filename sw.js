@@ -349,7 +349,14 @@
 // cost the vendor's price — and units nothing covers are flagged with an
 // UNCOSTED chip beside the section and summary margins rather than counted as
 // profit. rentals-utils.js, quotes-builder.js.
-var CACHE_VERSION = 'ltp-shell-v100';
+// v101: a quote whose project moved its dates after the equipment was priced
+// now says so instead of showing the new dates over the old prices. Each
+// section remembers the window it was priced for; the builder shows an "out of
+// sync" notice with Update / Keep per section, the quote lists carry a "Dates
+// changed" chip, and a project save that moved the dates toasts the quotes
+// concerned. quotes-builder.js, quotes-list.js, crm-projects.js, projects.js,
+// domain-docs.js, ui.js, entity-quick-form.js, app.js.
+var CACHE_VERSION = 'ltp-shell-v101';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
