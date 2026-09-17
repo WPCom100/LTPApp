@@ -122,39 +122,55 @@ Every changed line and its rule. Line numbers are post-change.
 
 **Crew portal** — `crew-portal.js`: tabs → `goTab`; `signedIn`/`signedOut` → `replace`; `seedIfCold()` at mount.
 
-## Remaining work (for the next session)
+## Verification
 
-1. **List state via `LTP_useNavState`** (decision 4): `projects.js:33-37`,
-   `quotes-list.js:22-27`, `invoices.js:82-88`, `crm-shell.js:31-38`,
-   `rentals-containers.js:486-489`, the Labor tab lists. Mechanical swap.
-2. **Deleted / missing entity on a seeded or stale route**: when a module
-   finds no record for `route.id` (e.g. `rentals-shell.js` `openEq === null`,
-   `projects.js` "This project was deleted"), call
-   `window.LTPRouter.replace(parentOf(route))` from an effect so the URL does
-   not sit on a dead id. Not yet done.
-3. **`quotes-builder.js` convert → invoice** still pushes inside a 100 ms
-   `setTimeout`; drop the timeout.
-4. **`sw.js` `notificationclick`**: prefer a *controlled* client whose URL is
-   a staff route before falling back to the first window (audit repro 11).
-5. **`rentals-shell.js` `goList()`** and `calendar.js:16` still call
-   `nav(list)`; check their callers and switch to `goBack` if they close.
-6. **Runtime verification** with the repo's `verify` skill (Playwright): the
-   acceptance matrix below. Unit tests cover the history mechanics only.
+`tests/test_nav_history.js` — 125 assertions, no deps, runs in CI. Covers the
+parent table, chains, canonicalisation, peers, stamping, seeding, reload,
+fresh launch, return-to, per-entry state and the unsaved guard against a
+browser-faithful fake history.
+
+`tests/test_static_allowlist.py` — every root-level script `index.html` loads
+is servable by the backend and precached by the service worker. See the
+white-screen note below for why this exists.
+
+`tests/manual/verify-navigation.js` — 40 assertions in a real Chromium against
+a running server, covering the matrix below. Not in the automatic suites (it
+needs a server, a forged session and the `playwright` package); the recipe is
+in `.claude/skills/verify/SKILL.md`. Last run: **40 passed, 0 failed**, plus a
+crew-portal and share-view smoke pass with no page errors.
+
+### What the browser caught that the unit suites could not
+
+`/nav-registry.js` was added to `index.html` and to the service worker's
+precache list, but not to `_ALLOWED_TOP_LEVEL_FILES` in `backend/main.py`.
+That allowlist is deny-by-default, so the request fell through to the SPA
+catch-all and the file was served **as `index.html` with `text/html`**. With
+`nosniff` and a strict CSP the browser refused to execute it, leaving
+`window.LTP_NAV_REGISTRY` undefined — and since `app.js` reads it on every
+render, the app was a **white screen on every route**, signed in or out. Every
+JS suite passed throughout, because they load files from disk and never ask
+the server for them. `tests/test_static_allowlist.py` now fails on exactly
+this, and was confirmed to fail against the broken tree before the fix.
+
+Anyone adding a root-level boot file must add it in three places: the
+`<script>` tag, `_ALLOWED_TOP_LEVEL_FILES`, and `sw.js`'s precache list.
 
 ## Acceptance matrix
 
-| # | Case | Automated | Manual |
-|---|---|---|---|
-| 1 | Cold load of each deep route walks up to area root, then home | unit: seeding chains | Android PWA gesture-back |
-| 2 | A → B → C, Back returns C → B → A | unit: stamping | — |
-| 3 | Cross-area link, Back returns to origin | unit: push + goBack | invoice → linked quote → Back |
-| 4 | Create / edit-save / delete never return to form or dead item | unit: replace / goBack | each builder and modal |
-| 5 | Tab change does not add entries | unit: goTab peers | sidebar, More sheet, portal tabs |
-| 6 | Modal: Back closes it only | — | Playwright: open detail, `page.goBack()`, modal gone, list scroll kept |
-| 7 | Deep link while signed out: after login, no sign-in entry | unit: return-to | Playwright with forged session |
-| 8 | Reload mid-session preserves Back | unit: reload keeps stamp | — |
-| 9 | Installed PWA Android (gesture) and iOS (in-app control) | — | device |
-| 10 | No double render / fetch / flash while seeding | — | Playwright: count `/api/` requests on cold load of a deep route |
+| # | Case | Result |
+|---|---|---|
+| 1 | Cold load of a deep route walks up the declared hierarchy to the area root, then home | passes (CRM 3-deep, rentals, schedule editor) |
+| 2 | A → B → C, Back returns C → B → A exactly | passes |
+| 3 | Cross-area link, Back returns to the originating screen | passes (rentals → CRM → Back lands in rentals) |
+| 4 | Create / edit-save / delete never return to the form or a dead item | passes; the create form entry is replaced, not stacked |
+| 5 | Tab change adds no history entry and Back leaves the area | passes |
+| 6 | Modal with URL state: Back closes it only | passes (backdrop gone, list intact) |
+| 7 | Deep link while signed out: after login, no sign-in entry | unit-tested (return-to stash); not yet driven through real Google OAuth |
+| 8 | Reload mid-session preserves Back | passes |
+| 9 | Installed PWA on Android (gesture back) and iOS (in-app control) | **still needs a device** |
+| 10 | No double render, fetch or flash while seeding | passes: zero duplicated API requests, and exactly one `hashchange`, so React is handed the route once and no ancestor renders |
+| — | A dead record id never strands the user | passes for quotes, invoices, CRM and rentals; an unknown route canonicalises home |
+| — | Crew portal deep tab and auth screen seed; public share view is never seeded | passes, no page errors |
 
 ## Known limitations
 
@@ -164,3 +180,9 @@ Every changed line and its rule. Line numbers are post-change.
   screen.
 - Entries created before this deploy in an already-open tab are foreign until
   the next cold load.
+- Signing in to the crew portal always lands on its overview, so a crew member
+  who opened an emailed link to a specific tab while signed out does not return
+  to that tab. Unchanged by this work, but now visible because the portal seeds.
+- Acceptance case 9 (installed PWA on a real Android and iOS device) has not
+  been run. Everything it covers is exercised in desktop Chromium, but the
+  gesture-back and no-browser-chrome cases are genuinely device-specific.
