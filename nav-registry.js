@@ -214,11 +214,24 @@
       var k = window.LTPRouter.entryKey(), s = entryState(k);
       if (k && (!s || !(name in s))) setEntryField(k, name, ref.current);
     });
-    // Same component instance, different entry (a tab replace, or Back within
-    // one module): adopt that entry's remembered value, or the default.
+    // The entry changed under a component that is still mounted — a Back to an
+    // earlier entry, or a push that left this list on screen underneath a modal.
+    //
+    // Adopt ONLY when the new entry actually remembers a value. It is tempting
+    // to fall back to `initial` otherwise, but a forward entry remembers
+    // nothing yet, and opening a record's modal over a list makes exactly that:
+    // the list stays mounted and visible behind the modal, so resetting emptied
+    // its search box and showed every row while the modal sat on top. Keeping
+    // what is on screen is right in that case, and the effect above records it
+    // against the new entry so a later Back still finds it.
+    //
+    // Leaving for a different screen does not come through here at all: that
+    // unmounts this component, and the next one starts from its own useState
+    // initialiser above, so nothing leaks between lists.
     React.useEffect(function() {
       var s = entryState(key);
-      var want = (s && (name in s)) ? s[name] : initial;
+      if (!s || !(name in s)) return;
+      var want = s[name];
       if (JSON.stringify(want) !== JSON.stringify(ref.current)) { ref.current = want; pair[1](want); }
     }, [key]);   // eslint-disable-line react-hooks/exhaustive-deps
     return [pair[0], setBoth];

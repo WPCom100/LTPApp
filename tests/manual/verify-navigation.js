@@ -144,6 +144,33 @@ async function back(p) { await p.goBack(); await settle(p); }
     await p.close();
   }
 
+  console.log("\na list keeps its filter while a modal sits over it");
+  // Opening a record pushes a new history entry while the list stays mounted
+  // and visible behind the modal. Its search/filter lives on the history entry,
+  // so a new entry must inherit what is on screen rather than reset to the
+  // default — otherwise the list silently unfilters behind the modal and
+  // re-filters when it closes. Each list has its OWN search box; the global one
+  // in the top bar is a different control and is deliberately cleared on use.
+  for (const [route, sel, term, row] of [
+    ["#/rentals/equipment",  'input[placeholder="Search inventory..."]',  "Line",   "Line Array"],
+    ["#/rentals/containers", 'input[placeholder="Search containers..."]', "Shelf",  "Shelf Unit"],
+    ["#/rentals/kits",       'input[placeholder="Search kits\u2026"]',     "Audio",  "Audio Kit"],
+    ["#/projects",           'input[placeholder="Search projects\u2026"]', "Harbor", "Harbor Launch"],
+  ]) {
+    const p = await cold(route);
+    const box = p.locator(sel).first();
+    if (await box.count() === 0) { ok("search box on " + route, false, "not found"); await p.close(); continue; }
+    await box.fill(term); await settle(p, 500);
+    const target = p.locator("text=" + row).first();
+    if (await target.count() === 0) { ok("a row to open on " + route, false, "none matched " + row); await p.close(); continue; }
+    await target.click(); await settle(p, 1300);
+    ok("a modal opened over " + route, await p.locator(".ltp-modal-backdrop").count() > 0);
+    eq(route + " keeps its filter behind the modal", await p.locator(sel).first().inputValue().catch(() => "(unmounted)"), term);
+    await back(p);
+    eq(route + " still has it after closing", await p.locator(sel).first().inputValue().catch(() => "(unmounted)"), term);
+    await p.close();
+  }
+
   console.log("\ncross-area links OUT of a modal actually arrive");
   // Regression: these handlers used to close the modal and then navigate. The
   // close is goBack(), whose queued history.back() undid the push, so clicking

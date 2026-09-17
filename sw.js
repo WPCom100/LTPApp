@@ -379,7 +379,10 @@
 // history.back() undid the push. Also routes #/projects/:id/invoices to the
 // Invoices tab, which the URL tab list had never listed. crm-projects.js,
 // crm-contacts.js, projects.js.
-var CACHE_VERSION = 'ltp-shell-v105';
+// v106: a list's filter no longer depends on the order two effects happen to
+// run in when a modal opens over it (nav-registry.js). Behaviour is unchanged
+// in every case that could be reproduced; this removes the way it could break.
+var CACHE_VERSION = 'ltp-shell-v106';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
