@@ -380,6 +380,16 @@
     var [vendorFilter, setVendorFilter] = useState("all");
     var [search, setSearch] = useState("");
     var [sort, setSort] = useState({ key: "dates", dir: "asc" });
+    // Per-user saved views — sort + the status + vendor filters.
+    var vw = window.LTP_useTableView({
+      tableKey: "rentals-cross",
+      defaults: { sort: { key: "dates", dir: "asc" }, filters: { status: "open", vendor: "all" }, toggles: {} },
+      snapshot: { sort: sort, filters: { status: statusFilter, vendor: vendorFilter }, toggles: {} },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters) { if ("status" in v.filters) setStatusFilter(v.filters.status); if ("vendor" in v.filters) setVendorFilter(v.filters.vendor); }
+      },
+    });
     var today = R.today();
 
     var OPEN = { "quoted": true, "confirmed": true, "picked-up": true };
@@ -414,15 +424,22 @@
       return h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.danger, background: B.dangerBg, border: "1px solid " + B.dangerBd, padding: "1px 6px", borderRadius: 3, textTransform: "uppercase", flexShrink: 0 } }, "Overdue");
     }
 
+    var statusChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      chips.map(function(c) { return h("button", { key: c.v, className: "ltp-tap", onClick: function() { setStatusFilter(c.v); }, style: chipStyle(statusFilter === c.v) }, c.l); }));
+    var vendorSelect = vendorIds.length > 1 ? h("select", { value: vendorFilter, onChange: function(e) { setVendorFilter(e.target.value); }, style: Object.assign({}, R.INP, { padding: "6px 8px" }) },
+      [h("option", { key: "all", value: "all" }, "All vendors")].concat(vendorIds.map(function(id) { return h("option", { key: id, value: id }, vendorLabel(companies, id)); }))) : null;
+    var searchEl = h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search vendor, PO, item…", style: Object.assign({}, R.INP, isMobile ? { width: "100%" } : { width: 200 }) });
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          chips.map(function(c) { return h("button", { key: c.v, className: "ltp-tap", onClick: function() { setStatusFilter(c.v); }, style: chipStyle(statusFilter === c.v) }, c.l); })),
-        h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-          vendorIds.length > 1 && h("select", { value: vendorFilter, onChange: function(e) { setVendorFilter(e.target.value); }, style: Object.assign({}, R.INP, { padding: "6px 8px" }) },
-            [h("option", { key: "all", value: "all" }, "All vendors")].concat(vendorIds.map(function(id) { return h("option", { key: id, value: id }, vendorLabel(companies, id)); }))),
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search vendor, PO, item…", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 200 }) }))
-      ),
+      // Desktop: standardized toolbar — status chips │ vendor filter · search …
+      // (right) saved-view menu. Mobile: chips, then vendor + search + view.
+      isMobile
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 } },
+            statusChips,
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+              vendorSelect, h("div", { style: { flex: 1, minWidth: 140 } }, searchEl), viewMenu))
+        : h(window.LTPTableToolbar, { isMobile: false, filters: statusChips, toggles: vendorSelect, search: searchEl, view: viewMenu }),
 
       ordered.length === 0
         ? h(window.EmptyState, { text: statusFilter === "open" ? "No open cross rentals. Add one when a job needs gear you don't have." : "No cross rentals match." })

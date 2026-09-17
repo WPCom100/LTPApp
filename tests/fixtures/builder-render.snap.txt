@@ -1685,10 +1685,9 @@
 == InvoiceList ==
 <InvoiceList>
   <div>
-    <div style=4props>
+    <div style=5props>
       <h2 style=5props>
         Invoices
-      <input onChange=fn placeholder="Search invoices…" style=10props type="text" value="">
       <anon>
         <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
           + New Invoice
@@ -1711,23 +1710,36 @@
             Overdue
           <div style=6props>
             $0.00
-    <div style=6props>
-      <anon>
-        <div className="ltp-tabs-strip" style=3props>
-          <button className="ltp-tap" key="all" onClick=fn style=12props>
-            all
-          <button className="ltp-tap" key="draft" onClick=fn style=12props>
-            draft
-          <button className="ltp-tap" key="sent" onClick=fn style=12props>
-            sent
-          <button className="ltp-tap" key="partial" onClick=fn style=12props>
-            partial
-          <button className="ltp-tap" key="paid" onClick=fn style=12props>
-            paid
-          <button className="ltp-tap" key="overdue" onClick=fn style=12props>
-            overdue
-      <button className="ltp-tap" onClick=fn style=11props>
-        Hide Paid
+    <anon>
+      <div style=5props>
+        <div style=6props>
+          <div style=5props>
+            <anon>
+              <div className="ltp-tabs-strip" style=3props>
+                <button className="ltp-tap" key="all" onClick=fn style=12props>
+                  all
+                <button className="ltp-tap" key="draft" onClick=fn style=12props>
+                  draft
+                <button className="ltp-tap" key="sent" onClick=fn style=12props>
+                  sent
+                <button className="ltp-tap" key="partial" onClick=fn style=12props>
+                  partial
+                <button className="ltp-tap" key="paid" onClick=fn style=12props>
+                  paid
+                <button className="ltp-tap" key="overdue" onClick=fn style=12props>
+                  overdue
+          <span aria-hidden="true" style=6props>
+          <button className="ltp-tap" onClick=fn style=11props>
+            Hide Paid
+          <input onChange=fn placeholder="Search invoices…" style=10props type="text" value="">
+        <div style=5props>
+          <anon>
+            <div ref={"current":null} style=2props>
+              <button onClick=fn style=14props title="Saved views" type="button">
+                <span style=3props>
+                  Default
+                <span style=2props>
+                  ▾
     <anon>
       <anon>
         <div className="ltp-list" style=4props>

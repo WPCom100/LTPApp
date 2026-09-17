@@ -289,6 +289,17 @@
     // below. The phone chips and the desktop column headers set the same state.
     var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
     var [showArchived, setShowArchived] = useState(false);
+    // Per-user saved views — sort + category chip + the Show Archived toggle.
+    var vw = window.LTP_useTableView({
+      tableKey: "rentals-kits",
+      defaults: { sort: { key: "name", dir: "asc" }, filters: { cat: "all" }, toggles: { showArchived: false } },
+      snapshot: { sort: sort, filters: { cat: catFilter }, toggles: { showArchived: showArchived } },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "cat" in v.filters) setCatFilter(v.filters.cat);
+        if (v.toggles && "showArchived" in v.toggles) setShowArchived(!!v.toggles.showArchived);
+      },
+    });
 
     var cats = ["all"].concat(Array.from(new Set((kits || []).map(function(k) { return k.category; }))));
     var q = search.toLowerCase();
@@ -337,6 +348,15 @@
       style: { flexShrink: 0, whiteSpace: "nowrap", background: showArchived ? B.success : B.raised, color: showArchived ? B.btnInk : B.textMut, border: "1px solid " + (showArchived ? B.success : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 14px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } },
       showArchived ? "\u2713 Archived" : "Show Archived");
 
+    // Shared toolbar slots (components/table-views.js LTPTableToolbar).
+    var catChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      cats.map(function(c) {
+        return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
+          style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, c === "all" ? "All" : c);
+      }));
+    var searchEl = h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits…", style: Object.assign({}, R.INP, { width: 180 }) });
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
     return h("div", null,
       // Mobile: title + search share the top row (the shell suppresses its own
       // header for kits on mobile).
@@ -345,24 +365,15 @@
         h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026",
           style: Object.assign({}, R.INP, { flex: 1, minWidth: 0, borderRadius: "8px", padding: "9px 12px" }) })),
 
-      // Category filters; Show Archived rides the right (mobile), or joins the
-      // search + sort cluster (desktop).
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: isMobile ? "nowrap" : "wrap" } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          cats.map(function(c) {
-            return h("button", { key: c, onClick: function() { setCatFilter(c); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: catFilter === c ? B.accent : B.raised, color: catFilter === c ? B.btnInk : B.textMut, border: "1px solid " + (catFilter === c ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, c === "all" ? "All" : c);
-          })
-        ),
-        isMobile
-          ? showArchivedBtn
-          : h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-              h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search kits\u2026", style: Object.assign({}, R.INP, { width: 180 }) }),
-              showArchivedBtn)
-      ),
+      // Desktop: standardized toolbar \u2014 category chips \u2502 Show Archived \u00b7 search
+      // \u2026 (right) saved-view menu. Mobile: chips + Show Archived on one row.
+      isMobile
+        ? h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "nowrap" } },
+            catChips, showArchivedBtn)
+        : h(window.LTPTableToolbar, { isMobile: false, filters: catChips, toggles: showArchivedBtn, search: searchEl, view: viewMenu }),
 
       // Mobile: sort row sits below the filters.
-      isMobile && h("div", { style: { display: "flex", marginBottom: 12 } }, sortBtnsEl),
+      isMobile && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8 } }, sortBtnsEl, viewMenu),
 
       ordered.length === 0
         ? h(window.EmptyState, { text: "No kits match your search." })

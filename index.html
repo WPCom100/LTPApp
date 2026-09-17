@@ -389,6 +389,10 @@
   <script src="components/live-sync.js"></script>
   <script src="components/data-state.js"></script>
   <script src="components/ui.js"></script>
+  <!-- Per-user saved table views + the standardized list toolbar (filter chips │
+       Show/Hide toggles · search … saved-view dropdown). Reads LTP_THEME + the
+       LTPTable helpers in ui.js; consumed by every desktop record list. -->
+  <script src="components/table-views.js"></script>
   <!-- Drag-to-reorder engine + the mobile ▲▼ arrows. Reads LTP_THEME only;
        consumed by the quote and invoice builders. -->
   <script src="components/sortable.js"></script>

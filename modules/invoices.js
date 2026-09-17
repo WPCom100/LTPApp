@@ -87,6 +87,17 @@
     // the two viewports can never disagree about what "Newest" means.
     var [sort, setSort] = useState({ key: "date", dir: "desc" });
     var [hidePaid, setHidePaid] = useState(false);
+    // Per-user saved views — sort + status chip + the Hide Paid toggle.
+    var vw = window.LTP_useTableView({
+      tableKey: "invoices",
+      defaults: { sort: { key: "date", dir: "desc" }, filters: { status: "all" }, toggles: { hidePaid: false } },
+      snapshot: { sort: sort, filters: { status: filter }, toggles: { hidePaid: hidePaid } },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "status" in v.filters) setFilter(v.filters.status);
+        if (v.toggles && "hidePaid" in v.toggles) setHidePaid(!!v.toggles.hidePaid);
+      },
+    });
     var statuses = ["all", "draft", "sent", "partial", "paid", "overdue"];
     var sorts = [{ l: "Newest", s: { key: "date", dir: "desc" } },
                  { l: "Oldest", s: { key: "date", dir: "asc"  } },
@@ -169,13 +180,23 @@
           style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: "4px", padding: "3px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer" } }, s.l);
       }));
 
+    // Shared toolbar slots (components/table-views.js LTPTableToolbar).
+    var filterChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      statuses.map(function(f) {
+        return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
+          style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
+      }));
+    var searchEl = h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices…",
+      style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 240, maxWidth: "100%" } });
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
     return h("div", null,
-      // Title + search share the top row (search to the right of the title);
-      // desktop keeps the + New button at the far right.
-      h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } },
+      // Title row: name + (mobile) search + (desktop) the + New button. Desktop
+      // search moves into the toolbar below (right of the Show/Hide control).
+      h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 } },
         h("h2", { style: { fontSize: "18px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Invoices"),
-        h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices…",
-          style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: isMobile ? undefined : "12px", fontFamily: "inherit", outline: "none" } }),
+        isMobile && h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search invoices…",
+          style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
         !isMobile && h(window.Btn, { small: true, onClick: function() { nav("invoices/new"); } }, "+ New Invoice")),
       h("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 } },
         // Mobile drops the Paid tile so Pending + Overdue sit on one row and
@@ -183,16 +204,14 @@
         !isMobile && h(window.StatCard, { label: "Paid", value: "$" + window.LTP_money(totalPaid), accent: B.success }),
         h(window.StatCard, { label: "Pending", value: "$" + window.LTP_money(totalPending), accent: B.warn }),
         h(window.StatCard, { label: "Overdue", value: "$" + window.LTP_money(totalOverdue), accent: B.danger })),
-      // Filter chips (scroll strip with a swipe indicator) + Hide Paid on the right.
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          statuses.map(function(f) {
-            return h("button", { key: f, onClick: function() { setFilter(f); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize", minHeight: isMobile ? 36 : undefined } }, f);
-          })),
-        hidePaidBtn),
+      // Desktop: standardized toolbar \u2014 status chips \u2502 Hide Paid \u00b7 search \u2026
+      // (right) saved-view menu. Mobile: chips + Hide Paid, then sort + view.
+      isMobile
+        ? h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "nowrap", gap: 8 } },
+            filterChips, hidePaidBtn)
+        : h(window.LTPTableToolbar, { isMobile: false, filters: filterChips, toggles: hidePaidBtn, search: searchEl, view: viewMenu }),
       // Sort row (Newest / Oldest / Ref #) \u2014 phone only; the table sorts itself.
-      isMobile && h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtnsEl),
+      isMobile && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 } }, sortBtnsEl, viewMenu),
 
       isMobile
         // \u2500\u2500 Phone: ref and money on one line, then the job full width \u2500\u2500\u2500\u2500

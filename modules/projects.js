@@ -46,6 +46,20 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   // as a contributor: { name, docs: [{ref, kind, id}] }. See handleDelete.
   var [sharedLinkBlock, setSharedLinkBlock] = useState(null);
 
+  // Per-user saved views (sort + category chip + Show Completed). MUST sit with
+  // the hooks above — it calls hooks internally, so the early return below can't
+  // come between it and them.
+  var DEFAULT_VIEW = { sort: { key: "start", dir: "asc" }, filters: { category: "all" }, toggles: { showCompleted: false } };
+  var vw = window.LTP_useTableView({
+    tableKey: "projects", defaults: DEFAULT_VIEW,
+    snapshot: { sort: sort, filters: { category: projectFilter }, toggles: { showCompleted: showCompleted } },
+    apply: function(v) {
+      if (v.sort) setSort(v.sort);
+      if (v.filters && "category" in v.filters) setProjectFilter(v.filters.category);
+      if (v.toggles && "showCompleted" in v.toggles) setShowCompleted(!!v.toggles.showCompleted);
+    },
+  });
+
   // Full-screen schedule builder. This conditional return MUST stay below every
   // hook above: an early return placed before the useState calls changes the
   // hook count between the list route and the schedule route (which keep the
@@ -296,28 +310,34 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     }));
   }
 
+  // Shared toolbar slots (components/table-views.js LTPTableToolbar).
+  var filterChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+    ["all"].concat(CATS).map(function(f) {
+      return h("button", { key: f, onClick: function() { setProjectFilter(f); }, className: "ltp-tap",
+        style: { flexShrink: 0, whiteSpace: "nowrap", background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, f === "all" ? "All" : f);
+    }));
+  var searchEl = h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
+    style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "6px 12px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: 240, maxWidth: "100%" } });
+  var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
   return h("div", null,
     // Title + search share the top row (search to the right of the title);
     // desktop keeps the + Create button at the far right — matching Invoices.
-    h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginBottom: 14 } },
+    h("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14 } },
       h("h2", { style: { fontSize: "20px", fontWeight: 700, color: B.text, margin: 0, flexShrink: 0 } }, "Projects"),
-      h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
-        style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: isMobile ? "9px 12px" : "6px 12px", color: B.text, fontSize: isMobile ? undefined : "12px", fontFamily: "inherit", outline: "none" } }),
+      isMobile && h("input", { type: "text", value: searchQuery, onChange: function(e) { setSearchQuery(e.target.value); }, placeholder: "Search projects…",
+        style: { flex: 1, minWidth: 0, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "9px 12px", color: B.text, fontFamily: "inherit", outline: "none" } }),
       !isMobile && h(window.Btn, { small: true, onClick: function() { nav("projects/new"); } }, "+ Create Project")),
 
-    // Category filters + Show Completed on the right (both viewports).
-    h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: isMobile ? "flex-start" : "center", marginBottom: 10, flexWrap: isMobile ? "nowrap" : "wrap", gap: 8 } },
-      h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 }, wrapStyle: { flex: 1, minWidth: 0 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-        ["all"].concat(CATS).map(function(f) {
-          return h("button", { key: f, onClick: function() { setProjectFilter(f); }, className: "ltp-tap",
-            style: { flexShrink: 0, whiteSpace: "nowrap", background: projectFilter === f ? B.accent : B.raised, color: projectFilter === f ? B.btnInk : B.textMut, border: "1px solid " + (projectFilter === f ? B.accent : B.border), borderRadius: isMobile ? "16px" : "4px", padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, f === "all" ? "All" : f);
-        })
-      ),
-      showCompletedBtn
-    ),
+    // Desktop: standardized toolbar — category chips │ Show Completed · search
+    // … (right) saved-view menu. Mobile: chips + Show Completed on one row.
+    isMobile
+      ? h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10, flexWrap: "nowrap", gap: 8 } },
+          filterChips, showCompletedBtn)
+      : h(window.LTPTableToolbar, { isMobile: false, filters: filterChips, toggles: showCompletedBtn, search: searchEl, view: viewMenu }),
 
     // Sort row \u2014 phone only; the desktop table sorts from its column headers.
-    isMobile && h("div", { style: { display: "flex", marginBottom: 14 } }, sortBtns()),
+    isMobile && h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 8 } }, sortBtns(), viewMenu),
 
     ordered.length === 0 ? h(window.EmptyState, { text: !showCompleted && projects.some(function(p) { return p.status === "completed"; }) ? "No active projects. Use \"Show Completed\" to see finished projects." : "No projects match your search." }) :
     isMobile

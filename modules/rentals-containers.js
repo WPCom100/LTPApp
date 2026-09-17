@@ -487,6 +487,16 @@
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
     // below. The phone chips and the desktop column headers set the same state.
     var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
+    // Per-user saved views — sort + the type chip.
+    var vw = window.LTP_useTableView({
+      tableKey: "rentals-containers",
+      defaults: { sort: { key: "name", dir: "asc" }, filters: { type: "all" }, toggles: {} },
+      snapshot: { sort: sort, filters: { type: typeFilter }, toggles: {} },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "type" in v.filters) setTypeFilter(v.filters.type);
+      },
+    });
 
     var types = ["all"].concat(Array.from(new Set((containers || []).map(function(c) { return c.type; }))));
     var q = search.toLowerCase();
@@ -523,24 +533,29 @@
     });
     var ordered = window.LTP_sortRows(filtered, COLS, sort);
 
+    var typeChips = h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
+      types.map(function(t) {
+        return h("button", { key: t, onClick: function() { setTypeFilter(t); }, className: "ltp-tap",
+          style: { flexShrink: 0, whiteSpace: "nowrap", background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, t === "all" ? "All" : t);
+      }));
+    var searchEl = h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, isMobile ? { width: "100%", borderRadius: "8px", padding: "9px 12px" } : { width: 180 }) });
+    var sortChipsEl = h("div", { style: { display: "flex", gap: 6 } },
+      [{ l: "A\u2192Z", d: "asc" }, { l: "Z\u2192A", d: "desc" }].map(function(o) {
+        var active = sort.key === "name" && sort.dir === o.d;
+        return h("button", { key: o.l, onClick: function() { setSort({ key: "name", dir: o.d }); },
+          style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
+      }));
+    var viewMenu = h(window.LTPViewMenu, { vw: vw });
+
     return h("div", null,
-      h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" } },
-        h(window.LTPScrollStrip, { isMobile: isMobile, mobileStyle: { display: "flex", gap: 8, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", width: "100%", paddingBottom: 4 }, desktopStyle: { display: "flex", gap: 6, flexWrap: "wrap" } },
-          types.map(function(t) {
-            return h("button", { key: t, onClick: function() { setTypeFilter(t); }, className: "ltp-tap",
-              style: { flexShrink: 0, whiteSpace: "nowrap", background: typeFilter === t ? B.accent : B.raised, color: typeFilter === t ? B.btnInk : B.textMut, border: "1px solid " + (typeFilter === t ? B.accent : B.border), borderRadius: isMobile ? "16px" : 4, padding: isMobile ? "8px 16px" : "4px 12px", fontSize: isMobile ? "13px" : "11px", fontWeight: 600, cursor: "pointer", minHeight: isMobile ? 36 : undefined } }, t === "all" ? "All" : t);
-          })
-        ),
-        h("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-          h("input", { value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search containers...", style: Object.assign({}, R.INP, { width: isMobile ? "100%" : 180 }, isMobile ? { borderRadius: "8px", padding: "9px 12px" } : {}) }),
-          // Sort chips \u2014 PHONE ONLY; the desktop table sorts from its headers.
-          isMobile && [{ l: "A\u2192Z", d: "asc" }, { l: "Z\u2192A", d: "desc" }].map(function(o) {
-            var active = sort.key === "name" && sort.dir === o.d;
-            return h("button", { key: o.l, onClick: function() { setSort({ key: "name", dir: o.d }); },
-              style: { background: active ? B.accent : B.raised, color: active ? B.btnInk : B.textMut, border: "1px solid " + (active ? B.accent : B.border), borderRadius: 4, padding: "4px 10px", fontSize: "11px", fontWeight: 600, cursor: "pointer" } }, o.l);
-          })
-        )
-      ),
+      // Desktop: standardized toolbar \u2014 type chips \u2502 search \u2026 (right) saved-view
+      // menu. Mobile: chips, then search + sort chips + view.
+      isMobile
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 } },
+            typeChips,
+            h("div", { style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" } },
+              h("div", { style: { flex: 1, minWidth: 140 } }, searchEl), sortChipsEl, viewMenu))
+        : h(window.LTPTableToolbar, { isMobile: false, filters: typeChips, search: searchEl, view: viewMenu }),
 
       ordered.length === 0 ? h(window.EmptyState, { text: "No containers match your search." }) :
       isMobile
