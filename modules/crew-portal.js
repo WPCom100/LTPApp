@@ -12,6 +12,7 @@
 //   #/crew-portal/request-access    → email an invitation to a roster address
 //   #/crew-portal/signup/<token>    → accept an invitation (choose a password)
 //   #/crew-portal/reset/<token>     → finish a password reset
+//   #/crew-portal/confirm-email/<token> → make a new sign-in email take effect
 //   #/crew-portal/overview | schedule | payouts | account     (signed in)
 //
 // Visual language is the crew call sheet's (modules/crew-view.js): slate
@@ -46,7 +47,7 @@
     { id: "payouts",  label: "Pay" },
     { id: "account",  label: "Account" },
   ];
-  var PUBLIC = { login: 1, forgot: 1, "request-access": 1, signup: 1, reset: 1 };
+  var PUBLIC = { login: 1, forgot: 1, "request-access": 1, signup: 1, reset: 1, "confirm-email": 1 };
 
   // ── Date / time / money helpers (deterministic, no toLocaleString) ─────────
   var _WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -468,6 +469,63 @@
       footer: info === undefined ? null : LinkBtn({ onClick: function() { go("login"); } }, "Already have a password? Sign in") }), body);
   }
 
+  // Finishing an email change. The link went to the NEW address, so opening
+  // it proves the crew member can read that inbox; the change itself was
+  // already authorised with their password on the Account tab. Works signed
+  // in or out (a phone may open the link while the app is signed out), and
+  // never signs anyone in by itself, unlike a reset.
+  function EmailConfirmScreen(props) {
+    var infoState = useState(undefined), info = infoState[0], setInfo = infoState[1];   // undefined=loading, null=unknown
+    var busyState = useState(false), busy = busyState[0], setBusy = busyState[1];
+    var errState = useState(null), err = errState[0], setErr = errState[1];
+    var doneState = useState(""), done = doneState[0], setDone = doneState[1];          // the confirmed address
+    useEffect(function() {
+      if (!props.token) { setInfo(null); return; }
+      api("/auth/token/" + encodeURIComponent(props.token)).then(function(res) {
+        setInfo(res.ok ? res.data : null);
+      });
+    }, [props.token]);
+    function confirm() {
+      if (busy) return;
+      setBusy(true); setErr(null);
+      api("/auth/confirm-email", { method: "POST", body: { token: props.token } }).then(function(res) {
+        setBusy(false);
+        if (!res.ok) { setErr(errMessage(res)); return; }
+        setDone(res.data.email || (info && info.email) || "your new address");
+        props.onConfirmed();
+      });
+    }
+    var back = LinkBtn({ onClick: function() { go(props.signedIn ? "account" : "login"); } }, props.signedIn ? "Back to my account" : "Back to sign in");
+    var body;
+    if (info === undefined) {
+      body = h("div", { style: { padding: "12px 0" } }, h("div", { className: "ltp-cp-shimmer", style: { height: 4, width: 120, borderRadius: 2 } }));
+    } else if (done) {
+      body = h("div", null,
+        Notice("success", "Done. " + done + " is now your sign-in email, and where crew requests are sent."),
+        PrimaryBtn({ onClick: function() { go(props.signedIn ? "account" : "login"); }, style: { width: "100%" } }, props.signedIn ? "Back to My Account" : "Sign In"));
+    } else if (!info || info.kind !== "email") {
+      body = h("div", null,
+        Notice("error", "This link isn't valid. It may have been copied incompletely."),
+        back);
+    } else if (!info.valid) {
+      var why = info.reason === "used" ? "This link has already been used."
+        : info.reason === "expired" ? "This link has expired. Start the change again from the Account tab and a fresh link will be sent."
+        : info.reason === "inactive" ? "This crew profile is no longer active. Please contact the production team."
+        : "This link isn't valid any more.";
+      body = h("div", null, Notice("error", why), back);
+    } else {
+      body = h("div", null,
+        Notice("error", err),
+        h("div", { style: { fontSize: "13px", color: MUTE, lineHeight: 1.6, marginBottom: 16 } },
+          "Make ", h("strong", { style: { color: WHITE } }, info.email), " your sign-in email? It also becomes the address crew requests are sent to."),
+        PrimaryBtn({ onClick: confirm, disabled: busy, style: { width: "100%" } }, busy ? "Confirming…" : "Confirm New Email"));
+    }
+    return h(AuthShell, Object.assign({}, props.shell, {
+      title: (info && info.valid && info.firstName ? "Hi " + info.firstName + ", confirm your new email" : "Confirm your new email"),
+      companyName: info && info.companyName,
+      footer: (info === undefined || done) ? null : back }), body);
+  }
+
   // ── Dashboard: the signed-in shell ────────────────────────────────────────
   function tabIcon(id, color) {
     var s = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none", stroke: color, strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" };
@@ -566,8 +624,7 @@
     return h("div", { style: { minHeight: "100vh", background: BG, color: TEXT, fontFamily: FONT, padding: "0 0 " + (isMobile ? 96 : 48) + "px" } },
       h("div", { style: { maxWidth: 1180, margin: "0 auto", padding: isMobile ? "24px 20px 0" : "36px 32px 0" } },
         h("div", { style: { display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 } },
-          h("div", { style: { flex: 1, minWidth: 0 } }, h(Masthead, { failed: props.mastheadFailed, onFail: props.onMastheadFail, companyName: settings.companyName, maxWidth: isMobile ? 220 : 300 })),
-          !isMobile && LinkBtn({ onClick: signOut, style: { color: MUTE, textDecoration: "none", fontSize: "12px", paddingBottom: 8 } }, "Sign out")),
+          h("div", { style: { flex: 1, minWidth: 0 } }, h(Masthead, { failed: props.mastheadFailed, onFail: props.onMastheadFail, companyName: settings.companyName, maxWidth: isMobile ? 220 : 300 }))),
         h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 18 } },
           Eyebrow("Crew Portal"),
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: MUTE } }, fmtDateShort(today))),
@@ -1064,6 +1121,10 @@
     var pwBusy = useState(false), wBusy = pwBusy[0], setWBusy = pwBusy[1];
     var pwErr = useState(null), wErr = pwErr[0], setWErr = pwErr[1];
     var pwOk = useState(false), wOk = pwOk[0], setWOk = pwOk[1];
+    var emState = useState(""), newEmail = emState[0], setNewEmail = emState[1];
+    var emPwState = useState(""), emPw = emPwState[0], setEmPw = emPwState[1];
+    var emBusyState = useState(false), emBusy = emBusyState[0], setEmBusy = emBusyState[1];
+    var emErrState = useState(null), emErr = emErrState[0], setEmErr = emErrState[1];
     useEffect(function() { setPhone(user.phone || ""); }, [user.phone]);
 
     function savePhone() {
@@ -1089,6 +1150,30 @@
         props.showToast("Password changed. Other devices were signed out.");
       });
     }
+    // A new sign-in email takes effect only when the link sent to it is
+    // opened, so a typo can't lock anyone out; the current password is asked
+    // for because the email IS the credential.
+    function requestEmailChange() {
+      if (emBusy) return;
+      var v = newEmail.trim();
+      if (!v || v.indexOf("@") < 1) { setEmErr("Enter the new email address."); return; }
+      if (!emPw) { setEmErr("Enter your current password to change your email."); return; }
+      setEmBusy(true); setEmErr(null);
+      api("/me/email", { method: "POST", body: { email: v, currentPassword: emPw } }).then(function(res) {
+        setEmBusy(false);
+        if (!res.ok) { setEmErr(errMessage(res)); return; }
+        setNewEmail(""); setEmPw("");
+        if (res.data && res.data.me) props.onUser(res.data.me);
+        props.showToast("Confirmation link sent to " + ((res.data && res.data.email) || v) + ".");
+      });
+    }
+    function cancelEmailChange() {
+      api("/me/email/cancel", { method: "POST", body: {} }).then(function(res) {
+        if (!res.ok) { props.showToast(errMessage(res), "error"); return; }
+        props.onUser(res.data);
+        props.showToast("Email change cancelled.");
+      });
+    }
     var roleChips = (user.roles || []).map(function(r) { return h("span", { key: "r" + r, style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, border: "1px solid " + HAIR, borderRadius: 4, padding: "3px 8px", letterSpacing: "0.06em" } }, r); })
       .concat((user.departments || []).map(function(d) { return h("span", { key: "d" + d, style: { fontSize: "11px", fontWeight: 600, color: MUTE, border: "1px solid " + HAIR, borderRadius: 4, padding: "3px 8px" } }, d); }));
     var row = function(label, value) {
@@ -1109,7 +1194,18 @@
           h("div", { style: { paddingTop: 14 } },
             h(Field, { id: "cp-phone", label: "Phone", type: "tel", value: phone, onChange: setPhone, autoComplete: "tel", inputMode: "tel", placeholder: "(555) 555-5555", onEnter: savePhone, hint: "The number production managers reach you on for day-of changes. Everything else on your profile is kept by the production team. Let them know if something's wrong." }),
             Notice("error", pErr),
-            QuietBtn({ onClick: savePhone, disabled: pBusy || phone.trim() === (user.phone || "") }, pBusy ? "Saving…" : "Save Phone")))),
+            QuietBtn({ onClick: savePhone, disabled: pBusy || phone.trim() === (user.phone || "") }, pBusy ? "Saving…" : "Save Phone")),
+          h("div", { style: { marginTop: 18, paddingTop: 16, borderTop: "1px solid " + HAIR } },
+            h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: MUTE, marginBottom: 6 } }, "Change email"),
+            h("div", { style: { fontSize: "12px", color: FAINT, lineHeight: 1.5, marginBottom: 12 } },
+              "We'll email a confirmation link to the new address. Your sign-in email, and where crew requests are sent, changes when you open it."),
+            user.pendingEmail && Notice("info", h("span", null,
+              "A confirmation link is waiting at ", h("strong", { style: { color: WHITE } }, user.pendingEmail), ". Open it to finish the change, or ",
+              LinkBtn({ onClick: cancelEmailChange, style: { fontSize: "13px" } }, "cancel it"), ".")),
+            h(Field, { id: "cp-newemail", label: "New email", type: "email", value: newEmail, onChange: setNewEmail, autoComplete: "email", inputMode: "email", placeholder: "you@example.com" }),
+            h(Field, { id: "cp-email-pw", label: "Current password", type: "password", value: emPw, onChange: setEmPw, autoComplete: "current-password", onEnter: requestEmailChange }),
+            Notice("error", emErr),
+            QuietBtn({ onClick: requestEmailChange, disabled: emBusy || !newEmail.trim() || !emPw }, emBusy ? "Sending…" : "Send Confirmation Link")))),
         h("div", { style: { marginTop: 22 } },
           SectionTitle("Session"),
           Card(h("div", null,
@@ -1154,7 +1250,7 @@
     // replace, since the router's hashchange would re-render the outer app while
     // this component is still rendering.
     useEffect(function() {
-      if (user && sub && PUBLIC[sub] && sub !== "signup" && sub !== "reset") {
+      if (user && sub && PUBLIC[sub] && sub !== "signup" && sub !== "reset" && sub !== "confirm-email") {
         window.LTPRouter.replace("crew-portal/overview");
       }
     }, [user, sub]);
@@ -1172,6 +1268,12 @@
     // a shared phone must still be able to accept an invitation.
     if (sub === "signup" || sub === "reset") {
       return h(TokenScreen, { kind: sub, token: route.id, shell: shell, onSignedIn: signedIn, onPresetEmail: setPresetEmail });
+    }
+    if (sub === "confirm-email") {
+      return h(EmailConfirmScreen, { token: route.id, shell: shell, signedIn: !!user, onConfirmed: function() {
+        // A signed-in device picks up the new address straight away.
+        if (user) api("/auth/me").then(function(res) { if (res.ok) setUser(res.data); });
+      } });
     }
     if (user === null) {
       if (sub === "forgot" || sub === "request-access") {
