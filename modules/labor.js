@@ -543,6 +543,18 @@
         message: "Another window updated them while this form was open. Saving will replace the newer version." });
     var [customRole, setCustomRole] = useState("");
 
+    // Per-user saved views (sort + the department chip). Placed with the hooks
+    // above so the editingCrew early return below can't change the hook order.
+    var vw = window.LTP_useTableView({
+      tableKey: "crew-roster",
+      defaults: { sort: { key: "name", dir: "asc" }, filters: { dept: "all" }, toggles: {} },
+      snapshot: { sort: sort, filters: { dept: deptFilter }, toggles: {} },
+      apply: function(v) {
+        if (v.sort) setSort(v.sort);
+        if (v.filters && "dept" in v.filters) setDeptFilter(v.filters.dept);
+      },
+    });
+
     // ── Crew portal access (backend/routes/crew_portal.py) ─────────────────
     // A crew member's own sign-in to #/crew-portal — their calls, requests and
     // pay. `portal` is contactId → { status: invited|active|disabled, email,
@@ -664,7 +676,7 @@
     // sorts — "who is busiest" and "who costs most" are now one click each.
     var COLS = [
       { key: "name",   label: "Name",        w: "minmax(0,1.2fr)",
-        sort: function(c) { return (c.lastName || "") + " " + (c.firstName || ""); } },
+        sort: function(c) { return (c.firstName || "") + " " + (c.lastName || ""); } },
       { key: "roles",  label: "Roles",       w: "minmax(0,1.4fr)",
         sort: function(c) { return (c.crewRoles || []).join(", "); } },
       { key: "depts",  label: "Departments", w: "minmax(0,1.1fr)", flex: true,
@@ -886,10 +898,13 @@
         var searchInput = h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search crew\u2026",
           style: isMobile ? { width: "100%", boxSizing: "border-box", height: 36, background: B.raised, border: "1px solid " + B.border, borderRadius: "8px", padding: "0 12px", color: B.text, fontSize: "16px", fontFamily: "inherit", outline: "none" }
                           : { flex: 1, maxWidth: 250, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "5px 12px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none" } });
+        var crewViewMenu = h(window.LTPViewMenu, { vw: vw });
+        // Desktop: standardized toolbar — department chips │ search … (right)
+        // saved-view menu. Mobile: search + view on a row, chips scrolling below.
         if (isMobile) return h("div", { style: { marginBottom: 12 } },
-          h("div", { style: { marginBottom: 8 } }, searchInput),
+          h("div", { style: { display: "flex", gap: 8, alignItems: "center", marginBottom: 8 } }, h("div", { style: { flex: 1, minWidth: 0 } }, searchInput), crewViewMenu),
           h(window.LTPScrollStrip, { isMobile: true, mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips));
-        return h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center" } }, chips, searchInput);
+        return h(window.LTPTableToolbar, { isMobile: false, filters: chips, search: searchInput, view: crewViewMenu });
       })(),
       isMobile
         // \u2500\u2500 Phone: the stacked rows with tap-to-call / tap-to-email \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

@@ -360,7 +360,15 @@
 // fixed cost is spread over every live quote drawing from it by unit-days
 // (rentals-utils.js::crossRentalMargin), so a rental spanning several jobs is
 // no longer paid for in full by each. quotes-builder.js reads its share.
-var CACHE_VERSION = 'ltp-shell-v102';
+// v103: per-user saved table views + the standardized list toolbar. Every
+// desktop record list (Projects, Quotes, Invoices, CRM Companies/Contacts,
+// Crew Roster, Rentals Inventory/Containers/Kits/Cross Rentals) now carries the
+// same controls in one row — filter chips │ Show/Hide toggles · search — with a
+// saved-view dropdown on the right that stores the sort + filter arrangement to
+// the user's account (new components/table-views.js; GET/PUT /api/me/preferences).
+// The Name column on Contacts and the Crew Roster now sorts by the name as
+// shown (first name first). New + changed cached files, so the shell refetches.
+var CACHE_VERSION = 'ltp-shell-v103';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
