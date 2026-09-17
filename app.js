@@ -41,6 +41,16 @@ window.LTPApp = function() {
   useEffect(function() {
     function onReady() { setAuthUser(window.LTP_AUTH_USER); }
     window.addEventListener("ltp-auth-ready", onReady);
+    // The result can land between this component's first render and this
+    // effect attaching. components/auth.js fires ltp-auth-ready from a fetch
+    // started at script-load time, long before React mounts, and the event
+    // never fires twice — so a miss left authUser undefined forever and the
+    // app sat on "Loading…" until a manual reload. useState above only covers
+    // a result that arrived before the FIRST render; React 18 schedules
+    // passive effects asynchronously, so the gap after it is milliseconds, not
+    // microseconds, and a busy machine lands in it. Re-read on attach, exactly
+    // as LTPShellFooter does for the worker version below.
+    onReady();
     return function() { window.removeEventListener("ltp-auth-ready", onReady); };
   }, []);
 

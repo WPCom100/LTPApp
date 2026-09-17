@@ -140,13 +140,32 @@ async function back(p) { await p.goBack(); await settle(p); }
   }
 
   console.log("\ndead record ids never strand the user");
+  // The redirect is an effect that waits on the data load, so poll for it
+  // rather than guessing a sleep: under load a fixed wait races the boot.
+  async function settledHash(p, want, ms = 8000) {
+    const t0 = Date.now();
+    for (;;) {
+      const h = await hash(p);
+      if (h === want || Date.now() - t0 > ms) return h;
+      await p.waitForTimeout(150);
+    }
+  }
   for (const [dead, land] of [["#/quotes/99999", "#/quotes"], ["#/crm/companies/99999", "#/crm/companies"],
                               ["#/rentals/equipment/99999", "#/rentals/equipment"], ["#/invoices/99999", "#/invoices"]]) {
     const p = await cold(dead);
-    eq(dead + " → " + land, await hash(p), land);
+    const got = await settledHash(p, land);
+    if (got !== land) {
+      const d = await p.evaluate(() => ({ auth: typeof window.LTP_AUTH_USER, who: window.LTP_AUTH_USER && window.LTP_AUTH_USER.email,
+        reg: typeof window.LTP_NAV_REGISTRY, state: JSON.stringify(history.state),
+        body: (document.body.innerText || "").slice(0, 60).replace(/\n/g, " ") }));
+      console.log("    DIAG " + JSON.stringify(d));
+    }
+    eq(dead + " → " + land, got, land);
     await p.close();
   }
-  { const p = await cold("#/bogus/route"); eq("an unknown route canonicalises home", await hash(p), "#/dashboard"); await p.close(); }
+  { const p = await cold("#/bogus/route"); const g = await settledHash(p, "#/dashboard");
+    if (g !== "#/dashboard") console.log("    DIAG " + JSON.stringify(await p.evaluate(() => ({ auth: typeof window.LTP_AUTH_USER, who: window.LTP_AUTH_USER && window.LTP_AUTH_USER.email, reg: typeof window.LTP_NAV_REGISTRY, state: JSON.stringify(history.state), body: (document.body.innerText || "").slice(0, 60).replace(/\n/g, " ") }))));
+    eq("an unknown route canonicalises home", g, "#/dashboard"); await p.close(); }
 
   console.log("\n#8 reload mid-session preserves Back");
   {
