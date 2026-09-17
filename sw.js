@@ -356,7 +356,11 @@
 // changed" chip, and a project save that moved the dates toasts the quotes
 // concerned. quotes-builder.js, quotes-list.js, crm-projects.js, projects.js,
 // domain-docs.js, ui.js, entity-quick-form.js, app.js.
-var CACHE_VERSION = 'ltp-shell-v101';
+// v102: a cross rental shared across projects splits its cost. One order line's
+// fixed cost is spread over every live quote drawing from it by unit-days
+// (rentals-utils.js::crossRentalMargin), so a rental spanning several jobs is
+// no longer paid for in full by each. quotes-builder.js reads its share.
+var CACHE_VERSION = 'ltp-shell-v102';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

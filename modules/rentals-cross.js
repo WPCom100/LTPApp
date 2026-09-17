@@ -1,5 +1,5 @@
 // Rentals — Cross Rentals: orders of gear rented IN from a vendor.
-// docs/CROSS_RENTAL_PLAN.md. One order per vendor, with lines: the fixtures
+// README.md "Cross rentals & vendor pricing". One order per vendor, with lines: the fixtures
 // (catalog items, which count as our inventory once the order is confirmed)
 // and the parts and accessories that come with them (cost only).
 //

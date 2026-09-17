@@ -2,7 +2,7 @@
 //   VENDOR RENTAL RATES — what each vendor charges US per catalog item
 // ═══════════════════════════════════════════════════════════════════════════
 //
-// The price memory behind cross rentals (docs/CROSS_RENTAL_PLAN.md). One row
+// The price memory behind cross rentals (README.md "Cross rentals & vendor pricing"). One row
 // per (vendor, item): the vendor's 3-day / week / month price, what they call
 // the item, when the price was last quoted, a preferred flag, and active /
 // paused. Saving a cross-rental order refreshes these rows; this editor is the
