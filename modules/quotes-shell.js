@@ -50,7 +50,7 @@
       return h("div", { style: { display: "flex", gap: 0, borderBottom: "1px solid " + B.border, marginBottom: 18 } },
         tabs.map(function(t) {
           var active = activeTab === t.key;
-          return h("button", { key: t.key, onClick: function() { nav(t.path); },
+          return h("button", { key: t.key, onClick: function() { window.LTP_NAV_REGISTRY.goTab(t.path); },
             style: { background: "transparent", border: "none", borderBottom: active ? "2px solid " + B.accent : "2px solid transparent",
                      padding: "8px 16px", fontSize: "12px", fontWeight: active ? 700 : 500,
                      color: active ? B.accent : B.textMut, cursor: "pointer", transition: "all 0.15s" }

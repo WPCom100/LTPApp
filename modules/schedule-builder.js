@@ -795,7 +795,7 @@
     var savedChip = justSaved && h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.success, background: B.successBg, border: "1px solid " + B.successBd, padding: isMobile ? "0 10px" : "5px 10px", height: isMobile ? 34 : undefined, display: "inline-flex", alignItems: "center", borderRadius: isMobile ? "8px" : "6px", whiteSpace: "nowrap" } }, "\u2713 Saved");
     var header = isMobile
       ? h("div", { style: { display: "flex", alignItems: "center", gap: 10, background: B.surface, borderBottom: "1px solid " + B.border, padding: "calc(8px + env(safe-area-inset-top)) 10px 8px", flexShrink: 0, zIndex: 5 } },
-          h("button", { onClick: function() { nav("projects/" + project.id); }, "aria-label": "Back to project", className: "ltp-tap",
+          h("button", { onClick: function() { window.LTPRouter.goBack(); }, "aria-label": "Back to project", className: "ltp-tap",
             style: { flexShrink: 0, width: 36, height: 36, borderRadius: "8px", background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontSize: "18px", lineHeight: 1, cursor: "pointer", fontFamily: "inherit", display: "inline-flex", alignItems: "center", justifyContent: "center", padding: 0 } }, "\u2190"),
           h("div", { style: { flex: 1, minWidth: 0 } },
             h("div", { style: { fontSize: "16px", fontWeight: 700, color: B.accent, lineHeight: 1.15, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", letterSpacing: "-0.01em" } }, project.name),
@@ -814,7 +814,7 @@
             ] })))
       : h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: "12px 16px", flexShrink: 0, zIndex: 5 } },
           h("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
-            h("button", { onClick: function() { nav("projects/" + project.id); },
+            h("button", { onClick: function() { window.LTPRouter.goBack(); },
               style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back to Project"),
             h("div", null,
               h("div", { style: { fontSize: "20px", fontWeight: 700, color: B.accent, lineHeight: 1.1 } }, project.name + " \u2014 Schedule"),

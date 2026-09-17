@@ -182,7 +182,7 @@
     if (inFlightRevalidate) return inFlightRevalidate;
     inFlightRevalidate = apiFetch(VERSIONS_URL)
       .then(function(r) {
-        if (r.status === 401) { window.location.href = "/auth/login"; return null; }
+        if (r.status === 401) { if (window.LTP_NAV_REGISTRY) window.LTP_NAV_REGISTRY.stashReturnTo(); window.location.href = "/auth/login"; return null; }
         return r.ok ? r.json() : null;
       })
       .then(function(body) {

@@ -60,6 +60,19 @@
     var editKit       = editKitId      ? kits.find(function(k) { return k.id === editKitId; })             : null;
     var openCross     = openCrossId    ? (crossRentals || []).find(function(o) { return o.id === openCrossId; }) : null;
     var editCross     = editCrossId    ? (crossRentals || []).find(function(o) { return o.id === editCrossId; }) : null;
+    // The record this URL names is gone (deleted here or in another window, or
+    // a stale link): the modal simply does not render, leaving the list under a
+    // dead URL that Back would then walk through. The list always exists, so it
+    // is the fallback rather than the declared parent (…/:id for an edit form,
+    // which is just as dead).
+    var listPath = "rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment");
+    window.LTP_useMissingRecord(!!(
+      (openEqId && !openEq) || (editEqId && !editEq) || (scanEqId && !scanEq) ||
+      (openContainerId && !openContainer) || (editContainerId && !editContainer) ||
+      (openKitId && !openKit) || (editKitId && !editKit) ||
+      (openCrossId && !openCross) || (editCrossId && !editCross)
+    ), listPath);
+
     // The checker and the quote picker open a new order with the item, the
     // dates and a chosen vendor already filled in (router.js parses the query).
     var crossPrefill = showAddCross ? (function(qs) {
@@ -69,7 +82,6 @@
     })(route.query) : null;
 
     // ── Navigation helpers ───────────────────────────────────────────────────
-    function goList()        { nav("rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment")); }
     // The checker's shortage hint opens a new order with everything filled in.
     function crossRentFor(eid, start, end, vendorId) {
       nav("rentals/cross-rentals/new?equipmentId=" + eid + (start ? "&start=" + start : "") + (end ? "&end=" + end : "") + (vendorId ? "&vendorId=" + vendorId : ""));
@@ -107,7 +119,7 @@
       setContainers(function(prev) { return prev.map(function(c) {
         return Object.assign({}, c, { defaultForEquipment: (c.defaultForEquipment || []).filter(function(x) { return x !== eid; }) });
       }); });
-      nav("rentals/equipment");
+      window.LTPRouter.goBack();   // deleted from its detail: back to the list, never to the dead item
     }
 
     // ── Scan-import: append/remove one serialized unit, persisting immediately ─
@@ -153,7 +165,7 @@
       setEquipment(function(prev) { return prev.map(function(e) {
         return e.defaultContainerId === cid ? Object.assign({}, e, { defaultContainerId: null }) : e;
       }); });
-      nav("rentals/containers");
+      window.LTPRouter.goBack();   // deleted from its detail: back to the list, never to the dead item
     }
 
     // ── Kit CRUD ─────────────────────────────────────────────────────────────
@@ -172,7 +184,7 @@
 
     function deleteKit(kid) {
       setKits(function(prev) { return prev.filter(function(k) { return k.id !== kid; }); });
-      nav("rentals/kits");
+      window.LTPRouter.goBack();   // deleted from its detail: back to the list, never to the dead item
     }
 
     // ── Cross-rental CRUD ────────────────────────────────────────────────────
@@ -199,7 +211,7 @@
 
     function deleteCrossRental(oid) {
       setCrossRentals(function(prev) { return prev.filter(function(o) { return o.id !== oid; }); });
-      nav("rentals/cross-rentals");
+      window.LTPRouter.goBack();   // deleted from its detail: back to the list, never to the dead item
     }
     function logMaintenance(eqId, log, unitId) {
       setEquipment(function(prev) { return prev.map(function(e) {
@@ -298,7 +310,7 @@
         onOpenCrossRental:    function(oid) { nav("rentals/cross-rentals/" + oid); },
         onCrossRent:          function(eid) { nav("rentals/cross-rentals/new?equipmentId=" + eid); },
         onSetBookingState:    setAllocationState,
-        onClose:              function() { nav("rentals/equipment"); },
+        onClose:              function() { window.LTPRouter.goBack(); },
         onEdit:               function() { editEquip(openEq.id); },
         onDelete:             function() { deleteEquipment(openEq.id); },
         onScan:               function() { nav("rentals/equipment/" + openEq.id + "/scan"); },
@@ -314,13 +326,13 @@
         eq: scanEq, existingUnits: scanEq.units || [], vendors: vendors,
         onAddUnit:    function(unit) { addScannedUnit(scanEq.id, unit); },
         onRemoveUnit: function(uid)  { removeScannedUnit(scanEq.id, uid); },
-        onClose:      function() { nav("rentals/equipment/" + scanEq.id); },
+        onClose:      function() { window.LTPRouter.goBack(); },
       }),
 
       // Container detail popup
       openContainer && h(window.RentalsContainerDetail, {
         container: openContainer, equipment: equipment, containers: containers,
-        onClose:              function() { nav("rentals/containers"); },
+        onClose:              function() { window.LTPRouter.goBack(); },
         onEdit:               function() { editCont(openContainer.id); },
         onDelete:             function() { deleteContainer(openContainer.id); },
         onOpenEquipment:      function(eid) { openEquip(eid); },
@@ -333,33 +345,33 @@
       // Add Equipment
       showAddEq && h(window.RentalsEquipmentForm, {
         vendors: vendors,
-        onClose: function() { nav("rentals/equipment"); },
-        onSave:  function(data) { var newId = saveEquipment(data); nav("rentals/equipment/" + newId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { var newId = saveEquipment(data); window.LTPRouter.replace("rentals/equipment/" + newId); },
       }),
 
       // Edit Equipment
       editEq && h(window.RentalsEquipmentForm, {
         initial: editEq, vendors: vendors,
-        onClose: function() { nav("rentals/equipment/" + editEqId); },
-        onSave:  function(data) { saveEquipment(Object.assign({ id: editEqId }, data)); nav("rentals/equipment/" + editEqId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { saveEquipment(Object.assign({ id: editEqId }, data)); window.LTPRouter.goBack(); },
       }),
 
       // Add Container
       showAddContainer && h(window.RentalsContainerForm, {
         equipment: equipment, containers: containers,
-        onClose: function() { nav("rentals/containers"); },
-        onSave:  function(data) { var newId = saveContainer(data); nav("rentals/containers/" + newId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { var newId = saveContainer(data); window.LTPRouter.replace("rentals/containers/" + newId); },
       }),
       editContainer && h(window.RentalsContainerForm, {
         initial: editContainer, equipment: equipment, containers: containers,
-        onClose: function() { nav("rentals/containers/" + editContainerId); },
-        onSave:  function(data) { saveContainer(Object.assign({ id: editContainerId }, data)); nav("rentals/containers/" + editContainerId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { saveContainer(Object.assign({ id: editContainerId }, data)); window.LTPRouter.goBack(); },
       }),
 
       // Kit detail
       openKit && h(window.RentalsKitDetail, {
         kit: openKit, equipment: equipment,
-        onClose:  function() { nav("rentals/kits"); },
+        onClose:  function() { window.LTPRouter.goBack(); },
         onEdit:   function() { nav("rentals/kits/" + openKit.id + "/edit"); },
         onDelete: function() { deleteKit(openKit.id); },
       }),
@@ -367,21 +379,21 @@
       // Add Kit
       showAddKit && h(window.RentalsKitForm, {
         equipment: equipment,
-        onClose: function() { nav("rentals/kits"); },
-        onSave:  function(data) { var newId = saveKit(data); nav("rentals/kits/" + newId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { var newId = saveKit(data); window.LTPRouter.replace("rentals/kits/" + newId); },
       }),
 
       // Edit Kit
       editKit && h(window.RentalsKitForm, {
         initial: editKit, equipment: equipment,
-        onClose: function() { nav("rentals/kits/" + editKitId); },
-        onSave:  function(data) { saveKit(Object.assign({ id: editKitId }, data)); nav("rentals/kits/" + editKitId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { saveKit(Object.assign({ id: editKitId }, data)); window.LTPRouter.goBack(); },
       }),
 
       // Cross rental detail
       openCross && h(window.RentalsCrossDetail, {
         order: openCross, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
-        onClose:  function() { nav("rentals/cross-rentals"); },
+        onClose:  function() { window.LTPRouter.goBack(); },
         onEdit:   function() { nav("rentals/cross-rentals/" + openCross.id + "/edit"); },
         onDelete: function() { deleteCrossRental(openCross.id); },
         onStatus: function(st) { setCrossStatus(openCross.id, st); },
@@ -391,15 +403,15 @@
       // New cross rental (prefilled from the checker / quote picker when opened there)
       showAddCross && h(window.RentalsCrossForm, {
         prefill: crossPrefill, vendors: vendors, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
-        onClose: function() { nav("rentals/cross-rentals"); },
-        onSave:  function(data) { var newId = saveCrossRental(data); nav("rentals/cross-rentals/" + newId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { var newId = saveCrossRental(data); window.LTPRouter.replace("rentals/cross-rentals/" + newId); },
       }),
 
       // Edit cross rental
       editCross && h(window.RentalsCrossForm, {
         initial: editCross, vendors: vendors, companies: companies || [], equipment: equipment, projects: projects || [], vendorRates: vendorRates || [],
-        onClose: function() { nav("rentals/cross-rentals/" + editCrossId); },
-        onSave:  function(data) { saveCrossRental(Object.assign({ id: editCrossId }, data)); nav("rentals/cross-rentals/" + editCrossId); },
+        onClose: function() { window.LTPRouter.goBack(); },
+        onSave:  function(data) { saveCrossRental(Object.assign({ id: editCrossId }, data)); window.LTPRouter.goBack(); },
       })
     );
   };

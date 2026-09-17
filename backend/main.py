@@ -684,7 +684,13 @@ frontend_dir = os.path.realpath(os.path.dirname(os.path.dirname(__file__)))
 # backend/ tree, etc.). Only the explicit set below is reachable; everything
 # else falls through to index.html so the SPA can still handle unknown client routes.
 _ALLOWED_TOP_LEVEL_FILES = {
-    "index.html", "app.js", "mount.js", "router.js", "theme.js", "favicon.ico",
+    # Every root-level file index.html loads must be listed here. A missing one
+    # falls through to the SPA fallback below, which answers with index.html as
+    # text/html; the browser refuses to execute it (nosniff + strict MIME) and
+    # the app white-screens on every route. tests/test_static_allowlist.py
+    # keeps this set and index.html's <script src> tags in step.
+    "index.html", "app.js", "mount.js", "router.js", "nav-registry.js",
+    "theme.js", "favicon.ico",
 }
 _ALLOWED_TREES = {
     "components/": (".js",),

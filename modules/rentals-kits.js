@@ -283,12 +283,15 @@
   window.RentalsKitsView = function({ kits, equipment, onOpenKit }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
-    var [catFilter,  setCatFilter]  = useState("all");
-    var [search,     setSearch]     = useState("");
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [catFilter,  setCatFilter]  = window.LTP_useNavState("filter", "all");
+    var [search,     setSearch]     = window.LTP_useNavState("search", "");
     // ONE sort state for both viewports \u2014 { key, dir } naming a column in COLS
     // below. The phone chips and the desktop column headers set the same state.
-    var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
-    var [showArchived, setShowArchived] = useState(false);
+    var [sort,       setSort]       = window.LTP_useNavState("sort", { key: "name", dir: "asc" });
+    var [showArchived, setShowArchived] = window.LTP_useNavState("showArchived", false);
     // Per-user saved views — sort + category chip + the Show Archived toggle.
     var vw = window.LTP_useTableView({
       tableKey: "rentals-kits",

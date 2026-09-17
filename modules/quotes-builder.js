@@ -1134,6 +1134,16 @@
       return q ? cloneDraft(q) : emptyDraft();
     }, [quoteId, isNew]);
 
+    // The quote this URL names does not exist — a stale link, or deleted before
+    // we got here. `initial` above fell back to a blank draft, so without this
+    // the screen is an empty builder under #/quotes/<dead id> that a save would
+    // turn into a real quote. Same deps as `initial` on purpose: a delete that
+    // lands later is a different situation (see LTP_useMissingRecord).
+    var missingAtOpen = useMemo(function() {
+      return !isNew && quoteId != null && !quotes.some(function(q) { return q.id === quoteId; });
+    }, [quoteId, isNew]);
+    window.LTP_useMissingRecord(missingAtOpen, "quotes");
+
     // Two-tier setter:
     //   setDraftRaw — internal, does NOT mark dirty (used by reset and post-save sync)
     //   setDraft    — public wrapper used by all mutators, automatically marks dirty
@@ -1459,7 +1469,7 @@
         setDraftRaw(toSave);
         cleanRef.current = toSave;
         setIsDirty(false);
-        nav("quotes/" + newId);
+        window.LTPRouter.replace("quotes/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       } else {
         // Backfill shareToken on existing-but-tokenless quotes (older rows
         // from before the share_token column was added). Once minted on
@@ -1787,7 +1797,7 @@
         onConfirm: function() {
           setQuotes(function(prev) { return prev.filter(function(q) { return q.id !== draft.id; }); });
           setDlg(null);
-          nav("quotes");
+          window.LTPRouter.goBack();   // deleted: never back to the dead item
         },
       });
     }
@@ -1940,7 +1950,11 @@
       cleanRef.current = updatedQuote;
       setIsDirty(false);
 
-      setTimeout(function() { nav("invoices/" + targetId); }, 100);
+      // Push, not replace: the quote still exists and Back must return to it.
+      // This used to sit in a 100 ms setTimeout, which let a Back pressed in
+      // that window race the navigation; the state writes above are already
+      // committed by React before this line runs.
+      nav("invoices/" + targetId);
     }
 
     // ── Derived data ───────────────────────────────────────────────────────────
@@ -2166,7 +2180,7 @@
       // Sticky header bar
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "nowrap", gap: isMobile ? 8 : 0, background: B.surface, borderBottom: "1px solid " + B.border, padding: isMobile ? "calc(10px + env(safe-area-inset-top)) 12px 10px" : "12px 16px", flexShrink: 0, zIndex: 5 } },
         h("div", { style: { display: "flex", alignItems: "center", gap: isMobile ? 10 : 14, flex: 1, minWidth: 0 } },
-          h("button", { onClick: function() { nav("quotes"); },
+          h("button", { onClick: function() { window.LTPRouter.goBack(); },
             style: { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textSec, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" } }, "\u2190 Back"),
           h("div", { style: { minWidth: 0 } },
             h("div", { style: { fontSize: isMobile ? "17px" : "22px", fontWeight: 700, color: B.accent, letterSpacing: "0.02em", lineHeight: 1.1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, refDisplay),

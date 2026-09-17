@@ -46,7 +46,7 @@ eq("crm/companies/5/edit unchanged", parse("#/crm/companies/5/edit"), { module: 
 // once at load so a bare visit lands on the portal. Everywhere else the tag is
 // absent and the staff dashboard stays the default.
 function loadRouter(metaContent, startHash) {
-  global.window = { location: { hash: startHash || "" }, addEventListener() {}, removeEventListener() {}, history: { replaceState() {} } };
+  global.window = { location: { hash: startHash || "" }, addEventListener() {}, removeEventListener() {}, history: { replaceState(s, t, u) { global.window.location.hash = u.slice(u.indexOf("#")); } } };
   global.document = {
     querySelector(sel) {
       if (metaContent === null || sel.indexOf("ltp-default-route") === -1) return null;
@@ -58,11 +58,11 @@ function loadRouter(metaContent, startHash) {
   delete global.document;
   return w;
 }
-eq("no tag → a bare visit lands on the dashboard", loadRouter(null).location.hash, "/dashboard");
-eq("crew-portal tag → a bare visit lands on the portal", loadRouter("crew-portal").location.hash, "/crew-portal");
-eq("a bare '#' counts as bare", loadRouter("crew-portal", "#").location.hash, "/crew-portal");
+eq("no tag → a bare visit lands on the dashboard", loadRouter(null).location.hash, "#/dashboard");
+eq("crew-portal tag → a bare visit lands on the portal", loadRouter("crew-portal").location.hash, "#/crew-portal");
+eq("a bare '#' counts as bare", loadRouter("crew-portal", "#").location.hash, "#/crew-portal");
 eq("an existing hash is never overridden by the tag", loadRouter("crew-portal", "#/labor/roster").location.hash, "#/labor/roster");
-eq("an unexpected tag value is ignored", loadRouter("evil<script>").location.hash, "/dashboard");
+eq("an unexpected tag value is ignored", loadRouter("evil<script>").location.hash, "#/dashboard");
 eq("the tag also sets the module a bare hash parses to", loadRouter("crew-portal").LTPRouter.getRoute().module, "crew-portal");
 // Restore the plain shim for the remaining assertions.
 global.window = { location: { hash: "#/crew-portal" }, addEventListener() {}, removeEventListener() {}, history: { replaceState() {} } };
