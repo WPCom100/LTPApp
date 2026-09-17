@@ -433,6 +433,25 @@ out.push(renderWithOverlays(window.QuotesBuilder, Object.assign({
   }
 })();
 
+// Appended after the overlay probes so the deterministic id counters the
+// earlier scenarios print (sortable instances, minted ids) do not shift.
+// The project's dates moved after the quote's equipment was priced: the
+// section is stamped for 09-01 → 09-02 while pr1 now runs 09-01 → 09-03, so
+// the Quote Details notice and the section's Update / Keep controls light up
+// (components/domain-docs.js::LTP_staleRentalSections).
+const MOVED = Object.assign({}, QUOTE, { sections: [
+  Object.assign({}, QUOTE.sections[0], { pricedStartDate: "2026-09-01", pricedEndDate: "2026-09-02",
+    items: QUOTE.sections[0].items.concat([
+      { id: "i4", type: "equipment", equipmentId: "e1", name: "Speaker", qty: 2, unitPrice: 100, rateType: "threeDay", rentalLabel: "1\u00d7 3-Day", cost: 40 },
+    ]) }),
+  QUOTE.sections[1],
+] });
+out.push(render(window.QuotesBuilder, Object.assign({
+  quoteId: 1, isNew: false, quotes: [MOVED], setQuotes: function () {},
+  getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+  getNextInvoiceId: function () { return 1; },
+}, COMMON), "\n== QuotesBuilder (project dates moved) =="));
+
 // Three clock reads reach the tree and differ between two runs of the SAME
 // code, so they are normalized rather than compared: an id minted from
 // Date.now() inside a nested module, the "HH:MM" stamped onto activity
@@ -469,7 +488,7 @@ ok("the payment form is one of them (it is exercised by the overlay sweep)",
 ok("every scenario rendered without throwing", threw === 0,
    (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
 // 14 data scenarios + 2 overlay sweeps (one per builder).
-ok("all " + out.length + " scenarios produced output", out.length === 16, "got " + out.length);
+ok("all " + out.length + " scenarios produced output", out.length === 17, "got " + out.length);
 ok("the overlay sweeps actually opened modals",
    (text.match(/opens an overlay/g) || []).length >= 24,
    "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "
