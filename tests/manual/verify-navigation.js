@@ -144,6 +144,23 @@ async function back(p) { await p.goBack(); await settle(p); }
     await p.close();
   }
 
+  console.log("\ncross-area links OUT of a modal actually arrive");
+  // Regression: these handlers used to close the modal and then navigate. The
+  // close is goBack(), whose queued history.back() undid the push, so clicking
+  // a quote inside a project dumped the user on the projects list.
+  for (const [tab, re_, label] of [["quotes", /^#\/quotes\/\d+$/, "quote"], ["invoices", /^#\/invoices\/\d+$/, "invoice"]]) {
+    const p = await cold("#/projects/1/" + tab);
+    const row = p.locator('.ltp-modal-backdrop >> text=/^(Q|INV)-/').first();
+    if (await row.count() === 0) { ok("a " + label + " row to click", false, "none rendered"); await p.close(); continue; }
+    await row.click();
+    await settle(p, 1600);                       // long enough for a queued back() to land
+    const h = await hash(p);
+    ok("clicking a " + label + " in a project opens it", re_.test(h), "landed on " + h);
+    await back(p);
+    eq("...and Back returns to the project, not its list", await hash(p), "#/projects/1/" + tab);
+    await p.close();
+  }
+
   console.log("\ndead record ids never strand the user");
   // The redirect is an effect that waits on the data load, so poll for it
   // rather than guessing a sleep: under load a fixed wait races the boot.

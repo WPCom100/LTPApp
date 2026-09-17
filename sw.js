@@ -373,7 +373,13 @@
 // tabs replace instead of push, modal close / save / delete step back, and
 // the requested screen survives the Google sign-in hop. New boot file plus
 // index.html, app.js and every module with a navigation call.
-var CACHE_VERSION = 'ltp-shell-v104';
+// v105: clicking a quote or invoice inside a project's detail modal took you
+// to the projects list instead of the document. Those handlers closed the modal
+// and then navigated; since v104 closing means goBack(), whose queued
+// history.back() undid the push. Also routes #/projects/:id/invoices to the
+// Invoices tab, which the URL tab list had never listed. crm-projects.js,
+// crm-contacts.js, projects.js.
+var CACHE_VERSION = 'ltp-shell-v105';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

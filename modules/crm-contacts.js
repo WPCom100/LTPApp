@@ -62,7 +62,7 @@
             linkedProjects.map(function(p) {
               var co = ctx.companies.find(function(c) { return c.id === p.companyId; });
               return h("div", { key: p.id,
-                onClick: function() { ctx.setEditContactId(null); ctx.setSelectedProjectId(p.id); },
+                onClick: function() { ctx.setSelectedProjectId(p.id); },
                 style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", transition: "all 0.15s" },
                 onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                 onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },

@@ -17,7 +17,10 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var urlId     = route.id     || null;
   var urlAction = route.action || null;
 
-  var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1 };
+  // Must list every tab CRMProjectDetail renders (modules/crm-projects.js), or
+  // that tab's URL is silently ignored and the modal opens on Overview —
+  // which is what #/projects/:id/invoices did.
+  var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1, invoices: 1 };
   var urlTab = (urlId && PROJECT_TABS[urlAction]) ? urlAction : null;
 
   // URL-derived state

@@ -102,7 +102,7 @@
 
     return h(window.LTPModal, { title: project.name, onClose: function() { ctx.setSelectedProjectId(null); }, wide: true },
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 } },
-        h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, h(window.Badge, { status: CAT_KEYS[project.category] }), h(window.Badge, { status: project.status }), h("span", { style: { fontSize: "12px", color: B.textMut } }, "\u00b7"), h("span", { style: { fontSize: "12px", color: B.textSec, cursor: "pointer", textDecoration: "underline" }, onClick: function() { ctx.setSelectedProjectId(null); ctx.setSelectedCompanyId(company ? company.id : null); } }, company ? company.name : "")),
+        h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } }, h(window.Badge, { status: CAT_KEYS[project.category] }), h(window.Badge, { status: project.status }), h("span", { style: { fontSize: "12px", color: B.textMut } }, "\u00b7"), h("span", { style: { fontSize: "12px", color: B.textSec, cursor: "pointer", textDecoration: "underline" }, onClick: function() { if (company) ctx.setSelectedCompanyId(company.id); } }, company ? company.name : "")),
         h("div", { style: { display: "flex", gap: 6 } }, h(window.Btn, { small: true, variant: "ghost", onClick: function() { ctx.setEditProjectId(project.id); } }, "Edit"), h(window.Btn, { small: true, variant: "danger", onClick: function() { ctx.setDeleteConfirm({ type: "project", id: project.id, name: project.name }); } }, "Delete"))
       ),
       h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 16 } }, fmt(project.startDate) + " \u2192 " + fmt(project.endDate)),
@@ -137,7 +137,7 @@
                 siteAddr + (project.siteUseCompanyAddress ? "  ·  client company address" : ""))));
         })(),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Contacts"),
-        projContacts.length > 0 ? projContacts.map(function(c) { return h("div", { key: c.id, style: { fontSize: "13px", color: B.textSec, marginBottom: 4, cursor: "pointer" }, onClick: function() { ctx.setSelectedProjectId(null); ctx.setEditContactId(c.id); } }, h("span", { style: { color: B.accent, textDecoration: "underline" } }, c.firstName + " " + c.lastName), " \u2014 " + c.role + " \u00b7 " + c.email); }) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No contacts assigned."),
+        projContacts.length > 0 ? projContacts.map(function(c) { return h("div", { key: c.id, style: { fontSize: "13px", color: B.textSec, marginBottom: 4, cursor: "pointer" }, onClick: function() { ctx.setEditContactId(c.id); } }, h("span", { style: { color: B.accent, textDecoration: "underline" } }, c.firstName + " " + c.lastName), " \u2014 " + c.role + " \u00b7 " + c.email); }) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No contacts assigned."),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "16px 0 8px", textTransform: "uppercase" } }, "Upcoming Schedule"),
         upcomingSched.length > 0 ? h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 8 } }, upcomingSched.map(function(s) { var dur = calc(s.date, s.time, s.endDate || s.date, s.endTime); return h("div", { key: s.id, style: { display: "flex", gap: 12, alignItems: "center", padding: "8px 12px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent } }, h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, flex: 1 } }, s.title), h("div", { style: { fontSize: "11px", color: B.textMut } }, fmt(s.date) + " " + ft(s.time) + " \u2192 " + (s.endDate !== s.date ? fmt(s.endDate) + " " : "") + ft(s.endTime)), dur && h("div", { style: { fontSize: "11px", fontWeight: 600, color: B.accent } }, dur)); })) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No upcoming schedule items."),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "8px 0 8px", textTransform: "uppercase" } }, "Upcoming Meetings"),
@@ -212,7 +212,7 @@
       projTab === "quotes" && h("div", null,
         h(window.Btn, { small: true, onClick: function() {
           window.__LTP_PREFILL_QUOTE = { projectId: project.id, companyId: project.companyId };
-          ctx.setSelectedProjectId(null); localNav("quotes/new");
+          localNav("quotes/new");
         }, style: { marginBottom: 14 } }, "+ Create Quote for this Project"),
         projectQuotes.length === 0
           ? h("div", { style: { fontSize: "12px", color: B.textMut, fontStyle: "italic", padding: 20, textAlign: "center" } }, "No quotes linked to this project yet.")
@@ -222,7 +222,7 @@
                 var tot = window.LTP_QUOTE_TOTALS ? window.LTP_QUOTE_TOTALS(qt) : { total: 0 };
                 var itemCount = (qt.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
                 return h("div", { key: qt.id,
-                  onClick: function() { ctx.setSelectedProjectId(null); localNav("quotes/" + qt.id); },
+                  onClick: function() { localNav("quotes/" + qt.id); },
                   style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
                   onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                   onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
@@ -262,7 +262,7 @@
                   var tot = window.LTP_INVOICE_TOTALS(inv);
                   var itemCount = (inv.sections || []).reduce(function(n, s) { return n + (s.items || []).filter(function(i) { return i.type !== "note"; }).length; }, 0);
                   return h("div", { key: inv.id,
-                    onClick: function() { ctx.setSelectedProjectId(null); localNav("invoices/" + inv.id); },
+                    onClick: function() { localNav("invoices/" + inv.id); },
                     style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center" },
                     onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                     onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
