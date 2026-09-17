@@ -2118,28 +2118,47 @@
 
     // ── What this quote's gear costs us ──────────────────────────────────────
     // Owned units cost nothing extra to send out, so an equipment line only
-    // costs what has to be cross-rented in for its dates. Resolved live from
-    // the orders rather than stored on the line, so it follows the cross
-    // rentals instead of going stale — and this quote's OWN bookings are
-    // excluded from the demand it is measured against, or an accepted quote
-    // would read as competing with itself.
+    // costs what has to be cross-rented in for its dates. But one cross-rental
+    // order has a single fixed cost however many jobs borrow the units across
+    // its period, so the cost is SPLIT across every live quote that draws from
+    // it, weighted by unit-days (rentals-utils.js::crossRentalMargin) — a
+    // rental shared 50/50 is billed 50/50, not counted whole against each. The
+    // draft stands in for its saved copy so edits show live; this quote's own
+    // bookings are excluded, or an accepted quote would compete with itself.
     var gear = (function() {
       var R = window.LTP_RENTALS;
-      var ownIds = {};
-      R.quoteBookings(draft.id, allocations, invoices).forEach(function(a) { ownIds[a.id] = true; });
-      var ctx = { equipment: equipment || [], allocations: allocations || [], crossRentals: crossRentals || [], ownIds: ownIds };
-      var bySection = {}, total = { cost: 0, short: 0, items: [] };
-      (draft.sections || []).forEach(function(sec) {
-        var d = sec.customDates && sec.startDate && sec.endDate
-          ? { start: sec.startDate, end: sec.endDate }
-          : quoteDates;
-        var g = R.sectionGearCost(sec.items, d, ctx);
-        bySection[sec.id] = g;
-        total.cost += g.cost;
-        total.short += g.short;
-        total.items = total.items.concat(g.items);
+      var DRAFT_KEY = "__DRAFT__";
+      var others = (quotes || []).filter(function(q) { return q.id !== draft.id; });
+      var live = others.concat([draft]);
+      function keyOf(q) { return q === draft ? DRAFT_KEY : q.id; }
+      function datesOf(q, sec) {
+        if (sec.customDates && sec.startDate && sec.endDate) return { start: sec.startDate, end: sec.endDate };
+        if (q.projectId != null) {
+          var p = (projects || []).find(function(x) { return x.id === q.projectId; });
+          return p ? { start: p.startDate, end: p.endDate } : { start: "", end: "" };
+        }
+        return { start: q.customStartDate || "", end: q.customEndDate || "" };
+      }
+      var res = R.crossRentalMargin({
+        quotes: live, keyOf: keyOf, lineDates: datesOf,
+        bookings: function(q) { return R.quoteBookings(q === draft ? draft.id : q.id, allocations, invoices); },
+        equipment: equipment || [], allocations: allocations || [], crossRentals: crossRentals || [],
       });
-      return { bySection: bySection, total: total };
+      var mine = res.byQuote[DRAFT_KEY] || { byItem: {}, cost: 0, short: 0, items: [] };
+      var bySection = {};
+      (draft.sections || []).forEach(function(sec) {
+        var g = { cost: 0, short: 0, items: [] };
+        (sec.items || []).forEach(function(it) {
+          if (!it || it.type !== "equipment" || it.equipmentId == null) return;
+          var m = mine.byItem[it.id];
+          if (!m) return;
+          g.cost += m.cost;
+          g.short += m.short;
+          if (m.short > 0) g.items.push({ name: m.name, short: m.short });
+        });
+        bySection[sec.id] = g;
+      });
+      return { bySection: bySection, total: { cost: mine.cost, short: mine.short, items: mine.items } };
     })();
 
     // ── Render ─────────────────────────────────────────────────────────────────

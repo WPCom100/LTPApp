@@ -356,7 +356,11 @@
 // changed" chip, and a project save that moved the dates toasts the quotes
 // concerned. quotes-builder.js, quotes-list.js, crm-projects.js, projects.js,
 // domain-docs.js, ui.js, entity-quick-form.js, app.js.
-// v102: per-user saved table views + the standardized list toolbar. Every
+// v102: a cross rental shared across projects splits its cost. One order line's
+// fixed cost is spread over every live quote drawing from it by unit-days
+// (rentals-utils.js::crossRentalMargin), so a rental spanning several jobs is
+// no longer paid for in full by each. quotes-builder.js reads its share.
+// v103: per-user saved table views + the standardized list toolbar. Every
 // desktop record list (Projects, Quotes, Invoices, CRM Companies/Contacts,
 // Crew Roster, Rentals Inventory/Containers/Kits/Cross Rentals) now carries the
 // same controls in one row — filter chips │ Show/Hide toggles · search — with a
@@ -364,7 +368,7 @@
 // the user's account (new components/table-views.js; GET/PUT /api/me/preferences).
 // The Name column on Contacts and the Crew Roster now sorts by the name as
 // shown (first name first). New + changed cached files, so the shell refetches.
-var CACHE_VERSION = 'ltp-shell-v102';
+var CACHE_VERSION = 'ltp-shell-v103';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
