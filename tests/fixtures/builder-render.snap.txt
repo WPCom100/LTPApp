@@ -116,8 +116,10 @@
               <div style=4props>
                 <div>
                   $1,900.00
-                <div style=1props>
-                  margin: $700.00
+                <div style=5props>
+                  <span>
+                    margin: $700.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -226,8 +228,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -288,9 +292,11 @@
                 Total Cost
               <span>
                 $1,200.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $510.00 (30%)
       <anon>
@@ -339,9 +345,11 @@
               Total
             <span style=3props>
               $1,710.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $510.00 (30%)
       <div style=3props>
@@ -483,8 +491,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -534,9 +544,11 @@
                 Total Cost
               <span>
                 $0.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $0.00 (0%)
       <anon>
@@ -567,9 +579,11 @@
               Total
             <span style=3props>
               $0.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $0.00 (0%)
       <div style=3props>
@@ -712,8 +726,10 @@
               <div style=4props>
                 <div>
                   $1,900.00
-                <div style=1props>
-                  margin: $700.00
+                <div style=5props>
+                  <span>
+                    margin: $700.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -822,8 +838,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -884,9 +902,11 @@
                 Total Cost
               <span>
                 $1,200.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $510.00 (30%)
       <anon>
@@ -935,9 +955,11 @@
               Total
             <span style=3props>
               $1,710.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $510.00 (30%)
       <div style=3props>
@@ -2732,8 +2754,10 @@
               <div style=4props>
                 <div>
                   $1,900.00
-                <div style=1props>
-                  margin: $700.00
+                <div style=5props>
+                  <span>
+                    margin: $700.00
+                  <UncostedChip>
             <div style=6props>
               <span style=3props>
                 Using quote dates: September 1st, 2026 → September 3rd, 2026
@@ -2813,8 +2837,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
             <div style=6props>
               <span style=3props>
                 Using quote dates: September 1st, 2026 → September 3rd, 2026
@@ -2858,9 +2884,11 @@
                 Total Cost
               <span>
                 $1,200.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $510.00 (30%)
       <anon>
@@ -2909,9 +2937,11 @@
               Total
             <span style=3props>
               $1,710.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $510.00 (30%)
       <div style=3props>
@@ -3049,8 +3079,10 @@
               <div style=4props>
                 <div>
                   $1,900.00
-                <div style=1props>
-                  margin: $700.00
+                <div style=5props>
+                  <span>
+                    margin: $700.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -3159,8 +3191,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -3221,9 +3255,11 @@
                 Total Cost
               <span>
                 $1,200.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $510.00 (30%)
       <anon>
@@ -3272,9 +3308,11 @@
               Total
             <span style=3props>
               $1,710.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $510.00 (30%)
       <div style=3props>
@@ -3406,8 +3444,10 @@
               <div style=4props>
                 <div>
                   $1,900.00
-                <div style=1props>
-                  margin: $700.00
+                <div style=5props>
+                  <span>
+                    margin: $700.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -3516,8 +3556,10 @@
               <div style=4props>
                 <div>
                   $0.00
-                <div style=1props>
-                  margin: $0.00
+                <div style=5props>
+                  <span>
+                    margin: $0.00
+                  <UncostedChip>
               <button onClick=fn style=8props>
                 Delete Section
             <div style=6props>
@@ -3578,9 +3620,11 @@
                 Total Cost
               <span>
                 $1,200.00
-            <div style=5props>
-              <span>
-                Margin
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
               <span style=2props>
                 $510.00 (30%)
       <anon>
@@ -3629,9 +3673,11 @@
               Total
             <span style=3props>
               $1,710.00
-          <div style=7props>
-            <span>
-              Margin
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
             <span style=2props>
               $510.00 (30%)
       <div style=3props>
