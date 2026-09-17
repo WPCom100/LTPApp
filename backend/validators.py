@@ -333,7 +333,7 @@ def _build_rules():
             "docType":   _enum("allocation_doc_type"),
             "lineId":    _str_max(64),
         },
-        # Vendor price memory + cross-rental orders (docs/CROSS_RENTAL_PLAN.md).
+        # Vendor price memory + cross-rental orders (README.md "Cross rentals & vendor pricing").
         # Line contents inside CrossRental.lines are not validated per element,
         # the same as quote items — readers guard per line.
         models.VendorRate: {

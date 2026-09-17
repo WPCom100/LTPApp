@@ -1,6 +1,6 @@
 """Cross rentals — vendor price memory + orders of gear rented in.
 
-Covers the backend half of docs/CROSS_RENTAL_PLAN.md:
+Covers the backend half of README.md "Cross rentals & vendor pricing":
   - The migration lands both tables, the equipment flag and the allocation
     source columns on a fresh database (the TestClient lifespan runs
     `alembic upgrade head`).

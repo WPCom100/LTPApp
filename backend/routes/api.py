@@ -707,7 +707,7 @@ _crud_routes(router, "client-rates", models.ClientRate, has_activity=False)
 _crud_routes(router, "allocations", models.Allocation, has_activity=False)
 _crud_routes(router, "containers",  models.Container, has_activity=False)
 _crud_routes(router, "kits",        models.Kit,       has_activity=False)
-# Cross rentals (docs/CROSS_RENTAL_PLAN.md): what a vendor charges us per
+# Cross rentals (README.md "Cross rentals & vendor pricing"): what a vendor charges us per
 # item, and the orders of gear rented in. Hyphenated like client-rates.
 _crud_routes(router, "vendor-rates",  models.VendorRate,  has_activity=False)
 _crud_routes(router, "cross-rentals", models.CrossRental, has_activity=False)

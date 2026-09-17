@@ -499,7 +499,7 @@ def test_quote_builder_delegates_to_canonical_helpers():
                'state === "cancelled"' not in body)
 
 
-# ── Cross rentals: the supply term (docs/CROSS_RENTAL_PLAN.md) ─────────────
+# ── Cross rentals: the supply term (README.md "Cross rentals & vendor pricing") ─────────────
 
 
 def py_cross_rented_qty(cross_rentals, equipment_id, start_date, end_date):

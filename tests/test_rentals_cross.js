@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regression suite for cross rentals (docs/CROSS_RENTAL_PLAN.md).
+// Regression suite for cross rentals (README.md "Cross rentals & vendor pricing").
 //   1. Behavioral: the pure helpers in modules/rentals-utils.js that turn
 //      cross-rental orders + vendor prices into availability and cost
 //      (crossRentedQty / crossQuotedQty / totalQty / lineCost / orderCost /

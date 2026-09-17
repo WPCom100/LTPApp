@@ -345,7 +345,7 @@
   }
 
 
-  // ── Cross rentals (docs/CROSS_RENTAL_PLAN.md) ─────────────────────────────
+  // ── Cross rentals (README.md "Cross rentals & vendor pricing") ─────────────────────────────
   // An ORDER of gear rented in from a vendor, with lines. Only confirmed and
   // picked-up orders count as inventory; a quoted order is flagged, never
   // counted (the owner's rule: "like a quote, it's not marked as unavailable
