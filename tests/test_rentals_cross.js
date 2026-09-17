@@ -211,6 +211,79 @@ eq("Q2 another quote's rows are not included", R.quoteBookings(8, ALLOCS, INVS).
 eq("Q3 no id, no rows", R.quoteBookings(null, ALLOCS, INVS).length, 0);
 eq("Q4 tolerates a document with no sections", R.quoteBookings(7, ALLOCS, [{ id: 3 }]).length, 1);
 
+// ── crossRentalMargin: split the cost across the quotes that share the gear ──
+// The fixed cost of one cross-rental order line, spread over the quote lines
+// that draw from it by unit-days, so a rental used across several jobs is not
+// paid for by each of them in full.
+(function () {
+  const EQ0 = { id: 5, name: "Mover", qty: 0, serialized: false, rates: RATES, maintenanceLogs: [] }; // owned none → all cross-rented
+  // One confirmed order, Oct 1-14, 2 units at 50/100/250. Its cost is what we
+  // split; the day span between the two jobs' weeks is idle and must not count.
+  const ORD = order("confirmed", [line(5, 2)], { startDate: "2026-10-01", endDate: "2026-10-31" });
+  const LC = R.lineCost(ORD, ORD.lines[0]); // full line cost for the 2 units over the order period
+  const base = { keyOf: (q) => q.id, lineDates: (q, sec) => ({ start: sec.startDate, end: sec.endDate }),
+                 bookings: () => [], equipment: [EQ0], allocations: [], crossRentals: [ORD] };
+  const mk = (id, secStart, secEnd, eqId, qty, itemId) => ({ id, status: "draft",
+    sections: [{ id: "s" + id, customDates: true, startDate: secStart, endDate: secEnd,
+                 items: [{ id: itemId || ("i" + id), type: "equipment", equipmentId: eqId == null ? 5 : eqId, name: "Mover", qty }] }] });
+
+  // Two jobs, one unit each, equal weeks (Mon-Fri wk1, Mon-Fri wk2) → 50/50.
+  let r = R.crossRentalMargin(Object.assign({}, base, { quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 1), mk("B", "2026-10-12", "2026-10-16", 5, 1)] }));
+  eq("M1 two equal jobs split the cost 50/50", r.byQuote.A.cost, LC / 2);
+  eq("M1b …both halves, nothing lost", r.byQuote.A.cost + r.byQuote.B.cost, LC);
+  eq("M1c neither is short", r.byQuote.A.short + r.byQuote.B.short, 0);
+
+  // A sole user bears the whole cost (the other weeks are simply idle).
+  r = R.crossRentalMargin(Object.assign({}, base, { quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 1)] }));
+  eq("M2 a sole user bears the full line cost", r.byQuote.A.cost, LC);
+
+  // The unrented gap is not in the denominator: Mon-Fri each week, weekend idle.
+  // A uses 5 days, B uses 5 days → 50/50 even though 3 idle days sit between.
+  r = R.crossRentalMargin(Object.assign({}, base, { quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 1), mk("B", "2026-10-12", "2026-10-16", 5, 1)] }));
+  eq("M3 the idle gap does not dilute the split", r.byQuote.A.cost, LC / 2);
+
+  // Unit-days weighting: A takes 2 units for 5 days, B takes 1 for 5 days → 2:1.
+  const ORD3 = order("confirmed", [line(5, 3)], { startDate: "2026-10-01", endDate: "2026-10-31" });
+  const LC3 = R.lineCost(ORD3, ORD3.lines[0]);
+  r = R.crossRentalMargin(Object.assign({}, base, { crossRentals: [ORD3],
+    quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 2), mk("B", "2026-10-12", "2026-10-16", 5, 1)] }));
+  eq("M4 more units → proportionally more cost", Math.round(r.byQuote.A.cost * 100) / 100, Math.round(LC3 * 2 / 3 * 100) / 100);
+  eq("M4b …and the rest to the other job", Math.round((r.byQuote.A.cost + r.byQuote.B.cost) * 100) / 100, LC3);
+
+  // Longer use pays more: A 10 days, B 5 days, one unit each → 2:1 by days.
+  r = R.crossRentalMargin(Object.assign({}, base, { quotes: [mk("A", "2026-10-01", "2026-10-10", 5, 1), mk("B", "2026-10-11", "2026-10-15", 5, 1)] }));
+  eq("M5 more days → proportionally more cost", Math.round(r.byQuote.A.cost / r.byQuote.B.cost * 100) / 100, 2);
+
+  // A declined quote never shares.
+  r = R.crossRentalMargin(Object.assign({}, base, { quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 1), Object.assign(mk("B", "2026-10-12", "2026-10-16", 5, 1), { status: "declined" })] }));
+  eq("M6 a declined quote takes no share", r.byQuote.A.cost, LC);
+  eq("M6b …and gets no cost of its own", r.byQuote.B, undefined);
+
+  // Owned units are free and never enter the split.
+  const OWN = { id: 5, name: "Mover", qty: 4, serialized: false, rates: RATES, maintenanceLogs: [] };
+  r = R.crossRentalMargin(Object.assign({}, base, { equipment: [OWN], quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 2)] }));
+  eq("M7 a job covered by owned stock costs nothing", r.byQuote.A.cost, 0);
+
+  // Only what a quote can't own is cross-rented and shared: own 1, two jobs of 2.
+  r = R.crossRentalMargin(Object.assign({}, base, { equipment: [Object.assign({}, OWN, { qty: 1 })],
+    quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 2), mk("B", "2026-10-12", "2026-10-16", 5, 2)] }));
+  // Each job owns 1 (its own week, no competition) and cross-rents 1 → weights equal → 50/50.
+  eq("M8 owned-first then split the remainder", Math.round(r.byQuote.A.cost * 100) / 100, Math.round(LC / 2 * 100) / 100);
+
+  // A quoted (not confirmed) order supplies nothing, so nothing is costed and
+  // the whole demand is short.
+  r = R.crossRentalMargin(Object.assign({}, base, { crossRentals: [order("quoted", [line(5, 2)], { startDate: "2026-10-01", endDate: "2026-10-31" })],
+    quotes: [mk("A", "2026-10-05", "2026-10-09", 5, 1)] }));
+  eq("M9 a quoted order costs nothing", r.byQuote.A.cost, 0);
+  eq("M9b …and the demand is flagged short", r.byQuote.A.short, 1);
+
+  // Per-item results are keyed for the section rollup, with the short count.
+  r = R.crossRentalMargin(Object.assign({}, base, {
+    quotes: [Object.assign(mk("A", "2026-10-05", "2026-10-09", 5, 1, "line-x"))] }));
+  ok("M10 result is keyed by item id for the section rollup", "line-x" in r.byQuote.A.byItem);
+  eq("M10b …carrying that item's cost", r.byQuote.A.byItem["line-x"].cost, LC);
+})();
+
 // ── Structural guards ───────────────────────────────────────────────────────
 const qb = fs.readFileSync(path.join(root, "modules", "quotes-builder.js"), "utf8");
 ok("S1 quote builder no longer defines its own pricing engine", !/function calcRentalPrice\(/.test(qb));
@@ -248,7 +321,8 @@ ok("S19 equipment popup lists bookings with their source and an inline state", /
 const inv = fs.readFileSync(path.join(root, "modules", "rentals-inventory.js"), "utf8");
 ok("S20 inventory list says where each item is", /Where/.test(inv) && /"checked-out"/.test(inv));
 // Margin reads the live cross-rental cost, and says so when it could not.
-ok("S21 quote builder costs each section through the shared helper", /R\.sectionGearCost\(/.test(qb) && /R\.quoteBookings\(/.test(qb));
+ok("S21 quote builder costs the whole quote through the split helper", /R\.crossRentalMargin\(/.test(qb) && /R\.quoteBookings\(/.test(qb));
+ok("S21b …and no longer costs a section in isolation", !/R\.sectionGearCost\(/.test(qb));
 ok("S22 the section margin subtracts that cost", /sectionMargin:\s*t\.margin - g\.cost/.test(qb));
 ok("S23 both summaries subtract it too", /var totalCost = t\.cost \+ gearCost/.test(qb) && /t\.preTax - t\.cost - gear\.total\.cost/.test(qb));
 ok("S24 an uncosted unit is flagged by a chip, not a sentence", /UncostedChip/.test(qb) && (qb.match(/h\(UncostedChip,/g) || []).length >= 3);

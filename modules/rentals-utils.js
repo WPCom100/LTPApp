@@ -620,6 +620,93 @@
     return rows;
   }
 
+  // Inclusive rental days for a period — Mon..Fri is 5. Used only as a WEIGHT,
+  // so the exact convention cancels in the ratio; it just has to be consistent.
+  function rentalDays(start, end) {
+    if (!start || !end) return 0;
+    var d = Math.floor((new Date(end) - new Date(start)) / 86400000) + 1;
+    return d > 0 ? d : 0;
+  }
+
+  // ── Cross-rental cost, split across the quotes that share the gear ─────────
+  // A cross-rental order line has ONE fixed cost for its whole period, however
+  // many projects borrow the units across it. Costing each quote in isolation
+  // (lineGearCost) makes every project that draws from it eat the WHOLE cost —
+  // so a rental spanning three jobs is paid for three times. This spreads each
+  // line's cost across the quote lines that actually draw cross-rented units
+  // from it, weighted by unit-days (units drawn x that line's own rental days).
+  //
+  // Only used days count: a line's weight is its own period, never the unrented
+  // gap between one project and the next, so a piece rented Mon-Fri two weeks
+  // running with the weekend idle splits 50/50, not by the 10-day span. A sole
+  // user has the whole weight and bears the whole cost. Owned units stay free —
+  // lineGearCost decides how many units are cross-rented; this only prices them.
+  //
+  // opts: { quotes, keyOf, lineDates, bookings, equipment, allocations, crossRentals }
+  //   quotes     every LIVE quote to share among (the caller drops declined and
+  //              swaps the one being edited in for its saved copy).
+  //   keyOf(q)   stable key to read a quote's result back by (an unsaved draft
+  //              has no id, so the caller supplies its own).
+  //   lineDates(q, section) -> {start, end}   the section's effective dates.
+  //   bookings(q) -> [allocation]   this quote's OWN bookings, excluded so an
+  //              accepted quote is not counted as competing with itself.
+  // Returns { byQuote: { [key]: { byItem: {itemId: {cost, short, name}},
+  //                               cost, short, items } } }.
+  function crossRentalMargin(opts) {
+    opts = opts || {};
+    var quotes = opts.quotes || [], keyOf = opts.keyOf || function(q) { return q.id; };
+    var lineDatesOf = opts.lineDates || function() { return { start: "", end: "" }; };
+    var bookingsOf = opts.bookings || function() { return []; };
+    var ctx = { equipment: opts.equipment || [], allocations: opts.allocations || [], crossRentals: opts.crossRentals || [] };
+
+    // 1. Resolve each quote's equipment lines to demand: which cross-rental
+    //    units each draws, and over how many of its own rental days.
+    var consumers = [];
+    quotes.forEach(function(q) {
+      if (!q || q.status === "declined") return;
+      var ownIds = {};
+      (bookingsOf(q) || []).forEach(function(a) { if (a) ownIds[a.id] = true; });
+      (q.sections || []).forEach(function(sec) {
+        if (!sec) return;
+        var d = lineDatesOf(q, sec) || {};
+        (sec.items || []).forEach(function(it) {
+          if (!it || it.type !== "equipment" || it.equipmentId == null) return;
+          var r = lineGearCost({ equipment: ctx.equipment, allocations: ctx.allocations, crossRentals: ctx.crossRentals,
+            ownIds: ownIds, equipmentId: it.equipmentId, qty: it.qty, startDate: d.start, endDate: d.end });
+          consumers.push({
+            key: keyOf(q), itemId: it.id, name: it.name || "item", short: r.short,
+            days: rentalDays(d.start, d.end),
+            draws: (r.used || []).map(function(u) {
+              return { ckey: u.order.id + ":" + u.line.id, lineCost: lineCost(u.order, u.line), units: u.qty };
+            }),
+          });
+        });
+      });
+    });
+
+    // 2. Total unit-day weight drawn from each cross-rental line.
+    var weight = {};
+    consumers.forEach(function(c) {
+      c.draws.forEach(function(dw) { weight[dw.ckey] = (weight[dw.ckey] || 0) + dw.units * c.days; });
+    });
+
+    // 3. Each consumer's cost is its share of every line it draws from.
+    var byQuote = {};
+    consumers.forEach(function(c) {
+      var cost = 0;
+      c.draws.forEach(function(dw) {
+        var w = weight[dw.ckey];
+        if (w > 0) cost += dw.lineCost * (dw.units * c.days) / w;
+      });
+      var q = byQuote[c.key] || (byQuote[c.key] = { byItem: {}, cost: 0, short: 0, items: [] });
+      q.byItem[c.itemId] = { cost: cost, short: c.short, name: c.name };
+      q.cost += cost;
+      q.short += c.short;
+      if (c.short > 0) q.items.push({ name: c.name, short: c.short });
+    });
+    return { byQuote: byQuote };
+  }
+
   window.LTP_RENTALS = {
     SerialSearch:  SerialSearch,
     VendorSearch:  VendorSearch,
@@ -651,6 +738,8 @@
     crossOverdue:     crossOverdue,
     lineGearCost:      lineGearCost,
     sectionGearCost:   sectionGearCost,
+    crossRentalMargin: crossRentalMargin,
+    rentalDays:        rentalDays,
     quoteBookings:     quoteBookings,
     upsertCrossRental:  upsertCrossRental,
     rememberVendorRates: rememberVendorRates,

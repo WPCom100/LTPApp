@@ -349,7 +349,11 @@
 // cost the vendor's price — and units nothing covers are flagged with an
 // UNCOSTED chip beside the section and summary margins rather than counted as
 // profit. rentals-utils.js, quotes-builder.js.
-var CACHE_VERSION = 'ltp-shell-v100';
+// v101: a cross rental shared across projects splits its cost. One order line's
+// fixed cost is spread over every live quote drawing from it by unit-days
+// (rentals-utils.js::crossRentalMargin), so a rental spanning several jobs is
+// no longer paid for in full by each. quotes-builder.js reads its share.
+var CACHE_VERSION = 'ltp-shell-v101';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
