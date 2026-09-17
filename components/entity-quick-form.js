@@ -259,6 +259,9 @@
             return x.id === entry.id ? Object.assign({}, x, d, { schedule: d.schedule || x.schedule }) : x;
           });
         });
+        // Moved the dates? Say which live quotes price on them (the builder
+        // shows the full notice when one is next opened) — components/ui.js.
+        window.LTP_toastRentalDrift(proj, mergedProject, p.quotes);
         return mergedProject;
       }
 

@@ -474,6 +474,56 @@ shares live in `modules/rentals-utils.js` (`crossRentedQty`, `crossQuotedQty`,
 `totalQty`, `vendorOptions`, `lineCost`, `orderCost`), guarded by
 `tests/test_rentals_cross.js` and `tests/test_quote_availability.py`.
 
+## Quote rental periods when a project's dates move
+
+A quote's rental window is its primary project's dates, read live, and every
+section that doesn't set its own dates follows it. Equipment lines, though, are
+priced once — for the window in force when they were added or last repriced —
+and opening a quote never silently reprices them (that would overwrite the
+snapshot a sent quote was priced at whenever a rate card changed since). So
+when a project's dates moved after a quote existed, the quote showed the new
+dates over prices computed for the old ones, and nobody was told.
+
+Each section now remembers the window its equipment was priced for
+(`pricedStartDate` / `pricedEndDate` in the section JSON — stamped by the
+builder whenever it reprices a section and again on save; a one-off migration
+stamped every existing quote with its window at the time). When that window
+no longer matches the project, nothing is repriced on its own. The editor is
+told, and decides:
+
+- **In the builder**, a *Rental periods are out of sync* notice under Quote
+  Details names the stale sections, with **Update all to new dates** and
+  **Keep old dates on all**. Each stale section shows the same choice on its
+  own row. **Update to new dates** reprices its equipment for the project's
+  dates from the current rate card. **Keep <old dates>** turns the old window
+  into that section's custom rental period, prices untouched — the same thing
+  as ticking *Custom rental period* and typing the old dates. A line added to
+  a stale section prices on the window the section is still on, so "keep"
+  never leaves one line on the new dates.
+- **The quotes list and the project's Quotes tab** show a *Dates changed* chip
+  on the draft and sent quotes concerned, so they can be found without opening
+  each one.
+- **Saving a project** whose dates moved toasts which live quotes price their
+  equipment on them — from the CRM edit form and from the inline project edit
+  on a quote's Linked Projects chip alike.
+- The save log records an update as *<Section> Rental Period: Repriced for …*;
+  a keep shows as the section switching to its own rental period.
+
+Only draft and sent quotes are flagged (accepted and converted are locked;
+declined is over), only sections that follow the quote's dates (a custom-dated
+section prices on its own window), and only sections holding an equipment
+line (nothing else is priced by the dates). A section never stamped —
+appended from a schedule, or one the migration could not resolve a window
+for — is treated as in sync and starts being watched from its next save.
+Custom-dated quotes (no project) can't drift: their dates are edited in the
+builder itself, which reprices as you type, as before. One consequence of the
+stamp: a date edit on one section no longer reprices every other section from
+today's rate card — a section already priced for its window is left alone.
+
+The helpers are pure and tested (`components/domain-docs.js`:
+`LTP_staleRentalSections`, `LTP_stampRentalWindows`, `LTP_rentalDriftNotice`;
+`tests/test_rental_drift.js`, `tests/test_quote_priced_window_migration.py`).
+
 ## Bookings (allocations)
 
 An **allocation** is the record that some units of an item are booked to a
