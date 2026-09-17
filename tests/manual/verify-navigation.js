@@ -12,12 +12,17 @@
 //   DATABASE_URL="sqlite+aiosqlite:///$S/ltp.db" .venv/bin/uvicorn backend.main:app --port 8000 &
 //   # forge a session row, seed a company/project/equipment via /api/*
 //   npm install playwright && curl the four cdnjs libs into ./vendor
-//   node tests/manual/verify-navigation.js
-const { chromium } = require("playwright");
+//   node /path/to/repo/tests/manual/verify-navigation.js
+//
+// Run it from the directory holding node_modules/ and vendor/ — both are
+// resolved against the working directory, not against this file, so the
+// scratch dir you installed into does not have to be inside the repo.
+// Override either with LTP_PW_VENDOR / LTP_BASE_URL.
 const path = require("path");
-const BASE = "http://127.0.0.1:8000";
-const TOKEN = "verifytoken-navigation-backbutton-0001";
-const VENDOR = path.join(__dirname, "vendor");
+const { chromium } = require(require.resolve("playwright", { paths: [process.cwd()] }));
+const BASE = process.env.LTP_BASE_URL || "http://127.0.0.1:8000";
+const TOKEN = process.env.LTP_SESSION_TOKEN || "verifytoken-navigation-backbutton-0001";
+const VENDOR = process.env.LTP_PW_VENDOR || path.join(process.cwd(), "vendor");
 const MAP = { "react/": "react.js", "react-dom/": "react-dom.js", "dompurify/": "purify.js", "signature_pad/": "signature_pad.js" };
 
 let pass = 0, fail = 0; const fails = [];
