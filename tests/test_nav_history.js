@@ -67,6 +67,11 @@ eq("home has no parent", P("dashboard"), null);
  ["rentals/equipment/new", "rentals/equipment"], ["rentals/equipment/3", "rentals/equipment"],
  ["rentals/equipment/3/edit", "rentals/equipment/3"], ["rentals/equipment/3/scan", "rentals/equipment/3"],
  ["rentals/kits/3/edit", "rentals/kits/3"], ["rentals/cross-rentals/new", "rentals/cross-rentals"],
+ // #/rentals/<id> — an equipment item opened from the Availability Checker,
+ // which is the bare `rentals` tab. Distinct from #/rentals/equipment/<id>,
+ // the same item opened from the Equipment List tab; each goes back to the
+ // tab it was opened from rather than swapping the list behind the popup.
+ ["rentals/2", "rentals"], ["rentals/equipment/2", "rentals/equipment"],
  ["crew-portal/overview", null], ["crew-portal/payouts", "crew-portal/overview"], ["crew-portal/account", "crew-portal/overview"],
  ["crew-portal/login", null], ["crew-portal/forgot", "crew-portal/login"], ["crew-portal/signup/tok", "crew-portal/login"],
  ["crew-portal/reset/tok", "crew-portal/login"], ["crew-portal/confirm-email/tok", "crew-portal/overview"],
@@ -80,7 +85,7 @@ eq("bare labor → assignments", C("labor"), "labor/assignments");
 eq("bad crm tab", C("crm/bogus"), "crm/companies");
 eq("bad rentals tab", C("rentals/bogus"), "rentals");
 eq("unknown module → home", C("foo"), "dashboard");
-["dashboard", "projects", "quotes/products", "rentals", "labor/roster", "invoices/9", "view/quote/t", "crew-portal/login", "crm/companies/5"].forEach((p) => eq("already canonical " + p, C(p), null));
+["dashboard", "projects", "quotes/products", "rentals", "rentals/2", "labor/roster", "invoices/9", "view/quote/t", "crew-portal/login", "crm/companies/5"].forEach((p) => eq("already canonical " + p, C(p), null));
 
 // ── Chains ───────────────────────────────────────────────────────────────────
 const CH = (p) => G().chainFor(parse(p));
@@ -88,6 +93,8 @@ eq("chain edit company", CH("crm/companies/42/edit"), ["dashboard", "crm/compani
 eq("chain schedule editor", CH("projects/7/schedule"), ["dashboard", "projects"]);
 eq("chain quote", CH("quotes/9"), ["dashboard", "quotes"]);
 eq("chain kit edit", CH("rentals/kits/3/edit"), ["dashboard", "rentals/kits", "rentals/kits/3"]);
+eq("chain checker item", CH("rentals/2"), ["dashboard", "rentals"]);
+eq("chain equipment-list item", CH("rentals/equipment/2"), ["dashboard", "rentals/equipment"]);
 eq("chain portal tab", CH("crew-portal/payouts"), ["crew-portal/overview"]);
 eq("chain portal signup", CH("crew-portal/signup/tok"), ["crew-portal/login"]);
 eq("chain home", CH("dashboard"), []);
@@ -100,6 +107,7 @@ ok("rentals ~ kits", peer("rentals", "rentals/kits"));
 ok("labor roster ~ payouts", peer("labor/roster", "labor/payouts"));
 ok("portal overview ~ schedule", peer("crew-portal/overview", "crew-portal/schedule"));
 ok("detail is not a peer of a tab", !peer("crm/companies/5", "crm/contacts"));
+ok("a checker item is not a peer of the checker", !peer("rentals/2", "rentals"));
 ok("cross-module never peers", !peer("quotes", "invoices"));
 ok("home is nobody's peer", !peer("dashboard", "projects"));
 {
@@ -137,6 +145,12 @@ ok("home is nobody's peer", !peer("dashboard", "projects"));
   R().goBack();
   eq("goBack on a foreign root replaces to the parent (home)", w.location.hash, "#/dashboard");
   eq("…without adding entries", w.hashes(), ["#/dashboard", "#/quotes/5"]);
+}
+{
+  const w = boot("#/rentals/2");
+  ok("a checker item seeds", G().seedIfCold());
+  eq("...under the checker, not the Equipment List", w.hashes(), ["#/dashboard", "#/rentals", "#/rentals/2"]);
+  R().goBack(); eq("Back returns to the checker", w.location.hash, "#/rentals");
 }
 {
   const w = boot("#/rentals/kits/3");

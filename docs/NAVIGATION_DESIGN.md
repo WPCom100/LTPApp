@@ -96,6 +96,22 @@ Replace `useState(initial)` with `window.LTP_useNavState("filter", initial)`
 for filter, sort, search and show-completed state. Scroll is automatic for
 anything inside `#ltp-content`.
 
+## Route added after the original audit
+
+`#/rentals/<id>` — an equipment item opened from the **Availability Checker**
+(the bare `rentals` tab). It exists because `#/rentals/equipment/<id>` names the
+Equipment List's tab: opening an item from the checker on that URL swapped the
+checker out for a list the user never asked for, behind the popup, and threw
+away the dates, category and search the checker was set to. The two URLs now
+mean "this item, opened from the checker" and "this item, opened from the
+Equipment List", and each keeps its own tab behind the popup. Back from either
+returns to the tab it was opened from.
+
+The router needed no change: a bare numeric segment already parses into `id`
+with no `sub`. `parentOf` already resolved it to `rentals`, because the bare
+module path is a declared tab. Edit and Scan from a checker-opened item push to
+their Equipment List routes and Back returns to the checker item.
+
 ## Change log (call sites)
 
 Every changed line and its rule. Line numbers are post-change.

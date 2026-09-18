@@ -171,6 +171,28 @@ async function back(p) { await p.goBack(); await settle(p); }
     await p.close();
   }
 
+  console.log("\nopening an item from the checker keeps the checker behind it");
+  // #/rentals/<id> is the checker with an item open; #/rentals/equipment/<id>
+  // is the Equipment List with the same item open. Each keeps its own tab
+  // behind the popup, instead of the checker being swapped for a list the user
+  // never asked for.
+  {
+    const p = await cold("#/rentals/2");
+    ok("a checker item deep-links", await p.locator(".ltp-modal-backdrop").count() > 0);
+    ok("the checker is what is behind it", await p.locator('input[placeholder="Search equipment..."]').count() > 0);
+    ok("the Equipment List is not", await p.locator('input[placeholder="Search inventory..."]').count() === 0);
+    await back(p); eq("Back goes to the checker", await hash(p), "#/rentals");
+    await back(p); eq("Back again goes home", await hash(p), "#/dashboard");
+    await p.close();
+  }
+  {
+    const p = await cold("#/rentals/equipment/2");
+    ok("the same item from the Equipment List keeps THAT list behind it",
+       await p.locator('input[placeholder="Search inventory..."]').count() > 0);
+    await back(p); eq("Back goes to the Equipment List", await hash(p), "#/rentals/equipment");
+    await p.close();
+  }
+
   console.log("\nthe availability checker survives opening an item");
   // Rentals opens on the Availability Checker, whose rows link to
   // #/rentals/equipment/:id — a DIFFERENT tab, so the checker unmounts and the
@@ -185,6 +207,8 @@ async function back(p) { await p.goBack(); await settle(p); }
       await box.fill("Line"); await settle(p, 500);
       await p.locator("text=Line Array").first().click(); await settle(p, 1400);
       ok("the item's popup opened", await p.locator(".ltp-modal-backdrop").count() > 0);
+      eq("the checker keeps its search WHILE the popup is open",
+         await p.locator('input[placeholder="Search equipment..."]').first().inputValue().catch(() => "(unmounted)"), "Line");
       await back(p); await settle(p, 500);
       eq("closing the popup gives the checker its search back",
          await p.locator('input[placeholder="Search equipment..."]').first().inputValue().catch(() => "(unmounted)"), "Line");

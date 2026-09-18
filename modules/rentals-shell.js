@@ -37,7 +37,14 @@
 
     var activeTab        = sub === "equipment" ? "equipment" : sub === "containers" ? "containers" : sub === "kits" ? "kits"
                          : sub === "cross-rentals" ? "cross" : "availability";
-    var openEqId         = activeTab === "equipment"  && id && !action ? id : null;
+    // #/rentals/<id> — an item opened FROM the Availability Checker. It needs a
+    // route of its own because #/rentals/equipment/<id> names the Equipment
+    // List's tab, so opening an item from the checker used to swap the checker
+    // out for that list behind the popup, and throw away the dates, category
+    // and search it was set to. Same detail, same Back, the tab just stays put.
+    // The router already parses a bare numeric segment into `id` with no `sub`
+    // (router.js), so this needed no parser change.
+    var openEqId         = (activeTab === "equipment" || activeTab === "availability") && id && !action ? id : null;
     var openContainerId  = activeTab === "containers" && id && !action ? id : null;
     var openKitId        = activeTab === "kits"       && id && !action ? id : null;
     var showAddEq        = activeTab === "equipment"  && action === "new";
@@ -65,7 +72,8 @@
     // dead URL that Back would then walk through. The list always exists, so it
     // is the fallback rather than the declared parent (…/:id for an edit form,
     // which is just as dead).
-    var listPath = "rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment");
+    var listPath = activeTab === "availability" ? "rentals"
+                 : "rentals/" + (activeTab === "containers" ? "containers" : activeTab === "kits" ? "kits" : activeTab === "cross" ? "cross-rentals" : "equipment");
     window.LTP_useMissingRecord(!!(
       (openEqId && !openEq) || (editEqId && !editEq) || (scanEqId && !scanEq) ||
       (openContainerId && !openContainer) || (editContainerId && !editContainer) ||
@@ -87,6 +95,8 @@
       nav("rentals/cross-rentals/new?equipmentId=" + eid + (start ? "&start=" + start : "") + (end ? "&end=" + end : "") + (vendorId ? "&vendorId=" + vendorId : ""));
     }
     function openEquip(eid)  { nav("rentals/equipment/" + eid); }
+    // Opened from the checker, so it stays on the checker (see openEqId above).
+    function openEquipHere(eid) { nav("rentals/" + eid); }
     function editEquip(eid)  { nav("rentals/equipment/" + eid + "/edit"); }
     function openCont(cid)   { nav("rentals/containers/" + cid); }
     function editCont(cid)   { nav("rentals/containers/" + cid + "/edit"); }
@@ -297,7 +307,7 @@
       activeTab === "kits"       && isMobile && h(window.LTPFab, { label: "Create kit", onClick: function() { nav("rentals/kits/new"); } }),
       activeTab === "cross"      && isMobile && h(window.LTPFab, { label: "New cross rental", onClick: function() { nav("rentals/cross-rentals/new"); } }),
 
-      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, crossRentals: crossRentals || [], vendorRates: vendorRates || [], companies: companies || [], projects: projects || [], onOpenEquipment: openEquip, onCrossRent: crossRentFor }),
+      activeTab === "availability" && h(window.RentalsAvailabilityView, { equipment: equipment, allocations: allocations, crossRentals: crossRentals || [], vendorRates: vendorRates || [], companies: companies || [], projects: projects || [], onOpenEquipment: openEquipHere, onCrossRent: crossRentFor }),
       activeTab === "equipment"   && h(window.RentalsInventoryView,    { equipment: equipment, allocations: allocations, projects: projects || [], onOpenEquipment: openEquip }),
       activeTab === "containers"  && h(window.RentalsContainersView,   { containers: containers, equipment: equipment, onOpenContainer: openCont }),
       activeTab === "kits"        && h(window.RentalsKitsView,         { kits: kits, equipment: equipment, onOpenKit: function(kid) { nav("rentals/kits/" + kid); } }),
@@ -313,6 +323,8 @@
         onClose:              function() { window.LTPRouter.goBack(); },
         onEdit:               function() { editEquip(openEq.id); },
         onDelete:             function() { deleteEquipment(openEq.id); },
+        // Edit and Scan are Equipment List screens; from the checker they push
+        // there and Back returns here, to the checker with the popup open.
         onScan:               function() { nav("rentals/equipment/" + openEq.id + "/scan"); },
         onOpenContainer:      function(cid) { openCont(cid); },
         onMainLog:            function(log, uid) { logMaintenance(openEq.id, log, uid); },
