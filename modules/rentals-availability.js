@@ -7,10 +7,18 @@
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
 
-    var [startDate, setStartDate] = useState(R.today());
-    var [endDate,   setEndDate]   = useState(R.addDays(R.today(), 7));
-    var [catFilter, setCatFilter] = useState("all");
-    var [search,    setSearch]    = useState("");
+    // Clicking a row here opens that item's detail, which lives at
+    // #/rentals/equipment/:id — a different tab, so this whole view unmounts
+    // and the Equipment List renders in its place behind the popup. Everything
+    // the checker was set to therefore has to outlive the unmount, or closing
+    // the popup drops the user back on a checker that has forgotten the dates,
+    // the category and the search they had set. Hanging it off the history
+    // entry does that (nav-registry.js::LTP_useNavState), the same way every
+    // record list keeps its filters across a Back.
+    var [startDate, setStartDate] = window.LTP_useNavState("availStart", R.today());
+    var [endDate,   setEndDate]   = window.LTP_useNavState("availEnd", R.addDays(R.today(), 7));
+    var [catFilter, setCatFilter] = window.LTP_useNavState("filter", "all");
+    var [search,    setSearch]    = window.LTP_useNavState("search", "");
 
     var cats = ["all"].concat(
       Array.from(new Set(

@@ -24,18 +24,21 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   var editContactId     = (urlSub === "contacts"  && urlId)                        ? urlId : null;
   var showAddContact    = (urlSub === "contacts"  && !urlId && urlAction === "new");
 
-  function setSelectedCompanyId(id) { id ? nav("crm/companies/" + id) : nav("crm/companies"); }
-  function setEditContactId(id)     { id ? nav("crm/contacts/"  + id) : nav("crm/contacts"); }
+  function setSelectedCompanyId(id) { id ? nav("crm/companies/" + id) : window.LTPRouter.goBack(); }
+  function setEditContactId(id)     { id ? nav("crm/contacts/"  + id) : window.LTPRouter.goBack(); }
 
   // Transient UI state (not worth URL-encoding)
-  var [companyFilter,  setCompanyFilter]  = useState("all");
-  var [typeFilter,     setTypeFilter]     = useState("all");
-  var [searchQuery,    setSearchQuery]    = useState("");
+  // Filter / sort / search deliberately stay OUT of the URL, but Back must
+  // still put this list back the way the user left it — so they hang off the
+  // history entry instead (nav-registry.js::LTP_useNavState).
+  var [companyFilter,  setCompanyFilter]  = window.LTP_useNavState("filter", "all");
+  var [typeFilter,     setTypeFilter]     = window.LTP_useNavState("typeFilter", "all");
+  var [searchQuery,    setSearchQuery]    = window.LTP_useNavState("search", "");
   // A sort per tab — { key, dir } naming a column in COMPANY_COLS / CONTACT_COLS
   // below. The two tabs share no columns, so they cannot share a sort: ordering
   // companies by project count says nothing about how to order contacts.
-  var [compSort,       setCompSort]       = useState({ key: "name", dir: "asc" });
-  var [contSort,       setContSort]       = useState({ key: "name", dir: "asc" });
+  var [compSort,       setCompSort]       = window.LTP_useNavState("compSort", { key: "name", dir: "asc" });
+  var [contSort,       setContSort]       = window.LTP_useNavState("contSort", { key: "name", dir: "asc" });
   var [deleteConfirm,  setDeleteConfirm]  = useState(null);
   var [deleteWizard,   setDeleteWizard]   = useState(null);
 
@@ -59,6 +62,11 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   });
 
   var selectedCompany = selectedCompanyId ? companies.find(function(c) { return c.id === selectedCompanyId; }) : null;
+  var editCompany     = editCompanyId     ? companies.find(function(c) { return c.id === editCompanyId; })     : null;
+  var editContact     = editContactId     ? contacts.find(function(c) { return c.id === editContactId; })      : null;
+  // Dead ids in the URL — see LTP_useMissingRecord (nav-registry.js).
+  window.LTP_useMissingRecord(!!((selectedCompanyId && !selectedCompany) || (editCompanyId && !editCompany)), "crm/companies");
+  window.LTP_useMissingRecord(!!(editContactId && !editContact), "crm/contacts");
 
   // ctx for CRMCompanyDetail/Form + CRMContactDetail/Form. Keep in sync with
   // the ctx.* references in modules/crm-companies.js and modules/crm-contacts.js.
@@ -77,7 +85,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     selectedCompany: selectedCompany,
     setSelectedCompanyId: setSelectedCompanyId,
     setEditCompanyId: function(id) {
-      id ? nav("crm/companies/" + id + "/edit") : nav("crm/companies/" + (selectedCompanyId || ""));
+      id ? nav("crm/companies/" + id + "/edit") : window.LTPRouter.goBack();
     },
     editContactId: editContactId,
     setEditContactId: setEditContactId,
@@ -107,7 +115,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         return;
       }
       setCompanies(function(p) { return p.filter(function(c) { return c.id !== dc.id; }); });
-      if (selectedCompanyId === dc.id) nav("crm/companies");
+      if (selectedCompanyId === dc.id) window.LTPRouter.goBack();
     } else if (dc.type === "contact") {
       var ct = contacts.find(function(c) { return c.id === dc.id; });
       var crewPositions = [];
@@ -132,7 +140,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         return;
       }
       setContacts(function(p) { return p.filter(function(c) { return c.id !== dc.id; }); });
-      if (editContactId === dc.id) nav("crm/contacts");
+      if (editContactId === dc.id) window.LTPRouter.goBack();
     }
     setDeleteConfirm(null);
   }
@@ -141,10 +149,10 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     if (!deleteWizard) return;
     if (deleteWizard.type === "company") {
       setCompanies(function(p) { return p.filter(function(c) { return c.id !== deleteWizard.id; }); });
-      if (selectedCompanyId === deleteWizard.id) nav("crm/companies");
+      if (selectedCompanyId === deleteWizard.id) window.LTPRouter.goBack();
     } else if (deleteWizard.type === "contact") {
       setContacts(function(p) { return p.filter(function(c) { return c.id !== deleteWizard.id; }); });
-      if (editContactId === deleteWizard.id) nav("crm/contacts");
+      if (editContactId === deleteWizard.id) window.LTPRouter.goBack();
     }
     setDeleteWizard(null);
   }
@@ -152,7 +160,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
   function switchTab(t) {
     // Clear the transient search on a tab switch, but leave each tab's sort
     // alone — the two tabs sort independently and a saved view owns the order.
-    nav("crm/" + t); setSearchQuery("");
+    window.LTP_NAV_REGISTRY.goTab("crm/" + t); setSearchQuery("");
   }
 
   var q = searchQuery.toLowerCase();
@@ -351,22 +359,22 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     selectedCompany && !editCompanyId && h(window.CRMCompanyDetail, { ctx: ctx }),
 
     showAddCompany && h(window.CRMCompanyForm, { ctx: ctx, initial: null,
-      onClose: function() { nav("crm/companies"); },
+      onClose: function() { window.LTPRouter.goBack(); },
       onSave: function(d) {
         var newId = Math.max.apply(null, companies.map(function(c) { return c.id; }).concat([0])) + 1;
         setCompanies(function(p) { return p.concat([Object.assign({ id: newId }, d)]); });
-        nav("crm/companies/" + newId);
+        window.LTPRouter.replace("crm/companies/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       }}),
 
-    editCompanyId && h(window.CRMCompanyForm, { ctx: ctx, initial: companies.find(function(c) { return c.id === editCompanyId; }),
+    editCompany && h(window.CRMCompanyForm, { ctx: ctx, initial: editCompany,
       onClose: function() { ctx.setEditCompanyId(null); },
       onSave: function(d) {
         setCompanies(function(p) { return p.map(function(c) { return c.id === editCompanyId ? Object.assign({}, c, d) : c; }); });
-        nav("crm/companies/" + editCompanyId);
+        window.LTPRouter.goBack();   // saved: back to the detail this form sat over
       }}),
 
     showAddContact && h(window.CRMContactForm, { ctx: ctx, initial: null,
-      onClose: function() { nav("crm/contacts"); },
+      onClose: function() { window.LTPRouter.goBack(); },
       onSave: function(d) {
         // Check for duplicates
         var dupes = contacts.filter(function(c) {
@@ -380,7 +388,7 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
         }
         var newId = Math.max.apply(null, contacts.map(function(c) { return c.id; }).concat([0])) + 1;
         setContacts(function(p) { return p.concat([Object.assign({ id: newId }, d)]); });
-        nav("crm/contacts/" + newId);
+        window.LTPRouter.replace("crm/contacts/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       }}),
 
     editContactId && h(window.CRMContactDetail, { ctx: ctx }),

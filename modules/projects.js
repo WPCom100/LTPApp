@@ -17,7 +17,10 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var urlId     = route.id     || null;
   var urlAction = route.action || null;
 
-  var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1 };
+  // Must list every tab CRMProjectDetail renders (modules/crm-projects.js), or
+  // that tab's URL is silently ignored and the modal opens on Overview —
+  // which is what #/projects/:id/invoices did.
+  var PROJECT_TABS = { overview: 1, notes: 1, schedule: 1, meetings: 1, budget: 1, quotes: 1, invoices: 1 };
   var urlTab = (urlId && PROJECT_TABS[urlAction]) ? urlAction : null;
 
   // URL-derived state
@@ -26,16 +29,19 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   var showAddProject    = (!urlId && urlAction === "new");
 
   function setSelectedProjectId(id, tab) {
-    if (!id) return nav("projects");
+    if (!id) return window.LTPRouter.goBack();
     nav("projects/" + id + (tab ? "/" + tab : ""));
   }
 
-  var [projectFilter,   setProjectFilter]   = useState("all");
-  var [searchQuery,     setSearchQuery]     = useState("");
+  // Filter / sort / search deliberately stay OUT of the URL, but Back must
+  // still put this list back the way the user left it — so they hang off the
+  // history entry instead (nav-registry.js::LTP_useNavState).
+  var [projectFilter,   setProjectFilter]   = window.LTP_useNavState("filter", "all");
+  var [searchQuery,     setSearchQuery]     = window.LTP_useNavState("search", "");
   // ONE sort state for both viewports — { key, dir } naming a column in COLS
   // below. The phone chips and the desktop column headers set the same state.
-  var [sort,            setSort]            = useState({ key: "start", dir: "asc" });
-  var [showCompleted,   setShowCompleted]   = useState(false);
+  var [sort,            setSort]            = window.LTP_useNavState("sort", { key: "start", dir: "asc" });
+  var [showCompleted,   setShowCompleted]   = window.LTP_useNavState("showCompleted", false);
   var [showAddMeeting,  setShowAddMeeting]  = useState(null);
   var [showAddNote,     setShowAddNote]     = useState(null);
   var [viewNote,        setViewNote]        = useState(null);
@@ -59,6 +65,14 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
       if (v.toggles && "showCompleted" in v.toggles) setShowCompleted(!!v.toggles.showCompleted);
     },
   });
+
+  // A dead project id in the URL — see LTP_useMissingRecord (nav-registry.js).
+  // MUST sit with the hooks above, before the early return below. The schedule
+  // route is deliberately excluded: it carries an open, possibly dirty builder
+  // and has its own written explanation a few lines down.
+  window.LTP_useMissingRecord(
+    !!(urlId && urlAction !== "schedule" && !projects.some(function(p) { return p.id === urlId; })),
+    "projects");
 
   // Full-screen schedule builder. This conditional return MUST stay below every
   // hook above: an early return placed before the useState calls changes the
@@ -113,7 +127,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     selectedProject: selectedProject,
     setSelectedProjectId: setSelectedProjectId,
     setEditProjectId: function(id) {
-      id ? nav("projects/" + id + "/edit") : nav("projects/" + (selectedProjectId || ""));
+      id ? nav("projects/" + id + "/edit") : window.LTPRouter.goBack();
     },
     projectOpenTab: urlTab, setProjectOpenTab: function() {},
     showAddMeeting: showAddMeeting, setShowAddMeeting: setShowAddMeeting,
@@ -181,7 +195,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         return;
       }
       setProjects(function(p) { return p.filter(function(x) { return x.id !== dc.id; }); });
-      if (selectedProjectId === dc.id) nav("projects");
+      if (selectedProjectId === dc.id) window.LTPRouter.goBack();
     }
     setDeleteConfirm(null);
   }
@@ -253,7 +267,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
   function wizardFinalDelete() {
     if (!deleteWizard) return;
     setProjects(function(p) { return p.filter(function(x) { return x.id !== deleteWizard.projectId; }); });
-    if (selectedProjectId === deleteWizard.projectId) nav("projects");
+    if (selectedProjectId === deleteWizard.projectId) window.LTPRouter.goBack();
     setDeleteWizard(null);
   }
 
@@ -387,11 +401,11 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     selectedProject && !editProjectId && h(window.CRMProjectDetail, { ctx: ctx }),
 
     showAddProject && h(window.CRMProjectForm, { ctx: ctx, initial: null,
-      onClose: function() { nav("projects"); },
+      onClose: function() { window.LTPRouter.goBack(); },
       onSave: function(d) {
         var newId = Math.max.apply(null, projects.map(function(x) { return x.id; }).concat([0])) + 1;
         setProjects(function(p) { return p.concat([Object.assign({ id: newId, notes: [], meetings: [] }, d, { schedule: d.schedule || [] })]); });
-        nav("projects/" + newId);
+        window.LTPRouter.replace("projects/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       }}),
 
     editProjectId && h(window.CRMProjectForm, { ctx: ctx, initial: projects.find(function(p) { return p.id === editProjectId; }),
@@ -402,7 +416,7 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
         // Moved the dates? The quotes pricing on them are told in the builder
         // when next opened; this is the heads-up now (components/ui.js).
         window.LTP_toastRentalDrift(before, Object.assign({}, before, d), quotes);
-        nav("projects/" + editProjectId);
+        window.LTPRouter.goBack();   // saved: back to the detail this form sat over
       }}),
 
     showAddMeeting && h(window.CRMAddMeeting, { ctx: ctx }),

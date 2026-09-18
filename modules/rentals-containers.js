@@ -345,7 +345,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Default Container For"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedEquipment.map(function(eq) {
-              return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onClose(); onOpenEquipment(eq.id); } : null,
+              return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onOpenEquipment(eq.id); } : null,
                 style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.accent + "44", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
             })
           )
@@ -356,7 +356,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Can Nest Inside"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             nestedContainers.map(function(c) {
-              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onClose(); onOpenContainer(c.id); } : null,
+              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onOpenContainer(c.id); } : null,
                 style: { background: B.infoBg, color: B.info, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.infoBd, cursor: onOpenContainer ? "pointer" : "default" } }, c.name);
             })
           )
@@ -365,7 +365,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Fits Inside"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             parentContainers.map(function(c) {
-              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onClose(); onOpenContainer(c.id); } : null,
+              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onOpenContainer(c.id); } : null,
                 style: { background: B.raised, color: B.textSec, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.border, cursor: onOpenContainer ? "pointer" : "default" } }, c.name);
             })
           )
@@ -482,11 +482,14 @@
   window.RentalsContainersView = function({ containers, equipment, onOpenContainer }) {
     var R = window.LTP_RENTALS, B = window.LTP_THEME;
     var isMobile = window.LTP_useIsMobile();
-    var [typeFilter, setTypeFilter] = useState("all");
-    var [search,     setSearch]     = useState("");
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [typeFilter, setTypeFilter] = window.LTP_useNavState("filter", "all");
+    var [search,     setSearch]     = window.LTP_useNavState("search", "");
     // ONE sort state for both viewports — { key, dir } naming a column in COLS
     // below. The phone chips and the desktop column headers set the same state.
-    var [sort,       setSort]       = useState({ key: "name", dir: "asc" });
+    var [sort,       setSort]       = window.LTP_useNavState("sort", { key: "name", dir: "asc" });
     // Per-user saved views — sort + the type chip.
     var vw = window.LTP_useTableView({
       tableKey: "rentals-containers",

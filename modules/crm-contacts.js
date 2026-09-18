@@ -14,10 +14,10 @@
     if (ctx.contactAction === "edit") {
       return h(window.CRMContactForm, { ctx: ctx,
         initial: contact,
-        onClose: function() { nav("crm/contacts/" + contact.id); },
+        onClose: function() { window.LTPRouter.goBack(); },
         onSave: function(d) {
           ctx.setContacts(function(p) { return p.map(function(c) { return c.id === contact.id ? Object.assign({}, c, d) : c; }); });
-          nav("crm/contacts/" + contact.id);
+          window.LTPRouter.goBack();   // saved: back to the detail
         }
       });
     }
@@ -28,7 +28,7 @@
           h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.accent, marginBottom: 4 } }, contact.role),
           linkedCompanies.length > 0 && h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedCompanies.map(function(co) {
-              return h("span", { key: co.id, onClick: function() { ctx.setEditContactId(null); ctx.setSelectedCompanyId(co.id); },
+              return h("span", { key: co.id, onClick: function() { ctx.setSelectedCompanyId(co.id); },
                 style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "2px 10px", borderRadius: "4px", fontWeight: 600, cursor: "pointer", border: "1px solid " + B.accent + "44" } }, co.name);
             })
           )
@@ -62,7 +62,7 @@
             linkedProjects.map(function(p) {
               var co = ctx.companies.find(function(c) { return c.id === p.companyId; });
               return h("div", { key: p.id,
-                onClick: function() { ctx.setEditContactId(null); ctx.setSelectedProjectId(p.id); },
+                onClick: function() { ctx.setSelectedProjectId(p.id); },
                 style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", transition: "all 0.15s" },
                 onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent + "44"; },
                 onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },

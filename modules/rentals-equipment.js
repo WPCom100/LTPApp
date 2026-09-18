@@ -444,7 +444,7 @@
               assignedContainers.map(function(c) {
                 var rawQty = c.serialized ? (c.units || []).length : (c.qty || 0);
                 return h("div", { key: c.id,
-                  onClick: onOpenContainer ? function() { onClose(); onOpenContainer(c.id); } : null,
+                  onClick: onOpenContainer ? function() { onOpenContainer(c.id); } : null,
                   style: { background: B.raised, borderRadius: 6, padding: "10px 12px", border: "1px solid " + B.border, display: "flex", justifyContent: "space-between", alignItems: "center", cursor: onOpenContainer ? "pointer" : "default", transition: "all 0.15s" },
                   onMouseOver: onOpenContainer ? function(e) { e.currentTarget.style.borderColor = B.accent + "44"; } : null,
                   onMouseOut:  onOpenContainer ? function(e) { e.currentTarget.style.borderColor = B.border; } : null },

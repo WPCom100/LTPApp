@@ -527,12 +527,15 @@
   // ═══════════════════════════════════════════════════════════════════════════
   function CrewRoster({ contacts, setContacts, services, allPositions, settings, isAdmin }) {
     var isMobile = window.LTP_useIsMobile();
-    var [search, setSearch] = useState("");
-    var [deptFilter, setDeptFilter] = useState("all");
+    // Filter / sort / search deliberately stay OUT of the URL, but Back must
+    // still put this list back the way the user left it — so they hang off the
+    // history entry instead (nav-registry.js::LTP_useNavState).
+    var [search, setSearch] = window.LTP_useNavState("search", "");
+    var [deptFilter, setDeptFilter] = window.LTP_useNavState("filter", "all");
     // Desktop column sort — { key, dir } naming a column in COLS below. This
     // list had no ordering control at all before; it came out in whatever order
     // the contacts array happened to be in.
-    var [sort, setSort] = useState({ key: "name", dir: "asc" });
+    var [sort, setSort] = window.LTP_useNavState("sort", { key: "name", dir: "asc" });
     var [editingCrew, setEditingCrew] = useState(null);
     var [crewDlg, setCrewDlg] = useState(null);
     // editingCrew is a COPY of the contact, taken when the editor opened. If the

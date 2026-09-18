@@ -95,6 +95,7 @@
     // out in another tab). Bounce to /auth/login so they can keep working
     // instead of letting the page keep firing failing PUTs.
     if (resp.status === 401) {
+      if (window.LTP_NAV_REGISTRY) window.LTP_NAV_REGISTRY.stashReturnTo();
       window.location.href = "/auth/login";
       var unauth = new Error(label + " unauthorized — redirecting to login");
       unauth.status = 401;
@@ -224,7 +225,8 @@
         // Session is gone. Bounce to login; the redirect supersedes any
         // further loading. Return null so the calling chain doesn't try to
         // populate React state with garbage in the meantime.
-        window.location.href = "/auth/login";
+        if (window.LTP_NAV_REGISTRY) window.LTP_NAV_REGISTRY.stashReturnTo();
+      window.location.href = "/auth/login";
         return null;
       }
       if (!r.ok) {

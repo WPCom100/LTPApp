@@ -149,6 +149,8 @@
     return fallback || "Something went wrong. Please try again.";
   }
   function go(path) { window.LTPRouter.navigate("crew-portal" + (path ? "/" + path : "")); }
+  // Portal tabs are peers: switching replaces the entry so Back leaves the portal in one step.
+  function goTab(screen) { window.LTP_NAV_REGISTRY.goTab("crew-portal/" + screen); }
 
   // The server joins a role's code and description with an em dash. The
   // portal carries none, so every role label is rewritten to "L2 · Lighting
@@ -586,7 +588,7 @@
     var tabStrip = h("div", { role: "tablist", style: { display: "flex", gap: 4, marginTop: 22, borderBottom: "1px solid " + HAIR } },
       TABS.map(function(t) {
         var active = t.id === tab;
-        return h("button", { key: t.id, role: "tab", "aria-selected": active, className: "ltp-cp-tab ltp-cp-tap", onClick: function() { go(t.id); },
+        return h("button", { key: t.id, role: "tab", "aria-selected": active, className: "ltp-cp-tab ltp-cp-tap", onClick: function() { goTab(t.id); },
           style: { background: "none", border: "none", borderBottom: "2px solid " + (active ? ORANGE : "transparent"), marginBottom: -1, padding: "10px 14px", color: active ? WHITE : MUTE, fontFamily: "inherit", fontSize: "13px", fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer" } }, t.label);
       }));
 
@@ -595,7 +597,7 @@
       h("div", { style: { display: "flex", paddingBottom: "max(8px, calc(env(safe-area-inset-bottom) - 10px))" } },
         TABS.map(function(t) {
           var active = t.id === tab;
-          return h("button", { key: t.id, className: "ltp-cp-tap", onClick: function() { go(t.id); }, "aria-label": t.label,
+          return h("button", { key: t.id, className: "ltp-cp-tap", onClick: function() { goTab(t.id); }, "aria-label": t.label,
             style: { flex: 1, minHeight: 52, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 3, background: "transparent", border: "none", cursor: "pointer", fontFamily: "inherit", padding: "6px 2px" } },
             tabIcon(t.id, active ? ORANGE : MUTE),
             h("span", { style: { fontSize: "10px", fontWeight: active ? 700 : 500, color: active ? ORANGE_SOFT : MUTE, letterSpacing: "0.03em" } }, t.label));
@@ -1243,6 +1245,8 @@
     useEffect(function() {
       api("/auth/me").then(function(res) { setUser(res.ok ? res.data : null); });
     }, []);
+    // A cold entry (bookmark, emailed link, home-screen launch) gets its ancestors seeded so Back walks up, never out.
+    useEffect(function() { window.LTP_NAV_REGISTRY.seedIfCold(); }, []);
 
     var sub = route.sub || null;
     // Signed in and on a sign-in route (a bookmarked #/crew-portal/login, the
@@ -1256,8 +1260,8 @@
     }, [user, sub]);
     var shell = { isMobile: isMobile, mastheadFailed: mastheadFailed, onMastheadFail: function() { setMastheadFailed(true); } };
 
-    function signedIn(u) { setUser(u); go("overview"); }
-    function signedOut() { setUser(null); go("login"); }
+    function signedIn(u) { setUser(u); window.LTPRouter.replace("crew-portal/overview"); }   // the sign-in entry never survives
+    function signedOut() { setUser(null); window.LTPRouter.replace("crew-portal/login"); }
 
     if (user === undefined) {
       return h("div", { style: { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, fontFamily: FONT } },
