@@ -33,11 +33,18 @@ CLOSERS = (
     "setEditCompanyId",
     "setEditProjectId",
 )
+# Everything that resolves to goBack() and so queues a history traversal:
+# a closer handed a falsy id, a modal's own onClose prop, or goBack itself.
+_CLOSE_CALL = (
+    r"(?:(?:[A-Za-z_$][\w$]*\.)*(?:%s)\(\s*(?:null|undefined|0|false)\s*\)"
+    r"|(?:[A-Za-z_$][\w$]*\.)*(?:onClose|onCancel|onDismiss|goBack)\(\s*\))"
+    % "|".join(CLOSERS)
+)
 # A close, then anything that changes the route, in one statement sequence.
 NAV_AFTER_CLOSE = re.compile(
-    r"\b(?:%s)\(\s*(?:null|undefined|0|false)\s*\)\s*;\s*"
-    r"(?:[A-Za-z_$][\w$]*\.)?(?:localNav|nav|navigate|goBack|set(?:%s))\s*\("
-    % ("|".join(CLOSERS), "|".join(c[3:] for c in CLOSERS))
+    _CLOSE_CALL + r"\s*;\s*"
+    r"(?:[A-Za-z_$][\w$]*\.)*(?:localNav|nav|navigate|goBack|onOpen\w*|open\w*|set(?:%s))\s*\("
+    % "|".join(c[3:] for c in CLOSERS)
 )
 # Two goBack-capable closes back to back — two queued traversals, one intent.
 DOUBLE_BACK = re.compile(r"goBack\(\)\s*;\s*(?:[A-Za-z_$][\w$]*\.)?goBack\(")
@@ -54,11 +61,20 @@ def _sources():
 
 
 def _hits(pattern):
+    """Matches, minus the ones guarded by `return`.
+
+    `if (!id) return goBack();` followed by a navigate on the next line is not a
+    race: the return means only one of them ever runs. Only a close and a
+    navigate that BOTH run, in sequence, queue a traversal that eats the push.
+    """
     out = []
     for rel, src in _sources():
         for m in pattern.finditer(src):
+            before = src[max(0, m.start() - 12):m.start()]
+            if re.search(r"\breturn\s*$", before):
+                continue
             out.append("%s:%d  %s" % (rel, src.count("\n", 0, m.start()) + 1,
-                                      m.group(0).strip()[:90]))
+                                      " ".join(m.group(0).split())[:90]))
     return out
 
 

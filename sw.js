@@ -389,7 +389,10 @@
 // v108: the checker-item route itself (rentals-shell.js). v107 shipped the
 // state fix a few minutes earlier, so a device that already took v107 would
 // otherwise keep serving the old rentals-shell.js and never see this.
-var CACHE_VERSION = 'ltp-shell-v108';
+// v109: links inside an equipment or container detail (the container chips,
+// the equipment chips) closed the popup before navigating, so the queued Back
+// undid the navigation and dropped you on a list with nothing open.
+var CACHE_VERSION = 'ltp-shell-v109';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

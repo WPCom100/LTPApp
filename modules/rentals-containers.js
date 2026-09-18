@@ -345,7 +345,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Default Container For"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             linkedEquipment.map(function(eq) {
-              return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onClose(); onOpenEquipment(eq.id); } : null,
+              return h("span", { key: eq.id, onClick: onOpenEquipment ? function() { onOpenEquipment(eq.id); } : null,
                 style: { background: B.accentMuted, color: B.accent, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.accent + "44", cursor: onOpenEquipment ? "pointer" : "default" } }, eq.name);
             })
           )
@@ -356,7 +356,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Can Nest Inside"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             nestedContainers.map(function(c) {
-              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onClose(); onOpenContainer(c.id); } : null,
+              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onOpenContainer(c.id); } : null,
                 style: { background: B.infoBg, color: B.info, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.infoBd, cursor: onOpenContainer ? "pointer" : "default" } }, c.name);
             })
           )
@@ -365,7 +365,7 @@
           h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.textSec, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 } }, "Fits Inside"),
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             parentContainers.map(function(c) {
-              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onClose(); onOpenContainer(c.id); } : null,
+              return h("span", { key: c.id, onClick: onOpenContainer ? function() { onOpenContainer(c.id); } : null,
                 style: { background: B.raised, color: B.textSec, fontSize: "11px", padding: "3px 10px", borderRadius: 4, fontWeight: 600, border: "1px solid " + B.border, cursor: onOpenContainer ? "pointer" : "default" } }, c.name);
             })
           )

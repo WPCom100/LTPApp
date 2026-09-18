@@ -10,7 +10,9 @@
 //
 // Setup and run — see .claude/skills/verify/SKILL.md for the full recipe:
 //   DATABASE_URL="sqlite+aiosqlite:///$S/ltp.db" .venv/bin/uvicorn backend.main:app --port 8000 &
-//   # forge a session row, seed a company/project/equipment via /api/*
+//   # forge a session row, then seed via /api/*: a company, projects, several
+//   # equipment items (incl. "Line Array"), containers (incl. one named
+//   # "Amp Rack" with defaultForEquipment:[<Line Array id>]) and kits
 //   npm install playwright && curl the four cdnjs libs into ./vendor
 //   node /path/to/repo/tests/manual/verify-navigation.js
 //
@@ -168,6 +170,24 @@ async function back(p) { await p.goBack(); await settle(p); }
     eq(route + " keeps its filter behind the modal", await p.locator(sel).first().inputValue().catch(() => "(unmounted)"), term);
     await back(p);
     eq(route + " still has it after closing", await p.locator(sel).first().inputValue().catch(() => "(unmounted)"), term);
+    await p.close();
+  }
+
+  console.log("\na link inside a detail opens that record, it does not just close");
+  // These chips used to call onClose() and then navigate. onClose is goBack(),
+  // whose queued history.back() undid the push, so the chip dropped the user on
+  // a list with nothing open instead of the record they clicked.
+  for (const [from, chip, want] of [
+    ["#/rentals/equipment/2",  "Amp Rack",   /^#\/rentals\/containers\/\d+$/],
+    ["#/rentals/containers/4", "Line Array", /^#\/rentals\/equipment\/\d+$/],
+  ]) {
+    const p = await cold(from);
+    const el = p.locator('.ltp-modal-backdrop >> text="' + chip + '"').first();
+    if (await el.count() === 0) { ok('a "' + chip + '" chip inside ' + from, false, "fixture missing — see the seed note at the top"); await p.close(); continue; }
+    await el.click(); await settle(p, 1500);
+    const h = await hash(p);
+    ok('"' + chip + '" opens that record', want.test(h), "landed on " + h);
+    ok("...with its popup actually open", await p.locator(".ltp-modal-backdrop").count() > 0);
     await p.close();
   }
 
