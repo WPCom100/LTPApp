@@ -495,6 +495,10 @@ class _DocPDF:
         self.y = self.H - self.M
         self.pg = 1
         self.content_w = self.W - 2 * self.M
+        # Set while a section's rows are being drawn — see _draw_section. A
+        # page break inside a section has to close that section's frame on the
+        # page it leaves and re-open it under a repeated header on the next.
+        self._break_hook = None
 
     # ── Page chrome ────────────────────────────────────────────────────────
     def _bg(self):
@@ -512,16 +516,34 @@ class _DocPDF:
         self.c.drawString(self.M, 14, f"{cname}  |  {website}")
         self.c.drawRightString(self.W - self.M, 14, f"Page {self.pg}")
 
+    @property
+    def _floor(self):
+        """Lowest y content may reach before the page has to break — leaves the
+        footer line and the gradient bar clear."""
+        return self.M + 30
+
+    def _fresh_page_h(self):
+        """Usable vertical space on a page carrying nothing but page chrome."""
+        return (self.H - self.M - 10) - self._floor
+
     def _new_page(self):
+        # Hand a section that's mid-draw the chance to finish itself off on the
+        # page being left, and to re-open on the new one (frame + repeated
+        # header). Read once: the callbacks must not see a stale hook.
+        on_leave, on_enter = self._break_hook or (None, None)
+        if on_leave:
+            on_leave()
         self.c.showPage()
         self.pg += 1
         self._bg()
         self._footer()
         self.y = self.H - self.M - 10
+        if on_enter:
+            on_enter()
 
     def _need(self, h):
         """Page break if `h` more units of vertical space won't fit."""
-        if self.y - h < self.M + 30:
+        if self.y - h < self._floor:
             self._new_page()
 
     # ── Header ─────────────────────────────────────────────────────────────
@@ -688,6 +710,80 @@ class _DocPDF:
         self.y -= 4   # breathing room before the next row / next note
 
     # ── Section ────────────────────────────────────────────────────────────
+    # A section taller than the page left under it is SPLIT, not clipped: the
+    # frame closes at the bottom of the page being left and re-opens at the top
+    # of the next one under a repeated title and column header, so continued
+    # rows never land on a bare page under no heading.
+    HEAD_H = 41        # title + column headers + the rule under them
+    SUBTOTAL_H = 26    # the "<Section> Subtotal:" line drawn below the frame
+    MIN_ROWS = 3       # rows a split section must be able to start on a page
+    # A section no taller than this share of a page is pushed whole to the next
+    # page rather than split. Past it, pushing would waste more space than the
+    # split costs, so it splits (with a repeated header) instead.
+    KEEP_WHOLE = 0.5
+
+    def _section_frame(self, top, bottom):
+        """Peach frame around the rows between two y-cursors ON THE CURRENT
+        PAGE. A frame with no height is skipped — a section that breaks right
+        after its header has nothing to box on the page it left."""
+        if top - bottom < 2:
+            return
+        self.c.setStrokeColor(SOFT_ORANGE)
+        self.c.setLineWidth(0.75)
+        self.c.rect(self.M, bottom, self.content_w, top - bottom, fill=0, stroke=1)
+
+    def _section_head(self, label, col, period="", cont=False):
+        """Section title, column headers, and the rule under them. Returns the
+        y the frame should start from and leaves self.y on the first row.
+
+        Drawn again at the top of every continuation page (with "(CONT.)" after
+        the title) so a split table keeps its heading and its ITEM / QTY / UNIT
+        PRICE / TOTAL labels."""
+        c = self.c
+        title = label.upper() + (" (CONT.)" if cont else "")
+        c.setFont(FONTS["heading"], 15)
+        c.setFillColor(LUMIN_ORANGE)
+        c.drawString(self.M, self.y - 12, title)
+        if period:
+            title_w = c.stringWidth(title, FONTS["heading"], 15)
+            c.setFont("Roboto-Light", 9)
+            c.setFillColor(INK_SOFT)
+            c.drawString(self.M + title_w + 12, self.y - 12, period)
+
+        self.y -= 16
+        box_top = self.y
+        self.y -= 4
+
+        # Column headers
+        c.setFont("Roboto-Bold", 9)
+        c.setFillColor(INK_SOFT)
+        c.drawString(col["item"], self.y - 12, "ITEM")
+        c.drawRightString(col["qty_right"], self.y - 12, "QTY")
+        c.drawRightString(col["unit"] + 55, self.y - 12, "UNIT PRICE")
+        c.drawRightString(col["total"], self.y - 12, "TOTAL")
+        self.y -= 18
+
+        # Header separator
+        c.setStrokeColor(HAIRLINE)
+        c.setLineWidth(0.5)
+        c.line(self.M + 4, self.y, self.W - self.M - 4, self.y)
+        self.y -= 3
+        return box_top
+
+    def _item_h(self, it, col):
+        """Height one line of a section takes when drawn — a priced row (taller
+        when an adjusted price stacks a struck-through original above it), or a
+        note wrapped to the same width _draw_note wraps it to."""
+        if it.get("type") == "note":
+            txt = it.get("text", "") or it.get("name", "") or ""
+            body_x = col["item"] + _sw("Note: ", self.NOTE_FONT, self.NOTE_SIZE)
+            max_w = (self.W - self.M - 10) - body_x
+            lines = _wrap_plain(txt, self.NOTE_FONT, self.NOTE_SIZE, max_w) or [""]
+            return len(lines) * self.NOTE_LEADING + 4
+        up = it.get("unitPrice", 0) or 0
+        ap = it.get("adjustedPrice")
+        return 23 if (ap is not None and ap != up) else 19
+
     def _draw_section(self, sec):
         c = self.c
         label = sec.get("label", "Section")
@@ -699,6 +795,12 @@ class _DocPDF:
             "unit": self.W - self.M - 150,
             "total": self.W - self.M - 10,
         }
+        # QTY is two aligned sub-columns: the number right-aligned at a fixed
+        # edge (so digits line up down the page), the unit label left-aligned
+        # just past it. The header sits flush with the digits, like the other
+        # numeric headers.
+        col["qty_right"] = col["qty"] + 30
+        col["unit_x"] = col["qty_right"] + 3
 
         # Section subtotal comes from priced lines only (notes carry no amount).
         sec_total = 0
@@ -711,13 +813,9 @@ class _DocPDF:
             eff = ap if ap is not None else up
             sec_total += eff * qty
 
-        self._need(60)
-
-        c.setFont(FONTS["heading"], 15)
-        c.setFillColor(LUMIN_ORANGE)
-        c.drawString(self.M, self.y - 12, label.upper())
-
-        # Rental period for equipment sections
+        # Rental period for equipment sections — rides beside the title, on
+        # continuation pages too.
+        period = ""
         has_equipment = any(it.get("type") == "equipment" for it in all_items)
         if has_equipment:
             sec_start = (sec.get("startDate") if sec.get("customDates") else None) \
@@ -725,43 +823,49 @@ class _DocPDF:
             sec_end = (sec.get("endDate") if sec.get("customDates") else None) \
                       or self.entity.get("customEndDate") or self.project.get("endDate", "")
             if sec_start and sec_end:
-                title_w = c.stringWidth(label.upper(), FONTS["heading"], 15)
-                c.setFont("Roboto-Light", 9)
-                c.setFillColor(INK_SOFT)
-                c.drawString(self.M + title_w + 12, self.y - 12,
-                             f"Rental Period: {_fmt_date(sec_start)} — {_fmt_date(sec_end)}")
+                period = f"Rental Period: {_fmt_date(sec_start)} — {_fmt_date(sec_end)}"
 
-        self.y -= 16
-        box_top = self.y
-        self.y -= 4
+        # How this section meets the bottom of the page:
+        #   • it fits in what's left            → drawn here, no break
+        #   • short enough to keep whole        → starts on a fresh page
+        #   • too tall to keep whole            → split, but only once at least
+        #     MIN_ROWS can start here; a lone row or two under a full table
+        #     header reads like an accident.
+        heights = [self._item_h(it, col) for it in all_items]
+        full_h = self.HEAD_H + sum(heights) + self.SUBTOTAL_H
+        keep_whole = full_h <= self.KEEP_WHOLE * self._fresh_page_h()
+        self._need(full_h if keep_whole
+                   else self.HEAD_H + sum(heights[:self.MIN_ROWS]) + 4)
 
-        # Column headers
-        c.setFont("Roboto-Bold", 9)
-        c.setFillColor(INK_SOFT)
-        c.drawString(col["item"], self.y - 12, "ITEM")
-        # QTY is two aligned sub-columns: the number right-aligned at a fixed
-        # edge (so digits line up down the page), the unit label left-aligned
-        # just past it. The header sits flush with the digits, like the other
-        # numeric headers.
-        qty_right = col["qty"] + 30
-        unit_x = qty_right + 3
-        c.drawRightString(qty_right, self.y - 12, "QTY")
-        c.drawRightString(col["unit"] + 55, self.y - 12, "UNIT PRICE")
-        c.drawRightString(col["total"], self.y - 12, "TOTAL")
-        self.y -= 18
+        box_top = self._section_head(label, col, period)
 
-        # Header separator
-        c.setStrokeColor(HAIRLINE)
-        c.setLineWidth(0.5)
-        c.line(self.M + 4, self.y, self.W - self.M - 4, self.y)
-        self.y -= 3
+        # Frame state lives in a dict so the break hook below can rebind the
+        # top edge each time the section re-opens on a new page.
+        frame = {"top": box_top}
+
+        def _close_frame():
+            self._section_frame(frame["top"], self.y)
+
+        def _reopen_frame():
+            frame["top"] = self._section_head(label, col, period, cont=True)
+
+        self._break_hook = (_close_frame, _reopen_frame)
 
         # Item + note rows, drawn in authored order so notes stay exactly where
         # they were placed in the builder (instead of collapsing to the bottom).
         # A separate stripe index keeps the zebra striping consistent across
         # priced rows; notes are full-width captions and don't take a stripe.
         stripe_i = 0
-        for it in all_items:
+        last = len(all_items) - 1
+        for i, it in enumerate(all_items):
+            # Widow control: never strand the final line of a table alone on
+            # the next page. When this line still fits but it and the last one
+            # together don't, break here so the two travel across together.
+            if (i == last - 1
+                    and self.y - heights[i] - 4 >= self._floor
+                    and self.y - heights[i] - heights[last] - 4 < self._floor):
+                self._new_page()
+
             if it.get("type") == "note":
                 self._draw_note(it.get("text", "") or it.get("name", "") or "",
                                 col["item"])
@@ -773,7 +877,7 @@ class _DocPDF:
             eff = ap if ap is not None else up
             lt = eff * qty
             has_adj = ap is not None and ap != up
-            row_h = 23 if has_adj else 19
+            row_h = heights[i]
 
             self._need(row_h + 4)
             row_bot = self.y - row_h
@@ -805,11 +909,11 @@ class _DocPDF:
             unit_lbl = _qty_label(it, qty)
             c.setFont("Roboto", fs)
             c.setFillColor(INK)
-            c.drawRightString(qty_right, vc, num)
+            c.drawRightString(col["qty_right"], vc, num)
             if unit_lbl:
                 c.setFont("Roboto-Light", 7.5)
                 c.setFillColor(MUTED)
-                c.drawString(unit_x, vc, unit_lbl)
+                c.drawString(col["unit_x"], vc, unit_lbl)
 
             if has_adj:
                 # Original price — muted strikethrough, upper part of row
@@ -838,14 +942,15 @@ class _DocPDF:
             c.drawRightString(col["total"], vc, _fmt_money(lt))
             self.y -= row_h
 
-        box_bottom = self.y
+        # Done with the rows — the hook must not fire for anything that
+        # follows, or the subtotal below would re-open the table's header.
+        self._break_hook = None
 
-        # Section border
-        c.setStrokeColor(SOFT_ORANGE)
-        c.setLineWidth(0.75)
-        c.rect(self.M, box_bottom, self.content_w, box_top - box_bottom, fill=0, stroke=1)
+        # Section border, on the page the last row actually landed on.
+        self._section_frame(frame["top"], self.y)
 
         # Section subtotal below
+        self._need(self.SUBTOTAL_H)
         self.y -= 4
         c.setFont("Roboto", 11)
         c.setFillColor(INK_SOFT)
@@ -859,7 +964,19 @@ class _DocPDF:
     def _draw_totals(self):
         t = _calc_totals(self.entity)
         c = self.c
-        self._need(110)
+
+        # Reserve the block's real height, optional rows included — 110 was
+        # short of even the minimum, so a document that ended near the bottom
+        # of a page could push TOTAL: into the footer.
+        gd = self.entity.get("globalDiscount", {}) or {}
+        gt = gd.get("type", "none")
+        disc = t["adjusted"] - t["preTax"]
+        extra_rows = sum((
+            abs(t["subtotal"] - t["adjusted"]) > 0.01,
+            gt != "none" and abs(disc) > 0.01,
+            t["tax"] > 0.005,
+        ))
+        self._need(112 + 18 * extra_rows)
 
         xl = self.W - self.M - 220
         xv = self.W - self.M - 10
@@ -887,9 +1004,6 @@ class _DocPDF:
             c.drawRightString(xv, self.y, f"{sign}{_fmt_money(abs(diff))}")
             self.y -= 18
 
-        gd = self.entity.get("globalDiscount", {}) or {}
-        gt = gd.get("type", "none")
-        disc = t["adjusted"] - t["preTax"]
         if gt != "none" and abs(disc) > 0.01:
             c.setFont("Roboto", 10)
             c.setFillColor(MUTED)
@@ -921,8 +1035,15 @@ class _DocPDF:
 
     # ── Terms ──────────────────────────────────────────────────────────────
     def _draw_terms(self):
-        self._need(70)
         c = self.c
+        # Whatever this document actually says — edited per document in the
+        # builder, else the workspace default, else the built-in list these two
+        # branches used to hardcode. Dates inside the text resolve here rather
+        # than being frozen when it was written.
+        lines = doc_terms(self.entity, self.kind, self.settings)
+        # Keep the rule + heading with at least its first three bullets; a
+        # longer list breaks per line below rather than running off the page.
+        self._need(38 + 14 * min(len(lines), 3))
         self.y -= 16
 
         c.setStrokeColor(HAIRLINE)
@@ -934,14 +1055,10 @@ class _DocPDF:
         c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
         self.y -= 22
 
-        # Whatever this document actually says — edited per document in the
-        # builder, else the workspace default, else the built-in list these two
-        # branches used to hardcode. Dates inside the text resolve here rather
-        # than being frozen when it was written.
-        lines = doc_terms(self.entity, self.kind, self.settings)
-        c.setFont("Roboto-Light", 9)
-        c.setFillColor(MUTED)
         for line in lines:
+            self._need(14)
+            c.setFont("Roboto-Light", 9)
+            c.setFillColor(MUTED)
             c.drawString(self.M + 8, self.y, f"•  {line}")
             self.y -= 14
 
