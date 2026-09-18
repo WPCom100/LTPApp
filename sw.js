@@ -382,7 +382,10 @@
 // v106: a list's filter no longer depends on the order two effects happen to
 // run in when a modal opens over it (nav-registry.js). Behaviour is unchanged
 // in every case that could be reproduced; this removes the way it could break.
-var CACHE_VERSION = 'ltp-shell-v106';
+// v107: the Availability Checker forgot its search, category and dates the
+// moment you opened an item from it — that row links to the Equipment List's
+// tab, so the whole checker unmounted. Its settings now outlive that.
+var CACHE_VERSION = 'ltp-shell-v107';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

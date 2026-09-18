@@ -171,6 +171,27 @@ async function back(p) { await p.goBack(); await settle(p); }
     await p.close();
   }
 
+  console.log("\nthe availability checker survives opening an item");
+  // Rentals opens on the Availability Checker, whose rows link to
+  // #/rentals/equipment/:id — a DIFFERENT tab, so the checker unmounts and the
+  // Equipment List renders behind the popup. Everything the checker was set to
+  // has to outlive that, or closing the popup lands on a checker that forgot
+  // the search, the category and the dates.
+  {
+    const p = await cold("#/rentals");
+    const box = p.locator('input[placeholder="Search equipment..."]').first();
+    if (await box.count() === 0) { ok("the checker has a search box", false, "not found"); }
+    else {
+      await box.fill("Line"); await settle(p, 500);
+      await p.locator("text=Line Array").first().click(); await settle(p, 1400);
+      ok("the item's popup opened", await p.locator(".ltp-modal-backdrop").count() > 0);
+      await back(p); await settle(p, 500);
+      eq("closing the popup gives the checker its search back",
+         await p.locator('input[placeholder="Search equipment..."]').first().inputValue().catch(() => "(unmounted)"), "Line");
+    }
+    await p.close();
+  }
+
   console.log("\ncross-area links OUT of a modal actually arrive");
   // Regression: these handlers used to close the modal and then navigate. The
   // close is goBack(), whose queued history.back() undid the push, so clicking
