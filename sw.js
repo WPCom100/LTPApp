@@ -386,7 +386,10 @@
 // the Equipment List behind the popup, and threw away the dates, category and
 // search it was set to. Such an item now has its own route (#/rentals/<id>) so
 // the checker stays put, and its settings outlive the popup either way.
-var CACHE_VERSION = 'ltp-shell-v107';
+// v108: the checker-item route itself (rentals-shell.js). v107 shipped the
+// state fix a few minutes earlier, so a device that already took v107 would
+// otherwise keep serving the old rentals-shell.js and never see this.
+var CACHE_VERSION = 'ltp-shell-v108';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
