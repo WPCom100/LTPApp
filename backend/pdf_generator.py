@@ -683,7 +683,7 @@ class _DocPDF:
     NOTE_SIZE = 9
     NOTE_LEADING = 12
 
-    def _draw_note(self, txt, x):
+    def _draw_note(self, txt, x, reserve=0):
         """Draw a note line item as a full-width caption, honoring the spacing
         and newlines the author typed in the builder's textarea.
 
@@ -691,7 +691,11 @@ class _DocPDF:
         gutter and every wrapped line — including the first — starts at the same
         x, so a multi-line note reads as one block. Each line gets its own page-
         break check, so a long note flows onto the next page instead of running
-        off the bottom (the old renderer truncated at 110 characters)."""
+        off the bottom (the old renderer truncated at 110 characters).
+
+        `reserve` is extra room the LAST line must leave behind it — a note
+        ending a section holds the section subtotal's place, which belongs on
+        the same page as the table it totals."""
         c = self.c
         label = "Note: "
         label_w = _sw(label, self.NOTE_FONT, self.NOTE_SIZE)
@@ -699,7 +703,7 @@ class _DocPDF:
         max_w = (self.W - self.M - 10) - body_x
         lines = _wrap_plain(txt, self.NOTE_FONT, self.NOTE_SIZE, max_w) or [""]
         for i, ln in enumerate(lines):
-            self._need(self.NOTE_LEADING + 4)
+            self._need(self.NOTE_LEADING + 4 + (reserve if i == len(lines) - 1 else 0))
             c.setFont(self.NOTE_FONT, self.NOTE_SIZE)
             c.setFillColor(MUTED)
             if i == 0:
@@ -721,6 +725,22 @@ class _DocPDF:
     # page rather than split. Past it, pushing would waste more space than the
     # split costs, so it splits (with a repeated header) instead.
     KEEP_WHOLE = 0.5
+
+    # Wording of the foot-of-page note. Reads true both ways a section crosses
+    # a break: pushed whole to the next page, or split mid-table.
+    CONTINUES = "continues on the next page"
+
+    def _continued_note(self, label):
+        """Draw "<Section> continues on the next page" at the foot of the page
+        being LEFT, so a reader who meets blank space (or a table that stops
+        mid-list) knows to turn the page rather than reading it as the end.
+
+        It sits in the gutter between the content floor and the footer line —
+        space _need already keeps clear — so it can never collide with a row."""
+        self.c.setFont("Roboto-Light", 8)
+        self.c.setFillColor(MUTED)
+        self.c.drawRightString(self.W - self.M, self.M + 6,
+                               f"{label} {self.CONTINUES}")
 
     def _section_frame(self, top, bottom):
         """Peach frame around the rows between two y-cursors ON THE CURRENT
@@ -834,8 +854,12 @@ class _DocPDF:
         heights = [self._item_h(it, col) for it in all_items]
         full_h = self.HEAD_H + sum(heights) + self.SUBTOTAL_H
         keep_whole = full_h <= self.KEEP_WHOLE * self._fresh_page_h()
+        # If this break fires, the page being left is the one that needs the
+        # note — it ends in blank space the reader can't otherwise read.
+        self._break_hook = (lambda: self._continued_note(label), None)
         self._need(full_h if keep_whole
                    else self.HEAD_H + sum(heights[:self.MIN_ROWS]) + 4)
+        self._break_hook = None
 
         box_top = self._section_head(label, col, period)
 
@@ -845,6 +869,7 @@ class _DocPDF:
 
         def _close_frame():
             self._section_frame(frame["top"], self.y)
+            self._continued_note(label)
 
         def _reopen_frame():
             frame["top"] = self._section_head(label, col, period, cont=True)
@@ -857,18 +882,23 @@ class _DocPDF:
         # priced rows; notes are full-width captions and don't take a stripe.
         stripe_i = 0
         last = len(all_items) - 1
+        # The final line and the subtotal under it travel together: a subtotal
+        # alone on a page would sit under no table, no repeated header, and no
+        # note pointing back at the rows it totals.
+        tail_h = (heights[last] if all_items else 0) + self.SUBTOTAL_H
         for i, it in enumerate(all_items):
             # Widow control: never strand the final line of a table alone on
-            # the next page. When this line still fits but it and the last one
-            # together don't, break here so the two travel across together.
+            # the next page. When this line still fits but it and the tail
+            # don't, break here so the two travel across together.
             if (i == last - 1
                     and self.y - heights[i] - 4 >= self._floor
-                    and self.y - heights[i] - heights[last] - 4 < self._floor):
+                    and self.y - heights[i] - tail_h - 4 < self._floor):
                 self._new_page()
 
             if it.get("type") == "note":
                 self._draw_note(it.get("text", "") or it.get("name", "") or "",
-                                col["item"])
+                                col["item"],
+                                reserve=self.SUBTOTAL_H if i == last else 0)
                 continue
 
             qty = it.get("qty", 0) or 0
@@ -879,7 +909,7 @@ class _DocPDF:
             has_adj = ap is not None and ap != up
             row_h = heights[i]
 
-            self._need(row_h + 4)
+            self._need(row_h + 4 + (self.SUBTOTAL_H if i == last else 0))
             row_bot = self.y - row_h
 
             if stripe_i % 2 == 0:
