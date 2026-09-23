@@ -643,17 +643,17 @@ Opus PR against this document before merge.
 | 0 | Owner confirms decisions 1–17. Done 2026-09-23. | owner | ✅ | — |
 | A1 | ✅ `90a8e85` — `laborSync` markers: generator gains `projectId`/`nowIso`, writes item + section markers; section whitelists ×3; model comments; `test_doc_projects.js` 163 → 181, `test_fixed_positions.js` 59 → 62, `test_quote_to_invoice.js` 77 → 78. | **Fable** | S | 0 |
 | A2 | ✅ `f4e5e51` — `components/domain-labor-sync.js`: `LTP_laborExpected`, `LTP_laborMarkedLines`, `LTP_laborHomeSection`, `LTP_laborDrift(All)`, `LTP_applyLaborSync`, `LTP_keepLaborSync`, `LTP_laborSyncChanges`, `LTP_laborDriftNotice`, `LTP_laborLinkable`, `LTP_adoptLaborLines`, `LTP_laborDifferenceQty`, `LTP_laborDifferenceInvoice`; wired into `index.html` and the `sw.js` precache (`CACHE_VERSION` v110); **`tests/test_labor_sync.js`** 139 assertions. | **Fable** | L | A1 |
-| A3 | Quote builder: drift memo, banner, review modal, Apply/Keep through `setDraft`, activity entry on save, legacy "Link" step; golden snapshot scenarios added (`tests/test_builder_render.js --update`). Copy from the rental notice at `quotes-builder.js:966-982, 2487-2500` and `PayoutExportModal`. | **Opus 5** | M | A2 |
-| A4 | Invoice builder: same surfaces; removals feed `pendingRollbacks`; sent-invoice banner with Recall / Keep as is (decision 15); `qbSignature` gains `notes` with the either-fingerprint compatibility shim (decision 16) + tests. | **Opus 5** | M | A2, A3 (reuse the modal component) |
-| A5 | List chip on quote/invoice rows and the project card; schedule-save toast; send-dialog "already linked → sync review" + "Append anyway". Copy `LTPRentalDriftChip`, `LTP_toastRentalDrift`, `sendDlg`. | **Opus 5** | S | A2 |
-| A6 | "Labor changed" chip in the quote's send-to-invoice picker (decision 17: a chip, not a sentence). | **Opus 5** | XS | A4 |
-| A7 | "New invoice with changes" (A9): difference mode in the review modal (positive deltas tickable, `credit` / `rate changed` captions), the creation flow copying the new-invoice literal at `quotes-builder.js:1900-1921`, the marker-only write on the sent invoice through a dedicated `setInvoices` mapping, activity on both invoices, navigation to the new draft; golden snapshot scenario. | **Opus 5** | M | A2 (`LTP_laborDifferenceInvoice`), A4 |
+| A3 | ✅ `b93c330` — `components/labor-sync.js`: `LTP_useLaborSync` (drift memo, banners, review state, Apply / Keep / Keep all through `setDraft`, activity rows added on save, the open-on-arrival handoff from the schedule's Send), `LTPLaborSyncBanner`, `LTPLaborSyncReview`; a legacy document is linked by its first Apply or Keep; golden render 17 → 21 scenarios; **`tests/test_labor_sync_ui.js`**. | **Opus 5** | M | A2 |
+| A4 | ✅ `b93c330` — Invoice builder: the same surfaces; removed lines feed `pendingRollbacks`; a sent invoice gets the difference banner (Recall to sync · New invoice with changes · Keep as is, with a caption when payments block the recall); `qbSignature(…, withNotes)` plus the either-fingerprint shim (**`tests/test_invoice_qb_signature.js`**, 14); the tax fingerprint ignores `laborSync` markers, so a marker-only write never clears the stored QuickBooks tax (`test_sales_tax_plumbing.py` +1). | **Opus 5** | M | A2, A3 (reuse the modal component) |
+| A5 | ✅ `b307d62` — `LTPLaborDriftChip` ("Labor changed") on quote and invoice rows, the CRM project list and the project card (`LTP_docLaborDrifted`, cached per document); `LTP_toastLaborDrift` after a schedule save that changed billed lines; the schedule's Send dialog marks an already-linked document "Linked · review" (opens its review) with "Append anyway". | **Opus 5** | S | A2 |
+| A6 | ✅ `b307d62` — "Labor changed" chip in the quote's send-to-invoice picker. | **Opus 5** | XS | A4 |
+| A7 | ✅ `b93c330` — Difference mode in the review modal (increases tickable; `credit` / `rate changed` / `days moved` asides; "Reductions need a recall or a credit memo."); `createDifferenceInvoice` through `LTP_laborDifferenceInvoice` (`opts.newRef`), the marker-only write on the sent invoice (`writeLockedInvoice`), activity on both invoices, navigation to the new draft. | **Opus 5** | M | A2 (`LTP_laborDifferenceInvoice`), A4 |
 | B1 | ✅ `0992346` — Cancellation record + engine in `components/domain-crew.js`: `LTP_cancelReference`, `LTP_cancelShare`, `LTP_cancelWork`, `LTP_cancelDefaults`, `LTP_cancelPosition`, `LTP_setCancellationShares`, `LTP_restorePosition`, the flat-rate mirrors, `LTP_reassignPatch` / `LTP_SNAPSHOT_CLEAR` (strip-on-reassign, applied in `labor.js` and `schedule-editor.js`); `crew_integrity`: `cancelled` ranks with `confirmed`, `_cancel_write_allowed` (frozen pay ≤ a fixed reference) and `_snapshot_drop_allowed`; **`tests/test_cancelled_labor.js`** 77 assertions, `test_crew_integrity.py` 28 → 34. | **Fable** | M | 0 |
 | B2 | ✅ `aaf0cdf` — Payout integration: `LTP_payoutRows` and `derive_payout_drafts` carry cancelled shifts (on top of a signed day; as the signed figure on a cancel-only day; waiting with a pending day); cancelled flat positions; units carry `kind`, `build_bill_lines` groups by account + kind so a cancellation is its own "Cancellation" bill line; parity fixture regenerated with a fifth crew member (every existing row unchanged); `test_payout_parity.js` 54 → 66, `test_payout_bills.py` +5, `test_qbo_payout_bills.py` +1, `test_paid_day_guard.py` +1 variant. The crew portal's earnings read the same derivation, so its days already carry `state: "cancelled"` (the label is B5). | **Fable** | M | B1 |
-| B3 | Generator: exclude cancelled from pools, emit `cancel:` lines, `_RATE_TYPE_ORDER`; the `"cancel"` rate-type trail (`doc_units.py`, both builders' `RATE_TYPES`/option/`clientRateNote`, PDF, public view, `qbo_sync`); `test_doc_projects.js`, `test_pdf_qty_label.py`, `test_public_qty_label.py`. Copy the `"flat"` trail from migration `a6b7c8d9e0f1`'s commit. | **Opus 5** | M | B1, A1 |
-| B4 | Cancel dialog (open to every producer; `guardPaidDay` keeps the paid-day check) + Assignments "Cancelled" group + Payouts row actions + schedule-builder/calendar rendering and totals + crew landing badge + `LTP_detectCrewConflicts`. Copy the sign-off/adjust dialogs at `labor.js:3365-3424`. | **Opus 5** | L | B1 |
-| B5 | Crew portal "Cancelled" group + label; new `crewCancelledWithPay` template in `data/settings.js` with `{{shifts}}` + `{{cancellationPay}}` and its byte-identical `_NOTIFY_FALLBACKS` entry in `backend/routes/crew.py`; tray routing (pay > 0 → new template, else the existing `crewCancelled`); Settings `cancellationDefaultBillPct` / `cancellationDefaultPayPct` = 50 in `data/settings.js` + `modules/settings.js`; `tests/test_crew_portal.py` + template round-trip test. | **Opus 5** | S | B1 |
-| B6 | "Cancel this shift…" on a schedule day: one share pair applied to every non-cancelled position, each still individually editable. No project-wide action (decision 14). | **Opus 5** | S | B4 |
+| B3 | ✅ `afb2444` — The generator leaves cancelled positions out of the day pools (`LTP_withoutCancelled` pins the survivors' person-slots, so nobody is re-paired) and bills each as a `cancel:<posId>` line: rate type `"cancel"`, qty 1 "cancellation", price = bill share, cost = pay share, note "Cancelled Aug 11 · 50% charged"; a cancelled flat-rate position too. The `"cancel"` trail: `domain-docs.js` (`LTP_RATE_TYPE_LABEL` / `LTP_RATE_TYPE_QTY` / `LTP_isTierRateType`), both builders' rate selects, `doc_units.py` (`SERVICE_UNITS`, `line_detail`), the PDF and the online view (a client-facing `detail` aside); schedule totals leave cancelled positions out and add a Cancelled row. `test_doc_projects.js` → 200, `test_labor_sync.js` → 147, `test_utils.js` → 336, `test_pdf_qty_label.py`, `test_public_qty_label.py`. | **Opus 5** | M | B1, A1 |
+| B4 | ✅ `0d68837` — **`components/cancel-labor.js`**: `LTPCancelDialog` (per side % / $ / none, pay held to its reference, totals line, reason, "Add to notify tray", Restore when editing, "Reopen slot instead" from Assignments), `LTPCancelFlow` (the Labor tab's write + activity + notice), `LTP_refillBooking`, `LTP_usePaidDayConflict`. Booking engine in `domain-crew.js`: `LTP_bookingCancelReference`, `LTP_cancelBooking`, `LTP_setBookingCancellationShares`, `LTP_restoreBooking`, `LTP_refillPosition` / `LTP_refillFixedPosition`, `LTP_projectBooking` / `LTP_projectBookingWrite`, `LTP_cancelSnapshots`, `LTP_cancelActivityDetail`, `LTP_cancelChange`. Surfaces: Assignments "Cancelled" group (Edit… / Refill); Payouts ("Cancel…" on unsigned rows, "Cancellation…" on rows carrying one, `guardPaidDay`, the cancel-only-day crash fixed); schedule editor (per position, cancelled rows folded per shift); flat-rate panel; weekly schedule struck through; calendar counts; crew landing badge; conflicts ignore cancelled. **`tests/test_cancelled_labor.js`** 77 → 143, **`tests/test_cancel_labor_ui.js`** 28; Playwright over Assignments, Payouts and the builder, desktop and 390px. | **Opus 5** | L | B1 |
+| B5 | ✅ `ed5eb94` — `crewCancelledWithPay` ("Position Cancellation with Pay") in `data/settings.js` with its byte-identical `_NOTIFY_FALLBACKS` entry; each notice shift carries `cancellationPay`, which the route sums into `{{cancellationPay}}`; the tray label; Settings "Cancellation Defaults" (50 / 50); crew portal: a `cancelled` list (Schedule → "Cancelled (n)"), and on the Pay tab a "Cancellation" day or "+$X cancellation". `test_crew_portal.py` +1 (the exact pay-day dict gains `cancelTotal`), `test_crew_requests.py` +2 (the pay notice sums; every notify fallback matches `settings.js`). | **Opus 5** | S | B1 |
+| B6 | ✅ `0d68837` — "Cancel day…" on each dated day of the schedule editor, and "Cancel…" on a shift when its day has more than one: one share pair over every position still on it, priced per person, each still editable on its own. No project-wide action (decision 14). | **Opus 5** | S | B4 |
 | C | End-to-end pass with the `verify` skill (Playwright): schedule → quote → change schedule → review → apply/keep → accept → invoice → cancel a shift → sync invoice → payout preview shows the cancellation; docs updated; `docs/LABOR_SYNC_PLAN.md` build-order ticks. | **Fable** | M | all |
 
 Suggested sequencing: A1 → A2 and B1 in parallel (Fable), then A3/A4/A5 and
@@ -801,12 +801,61 @@ something this document had left open, or named differently.
   `cancellations`, and each unit a `kind`. A cancellation on a still-unsigned
   day waits with the day (pending); say so on the row rather than inventing
   a second entry.
-- **Generator (B3).** `LTP_scheduleLaborSections` does not yet exclude
-  cancelled positions or emit `cancel:` lines — until B3 lands, a cancelled
-  position still bills in full through the day pools. B3 must add the
-  `"cancel"` rate type to `_RATE_TYPE_ORDER` (after `ot`) and read
-  `position.cancel.bill.total` / `cancel.pay.total` for the line.
+- **Generator (B3, built).** `LTP_scheduleLaborSections` leaves cancelled
+  positions out of the day pools and emits one `cancel:<posId>` line each
+  (rate type `"cancel"`, after `ot` in `_RATE_TYPE_ORDER`), priced from
+  `position.cancel.bill.total` / `cancel.pay.total`.
 - **`components/status-enums.js` does not exist** (the model comment is
   stale); the position status maps live in `modules/labor.js` (`POS_STATUSES`,
   `SEVERITY`), `components/schedule-editor.js` and `modules/schedule-builder.js`
-  (`POS_COLORS`). Add `cancelled` to each.
+  (`POS_COLORS`). All carry `cancelled` now (B4).
+
+## What the Opus steps settled (read before C)
+
+Places the build decided something this document had left open, or chose
+differently from it.
+
+- **Only committed crew are paid.** A cancellation pays the person on a
+  position only when they were confirmed or accepted
+  (`domain-crew.js::_cancelPaysCrew`). An open slot, an unanswered request
+  or a decline is charged to the client, pays nobody and freezes no `work`;
+  the reference's pay side counts only the committed.
+- **A booking is priced as one person-day.** The Labor tab cancels one
+  person's positions of a role on a day together.
+  `LTP_bookingCancelReference` prices them with `LTP_calcDayLabor` (each
+  shift carrying only the booking's positions), then splits bill and pay
+  across them in proportion to what each would bill alone, to the cent, so
+  every line's "50% charged" still reads true. "Cancel day…" prices the
+  whole day the same way.
+- **Restore sits in the edit dialog**, not on the row: every cancelled row
+  has "Edit…" (re-share or Restore) and "Refill".
+- **"Reopen slot instead"** is B4's "Release quietly". It runs the old
+  reset-to-open path, which still parks a `crewCancelled` notice, so
+  "quietly" would have misled.
+- **The notify choice is "Add to notify tray"** on the Labor tab, on by
+  default. The schedule editor offers none: its save diff
+  (`LTP_diffRemovedCrew` / `LTP_diffRemovedFixed`) parks every notice, and
+  the tray is where the producer sends or declines.
+- **`cancellationPay` travels per shift** in the notice snapshot and the
+  route sums it. The tray merges shifts by position id, so a total on the
+  notice would go stale.
+- **Adjustments on a cancel-only day** ride on the frozen cancellation and
+  move to a confirmed position when one joins the day
+  (`LTP_setPayAdjustments` / `LTP_getPayAdjustments`, mirroring the payout
+  rollup).
+- **Paid days.** The Payouts tab's cancel actions keep the paid-day check
+  and skip the admin one (`guardPaidDay`). Assignments now answers the
+  server's paid-day refusal with the same prompt the Payouts tab and the
+  builder already had (`LTP_usePaidDayConflict`).
+- **What the client sees.** The percentage rides as a `detail` aside on the
+  PDF and the online view (`doc_units.line_detail`). The note's date is
+  short ("Aug 11") so the percentage fits the PDF's item column.
+- **The tax fingerprint ignores `laborSync` markers**
+  (`api.py::_without_labor_sync`), so recording a sync on a sent invoice
+  never clears its QuickBooks tax.
+- **Crew portal.** A called-off call is listed under `cancelled`, over the
+  same span as past calls, with `cancellationPay`; it never reads "signed
+  off". Pay-day payloads carry `cancelTotal`.
+- **Found in passing.** The Payouts tab crashed on any cancel-only day
+  (`stateChips` had no `cancelled` entry since B2). Fixed in B4.
+- **Left for C:** the end-to-end pass.
