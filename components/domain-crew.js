@@ -596,17 +596,47 @@ window.LTP_signOffDay = function(schedule, crewId, date, actuals, services, crew
 // day (same ride-along pattern as `pay`/`work`); an empty list clears it.
 // Adjustments are independent of sign-off: they add on top of the estimate
 // before signing and on top of the frozen figure after.
+// A day the person has only CANCELLED shifts on (each with a frozen pay share,
+// LTP_cancelPosition) still pays, so its adjustments ride on those positions;
+// a day with any confirmed shift keeps them on the confirmed ones, as always.
+// Same rule as the payout rollup (domain-payouts.js, backend/payouts.py).
+function _adjTargets(schedule, crewId, date) {
+  var confirmed = false, cancelled = false;
+  (schedule || []).forEach(function(s) {
+    if (!s || s.date !== date) return;
+    (s.positions || []).forEach(function(p) {
+      if (!p || p.crewId !== crewId) return;
+      if (p.status === "confirmed") confirmed = true;
+      else if (p.status === "cancelled" && p.work && p.work.state === "cancelled") cancelled = true;
+    });
+  });
+  return confirmed ? "confirmed" : (cancelled ? "cancelled" : "confirmed");
+}
+function _isFrozenCancel(p) { return !!(p && p.status === "cancelled" && p.work && p.work.state === "cancelled"); }
+function _isAdjTarget(p, crewId, target) {
+  if (!p || p.crewId !== crewId) return false;
+  if (target === "cancelled") return _isFrozenCancel(p);
+  return p.status === "confirmed";
+}
 window.LTP_setPayAdjustments = function(schedule, crewId, date, adjustments) {
   var clean = (adjustments || []).filter(function(a) { return a && typeof a.amount === "number" && !isNaN(a.amount) && a.amount !== 0; });
+  var target = _adjTargets(schedule, crewId, date);
   return (schedule || []).map(function(s) {
     if (s.date !== date) return s;
     var touched = false;
     var positions = (s.positions || []).map(function(p) {
-      if (p && p.crewId === crewId && p.status === "confirmed") {
+      if (_isAdjTarget(p, crewId, target)) {
         touched = true;
         var copy = Object.assign({}, p);
         if (clean.length) copy.adj = clean; else delete copy.adj;
         return copy;
+      }
+      // The other kind of the person's positions that day never keeps a list
+      // of its own: the rollup reads confirmed first, then cancelled, so a
+      // stale list left there would come back the moment this one is cleared.
+      if (p && p.crewId === crewId && p.adj && (p.status === "confirmed" || _isFrozenCancel(p))) {
+        touched = true;
+        var bare = Object.assign({}, p); delete bare.adj; return bare;
       }
       return p;
     });
@@ -620,15 +650,18 @@ window.LTP_setPayAdjustments = function(schedule, crewId, date, adjustments) {
 // positions only, first non-empty list wins — so an editor reading this and a
 // payout row reading that can never disagree about what is on the day.
 window.LTP_getPayAdjustments = function(schedule, crewId, date) {
-  var found = null;
+  // Exactly the rollup's order: the first confirmed position's list, else the
+  // first frozen cancellation's.
+  var confirmed = null, cancelled = null;
   (schedule || []).forEach(function(s) {
-    if (!s || s.date !== date || found) return;
+    if (!s || s.date !== date) return;
     (s.positions || []).forEach(function(p) {
-      if (found) return;
-      if (p && p.crewId === crewId && p.status === "confirmed" && p.adj && p.adj.length) found = p.adj;
+      if (!p || p.crewId !== crewId || !p.adj || !p.adj.length) return;
+      if (p.status === "confirmed" && !confirmed) confirmed = p.adj;
+      else if (_isFrozenCancel(p) && !cancelled) cancelled = p.adj;
     });
   });
-  return found || [];
+  return confirmed || cancelled || [];
 };
 
 // Undo a sign-off: strip `work` from the person's positions on that date so the
@@ -677,9 +710,20 @@ window.LTP_unsignDay = function(schedule, crewId, date) {
 // and leaves it out of the day pools. A position with no crew member has no
 // pay side at all; a full-margin one is paid $0, as it would be for work.
 
+// Whether a cancellation pays the person on the position: only someone
+// committed to the call — confirmed, or accepted (they said yes and held the
+// date). A request still unanswered, a slot never sent, or a decline pays
+// nothing, though the client can still be charged for the role. A position
+// already cancelled was committed exactly when its pay was frozen.
+function _cancelPaysCrew(p) {
+  return !!p && p.crewId != null
+    && (p.status === "confirmed" || p.status === "accepted" || (p.status === "cancelled" && !!p.work));
+}
+
 // This shift's own full bill rate and pay cost — the reference the shares are
 // taken from. { bill: 0, pay: 0 } when the shift can't be priced (no times,
-// no role on the card).
+// no role on the card); pay 0 when nobody committed is on it or it is full
+// margin.
 window.LTP_cancelReference = function(shift, position, services, crewMins) {
   if (!shift || !position || !position.serviceId) return { bill: 0, pay: 0 };
   var day = window.LTP_calcDayLabor(
@@ -687,7 +731,7 @@ window.LTP_cancelReference = function(shift, position, services, crewMins) {
   var u = day && day.units && day.units[0];
   if (!u) return { bill: 0, pay: 0 };
   return { bill: Math.round((u.rateTotal || 0) * 100) / 100,
-           pay: position.fullMargin ? 0 : Math.round((u.costTotal || 0) * 100) / 100 };
+           pay: (position.fullMargin || !_cancelPaysCrew(position)) ? 0 : Math.round((u.costTotal || 0) * 100) / 100 };
 };
 
 // One share: a percentage of the reference, a typed amount, or nothing.
@@ -737,6 +781,36 @@ window.LTP_cancellationNote = function(cancel, isoDate) {
   return "Cancelled" + (day ? " " + day : "") + (pct !== "" ? " · " + pct + "% charged" : "");
 };
 
+// The schedule-activity detail for a cancellation: "Jane Doe · bill 50%
+// $300.00 · pay 50% $175.00" (docs/LABOR_SYNC_PLAN.md, B4). A typed amount
+// reads as the amount alone; with nobody booked there is no pay side.
+window.LTP_cancelActivityDetail = function(crewName, cancel) {
+  cancel = cancel || {};
+  function side(label, sd) {
+    if (!sd || sd.mode === "none") return label + " none";
+    return label + " " + (sd.mode === "amount" ? "" : (Number(sd.value) || 0) + "% ") + "$" + window.LTP_money(Number(sd.total) || 0);
+  }
+  var parts = [crewName || "Unassigned", side("bill", cancel.bill)];
+  if (crewName) parts.push(side("pay", cancel.pay));
+  return parts.join(" \u00b7 ");
+};
+
+// What a save did to one position's cancellation, for the schedule builder's
+// activity log: { what: "Cancelled" | "Cancellation Edited" | "Restored",
+// detail } — or null when its cancellation didn't change.
+window.LTP_cancelChange = function(before, after, crewName) {
+  var was = !!before && before.status === "cancelled", is = !!after && after.status === "cancelled";
+  if (!was && is) return { what: "Cancelled", detail: window.LTP_cancelActivityDetail(crewName, after.cancel) };
+  if (was && after && !is) return { what: "Restored", detail: (crewName || "Unassigned") + " \u00b7 back to " + after.status };
+  if (was && is) {
+    var a = before.cancel || {}, b = after.cancel || {};
+    if (JSON.stringify([a.bill, a.pay]) !== JSON.stringify([b.bill, b.pay])) {
+      return { what: "Cancellation Edited", detail: window.LTP_cancelActivityDetail(crewName, b) };
+    }
+  }
+  return null;
+};
+
 // The frozen pay for a cancelled position, in the shape a sign-off writes.
 window.LTP_cancelWork = function(position, payTotal, signedAt, signedBy) {
   var total = Math.round((Number(payTotal) || 0) * 100) / 100;
@@ -761,7 +835,7 @@ window.LTP_cancelDefaults = function(settings) {
 // records the edit alongside.
 function _cancelledPosition(position, ref, shares, meta) {
   shares = shares || {}; meta = meta || {};
-  var hasCrew = position.crewId != null;
+  var hasCrew = _cancelPaysCrew(position);
   var bill = shares.bill || { mode: "percent", value: 0 };
   var pay = (hasCrew && !position.fullMargin) ? (shares.pay || { mode: "percent", value: 0 }) : { mode: "none", value: 0 };
   var billTotal = window.LTP_cancelShare(ref.bill, bill.mode, bill.value);
@@ -842,7 +916,8 @@ window.LTP_cancelFixedPosition = function(fixedPositions, posId, shares, meta) {
     if (!p || p.id !== posId) return p;
     hit = true;
     var ref = (p.cancel && p.cancel.ref) ? p.cancel.ref
-      : { bill: Math.round((Number(p.bill) || 0) * 100) / 100, pay: p.fullMargin ? 0 : Math.round((Number(p.fee) || 0) * 100) / 100 };
+      : { bill: Math.round((Number(p.bill) || 0) * 100) / 100,
+          pay: (p.fullMargin || !_cancelPaysCrew(p)) ? 0 : Math.round((Number(p.fee) || 0) * 100) / 100 };
     return _cancelledPosition(p, ref, shares, meta);
   });
   return hit ? out : fixedPositions;
@@ -867,6 +942,293 @@ window.LTP_restoreFixedPosition = function(fixedPositions, posId, lockedAt) {
   });
   if (!hit) return fixedPositions;
   return crewId != null ? window.LTP_stampFixedPay(out, crewId, lockedAt, [posId]) : out;
+};
+
+// ── Bookings: several positions cancelled as one ─────────────────────────────
+// What the Labor tab and the schedule editor cancel is usually a BOOKING — one
+// person's positions on one day (a load-in and a show), or every position on a
+// day — not a lone position. A person's shifts that day bill as ONE
+// person-day (LTP_calcDayLabor pools them by role and slot, with the day's
+// OT), so pricing each shift alone would state the reference as two day rates.
+// Here the reference is the positions priced TOGETHER — each shift carrying
+// only the booking's positions, so nobody else on it moves the figure — and
+// then split across the positions in proportion to what each would bill
+// alone. A typed amount is split the same way, to the cent, remainder on the
+// last, so every position's record still reads "N% of its own reference" and
+// its line on the document names the same percentage. A single position comes
+// out exactly as LTP_cancelPosition would have it.
+
+// Split `total` across `weights` to the cent (equally when they sum to 0),
+// the rounding remainder on the last so the parts add up exactly.
+function _splitCents(total, weights) {
+  var cents = Math.round((Number(total) || 0) * 100);
+  var sumW = weights.reduce(function(t, w) { return t + (Number(w) || 0); }, 0);
+  var used = 0;
+  return weights.map(function(w, i) {
+    if (i === weights.length - 1) return (cents - used) / 100;
+    var c = sumW > 0 ? Math.round(cents * (Number(w) || 0) / sumW) : Math.round(cents / weights.length);
+    used += c;
+    return c / 100;
+  });
+}
+function _pickPositions(schedule, positionIds) {
+  var want = {}; (positionIds || []).forEach(function(id) { want[id] = true; });
+  var picks = [];
+  (schedule || []).forEach(function(s) {
+    ((s && s.positions) || []).forEach(function(p) { if (p && want[p.id]) picks.push({ shift: s, pos: p }); });
+  });
+  return picks;
+}
+
+// The booking's reference: { bill, pay, parts: [{ id, bill, pay }] }. Only
+// positions that are not already cancelled are priced (a cancelled one keeps
+// the reference it was cancelled against).
+window.LTP_bookingCancelReference = function(schedule, positionIds, services, crewMins) {
+  var picks = _pickPositions(schedule, positionIds).filter(function(pk) { return pk.pos.status !== "cancelled"; });
+  if (!picks.length) return { bill: 0, pay: 0, parts: [] };
+  var byShift = {}, order = [];
+  picks.forEach(function(pk) {
+    var k = String(pk.shift.id);
+    if (!byShift[k]) { byShift[k] = { time: pk.shift.time, endTime: pk.shift.endTime, breaks: pk.shift.breaks || [], positions: [] }; order.push(k); }
+    byShift[k].positions.push(pk.pos);
+  });
+  function priced(keep) {
+    var shifts = order.map(function(k) {
+      return Object.assign({}, byShift[k], { positions: byShift[k].positions.filter(keep) });
+    });
+    return window.LTP_calcDayLabor(shifts, services, crewMins);
+  }
+  var bill = 0, pay = 0;
+  (priced(function() { return true; }).units || []).forEach(function(u) { bill += u.rateTotal || 0; });
+  // The pay side: only the people committed to the call, not full margin
+  // (_cancelPaysCrew) — priced on their own, so an unanswered request on the
+  // same shift adds nothing to it.
+  var paid = function(p) { return _cancelPaysCrew(p) && !p.fullMargin; };
+  if (picks.some(function(pk) { return paid(pk.pos); })) {
+    (priced(paid).units || []).forEach(function(u) { pay += u.fullMargin ? 0 : (u.costTotal || 0); });
+  }
+  bill = Math.round(bill * 100) / 100; pay = Math.round(pay * 100) / 100;
+  var alone = picks.map(function(pk) { return window.LTP_cancelReference(pk.shift, pk.pos, services, crewMins); });
+  var bills = _splitCents(bill, alone.map(function(a) { return a.bill; }));
+  // Pay splits by each position's own cost (0 for anyone it doesn't pay).
+  var payWeights = alone.map(function(a) { return a.pay; });
+  var lastPaid = -1; picks.forEach(function(pk, i) { if (paid(pk.pos)) lastPaid = i; });
+  var pays = payWeights.some(function(w) { return w > 0; }) ? _splitCents(pay, payWeights)
+    : picks.map(function(pk, i) { return i === lastPaid ? pay : 0; });
+  return { bill: bill, pay: pay, parts: picks.map(function(pk, i) { return { id: pk.pos.id, bill: bills[i], pay: pays[i] }; }) };
+};
+
+// One side's share for each part: a percentage applies as it is; an amount is
+// split in proportion to the parts' references.
+function _sideShares(side, total, partRefs) {
+  var sd = side || { mode: "percent", value: 0 };
+  if (sd.mode !== "amount") return partRefs.map(function() { return { mode: sd.mode || "percent", value: Number(sd.value) || 0 }; });
+  return _splitCents(Number(sd.value) || 0, partRefs).map(function(v) { return { mode: "amount", value: v }; });
+}
+function _applyParts(schedule, parts, shares, meta, write) {
+  var byId = {};
+  var billShares = _sideShares(shares && shares.bill, 0, parts.map(function(pt) { return pt.bill; }));
+  var payShares = _sideShares(shares && shares.pay, 0, parts.map(function(pt) { return pt.pay; }));
+  parts.forEach(function(pt, i) { byId[pt.id] = { ref: { bill: pt.bill, pay: pt.pay }, shares: { bill: billShares[i], pay: payShares[i] } }; });
+  var hit = false;
+  var out = (schedule || []).map(function(s) {
+    if (!s || !(s.positions || []).some(function(p) { return p && byId[p.id]; })) return s;
+    return Object.assign({}, s, { positions: s.positions.map(function(p) {
+      var part = p && byId[p.id];
+      if (!part) return p;
+      var next = write(p, part);
+      if (next !== p) hit = true;
+      return next;
+    }) });
+  });
+  return hit ? out : schedule;
+}
+
+// Cancel the positions as one booking. shares = { bill: {mode, value}, pay:
+// {mode, value} } for the booking as a whole; meta = { at, by, byId, reason }.
+// Positions already cancelled are left as they are. Returns a new schedule
+// (the input when nothing was cancelled).
+window.LTP_cancelBooking = function(schedule, positionIds, shares, services, crewMins, meta) {
+  var ref = window.LTP_bookingCancelReference(schedule, positionIds, services, crewMins);
+  if (!ref.parts.length) return schedule;
+  return _applyParts(schedule, ref.parts, shares, meta, function(p, part) {
+    return p.status === "cancelled" ? p : _cancelledPosition(p, part.ref, part.shares, meta);
+  });
+};
+
+// The reference a cancelled booking was cancelled against — the sum of its
+// positions' fixed references — and the shares it currently carries, for the
+// edit dialog. { bill, pay, shares: { bill, pay } } or null.
+window.LTP_bookingCancellation = function(schedule, positionIds) {
+  var picks = _pickPositions(schedule, positionIds).filter(function(pk) { return pk.pos.status === "cancelled" && pk.pos.cancel && pk.pos.cancel.ref; });
+  if (!picks.length) return null;
+  var bill = 0, pay = 0, billTotal = 0, payTotal = 0;
+  picks.forEach(function(pk) {
+    var c = pk.pos.cancel;
+    bill += Number(c.ref.bill) || 0; pay += Number(c.ref.pay) || 0;
+    billTotal += Number(c.bill && c.bill.total) || 0; payTotal += Number(c.pay && c.pay.total) || 0;
+  });
+  function side(key, total) {
+    var first = picks[0].pos.cancel[key] || { mode: "percent", value: 0 };
+    if (first.mode === "amount") return { mode: "amount", value: Math.round(total * 100) / 100 };
+    return { mode: first.mode || "percent", value: Number(first.value) || 0 };
+  }
+  return { bill: Math.round(bill * 100) / 100, pay: Math.round(pay * 100) / 100,
+           billTotal: Math.round(billTotal * 100) / 100, payTotal: Math.round(payTotal * 100) / 100,
+           reason: picks[0].pos.cancel.reason || "",
+           shares: { bill: side("bill", billTotal), pay: side("pay", payTotal) } };
+};
+
+// Re-share a cancelled booking. Each position keeps the reference it was
+// cancelled against; an amount is split across those references.
+window.LTP_setBookingCancellationShares = function(schedule, positionIds, shares, meta) {
+  var picks = _pickPositions(schedule, positionIds).filter(function(pk) { return pk.pos.status === "cancelled" && pk.pos.cancel && pk.pos.cancel.ref; });
+  if (!picks.length) return schedule;
+  var parts = picks.map(function(pk) { return { id: pk.pos.id, bill: Number(pk.pos.cancel.ref.bill) || 0, pay: Number(pk.pos.cancel.ref.pay) || 0 }; });
+  return _applyParts(schedule, parts, shares, meta, function(p, part) {
+    return _cancelledPosition(p, part.ref, part.shares, meta);
+  });
+};
+
+// Restore every cancelled position of a booking (LTP_restorePosition each).
+window.LTP_restoreBooking = function(schedule, positionIds, services, crewMins, lockedAt) {
+  var out = schedule;
+  _pickPositions(schedule, positionIds).forEach(function(pk) {
+    if (pk.pos.status === "cancelled") out = window.LTP_restorePosition(out, pk.shift.id, pk.pos.id, services, crewMins, lockedAt);
+  });
+  return out;
+};
+
+// "Refill role": the call still needs someone. A new OPEN position for the same
+// role on the same shift, with the next free person-slot so it is a different
+// person, not the cancelled one's day. Returns { schedule, positionId }.
+window.LTP_refillPosition = function(schedule, shiftId, posId, genId) {
+  var gen = genId || window.LTP_genId, newId = null;
+  var out = (schedule || []).map(function(s) {
+    if (!s || s.id !== shiftId) return s;
+    var src = (s.positions || []).filter(function(p) { return p && p.id === posId; })[0];
+    if (!src) return s;
+    var used = {};
+    var slots = window.LTP_effectiveSlots(s.positions);
+    (s.positions || []).forEach(function(p) { if (p && p.serviceId === src.serviceId) used[slots[p.id] || 1] = true; });
+    var slot = 1; while (used[slot]) slot++;
+    newId = gen("pos");
+    var fresh = { id: newId, role: src.role || "", serviceId: src.serviceId || null, crewId: null, status: "open", fullMargin: false };
+    if (src.serviceId) fresh.slot = slot;
+    return Object.assign({}, s, { positions: (s.positions || []).concat([fresh]) });
+  });
+  return { schedule: newId ? out : schedule, positionId: newId };
+};
+// The flat-rate mirror: the same role, fee and bill, open, nobody on it.
+window.LTP_refillFixedPosition = function(fixedPositions, posId, genId) {
+  var gen = genId || window.LTP_genId;
+  var src = (fixedPositions || []).filter(function(p) { return p && p.id === posId; })[0];
+  if (!src) return { fixedPositions: fixedPositions, positionId: null };
+  var newId = gen("pos");
+  var fresh = { id: newId, serviceId: src.serviceId || null, role: src.role || "", crewId: null, status: "open",
+                fee: src.fee, bill: src.bill, fullMargin: false, note: src.note || "" };
+  return { fixedPositions: (fixedPositions || []).concat([fresh]), positionId: newId };
+};
+
+// ── A booking on a project row ───────────────────────────────────────────────
+// The Labor tab writes whole project rows, so these wrap the booking helpers
+// above for one project: its schedule when the ids are shift positions, its
+// flat-rate list when the id is a flat-rate position (a booking is one or the
+// other — the tab never mixes them).
+function _cancelR2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function _shareOf(side) {
+  return side ? { mode: side.mode || "percent", value: Number(side.value) || 0 } : { mode: "percent", value: 0 };
+}
+
+// What the cancel dialog shows for `positionIds` on `project`:
+//   { flat, ids, crewId, status, fullMargin, cancelled, ref: { bill, pay },
+//     shares, billTotal, payTotal, reason, date }
+// `cancelled` is true when every position named is already cancelled: `ref`
+// is then what they were cancelled against and `shares` what they carry (the
+// edit dialog). Otherwise `ids` narrows to the positions not yet cancelled
+// and `ref` is priced now. null when none of the ids is on the project.
+window.LTP_projectBooking = function(project, positionIds, services, crewMins) {
+  if (!project) return null;
+  var want = {}; (positionIds || []).forEach(function(id) { want[id] = true; });
+  var fp = (project.fixedPositions || []).filter(function(p) { return p && want[p.id]; })[0];
+  if (fp) {
+    var fc = fp.status === "cancelled" && fp.cancel && fp.cancel.ref ? fp.cancel : null;
+    var fref = fc ? fc.ref : { bill: fp.bill, pay: fp.fullMargin ? 0 : fp.fee };
+    var fpaid = _cancelPaysCrew(fp);
+    if (!fc && !fpaid) fref = { bill: fref.bill, pay: 0 };
+    return { flat: true, ids: [fp.id], crewId: fp.crewId != null ? fp.crewId : null, status: fp.status, paysCrew: fpaid,
+             fullMargin: !!fp.fullMargin, cancelled: !!fc, ref: { bill: _cancelR2(fref.bill), pay: _cancelR2(fref.pay) },
+             shares: fc ? { bill: _shareOf(fc.bill), pay: _shareOf(fc.pay) } : null,
+             billTotal: fc ? _cancelR2(fc.bill && fc.bill.total) : 0, payTotal: fc ? _cancelR2(fc.pay && fc.pay.total) : 0,
+             reason: fc ? (fc.reason || "") : "", date: "" };
+  }
+  var picks = _pickPositions(project.schedule, positionIds);
+  if (!picks.length) return null;
+  var live = picks.filter(function(pk) { return pk.pos.status !== "cancelled"; });
+  var lead = (live[0] || picks[0]).pos;
+  var out = { flat: false, crewId: lead.crewId != null ? lead.crewId : null, status: lead.status,
+              date: (live[0] || picks[0]).shift.date || "",
+              paysCrew: (live.length ? live : picks).some(function(pk) { return _cancelPaysCrew(pk.pos); }) };
+  function margin(pks) { return pks.every(function(pk) { return !!pk.pos.fullMargin; }); }
+  if (!live.length) {
+    var bc = window.LTP_bookingCancellation(project.schedule, positionIds);
+    if (!bc) return null;
+    return Object.assign(out, { ids: picks.map(function(pk) { return pk.pos.id; }), fullMargin: margin(picks), cancelled: true,
+      ref: { bill: bc.bill, pay: bc.pay }, shares: bc.shares, billTotal: bc.billTotal, payTotal: bc.payTotal, reason: bc.reason });
+  }
+  var ids = live.map(function(pk) { return pk.pos.id; });
+  var ref = window.LTP_bookingCancelReference(project.schedule, ids, services, crewMins);
+  return Object.assign(out, { ids: ids, fullMargin: margin(live), cancelled: false,
+    ref: { bill: ref.bill, pay: ref.pay }, shares: null, billTotal: 0, payTotal: 0, reason: "" });
+};
+
+// Write one of the dialog's decisions onto the project row. action: "cancel" |
+// "edit" | "restore" | "refill"; meta = { at, by, byId, reason } (restore
+// re-locks pay at meta.at). Returns { project, positionIds }: the new row (the
+// input when nothing changed) and, for "refill", the new open positions' ids.
+window.LTP_projectBookingWrite = function(project, booking, action, shares, services, crewMins, meta, genId) {
+  meta = meta || {};
+  if (!project || !booking) return { project: project, positionIds: [] };
+  var ids = booking.ids || [], added = [];
+  if (booking.flat) {
+    var fixed = project.fixedPositions || [], nextFixed = fixed;
+    if (action === "cancel") nextFixed = window.LTP_cancelFixedPosition(fixed, ids[0], shares, meta);
+    else if (action === "edit") nextFixed = window.LTP_setFixedCancellationShares(fixed, ids[0], shares, meta);
+    else if (action === "restore") nextFixed = window.LTP_restoreFixedPosition(fixed, ids[0], meta.at);
+    else if (action === "refill") {
+      var rf = window.LTP_refillFixedPosition(fixed, ids[0], genId);
+      nextFixed = rf.fixedPositions;
+      if (rf.positionId) added.push(rf.positionId);
+    }
+    return { project: nextFixed === fixed ? project : Object.assign({}, project, { fixedPositions: nextFixed }), positionIds: added };
+  }
+  var sched = project.schedule || [], next = sched;
+  if (action === "cancel") next = window.LTP_cancelBooking(sched, ids, shares, services, crewMins, meta);
+  else if (action === "edit") next = window.LTP_setBookingCancellationShares(sched, ids, shares, meta);
+  else if (action === "restore") next = window.LTP_restoreBooking(sched, ids, services, crewMins, meta.at);
+  else if (action === "refill") {
+    _pickPositions(sched, ids).forEach(function(pk) {
+      var rs = window.LTP_refillPosition(next, pk.shift.id, pk.pos.id, genId);
+      next = rs.schedule;
+      if (rs.positionId) added.push(rs.positionId);
+    });
+  }
+  return { project: next === sched ? project : Object.assign({}, project, { schedule: next }), positionIds: added };
+};
+
+// The notify-tray shift list for a cancelled booking: the usual snapshots,
+// each paid one carrying its own share as `cancellationPay`, which the
+// crewCancelledWithPay email sums (see LTP_diffRemovedCrew).
+window.LTP_cancelSnapshots = function(project, positionIds, services) {
+  if (!project) return [];
+  var payById = {};
+  function note(p) { if (p && p.status === "cancelled" && p.cancel && p.cancel.pay) payById[p.id] = _cancelR2(p.cancel.pay.total); }
+  (project.schedule || []).forEach(function(s) { ((s && s.positions) || []).forEach(note); });
+  (project.fixedPositions || []).forEach(note);
+  var snaps = window.LTP_shiftSnapshots(project.schedule, positionIds, services)
+    .concat(window.LTP_fixedSnapshots(project.fixedPositions, positionIds, services));
+  snaps.forEach(function(sn) { if (payById[sn.positionId] > 0) sn.cancellationPay = payById[sn.positionId]; });
+  return snaps;
 };
 
 // What a reassignment or a reopen must take with it: the previous holder's
@@ -967,19 +1329,37 @@ window.LTP_crewNotify = function(contactId, projectId, template, opts) {
     (after || []).forEach(function(s) {
       (s.positions || []).forEach(function(p) { afterById[p.id] = p.crewId || null; });
     });
+    // A position the person still holds but that was CANCELLED in between is
+    // a removal too: the call is off. It is noticed like a cancelled booking,
+    // except that one carrying a pay share gets its own notice
+    // (crewCancelledWithPay) naming what they will be paid: each shift carries
+    // its own share as `cancellationPay` (LTP_cancelSnapshots), which the
+    // notify route sums — the tray merges shifts from several parks into one
+    // notice, so the figure has to travel with the shift. A cancellation that
+    // pays nothing reads like any other removal from that status (a confirmed
+    // call → crewCancelled).
+    var afterPosById = {};
+    (after || []).forEach(function(s) {
+      (s.positions || []).forEach(function(p) { afterPosById[p.id] = p; });
+    });
     var groups = {};  // "crewId:template"
     (before || []).forEach(function(sh) {
       (sh.positions || []).forEach(function(p) {
         if (!p.crewId || !ACTIVE[p.status]) return;
         var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
-        if (stillThere && afterById[p.id] === p.crewId) return;  // still theirs
-        var template = window.LTP_removalTemplate(p.status);
+        var nowPos = afterPosById[p.id];
+        var cancelledNow = !!(stillThere && afterById[p.id] === p.crewId && nowPos && nowPos.status === "cancelled");
+        if (stillThere && afterById[p.id] === p.crewId && !cancelledNow) return;  // still theirs
+        var pay = cancelledNow ? Math.round((Number(nowPos.cancel && nowPos.cancel.pay && nowPos.cancel.pay.total) || 0) * 100) / 100 : 0;
+        var template = pay > 0 ? "crewCancelledWithPay" : window.LTP_removalTemplate(p.status);
         var k = p.crewId + ":" + template;
         if (!groups[k]) {
           var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
           groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: template, shifts: [] };
         }
-        groups[k].shifts.push(shiftSnap(sh, p, svcById));
+        var snap = shiftSnap(sh, p, svcById);
+        if (pay > 0) snap.cancellationPay = pay;
+        groups[k].shifts.push(snap);
       });
     });
     return Object.keys(groups).map(function(k) { return groups[k]; });
@@ -1167,7 +1547,9 @@ window.LTP_detectCrewConflicts = function(projects) {
     (proj.schedule || []).forEach(function(s) {
       if (!s.date) return;
       (s.positions || []).forEach(function(p) {
-        if (!p.crewId || p.status === "declined") return;
+        // A declined position was never theirs; a cancelled one no longer is —
+        // the day is free (its pay share, if any, is not a booking).
+        if (!p.crewId || p.status === "declined" || p.status === "cancelled") return;
         var key = p.crewId + "|" + s.date;
         if (!bookings[key]) bookings[key] = [];
         bookings[key].push({ projectId: proj.id, projectName: proj.name, schedTitle: s.title, schedItemId: s.id, posId: p.id, status: p.status, date: s.date, crewId: p.crewId, serviceId: p.serviceId,
@@ -1409,19 +1791,25 @@ window.LTP_fixedSnapshots = function(fixedPositions, positionIds, services) {
 window.LTP_diffRemovedFixed = function(before, after, contacts, services) {
   var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
   var afterById = {};
-  (after || []).forEach(function(p) { if (p) afterById[p.id] = p.crewId || null; });
+  (after || []).forEach(function(p) { if (p) afterById[p.id] = p; });
   var groups = {};
   (before || []).forEach(function(p) {
     if (!p || !p.crewId || !ACTIVE[p.status]) return;
-    var stillThere = Object.prototype.hasOwnProperty.call(afterById, p.id);
-    if (stillThere && afterById[p.id] === p.crewId) return;
-    var template = window.LTP_removalTemplate(p.status);
+    var now = afterById[p.id];
+    // Still theirs and not cancelled in between (a cancellation is noticed
+    // exactly as LTP_diffRemovedCrew notices one).
+    var cancelledNow = !!(now && now.crewId === p.crewId && now.status === "cancelled");
+    if (now && now.crewId === p.crewId && !cancelledNow) return;
+    var pay = cancelledNow ? Math.round((Number(now.cancel && now.cancel.pay && now.cancel.pay.total) || 0) * 100) / 100 : 0;
+    var template = pay > 0 ? "crewCancelledWithPay" : window.LTP_removalTemplate(p.status);
     var k = p.crewId + ":" + template;
     if (!groups[k]) {
       var cm = (contacts || []).find(function(c) { return c.id === p.crewId; });
       groups[k] = { crewId: p.crewId, crewName: cm ? (cm.firstName + " " + cm.lastName).trim() : "Crew", template: template, shifts: [] };
     }
-    groups[k].shifts = groups[k].shifts.concat(window.LTP_fixedSnapshots([p], [p.id], services));
+    var snaps = window.LTP_fixedSnapshots([p], [p.id], services);
+    if (pay > 0) snaps.forEach(function(sn) { sn.cancellationPay = pay; });
+    groups[k].shifts = groups[k].shifts.concat(snaps);
   });
   return Object.keys(groups).map(function(k) { return groups[k]; });
 };

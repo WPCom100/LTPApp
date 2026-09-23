@@ -10,7 +10,7 @@
   var genId = window.LTP_genId, todayISO = window.LTP_todayISO;
   var calcHours = window.LTP_calcHours;
 
-  var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info } };
+  var POS_STATUSES = { open: { label: "Open", color: B.textMut }, requested: { label: "Requested", color: B.warn }, accepted: { label: "Accepted", color: B.success }, declined: { label: "Declined", color: B.danger }, confirmed: { label: "Confirmed", color: B.info }, cancelled: { label: "Cancelled", color: B.textMut } };
 
   // "3 shifts" / "1 flat-rate position" / "3 shifts + 1 flat-rate position"
   // — the count line for a request, matching the server's email header
@@ -97,8 +97,10 @@
     { key: "needsCrew", label: "need crew", color: B.textMut },
   ];
   function summarizePositions(list) {
-    var s = { total: 0, confirmed: 0, accepted: 0, requested: 0, toSend: 0, declined: 0, needsCrew: 0 };
+    var s = { total: 0, confirmed: 0, accepted: 0, requested: 0, toSend: 0, declined: 0, needsCrew: 0, cancelled: 0 };
     (list || []).forEach(function(p) {
+      // A cancelled position is not a slot to fill (docs/LABOR_SYNC_PLAN.md, B4).
+      if (p.status === "cancelled") { s.cancelled++; return; }
       s.total++;
       if (p.status === "confirmed") s.confirmed++;
       else if (p.status === "accepted") s.accepted++;
@@ -246,6 +248,7 @@
             roleCode: svc ? svc.role : "Crew",
             dept: svc ? svc.department : "",
             crewName: cm ? cm.firstName + " " + cm.lastName : null,
+            fullMargin: !!p.fullMargin, cancel: p.status === "cancelled" ? (p.cancel || null) : null,
           });
         });
       });
@@ -279,6 +282,7 @@
           dept: svc ? svc.department : "",
           crewName: cm ? cm.firstName + " " + cm.lastName : null,
           flat: true, fee: Number(p.fee) || 0, bill: Number(p.bill) || 0, fullMargin: !!p.fullMargin,
+          cancel: p.status === "cancelled" ? (p.cancel || null) : null,
           payDate: window.LTP_fixedPayDate(proj),   // project end — the payroll period it falls into pays the fee
           projectStart: projectStart, projectEnd: projectEnd,
         });
@@ -1246,6 +1250,9 @@
     var [showManualShift, setShowManualShift] = useState(false);
     var [editManualProject, setEditManualProject] = useState(null);
     var [noteDlg, setNoteDlg] = useState(null);   // { pos, text, applyToDay, dayCount }
+    // The cancel dialog (components/cancel-labor.js): { projectId, positionIds, onReopen? }
+    var [cancelDlg, setCancelDlg] = useState(null);
+    var paidConflict = window.LTP_usePaidDayConflict(setProjects, contacts);
     var collapsed = useCollapsedSet("ltp.labor.assignments.collapsed");
     var crew = contacts.filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
 
@@ -1356,7 +1363,8 @@
       var proj = editManualProject;
       setEditManualProject(null);
       if (!proj) return;
-      var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
+      // A cancellation is kept too: it still bills and pays its share.
+      var ACTIVE = { requested: 1, accepted: 1, confirmed: 1, cancelled: 1 };
       function committed(sh) { return ((sh && sh.positions) || []).some(function(p) { return p.crewId && ACTIVE[p.status]; }); }
       // Build the new schedule from the LIVE row inside the updater, not from the
       // snapshot taken when the modal opened. This modal owns the shift's name,
@@ -1499,24 +1507,27 @@
       updatePosition(setProjects, pos.projectId, pos.schedItemId, pos.posId, { status: newStatus });
     }
 
-    function executeStatusChange() {
-      if (!statusDlg) return;
+    // `dlg` runs a change without its confirm dialog (the cancel dialog's
+    // "Reopen slot instead" — already a deliberate choice); else the open one.
+    function executeStatusChange(dlg) {
+      var sd = dlg || statusDlg;
+      if (!sd) return;
       // A reassign dialog carries its own onConfirm (park the removal notice
       // for the outgoing person, then run the assign flow for the incoming
       // one); the plain status-change cascade below doesn't apply to it.
-      if (statusDlg.onConfirm) {
-        var fn = statusDlg.onConfirm;
+      if (sd.onConfirm) {
+        var fn = sd.onConfirm;
         setStatusDlg(null);
         fn();
         return;
       }
-      var pos = statusDlg.pos;
-      var newStatus = statusDlg.newStatus;
-      var clearCrew = statusDlg.clearCrew;
+      var pos = sd.pos;
+      var newStatus = sd.newStatus;
+      var clearCrew = sd.clearCrew;
       // Scope the change to this booking's positions when known (so a conflict
       // resolution touches only its shift); fall back to every same-date shift
       // for this crew (the legacy whole-day behaviour) when not.
-      var scopeIds = (statusDlg.posIds && statusDlg.posIds.length) ? statusDlg.posIds : null;
+      var scopeIds = (sd.posIds && sd.posIds.length) ? sd.posIds : null;
       var affectIds = scopeIds ? scopeIds.reduce(function(m, id) { m[id] = true; return m; }, {}) : null;
       // Park a typed notice (requested→withdrawn, accepted→not-selected,
       // confirmed→cancelled) for the affected shifts — scopeIds (this booking's
@@ -1647,6 +1658,18 @@
       var crewMap = {};
       var dayBookings = [];
       g.positions.forEach(function(pos) {
+        // A cancelled position is a record, not a slot: one row per person
+        // and role (like a day booking), in the day's "Cancelled" group.
+        if (pos.status === "cancelled") {
+          var xk = "x|" + (pos.crewId ? pos.crewId + "|" + (pos.flat ? pos.posId : (pos.serviceId || pos.posId)) : pos.posId);
+          if (!crewMap[xk]) {
+            crewMap[xk] = { type: "cancelled", pos: pos, items: [], allPosIds: [] };
+            dayBookings.push(crewMap[xk]);
+          }
+          crewMap[xk].items.push(pos.schedTitle);
+          crewMap[xk].allPosIds.push(pos);
+          return;
+        }
         if (!pos.crewId) {
           // No crew — keep as individual entry
           dayBookings.push({ type: "single", pos: pos, items: [pos.schedTitle], allPosIds: [pos] });
@@ -1687,7 +1710,13 @@
       // Group bookings by matching schedule-item set
       var itemSetMap = {};
       var itemSetGroups = [];
+      var cancelledSet = null;
       dayBookings.forEach(function(bk) {
+        if (bk.type === "cancelled") {
+          if (!cancelledSet) cancelledSet = { items: [], bookings: [], cancelled: true };
+          cancelledSet.bookings.push(bk);
+          return;
+        }
         var key = bk.items.filter(function(v, i, a) { return a.indexOf(v) === i; }).sort().join("|");
         if (!itemSetMap[key]) {
           itemSetMap[key] = { items: bk.items.filter(function(v, i, a) { return a.indexOf(v) === i; }), bookings: [] };
@@ -1695,6 +1724,7 @@
         }
         itemSetMap[key].bookings.push(bk);
       });
+      if (cancelledSet) itemSetGroups.push(cancelledSet);   // always last
       g.itemSetGroups = itemSetGroups;
       });
     });
@@ -1880,10 +1910,35 @@
     allPositions.forEach(function(p) { (posByProject[p.projectId] = posByProject[p.projectId] || []).push(p); });
     var sectionIds = shownGroups.map(function(pg) { return pg.projectId; });
 
+    // A cancelled booking: what was decided, and the two things left to do
+    // with it — re-share or restore it (the dialog), or refill the role.
+    function renderCancelled(booking, bi) {
+      var pos = booking.pos;
+      var ids = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
+      var bill = 0, pay = 0, paid = false;
+      (booking.allPosIds || []).forEach(function(bp) {
+        var c = bp.cancel;
+        if (c) { bill += Number(c.bill && c.bill.total) || 0; pay += Number(c.pay && c.pay.total) || 0; paid = paid || !!(c.pay && c.pay.mode !== "none"); }
+      });
+      var proj = (projects || []).find(function(p) { return p.id === pos.projectId; });
+      var ctl = { background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: isMobile ? "6px 10px" : "3px 8px", color: B.textSec, fontSize: isMobile ? "11px" : "9px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" };
+      return h("div", { key: "x-" + pos.posId + "-" + bi,
+        style: { padding: isMobile ? "8px 10px" : "5px 10px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", borderTop: bi > 0 ? "1px solid " + B.border : "none" } },
+        h("div", { style: { flex: isMobile ? "1 1 100%" : "1 1 170px", minWidth: 0, display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+          h("span", { style: { fontSize: isMobile ? "13px" : "11px", fontWeight: 600, color: B.textMut, textDecoration: "line-through" } }, pos.svcName),
+          h("span", { style: { fontSize: isMobile ? "12px" : "10px", color: B.textSec } }, pos.crewName || "Nobody booked")),
+        h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: isMobile ? 0 : "auto", flexWrap: "wrap" } },
+          h("span", { style: { fontSize: isMobile ? "11px" : "10px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
+            "bill $" + window.LTP_money(bill) + (paid ? " \u00b7 pay $" + window.LTP_money(pay) : "")),
+          h("button", { onClick: function() { setCancelDlg({ projectId: pos.projectId, positionIds: ids }); }, style: ctl }, "Edit\u2026"),
+          proj && h("button", { onClick: function() { window.LTP_refillBooking(proj, ids, setProjects, services, contacts); }, style: ctl }, "Refill")));
+    }
+
     // One booking row: role + chips on the left, the crew picker and status
     // controls on the right. The controls wrap under the label when a day
     // column is narrow, and stay a single line when it is wide.
     function renderBooking(booking, bi) {
+      if (booking.type === "cancelled") return renderCancelled(booking, bi);
       var pos = booking.pos;
       // The positions this booking represents — status actions act on exactly
       // these (a conflicting shift is its own booking, so it isn't swept up
@@ -2057,8 +2112,13 @@
             h("button", { onClick: function() { releasePosition(pos, bkPosIds); }, style: ctlBtn }, "Release")),
           pos.status === "confirmed" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
             pill(B.info, "✓ Confirmed"),
-            h("button", { onClick: function() { handleStatusChange(pos, "open", bkPosIds); }, title: "Cancel this confirmed position",
-              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "9px", padding: "2px 4px", fontFamily: "inherit" } }, "cancel")),
+            // The cancel dialog (charge / pay shares). "Reopen slot instead"
+            // is the old reset-to-open, for a person off a call that goes ahead.
+            h("button", { onClick: function() {
+                setCancelDlg({ projectId: pos.projectId, positionIds: bkPosIds,
+                  onReopen: function() { executeStatusChange({ pos: pos, newStatus: "open", posIds: bkPosIds, clearCrew: true }); } });
+              },
+              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "9px", padding: "2px 4px", fontFamily: "inherit" } }, "Cancel\u2026")),
           pos.status === "declined" && h("div", { style: { display: "flex", gap: 4, alignItems: "center" } },
             pill(B.danger, "Declined"),
             h("button", { onClick: function() {
@@ -2082,6 +2142,7 @@
     // flat-rate bucket is a column too, without the caption.
     function renderDayColumn(pg, g) {
       var daySum = summarizePositions(g.positions);
+      var cancelledRows = (g.itemSetGroups || []).reduce(function(n, isg) { return n + (isg.cancelled ? isg.bookings.length : 0); }, 0);
       var shiftTimes = {};
       g.positions.forEach(function(p) {
         if (p.schedTitle && !shiftTimes[p.schedTitle] && p.callTime) shiftTimes[p.schedTitle] = ftc(p.callTime) + (p.endTime ? "–" + ftc(p.endTime) : "");
@@ -2093,11 +2154,12 @@
           !g.date && h("span", { style: { fontSize: "9px", color: B.textMut, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, "no call times — fee stated on the request"),
           h("span", { style: { flex: 1 } }),
           daySum.needsCrew > 0 && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.warn, whiteSpace: "nowrap" } }, daySum.needsCrew + " need crew"),
-          h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, g.shownRows + " crew")),
+          h("span", { style: { fontSize: "9px", color: B.textMut, whiteSpace: "nowrap" } }, (g.shownRows - cancelledRows) + " crew")),
         (g.itemSetGroups || []).map(function(isg, gi) {
-          var caption = isg.items.map(function(t) { return t + (shiftTimes[t] ? "  " + shiftTimes[t] : ""); }).join("   ›   ");
+          var caption = isg.cancelled ? "Cancelled"
+            : isg.items.map(function(t) { return t + (shiftTimes[t] ? "  " + shiftTimes[t] : ""); }).join("   ›   ");
           return h("div", { key: "isg-" + gi },
-            g.date && h("div", { title: caption, style: { padding: "3px 10px", background: B.bg, borderTop: gi > 0 ? "1px solid " + B.border : "none", borderBottom: "1px solid " + B.border, fontSize: "9px", fontWeight: 700, color: B.textMut, letterSpacing: "0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, caption),
+            (g.date || isg.cancelled) && h("div", { title: caption, style: { padding: "3px 10px", background: B.bg, borderTop: gi > 0 ? "1px solid " + B.border : "none", borderBottom: "1px solid " + B.border, fontSize: "9px", fontWeight: 700, color: B.textMut, letterSpacing: "0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, caption),
             isg.bookings.map(function(booking, bi) { return renderBooking(booking, bi); }));
         }));
     }
@@ -2254,6 +2316,12 @@
             h(window.Btn, { variant: "ghost", onClick: function() { setStatusDlg(null); } }, "Keep"),
             h(window.Btn, { variant: "danger", onClick: function() { executeStatusChange(); } }, statusDlg.actionLabel)))
       ),
+
+      cancelDlg && h(window.LTPCancelFlow, { key: cancelDlg.positionIds.join(","),
+        project: (projects || []).find(function(p) { return p.id === cancelDlg.projectId; }),
+        positionIds: cancelDlg.positionIds, services: services, clientRates: clientRates, contacts: contacts, settings: settings,
+        setProjects: setProjects, onReopen: cancelDlg.onReopen, onClose: function() { setCancelDlg(null); } }),
+      paidConflict,
 
       // Send Requests review panel with email preview. On a phone the
       // recipient list stacks above the request summary (side by side, the
@@ -2428,7 +2496,8 @@
     for (var i = 0; i < firstDay; i++) cells.push(null);
     for (var d = 1; d <= daysInMonth; d++) {
       var dateStr = year + "-" + String(month + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
-      var dayPos = allPositions.filter(function(p) { return p.date === dateStr; });
+      // A cancelled position fills no slot: it stays out of the day's counts.
+      var dayPos = allPositions.filter(function(p) { return p.date === dateStr && p.status !== "cancelled"; });
       cells.push({ day: d, date: dateStr, positions: dayPos });
     }
 
@@ -2540,7 +2609,11 @@
     crew.forEach(function(c) { scheduleMap[c.id] = []; });
     var ACTIVE = { requested: 1, accepted: 1, confirmed: 1 };
     allPositions.forEach(function(p) {
-      if (!p.crewId || !ACTIVE[p.status] || !scheduleMap[p.crewId]) return;
+      // A cancelled SHIFT stays in its cell, struck through, so the week shows
+      // who was taken off what; a cancelled flat-rate position would strike
+      // every day of its project, so it is left out.
+      var cancelledShift = p.status === "cancelled" && !p.flat;
+      if (!p.crewId || !(ACTIVE[p.status] || cancelledShift) || !scheduleMap[p.crewId]) return;
       if (p.flat) {
         // A flat-rate position has no call: it is on for EVERY day of the
         // project's date range, so it lands in each of those cells this week
@@ -2555,7 +2628,7 @@
       scheduleMap[p.crewId].push(p);
     });
 
-    var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].length > 0; });
+    var activeCrew = crew.filter(function(c) { return scheduleMap[c.id] && scheduleMap[c.id].some(function(sp) { return sp.status !== "cancelled"; }); });
     if (activeCrew.length === 0) activeCrew = crew.slice(0, 6);
 
     // Shift times for a position: "8:00 AM \u2013 5:00 PM". A shift with only a
@@ -2600,7 +2673,7 @@
                       title: r.pos.flat ? "Flat-rate position — on for the whole project (" + fmt(r.pos.projectStart) + " – " + fmt(r.pos.projectEnd) + "), hours their own." : undefined },
                     h("div", { style: { flex: 1, minWidth: 0 } },
                       h("div", { style: { fontSize: "15px", fontWeight: 600, color: B.text } }, cname),
-                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2 } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
+                      h("div", { style: { fontSize: "13px", color: B.textMut, marginTop: 2, textDecoration: r.pos.status === "cancelled" ? "line-through" : "none" } }, r.pos.roleCode + (r.pos.projectName ? " \u00b7 " + r.pos.projectName : "")),
                       shiftTimes(r.pos) && h("div", { style: { fontSize: "12px", color: B.textSec, marginTop: 2, fontVariantNumeric: "tabular-nums" } }, shiftTimes(r.pos))),
                     h(window.Badge, { status: r.pos.status }),
                     h(window.LTPCallBtn, { phone: r.crew.phone, name: cname }),
@@ -2635,7 +2708,7 @@
                   var sc = POS_STATUSES[s.status] || POS_STATUSES.open;
                   return h("div", { key: si, style: { fontSize: "9px", background: sc.color + "22", borderRadius: "3px", padding: "2px 4px", marginBottom: 1, color: B.text, borderLeft: "2px " + (s.flat ? "dashed" : "solid") + " " + sc.color },
                       title: s.flat ? "Flat-rate position — on for the whole project (" + fmt(s.projectStart) + " – " + fmt(s.projectEnd) + "), hours their own." : undefined },
-                    h("div", { style: { fontWeight: 600 } }, s.roleCode),
+                    h("div", { style: { fontWeight: 600, textDecoration: s.status === "cancelled" ? "line-through" : "none" } }, s.roleCode),
                     shiftTimes(s) && h("div", { style: { color: B.textSec, fontSize: "8px", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } }, shiftTimes(s)),
                     h("div", { style: { color: B.textMut, fontSize: "8px" } }, s.projectName));
                 }));
@@ -2923,6 +2996,13 @@
       // non-admin's snapshot change (backend/crew_integrity.py::enforce_pay_snapshot),
       // so surface a clear message here instead of a silent revert on reload.
       if (!isAdmin) { window.LTP_toast("Admins only", { message: "Only an admin can sign off, lock, or adjust payouts.", variant: "error" }); return; }
+      guardPaidDay(r, proceed);
+    }
+    // The paid-day half alone. Cancelling is open to every producer
+    // (docs/LABOR_SYNC_PLAN.md, decision 11 — the server holds a non-admin's
+    // pay share to the shift's reference), so the cancel actions skip the
+    // admin check but still warn before touching a day already paid.
+    function guardPaidDay(r, proceed) {
       var ds = dayStatusOf(r);
       if (ds && ds.paid) { setPaidGuard({ row: r, ds: ds, run: proceed }); return; }
       // Fail closed: QuickBooks is connected but we couldn't load paid status, so
@@ -2964,6 +3044,7 @@
     var [noShowDlg, setNoShowDlg] = useState(null);  // row awaiting no-show confirm
     var [adjPayDlg, setAdjPayDlg] = useState(null);  // { row, list, label, amount } — pay adjustments
     var [exportDlg, setExportDlg] = useState(null);  // QuickBooks payout export modal (truthy = open)
+    var [cancelDlg, setCancelDlg] = useState(null);  // { row, positionIds } — components/cancel-labor.js
     var canExport = isAdmin && qbo && qbo.connected;
 
     // Persist a row's pay adjustments (extras/deductions on top of the day's pay).
@@ -3178,6 +3259,7 @@
     function tierLabel(src) {
       if (!src) return "—";
       if (src.tier === "flat") return "Flat rate";
+      if (src.tier === "cancel") return "Cancellation";
       if (!src.tier && !(src.paidHours > 0)) return "No-show";
       var t = src.tier === "half" ? "Half day" : src.tier === "full" ? "Full day" : src.tier === "hourly" ? "Hourly" : "Mixed";
       var hrs = src.paidHours + "h" + (src.otHours > 0 ? " · " + src.otHours + "h OT" : "");
@@ -3304,7 +3386,13 @@
                   // No signing off the future — except a flat-rate position, which
                   // completes when the work is done, whenever its pay date falls.
                   var canSign = !r.signed && (isFlat || r.date <= todayISO());
-                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" }, completed: { c: B.success, t: "✓ complete" } };
+                  var stateChips = { worked: { c: B.success, t: "✓ worked" }, adjusted: { c: B.info, t: "adjusted" }, no_show: { c: B.danger, t: "no-show" }, completed: { c: B.success, t: "✓ complete" }, cancelled: { c: B.warn, t: "cancelled" } };
+                  var stateChip = r.signed ? (stateChips[r.signed.state] || { c: B.textMut, t: r.signed.state }) : null;
+                  // Cancellations on the row (edit / restore through the dialog),
+                  // and what "Cancel…" would take: the person's confirmed shifts
+                  // that day, or the flat-rate position, while unsigned.
+                  var cancelIds = isFlat ? (r.cancel ? [r.posId] : []) : (r.cancellations || []).map(function(c) { return c.posId; });
+                  var liveIds = r.signed ? [] : (isFlat ? [r.posId] : dayShifts(r).map(function(sh) { return sh.posId; }));
                   var sBtn = function(label, onClick, bg, title) {
                     return h("button", { onClick: onClick, title: title,
                       style: { flexShrink: 0, background: bg || "transparent", border: bg ? "none" : "1px solid " + B.border, borderRadius: "4px", padding: "3px 10px", color: bg ? B.btnInk : B.textSec, fontSize: "10px", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" } }, label);
@@ -3348,9 +3436,10 @@
                       allMargin && chip(B.success, "margin"),
                       r.signed
                         ? h(React.Fragment, null,
-                            chip(stateChips[r.signed.state].c, stateChips[r.signed.state].t,
-                              "Signed off " + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the position returns to pending." : "Undo the sign-off — the day returns to pending."))
+                            chip(stateChip.c, stateChip.t,
+                              (r.signed.state === "cancelled" ? "Cancelled " : "Signed off ") + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
+                            // A cancellation is undone by Restore, in its dialog.
+                            r.signed.state !== "cancelled" && sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the position returns to pending." : "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
                             !r.locked && chip(B.warn, "not locked", isFlat ? "Confirmed without a locked fee — the figure shown is the fee as typed today." : "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
                             (!r.locked || r.drift) && h("button", { onClick: function() { guardPaid(r, function() { lockRow(r); }); },
@@ -3361,6 +3450,10 @@
                             !isFlat && canSign && sBtn("Adjust…", function() { guardPaid(r, function() { openAdjust(r); }); }, null, "Sign off with actual times / dropped shifts."),
                             !isFlat && canSign && sBtn("No-show", function() { guardPaid(r, function() { setNoShowDlg(r); }); }, null, "Sign off: didn't work — pays $0."),
                             !canSign && chip(B.textMut, "upcoming", "Sign-off opens once the day has arrived.")),
+                      // A cancelled shift riding on a worked or pending day.
+                      cancelIds.length > 0 && !(r.signed && r.signed.state === "cancelled") && chip(B.warn, "+" + fmtMoney(r.cancelTotal) + " cancelled"),
+                      cancelIds.length > 0 && sBtn("Cancellation\u2026", function() { setCancelDlg({ row: r, positionIds: cancelIds }); }),
+                      liveIds.length > 0 && sBtn("Cancel\u2026", function() { setCancelDlg({ row: r, positionIds: liveIds }); }),
                       sBtn("$±", function() { guardPaid(r, function() { setAdjPayDlg({ row: r, label: "", amount: "" }); }); }, null,
                         "Add extras or deductions for this day (parking, gear, bonus, advance…). Negative amounts deduct.")));
                 })));
@@ -3453,6 +3546,13 @@
 
       // QuickBooks payout export (review + push)
       exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
+
+      // Cancel / re-share / restore (components/cancel-labor.js), behind the
+      // paid-day check only.
+      cancelDlg && h(window.LTPCancelFlow, { key: cancelDlg.positionIds.join(","),
+        project: projects.find(function(p) { return p.id === cancelDlg.row.projectId; }),
+        positionIds: cancelDlg.positionIds, services: services, clientRates: clientRates, contacts: contacts, settings: settings,
+        setProjects: setProjects, guard: function(run) { guardPaidDay(cancelDlg.row, run); }, onClose: function() { setCancelDlg(null); } }),
 
       // Paid-day edit guard (warn + confirm; confirming records the override).
       paidGuard && h(window.LTPModal, { title: paidGuard.unverified ? "Paid status unknown" : "Edit a paid day?", onClose: function() { setPaidGuard(null); } },

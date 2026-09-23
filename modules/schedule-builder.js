@@ -30,7 +30,7 @@
   // falls into — paid on that period's pay day with everything else, no
   // per-position pay date. Status is read-only here, exactly like a shift
   // position: requests, confirms and releases happen in Labor.
-  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info, cancelled: B.textMut };
   var ACTIVE_POS = { requested: 1, accepted: 1, confirmed: 1 };
 
   // declinedFor([{ flat: true, posId }]) → crew who declined a request for that
@@ -42,6 +42,23 @@
     // "Previously declined — assign anyway?" confirm for a pick from the
     // declined section of the crew picker.
     var [reask, setReask] = useState(null);
+    // The cancel dialog (components/cancel-labor.js): { booking, label }.
+    var [cancelDlg, setCancelDlg] = useState(null);
+    function openCancel(p) {
+      var bk = window.LTP_projectBooking({ fixedPositions: rows }, [p.id], svcs, null);
+      var cm = p.crewId != null ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
+      var sv = p.serviceId ? svcs.find(function(x) { return x.id === p.serviceId; }) : null;
+      if (bk) setCancelDlg({ booking: bk, label: [cm ? (cm.firstName + " " + cm.lastName).trim() : "", "Flat-rate " + (sv ? sv.role : (p.role || ""))].filter(Boolean).join(" \u00b7 ") });
+    }
+    function applyCancel(action, shares, reason) {
+      var d = cancelDlg;
+      setCancelDlg(null);
+      if (!d) return;
+      var meta = { at: new Date().toISOString(), by: window.LTP_CURRENT_USER || "User",
+                   byId: window.LTP_CURRENT_USER_ID != null ? window.LTP_CURRENT_USER_ID : null, reason: reason };
+      var w = window.LTP_projectBookingWrite({ fixedPositions: rows }, d.booking, action, shares, svcs, null, meta, genId);
+      if (w.project.fixedPositions && w.project.fixedPositions !== rows) onChange(w.project.fixedPositions);
+    }
     function update(id, patch) {
       onChange(rows.map(function(p) { return p.id === id ? Object.assign({}, p, patch) : p; }));
     }
@@ -89,6 +106,28 @@
       rows.map(function(p) {
         var svc = p.serviceId ? svcs.find(function(sv) { return sv.id === p.serviceId; }) : null;
         var pc = POS_COLORS[p.status] || B.textMut;
+        // A cancelled flat-rate position: its terms are fixed by the
+        // cancellation, so it reads as a record — struck through, what it
+        // bills and pays, Edit… (re-share / restore), Refill.
+        if (p.status === "cancelled") {
+          var cx = p.cancel || {};
+          var cxm = { bill: Number(cx.bill && cx.bill.total) || 0, pay: Number(cx.pay && cx.pay.total) || 0 };
+          var ccm = p.crewId != null ? (contacts || []).find(function(c) { return c.id === p.crewId; }) : null;
+          var cctl = { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                       height: M ? 30 : undefined, padding: M ? "0 10px" : "2px 7px", borderRadius: M ? "7px" : "3px", fontSize: M ? "11px" : "9px" };
+          return h("div", { key: p.id, style: { background: B.raised, border: "1px dashed " + B.border, borderRadius: M ? "10px" : "3px", padding: M ? 8 : "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: M ? 8 : 4 } },
+            h("span", { style: { fontSize: M ? "13px" : "10px", fontWeight: 600, color: B.textMut, textDecoration: "line-through" } },
+              svc ? svc.role + (svc.description ? " \u2014 " + svc.description : "") : (p.role || "Flat rate")),
+            h("span", { style: { fontSize: M ? "12px" : "10px", color: B.textSec } }, ccm ? (ccm.firstName + " " + ccm.lastName).trim() : "Nobody booked"),
+            h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: B.textMut } }, "cancelled"),
+            h("span", { style: { marginLeft: "auto", fontSize: M ? "11px" : "9px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
+              "bill $" + money(cxm.bill) + (p.work ? " \u00b7 pay $" + money(cxm.pay) : "")),
+            h("button", { onClick: function() { openCancel(p); }, style: cctl }, "Edit\u2026"),
+            h("button", { onClick: function() { var r = window.LTP_refillFixedPosition(rows, p.id, genId); if (r.positionId) onChange(r.fixedPositions); }, style: cctl }, "Refill"),
+            h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
+              style: M ? { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" }
+                       : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "\u00d7"));
+        }
         var fee = Number(p.fee) || 0, bill = Number(p.bill) || 0;
         var margin = Math.round((bill - (p.fullMargin ? 0 : fee)) * 100) / 100;
         // Crew who declined a request for this position sit under
@@ -178,6 +217,11 @@
               p.fullMargin
                 ? h("div", { style: { color: B.success, fontWeight: 600 } }, "margin")
                 : h("div", { style: { color: margin >= 0 ? B.textMut : B.danger } }, "margin $" + money(margin)));
+        // Cancel — the dialog (charge / pay shares) for a staffed position.
+        var cancelBtn = p.crewId != null && ACTIVE_POS[p.status] && h("button", { onClick: function() { openCancel(p); },
+          style: M ? { flexShrink: 0, height: 28, padding: "0 9px", borderRadius: "7px", fontSize: "10px", fontWeight: 700, lineHeight: 1, background: "transparent", border: "1px solid " + B.border, color: B.textMut, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" }
+                   : { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 5px", color: B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+          "Cancel\u2026");
         var roleWarn = !p.serviceId && h("span", { title: "Pick a rate-card role \u2014 it routes the fee to that role's expense account and names the quote line.", style: warnChip }, "\u26a0 role needed");
         var endWarn = !endISO && h("span", { title: "The project has no end date \u2014 this fee can't land in a payroll period until one is set (Projects \u2192 edit the project).", style: warnChip }, "\u26a0 no project end date");
         var delBtn = h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
@@ -189,11 +233,20 @@
               h("div", { style: line }, roleSel, crewSel),
               h("div", { style: Object.assign({ marginTop: 6 }, line) }, feeField, billField, mgnBtn),
               h("div", { style: { marginTop: 6 } }, noteInput),
-              h("div", { style: Object.assign({ marginTop: 6 }, line) }, statusChip, roleWarn, endWarn, moneyBox, delBtn))
+              h("div", { style: Object.assign({ marginTop: 6 }, line) }, statusChip, cancelBtn, roleWarn, endWarn, moneyBox, delBtn))
           : h("div", { key: p.id, style: { background: B.raised, border: "1px solid " + B.border, borderRadius: "3px", padding: "5px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
-              roleSel, crewSel, feeField, billField, mgnBtn, noteInput, statusChip, moneyBox, roleWarn, endWarn, delBtn);
+              roleSel, crewSel, feeField, billField, mgnBtn, noteInput, statusChip, cancelBtn, moneyBox, roleWarn, endWarn, delBtn);
       }),
-      h(window.LTPConfirmDialog, { dlg: reask, onCancel: function() { setReask(null); } }));
+      h(window.LTPConfirmDialog, { dlg: reask, onCancel: function() { setReask(null); } }),
+      cancelDlg && h(window.LTPCancelDialog, { key: cancelDlg.booking.ids.join(","),
+        title: cancelDlg.booking.cancelled ? "Cancellation" : "Cancel position", subtitle: cancelDlg.label,
+        refBill: cancelDlg.booking.ref.bill, refPay: cancelDlg.booking.ref.pay,
+        hasCrew: cancelDlg.booking.paysCrew, fullMargin: cancelDlg.booking.fullMargin,
+        initial: cancelDlg.booking.cancelled ? cancelDlg.booking.shares : window.LTP_cancelDefaults(settings),
+        reason: cancelDlg.booking.reason, edit: cancelDlg.booking.cancelled, notify: null, confirmLabel: "Cancel position",
+        onClose: function() { setCancelDlg(null); },
+        onRestore: cancelDlg.booking.cancelled ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
+        onConfirm: function(shares, reason) { applyCancel(cancelDlg.booking.cancelled ? "edit" : "cancel", shares, reason); } }));
   }
 
   window.ScheduleBuilder = function({ project, projects, setProjects, contacts, setContacts, services, clientRates, companies, quotes, setQuotes, getNextQuoteId, invoices, setInvoices, getNextInvoiceId, settings }) {
@@ -458,6 +511,7 @@
     // ── Compute changes for activity ─────────────────────────────────────────
     function computeSchedChanges(before, after) {
       if (!before || !after) return null;
+      function crewNameOf(id) { var c = id != null ? contacts.find(function(x) { return x.id === id; }) : null; return c ? c.firstName + " " + c.lastName : ""; }
       var changes = [];
       var bs = before.schedule || [], as = after.schedule || [];
       if (bs.length !== as.length) changes.push({ cat: "Schedule Days", detail: bs.length + " \u2192 " + as.length });
@@ -485,7 +539,11 @@
             var acn = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
             changes.push({ cat: dayLabel + " \u2014 " + (p.role || "?"), detail: (bcn ? bcn.firstName + " " + bcn.lastName : "Unassigned") + " \u2192 " + (acn ? acn.firstName + " " + acn.lastName : "Unassigned") });
           }
-          if (bp.status !== p.status) changes.push({ cat: dayLabel + " \u2014 " + (p.role || "?") + " Status", detail: bp.status + " \u2192 " + p.status });
+          // A cancellation reads as one (decision 17's plain wording): who,
+          // and the shares — not a bare status flip.
+          var cxc = window.LTP_cancelChange(bp, p, crewNameOf(p.crewId));
+          if (cxc) changes.push({ cat: dayLabel + " \u2014 " + (p.role || "?") + " " + cxc.what, detail: cxc.detail });
+          else if (bp.status !== p.status) changes.push({ cat: dayLabel + " \u2014 " + (p.role || "?") + " Status", detail: bp.status + " \u2192 " + p.status });
         });
         (b.positions || []).forEach(function(p) {
           if (!(s.positions || []).find(function(sp) { return sp.id === p.id; })) changes.push({ cat: dayLabel + " \u2014 Position Removed", detail: p.role || "?" });
@@ -504,7 +562,9 @@
         if (!bp) { changes.push({ cat: "Flat-rate Position Added", detail: roleName(p) + (Number(p.fee) ? " \u00b7 fee $" + money(p.fee) : "") }); return; }
         if (bp.serviceId !== p.serviceId) changes.push({ cat: label + " \u2014 Role Changed", detail: roleName(bp) + " \u2192 " + roleName(p) });
         if (bp.crewId !== p.crewId) changes.push({ cat: label, detail: crewName(bp.crewId) + " \u2192 " + crewName(p.crewId) });
-        if (bp.status !== p.status) changes.push({ cat: label + " Status", detail: bp.status + " \u2192 " + p.status });
+        var fcx = window.LTP_cancelChange(bp, p, p.crewId != null ? crewName(p.crewId) : "");
+        if (fcx) changes.push({ cat: label + " " + fcx.what, detail: fcx.detail });
+        else if (bp.status !== p.status) changes.push({ cat: label + " Status", detail: bp.status + " \u2192 " + p.status });
         if ((Number(bp.fee) || 0) !== (Number(p.fee) || 0)) changes.push({ cat: label + " Fee", detail: "$" + money(bp.fee) + " \u2192 $" + money(p.fee) });
         if ((Number(bp.bill) || 0) !== (Number(p.bill) || 0)) changes.push({ cat: label + " Bill", detail: "$" + money(bp.bill) + " \u2192 $" + money(p.bill) });
         if (!!bp.fullMargin !== !!p.fullMargin) changes.push({ cat: label + " Cost", detail: p.fullMargin ? "Full margin ($0 cost)" : "Costed at the fee" });
@@ -606,6 +666,14 @@
       var drop = function() {
         setDraft(function(d) { return Object.assign({}, d, { fixedPositions: (d.fixedPositions || []).filter(function(p) { return p.id !== pos.id; }) }); });
       };
+      var cx = pos.status === "cancelled" && pos.cancel ? pos.cancel : null;
+      var cxBill = cx ? Number(cx.bill && cx.bill.total) || 0 : 0, cxPay = cx ? Number(cx.pay && cx.pay.total) || 0 : 0;
+      if (cxBill > 0 || cxPay > 0) {
+        setDlg({ title: "Remove cancellation", variant: "danger", confirmLabel: "Remove",
+          message: "This cancellation (bill $" + window.LTP_money(cxBill) + " \u00b7 pay $" + window.LTP_money(cxPay) + ") goes with it.",
+          onConfirm: function() { drop(); setDlg(null); } });
+        return;
+      }
       if (pos.crewId && ACTIVE_POS[pos.status]) {
         var cm = contacts.find(function(c) { return c.id === pos.crewId; });
         setDlg({ title: "Remove flat-rate position", variant: "danger", confirmLabel: "Remove",
@@ -622,7 +690,7 @@
         var dur = window.LTP_calcDuration(s.date, s.time, s.endDate || s.date, s.endTime);
         var posText = (s.positions || []).map(function(p) {
           var cm = p.crewId ? contacts.find(function(c) { return c.id === p.crewId; }) : null;
-          return escAttr(p.role || "?") + (cm ? ": " + escAttr(cm.firstName + " " + cm.lastName) : " (open)");
+          return escAttr(p.role || "?") + (cm ? ": " + escAttr(cm.firstName + " " + cm.lastName) : " (open)") + (p.status === "cancelled" ? " (cancelled)" : "");
         }).join(", ") || "\u2014";
         return "<tr><td>" + escAttr(s.title) + "</td><td>" + fmt(s.date) + "</td><td>" + ft(s.time) + " \u2192 " + ft(s.endTime) + "</td><td>" + (dur || "\u2014") + "</td><td>" + posText + "</td></tr>";
       }).join("");
@@ -898,7 +966,7 @@
           h(FixedPositionsPanel, { list: draft.fixedPositions || [], onChange: handleFixedChange, onRemove: removeFixed,
             contacts: contacts, svcs: svcs, project: project, settings: settings, isMobile: isMobile, declinedFor: declinedCrewFor }),
           h(window.ScheduleEditor, { schedule: draft.schedule, onChange: handleScheduleChange, contacts: contacts, services: svcs,
-            declinedCrewFor: declinedCrewFor,
+            declinedCrewFor: declinedCrewFor, settings: settings,
             // The person's saved shifts on OTHER projects that day — any status
             // but declined, the rule LTP_detectCrewConflicts applies (a
             // pencilled-in "open" booking still takes the day). Each carries
@@ -911,7 +979,7 @@
                 (pr.schedule || []).forEach(function(sc) {
                   if (sc.date !== date) return;
                   (sc.positions || []).forEach(function(ps) {
-                    if (ps.crewId === crewId && ps.status !== "declined") {
+                    if (ps.crewId === crewId && ps.status !== "declined" && ps.status !== "cancelled") {
                       otherBookings.push({ posId: ps.id, projectId: pr.id, projectName: pr.name, schedTitle: sc.title, status: ps.status,
                                            date: sc.date, endDate: sc.endDate, time: sc.time, endTime: sc.endTime });
                     }

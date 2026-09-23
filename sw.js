@@ -405,7 +405,7 @@
 // v113: quote and invoice lists (and a project's document lists) show "Labor
 // changed"; a schedule save that changes what it bills says which documents
 // now differ; the schedule's Send routes an already-linked draft to its review.
-var CACHE_VERSION = 'ltp-shell-v113';
+var CACHE_VERSION = 'ltp-shell-v114';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
