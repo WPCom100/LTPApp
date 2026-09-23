@@ -392,7 +392,10 @@
 // v109: links inside an equipment or container detail (the container chips,
 // the equipment chips) closed the popup before navigating, so the queued Back
 // undid the navigation and dropped you on a list with nothing open.
-var CACHE_VERSION = 'ltp-shell-v109';
+// v110: schedule-generated labor lines and sections carry a laborSync marker,
+// and the builders' section whitelists keep it — the memory the labor sync
+// (a document brought back in step with its schedule) diffs against.
+var CACHE_VERSION = 'ltp-shell-v110';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

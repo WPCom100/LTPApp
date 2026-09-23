@@ -260,15 +260,30 @@ class Quote(Base):
                                                         #         another project; the label also names it, because
                                                         #         label is what survives the public-view scrub —
                                                         #         see routes/_shared.py::public_section_items)
+                                                        #       laborSync: {projectId, grouping: "one"|"dept", dept?,
+                                                        #                   ignored: {key: snap}} | absent
+                                                        #         (sections generated from a project schedule only:
+                                                        #         where a new labor line for that project lands, and
+                                                        #         the lines the producer chose not to add. Carried by
+                                                        #         the builders' section whitelists like the priced
+                                                        #         window above; scrubbed from the public view.)
                                                         #       items: list[QuoteLineItem]}]
                                                         # QuoteLineItem = {
                                                         #   id: str, type: "equipment"|"service"|"product"|"fee"|"note",
                                                         #   name: str, qty: float, unitPrice: float, adjustedPrice: float|null,
-                                                        #   rateType: "day"|"halfDay"|"hourly"|"ot"  (services only),
+                                                        #   rateType: "day"|"half"|"hourly"|"ot"|"flat"|"cancel"  (services only),
                                                         #   productVariantId: str|null  (products only — chosen pricing variant),
                                                         #   feeId: int|null  (fees only — catalog row, null = custom/ad-hoc fee),
                                                         #   deliveredQty: float, invoicedQty: float,
-                                                        #   equipmentId|serviceId|productId: int|null }
+                                                        #   equipmentId|serviceId|productId: int|null,
+                                                        #   laborSync: {projectId, key, at, snap: {qty, unitPrice, cost,
+                                                        #               notes, dates: list[str]} | null,
+                                                        #               adjustments?: list[{invoiceId, at, qty}],
+                                                        #               basis?: {invoiceId}} | absent
+                                                        #     (schedule-generated service lines only — the memory the
+                                                        #      labor sync diffs against; see components/domain-crew.js
+                                                        #      ::LTP_scheduleLaborSections and domain-labor-sync.js.
+                                                        #      A line without it is a hand-added line.) }
                                                         # Fees ("fee") are misc billable lines (Lodging, Meals, Travel,
                                                         # Consultation, Project Prep). Their price varies per project, so a
                                                         # fee line edits `unitPrice` DIRECTLY and never sets `adjustedPrice`

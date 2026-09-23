@@ -31,7 +31,23 @@
 // of "Send to Quote" / "Send to Invoice" except the document literal itself.
 // Lives here rather than in ScheduleBuilder so both destinations bill off ONE
 // implementation (a divergence between them would be an invisible pricing bug)
-// and so the aggregation is unit-testable — tests/test_schedule_billing.js.
+// and so the aggregation is unit-testable — tests/test_doc_projects.js and
+// tests/test_fixed_positions.js.
+//
+// Every line and section it returns carries a `laborSync` marker — the memory
+// that lets a document be brought back in step with the schedule later
+// (components/domain-labor-sync.js). On a line:
+//   { projectId, key, at, snap: { qty, unitPrice, cost, notes, dates } }
+//   key    the line's identity across regenerations — "svc:<serviceId>|<rateType>"
+//          for a pooled day/half/hourly/ot line, "flat:<positionId>" for a
+//          flat-rate position. Re-running this function on the changed
+//          schedule yields the same keys, which is what makes a line-level
+//          diff possible without changing what the client sees.
+//   snap   what the schedule produced when the line was last written or
+//          acknowledged; `dates` are the ISO days behind the `notes` text.
+// On a section: { projectId, grouping: "one"|"dept", dept?, ignored: {} } —
+// where a NEW line for the project lands, and the keys the producer chose not
+// to add. A line with no marker is a hand-added line and is never touched.
 //
 // Billing model, unchanged from the original Send-to-Quote: each DAY is priced
 // per ROLE, not per position. A role spread over several items on one day is
@@ -69,9 +85,16 @@ window.LTP_compareLaborLines = function(a, b) {
     || ((ra == null ? 9 : ra) - (rb == null ? 9 : rb));
 };
 
-window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId, fixedPositions) {
+//   projectId  stamped into every marker so a document holding several jobs'
+//             labor can be checked one project at a time (null = unknown; the
+//             marker is still written, it just never matches a project)
+//   nowIso     the marker's `at` timestamp (defaults to now; tests pass a
+//             fixed value so output is deterministic)
+window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, fmtDate, genId, fixedPositions, projectId, nowIso) {
   var gen = genId || window.LTP_genId;
   var fmt = fmtDate || function(d) { return d; };
+  var pid = projectId != null ? projectId : null;
+  var now = nowIso || new Date().toISOString();
 
   // Group by date for day-level rate calculation.
   var dateGroups = {};
@@ -92,6 +115,13 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     var g = dateGroups[dateKey];
     if (!g.dayCall || !g.dayWrap) return;
     var dayLabel = g.date !== "_unscheduled" ? fmt(g.date) : "TBD";
+    var isoDate = g.date !== "_unscheduled" ? g.date : "";
+    // Each pooled line remembers the days behind it twice: the formatted
+    // labels that become its `notes`, and the ISO dates for the sync marker.
+    function noteDay(li) {
+      if (li.dates.indexOf(dayLabel) === -1) li.dates.push(dayLabel);
+      if (isoDate && li.iso.indexOf(isoDate) === -1) li.iso.push(isoDate);
+    }
 
     window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
       if (u.tier === "hourly") {
@@ -102,13 +132,13 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
         // cost $0. OT still lands on the shared OT line further down.
         var hKey = u.serviceId;
         if (!hourlyItems[hKey]) {
-          hourlyItems[hKey] = { svc: u.svc, rate: u.dayRate, rateHours: 0, costAccum: 0, dates: [],
+          hourlyItems[hKey] = { svc: u.svc, rate: u.dayRate, rateHours: 0, costAccum: 0, dates: [], iso: [],
                                dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
         }
         if (u.minHoursApplied) hourlyItems[hKey].minApplied = true;
         hourlyItems[hKey].rateHours = Math.round((hourlyItems[hKey].rateHours + u.straightHours) * 100) / 100;
         hourlyItems[hKey].costAccum = Math.round((hourlyItems[hKey].costAccum + (u.fullMargin ? 0 : u.dayCost * u.straightHours)) * 100) / 100;
-        if (hourlyItems[hKey].dates.indexOf(dayLabel) === -1) hourlyItems[hKey].dates.push(dayLabel);
+        noteDay(hourlyItems[hKey]);
       } else {
         // Each unit is one person. The day-rate line aggregates units of the same
         // role+tier (qty = how many people); costAccum adds $0 for a full-margin
@@ -116,7 +146,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
         // so a single line stays correct.
         var drKey = u.serviceId + "|" + u.tier;
         if (!dayRateItems[drKey]) {
-          dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [],
+          dayRateItems[drKey] = { svc: u.svc, tier: u.tier, rate: u.dayRate, qty: 0, costAccum: 0, dates: [], iso: [],
                                   dept: u.svc.department || "Other", minHours: u.minHours || 0, minApplied: false };
         }
         // A day billed up to the client's contract minimum says so on the line —
@@ -125,18 +155,18 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
         if (u.minHoursApplied) dayRateItems[drKey].minApplied = true;
         dayRateItems[drKey].qty += 1;
         dayRateItems[drKey].costAccum = Math.round((dayRateItems[drKey].costAccum + (u.fullMargin ? 0 : u.dayCost)) * 100) / 100;
-        if (dayRateItems[drKey].dates.indexOf(dayLabel) === -1) dayRateItems[drKey].dates.push(dayLabel);
+        noteDay(dayRateItems[drKey]);
       }
 
       // OT line item — this person's own OT hours (cost $0 if full margin).
       if (u.otHours > 0) {
         var otKey = u.serviceId;
         if (!otItems[otKey]) {
-          otItems[otKey] = { svc: u.svc, otRate: u.otRate, rateHours: 0, costAccum: 0, dates: [], dept: u.svc.department || "Other" };
+          otItems[otKey] = { svc: u.svc, otRate: u.otRate, rateHours: 0, costAccum: 0, dates: [], iso: [], dept: u.svc.department || "Other" };
         }
         otItems[otKey].rateHours = Math.round((otItems[otKey].rateHours + u.otHours) * 100) / 100;
         otItems[otKey].costAccum = Math.round((otItems[otKey].costAccum + (u.fullMargin ? 0 : u.otCost * u.otHours)) * 100) / 100;
-        if (otItems[otKey].dates.indexOf(dayLabel) === -1) otItems[otKey].dates.push(dayLabel);
+        noteDay(otItems[otKey]);
       }
     });
   });
@@ -155,7 +185,8 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   // without splitting paid vs owner crew.
   Object.keys(dayRateItems).forEach(function(key) {
     var li = dayRateItems[key];
-    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: li.tier === "half" ? "half" : "day", item: {
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: li.tier === "half" ? "half" : "day",
+                      key: "svc:" + li.svc.id + "|" + (li.tier === "half" ? "half" : "day"), iso: li.iso, item: {
       id: gen("item"), type: "service", serviceId: li.svc.id,
       name: li.svc.role + " — " + li.svc.description,
       rateType: li.tier === "half" ? "half" : "day",
@@ -172,7 +203,8 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   Object.keys(hourlyItems).forEach(function(key) {
     var li = hourlyItems[key];
     if (li.rateHours <= 0) return;
-    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "hourly", item: {
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "hourly",
+                      key: "svc:" + li.svc.id + "|hourly", iso: li.iso, item: {
       id: gen("item"), type: "service", serviceId: li.svc.id,
       name: li.svc.role + " — " + li.svc.description,
       rateType: "hourly",
@@ -187,7 +219,8 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   Object.keys(otItems).forEach(function(key) {
     var li = otItems[key];
     if (li.rateHours <= 0) return;
-    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "ot", item: {
+    laborItems.push({ dept: li.dept, role: li.svc.role, description: li.svc.description, rateType: "ot",
+                      key: "svc:" + li.svc.id + "|ot", iso: li.iso, item: {
       id: gen("item"), type: "service", serviceId: li.svc.id,
       name: li.svc.role + " — " + li.svc.description,
       rateType: "ot",
@@ -201,6 +234,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   // spans the project's scheduled dates (no times — the hire sets their own).
   var svcById = {}; (svcs || []).forEach(function(sv) { svcById[sv.id] = sv; });
   var dated = (schedule || []).map(function(s) { return s && s.date; }).filter(Boolean).sort();
+  var datedUnique = dated.filter(function(d, i) { return dated.indexOf(d) === i; });
   // A multi-day row (endDate after date) extends the span to its last day.
   var lastDay = (schedule || []).reduce(function(m, s) { var e = s && s.endDate; return (e && e > m) ? e : m; }, dated.length ? dated[dated.length - 1] : "");
   var span = dated.length ? (dated[0] === lastDay ? fmt(dated[0]) : fmt(dated[0]) + " – " + fmt(lastDay)) : "";
@@ -210,7 +244,8 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     if (!svc) return;
     var bill = Math.round((Number(p.bill) || 0) * 100) / 100;
     if (bill <= 0) return;   // absorbed in a package price — nothing to bill separately
-    laborItems.push({ dept: svc.department || "Other", role: svc.role, description: svc.description, rateType: "flat", item: {
+    laborItems.push({ dept: svc.department || "Other", role: svc.role, description: svc.description, rateType: "flat",
+                      key: "flat:" + (p.id != null ? p.id : ""), iso: datedUnique, item: {
       id: gen("item"), type: "service", serviceId: svc.id,
       name: svc.role + " — " + svc.description,
       rateType: "flat",
@@ -229,14 +264,29 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   // agree, and so the split keeps each section in the same order.
   laborItems.sort(window.LTP_compareLaborLines);
 
+  // The sync marker (see the header comment): the line's identity plus a
+  // snapshot of what the schedule just said, so a later diff can tell a
+  // schedule change from a hand edit. Stamped after the sort so every line,
+  // pooled or flat, gets it in one place.
+  laborItems.forEach(function(x) {
+    x.item.laborSync = {
+      projectId: pid, key: x.key, at: now,
+      snap: { qty: x.item.qty, unitPrice: x.item.unitPrice, cost: x.item.cost, notes: x.item.notes,
+              dates: (x.iso || []).slice().sort() },
+    };
+  });
+
   if (grouping === "one") {
     return [{ id: gen("sec"), label: "Labor", customDates: false, startDate: "", endDate: "",
+              laborSync: { projectId: pid, grouping: "one", ignored: {} },
               items: laborItems.map(function(x) { return x.item; }) }];
   }
   var sectionMap = {};
   laborItems.forEach(function(x) { (sectionMap[x.dept] = sectionMap[x.dept] || []).push(x.item); });
   return Object.keys(sectionMap).map(function(dept) {
-    return { id: gen("sec"), label: dept, customDates: false, startDate: "", endDate: "", items: sectionMap[dept] };
+    return { id: gen("sec"), label: dept, customDates: false, startDate: "", endDate: "",
+             laborSync: { projectId: pid, grouping: "dept", dept: dept, ignored: {} },
+             items: sectionMap[dept] };
   });
 };
 

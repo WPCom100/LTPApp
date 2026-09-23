@@ -149,6 +149,11 @@ eq("G5 read order: the letters-only position (LD, flat) before the numbered one 
 const flatOnly = window.LTP_scheduleLaborSections([], services, {}, "split", fmt, null, [flat("q1", 8, 1500, { bill: 2000 })]);
 eq("G6 flat-only schedule still bills, grouped by department", [flatOnly.length, flatOnly[0].label, flatOnly[0].items.length], [1, "Lighting", 1]);
 eq("G7 nothing billable → []", window.LTP_scheduleLaborSections([], services, {}, "one", fmt, null, [flat("q2", 8, 100, { bill: 0 })]), []);
+// The labor-sync marker keys a flat line on its POSITION id — two flat lines
+// can share a role, so the role alone would not tell them apart later.
+eq("G8 flat lines are keyed by position id for the labor sync", flatLines.map(function(i) { return i.laborSync.key; }), ["flat:q1", "flat:q4"]);
+eq("G9 a flat line's snap mirrors it", flatLines[0].laborSync.snap, { qty: 1, unitPrice: 2000, cost: 1500, notes: "Flat-rate position · 2026-09-10 – 2026-09-13", dates: ["2026-09-10", "2026-09-13"] });
+eq("G10 the section carries the sync marker", secs[0].laborSync, { projectId: null, grouping: "one", ignored: {} });
 
 // ── Removal notices + snapshots + totals ────────────────────────────────────
 const before = [flat("r1", 8, 1500, { status: "confirmed" }), flat("r2", 5, 800, { status: "requested" }), flat("r3", 5, 100, { status: "open" })];

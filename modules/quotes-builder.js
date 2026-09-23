@@ -133,13 +133,18 @@
       // or editing the quote silently drops it — `projectId` records which job
       // an appended section came from.
       sections: (q.sections || []).map(function(s) {
-        return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+        var out = { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
                  projectId: s.projectId != null ? s.projectId : null,
                  // The window its equipment was last priced for — how a later
                  // change to the project's dates is noticed. See
                  // components/domain-docs.js::LTP_staleRentalSections.
                  pricedStartDate: s.pricedStartDate || "", pricedEndDate: s.pricedEndDate || "",
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
+        // The schedule-sync marker on a section generated from a project
+        // schedule (components/domain-crew.js::LTP_scheduleLaborSections).
+        // Only present on such sections, so it is carried rather than defaulted.
+        if (s.laborSync) out.laborSync = s.laborSync;
+        return out;
       }),
       notes: q.notes || "",
       terms: q.terms || "",

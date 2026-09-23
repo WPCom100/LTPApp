@@ -37,6 +37,7 @@ function quote(items, over) {
     id: 5,
     globalDiscount: { type: "none", value: 0 },
     sections: [{ id: "s1", label: "Audio", projectId: "pr1", customDates: false,
+                 laborSync: { projectId: "pr1", grouping: "one", ignored: {} },
                  startDate: "", endDate: "", items: items }],
   }, over || {});
 }
@@ -111,6 +112,8 @@ eq("A21 a note row survives the round-trip untouched",
 // ── Section attribution ─────────────────────────────────────────────────────
 eq("A22 the section's projectId rides along to the invoice",
    r.invSections[0].projectId, "pr1");
+eq("A22b the section's schedule-sync marker rides along too",
+   r.invSections[0].laborSync, { projectId: "pr1", grouping: "one", ignored: {} });
 eq("A23 the section label rides along", r.invSections[0].label, "Audio");
 ok("A24 the invoice section gets a new id", r.invSections[0].id !== "s1");
 // A section with nothing billable must not produce an empty invoice section.

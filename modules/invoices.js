@@ -807,9 +807,14 @@
       // an appended section came from. (Items are spread, so sourceQuoteId /
       // linkedQty survive automatically.)
       sections: (inv.sections || []).map(function(s) {
-        return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+        var out = { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
                  projectId: s.projectId != null ? s.projectId : null,
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
+        // The schedule-sync marker on a section generated from a project
+        // schedule (components/domain-crew.js::LTP_scheduleLaborSections);
+        // carried, not defaulted, so hand-built sections stay as they were.
+        if (s.laborSync) out.laborSync = s.laborSync;
+        return out;
       }),
       notes: inv.notes || "",
       // Carried by the spread above too; normalized here so a null from an

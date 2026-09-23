@@ -365,6 +365,48 @@ const day = (id, date, time, endTime, positions, breaks) =>
   eq("HR18 the note says so", mn[0].items[0].notes, "2026-08-10 · 4-hour contract minimum applied");
 }
 
+{
+  // ── laborSync markers ─────────────────────────────────────────────────────
+  // Every generated line and section carries the memory the labor sync diffs
+  // against (components/domain-labor-sync.js): a key that survives
+  // regeneration, and a snapshot of what the schedule said when it was written.
+  const NOW = "2026-09-23T12:00:00.000Z";
+  const schedule = [
+    day("d1", "2026-08-10", "08:00", "22:00", [pos("p1", 1), pos("p2", 2)], MEAL2),   // A1 + LX, full day + 3h OT each
+    day("d2", "2026-08-11", "08:00", "16:00", [pos("p3", 1)], MEAL),                  // A1 again, plain full day
+  ];
+  const flat = [{ id: "f1", serviceId: 2, role: "LX", crewId: 9, status: "confirmed", fee: 500, bill: 800, fullMargin: false }];
+  const one = SECTIONS(schedule, SVCS, {}, "one", fmtDate, window.LTP_genId, flat, 42, NOW);
+  const byKey = {};
+  one[0].items.forEach((i) => { byKey[i.laborSync.key] = i; });
+  ok("M0 every line carries a marker for the project", one[0].items.every((i) => i.laborSync && i.laborSync.projectId === 42 && i.laborSync.at === NOW));
+  eq("M1 keys: service|rateType for pooled lines, flat:<id> for a flat position", Object.keys(byKey).sort(),
+     ["flat:f1", "svc:1|day", "svc:1|ot", "svc:2|day", "svc:2|ot"]);
+  eq("M2 snap mirrors the line, with the ISO days behind the note",
+     byKey["svc:1|day"].laborSync.snap,
+     { qty: 2, unitPrice: 600, cost: 300, notes: "2026-08-10, 2026-08-11", dates: ["2026-08-10", "2026-08-11"] });
+  eq("M3 an OT line's snap carries only its own days", byKey["svc:2|ot"].laborSync.snap.dates, ["2026-08-10"]);
+  eq("M4 a flat line's snap spans the scheduled days", byKey["flat:f1"].laborSync.snap.dates, ["2026-08-10", "2026-08-11"]);
+  eq("M5 section marker, single section", one[0].laborSync, { projectId: 42, grouping: "one", ignored: {} });
+  const split = SECTIONS(schedule, SVCS, {}, "split", fmtDate, window.LTP_genId, flat, 42, NOW);
+  eq("M6 section marker, per department", split.map((s) => s.laborSync).sort((a, b) => a.dept.localeCompare(b.dept)),
+     [{ projectId: 42, grouping: "dept", dept: "Audio", ignored: {} }, { projectId: 42, grouping: "dept", dept: "Lighting", ignored: {} }]);
+  // Same schedule → same keys whatever ids were minted. This is what makes a
+  // later diff possible at all.
+  const again = SECTIONS(schedule, SVCS, {}, "split", fmtDate, (p) => p + "-other", flat, 42, NOW);
+  eq("M7 keys are stable across regenerations",
+     again.map((s) => s.items.map((i) => i.laborSync.key)), split.map((s) => s.items.map((i) => i.laborSync.key)));
+  // A caller that doesn't say which project still gets a marker; it matches none.
+  eq("M8 unknown project → null projectId", SECTIONS(schedule, SVCS, {}, "one", fmtDate, window.LTP_genId)[0].items[0].laborSync.projectId, null);
+  // An undated day is labelled TBD in the note and contributes no ISO day.
+  const undated = SECTIONS([day("d1", "", "08:00", "16:00", [pos("p1", 1)], MEAL)], SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW);
+  eq("M9 undated day → no ISO day in the snap", undated[0].items[0].laborSync.snap.dates, []);
+  // The marker never leaks into the fields the rest of the app reads.
+  eq("M10 line fields are what they always were",
+     Object.keys(byKey["svc:1|day"]).sort(),
+     ["adjustedPrice", "cost", "deliveredQty", "id", "invoicedQty", "laborSync", "name", "notes", "qty", "rateType", "serviceId", "type", "unitPrice"]);
+}
+
 // ── LTP_docHasProject ────────────────────────────────────────────────────────
 // The whole point: a project's Quotes/Invoices tabs must find documents where
 // it's a CONTRIBUTOR, not only ones it's primary on.
@@ -514,6 +556,36 @@ const ALLP = [GALA, SUMMIT];
   eq("C4 an exempt client's $0 survives", cloneDraft({ id: 6, sections: [], qbTaxTotal: 0 }).qbTaxTotal, 0);
   // And the totals helper agrees with what the PDF would compute.
   eq("C5 cloned draft totals are tax-inclusive", window.LTP_QUOTE_TOTALS(d).total, 10825);
+  // The schedule-sync marker is a section field too: it must be named in the
+  // whitelist to survive opening the quote, and stay ABSENT (not null) on a
+  // section that was built by hand — that absence is what marks a manual line.
+  const marked = cloneDraft({ id: 10, sections: [
+    { id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "one", ignored: {} },
+      items: [{ id: "i1", qty: 1, unitPrice: 5, laborSync: { projectId: 42, key: "svc:1|day", at: "t", snap: null } }] },
+    { id: "s2", label: "Extras", items: [] }] });
+  eq("C5a section marker survives the clone", marked.sections[0].laborSync, { projectId: 42, grouping: "one", ignored: {} });
+  eq("C5b line marker survives the clone", marked.sections[0].items[0].laborSync.key, "svc:1|day");
+  eq("C5c a hand-built section gets no marker", "laborSync" in marked.sections[1], false);
+  // modules/invoices.js::cloneInvoice is the same kind of whitelist rebuild —
+  // and the invoice is where the marker matters most (sync after acceptance).
+  // It closes over todayISO (supplied above) and window.LTP_docProjectIds.
+  const invSrc = fs.readFileSync(path.join(__dirname, "..", "modules", "invoices.js"), "utf8");
+  const invStart = invSrc.indexOf("function cloneInvoice(");
+  let invEnd = -1;
+  for (let j = invSrc.indexOf("{", invStart), depth = 0; j < invSrc.length; j++) {
+    if (invSrc[j] === "{") depth++;
+    else if (invSrc[j] === "}") { depth--; if (depth === 0) { invEnd = j + 1; break; } }
+  }
+  ok("C5d cloneInvoice located in the module", invStart !== -1 && invEnd !== -1);
+  const cloneInvoice = (0, eval)("(" + invSrc.slice(invStart, invEnd) + ")");
+  const markedInv = cloneInvoice({ id: 11, sections: [
+    { id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "dept", dept: "Audio", ignored: { "svc:9|ot": { qty: 1 } } },
+      items: [{ id: "i1", qty: 1, unitPrice: 5, laborSync: { projectId: 42, key: "svc:1|day", at: "t", snap: null } }] },
+    { id: "s2", label: "Extras", items: [] }] });
+  eq("C5e invoice section marker survives the clone", markedInv.sections[0].laborSync,
+     { projectId: 42, grouping: "dept", dept: "Audio", ignored: { "svc:9|ot": { qty: 1 } } });
+  eq("C5f invoice line marker survives the clone", markedInv.sections[0].items[0].laborSync.key, "svc:1|day");
+  eq("C5g a hand-built invoice section gets no marker", "laborSync" in markedInv.sections[1], false);
 
   // ── Expiry prefill ────────────────────────────────────────────────────────
   // The builder's date field must never open blank: a quote saved before the

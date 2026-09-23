@@ -387,8 +387,13 @@ window.LTP_quoteToInvoiceDraft = function(quote, genId) {
       // projectId rides along so a section's job attribution survives the
       // quote → invoice hop; without it a multi-project quote's sections
       // would arrive on the invoice with no idea which job they billed.
-      invSections.push({ id: genId("sec"), label: sec.label, projectId: sec.projectId != null ? sec.projectId : null,
-                         customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems });
+      var invSec = { id: genId("sec"), label: sec.label, projectId: sec.projectId != null ? sec.projectId : null,
+                     customDates: sec.customDates, startDate: sec.startDate, endDate: sec.endDate, items: invItems };
+      // The schedule-sync marker rides along too (items carry theirs by the
+      // spread above), so an invoice made from a schedule-built quote can be
+      // brought back in step with the schedule after acceptance.
+      if (sec.laborSync) invSec.laborSync = sec.laborSync;
+      invSections.push(invSec);
     }
     return Object.assign({}, sec, { items: updatedItems });
   });

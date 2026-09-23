@@ -672,7 +672,7 @@
     function chooseGrouping(grouping) {
       var kind = sendDlg.kind;
       var sections = window.LTP_scheduleLaborSections(
-        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId, draft.fixedPositions);
+        draft.schedule, svcs, window.LTP_crewMinMap(contacts), grouping, fmt, genId, draft.fixedPositions, project.id);
       if (sections.length === 0) {
         setSendDlg(null);
         // Positions exist (openSend checked) but nothing priced — every day is
