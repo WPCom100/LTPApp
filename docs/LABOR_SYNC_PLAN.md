@@ -641,15 +641,15 @@ Opus PR against this document before merge.
 | # | Step | Who | Size | Depends on |
 |---|---|---|---|---|
 | 0 | Owner confirms decisions 1–17. Done 2026-09-23. | owner | ✅ | — |
-| A1 | `laborSync` markers: generator gains `projectId`, writes item + section markers; section whitelists ×3; model comments; `tests/test_doc_projects.js` extended (existing scenarios must still pass byte-for-byte on the item fields they assert). | **Fable** | S | 0 |
-| A2 | `components/domain-labor-sync.js`: `LTP_laborExpected`, `LTP_laborDrift(All)`, `LTP_applyLaborSync`, `LTP_keepLaborSync`, `LTP_laborSyncChanges`, `LTP_laborDriftNotice`, `LTP_adoptLaborLines`; wired into `index.html`, `sw.js` precache, `CACHE_VERSION` bump; **`tests/test_labor_sync.js`** (no-mutation, same-reference-when-idle, hand-edit detection, adjustedPrice preserved, linked-line clamp, removed-linked rollback list, ignored keys, multi-project, adopt matching, cent/1e-5 rounding). | **Fable** | L | A1 |
+| A1 | ✅ `90a8e85` — `laborSync` markers: generator gains `projectId`/`nowIso`, writes item + section markers; section whitelists ×3; model comments; `test_doc_projects.js` 163 → 181, `test_fixed_positions.js` 59 → 62, `test_quote_to_invoice.js` 77 → 78. | **Fable** | S | 0 |
+| A2 | ✅ `f4e5e51` — `components/domain-labor-sync.js`: `LTP_laborExpected`, `LTP_laborMarkedLines`, `LTP_laborHomeSection`, `LTP_laborDrift(All)`, `LTP_applyLaborSync`, `LTP_keepLaborSync`, `LTP_laborSyncChanges`, `LTP_laborDriftNotice`, `LTP_laborLinkable`, `LTP_adoptLaborLines`, `LTP_laborDifferenceQty`, `LTP_laborDifferenceInvoice`; wired into `index.html` and the `sw.js` precache (`CACHE_VERSION` v110); **`tests/test_labor_sync.js`** 139 assertions. | **Fable** | L | A1 |
 | A3 | Quote builder: drift memo, banner, review modal, Apply/Keep through `setDraft`, activity entry on save, legacy "Link" step; golden snapshot scenarios added (`tests/test_builder_render.js --update`). Copy from the rental notice at `quotes-builder.js:966-982, 2487-2500` and `PayoutExportModal`. | **Opus 5** | M | A2 |
 | A4 | Invoice builder: same surfaces; removals feed `pendingRollbacks`; sent-invoice banner with Recall / Keep as is (decision 15); `qbSignature` gains `notes` with the either-fingerprint compatibility shim (decision 16) + tests. | **Opus 5** | M | A2, A3 (reuse the modal component) |
 | A5 | List chip on quote/invoice rows and the project card; schedule-save toast; send-dialog "already linked → sync review" + "Append anyway". Copy `LTPRentalDriftChip`, `LTP_toastRentalDrift`, `sendDlg`. | **Opus 5** | S | A2 |
 | A6 | "Labor changed" chip in the quote's send-to-invoice picker (decision 17: a chip, not a sentence). | **Opus 5** | XS | A4 |
 | A7 | "New invoice with changes" (A9): difference mode in the review modal (positive deltas tickable, `credit` / `rate changed` captions), the creation flow copying the new-invoice literal at `quotes-builder.js:1900-1921`, the marker-only write on the sent invoice through a dedicated `setInvoices` mapping, activity on both invoices, navigation to the new draft; golden snapshot scenario. | **Opus 5** | M | A2 (`LTP_laborDifferenceInvoice`), A4 |
-| B1 | Cancellation record + engine: `LTP_cancelReference`, `LTP_cancelPosition`, `LTP_setCancellationPay`, `LTP_restorePosition`, flat-rate variants; strip-on-reassign fix; the two non-admin allowances in `enforce_pay_snapshot` / `_fixed` (decision 11) with tests that a non-admin cannot inflate `work.pay.total` past `cancel.ref.pay` or write any other `work`; `crew_integrity` rank/assigned rules; **`tests/test_cancelled_labor.js`** + `tests/test_crew_integrity.py` cases. | **Fable** | M | 0 |
-| B2 | Payout integration: `derive_payout_drafts`, `LTP_payoutRows`, `_rollup_state`, `qbo_payouts` tier label, fixture regeneration, parity suites, paid-day-guard test for a cancelled paid day, `crew_portal.py` earnings. | **Fable** | M | B1 |
+| B1 | ✅ `0992346` — Cancellation record + engine in `components/domain-crew.js`: `LTP_cancelReference`, `LTP_cancelShare`, `LTP_cancelWork`, `LTP_cancelDefaults`, `LTP_cancelPosition`, `LTP_setCancellationShares`, `LTP_restorePosition`, the flat-rate mirrors, `LTP_reassignPatch` / `LTP_SNAPSHOT_CLEAR` (strip-on-reassign, applied in `labor.js` and `schedule-editor.js`); `crew_integrity`: `cancelled` ranks with `confirmed`, `_cancel_write_allowed` (frozen pay ≤ a fixed reference) and `_snapshot_drop_allowed`; **`tests/test_cancelled_labor.js`** 77 assertions, `test_crew_integrity.py` 28 → 34. | **Fable** | M | 0 |
+| B2 | ✅ `aaf0cdf` — Payout integration: `LTP_payoutRows` and `derive_payout_drafts` carry cancelled shifts (on top of a signed day; as the signed figure on a cancel-only day; waiting with a pending day); cancelled flat positions; units carry `kind`, `build_bill_lines` groups by account + kind so a cancellation is its own "Cancellation" bill line; parity fixture regenerated with a fifth crew member (every existing row unchanged); `test_payout_parity.js` 54 → 66, `test_payout_bills.py` +5, `test_qbo_payout_bills.py` +1, `test_paid_day_guard.py` +1 variant. The crew portal's earnings read the same derivation, so its days already carry `state: "cancelled"` (the label is B5). | **Fable** | M | B1 |
 | B3 | Generator: exclude cancelled from pools, emit `cancel:` lines, `_RATE_TYPE_ORDER`; the `"cancel"` rate-type trail (`doc_units.py`, both builders' `RATE_TYPES`/option/`clientRateNote`, PDF, public view, `qbo_sync`); `test_doc_projects.js`, `test_pdf_qty_label.py`, `test_public_qty_label.py`. Copy the `"flat"` trail from migration `a6b7c8d9e0f1`'s commit. | **Opus 5** | M | B1, A1 |
 | B4 | Cancel dialog (open to every producer; `guardPaidDay` keeps the paid-day check) + Assignments "Cancelled" group + Payouts row actions + schedule-builder/calendar rendering and totals + crew landing badge + `LTP_detectCrewConflicts`. Copy the sign-off/adjust dialogs at `labor.js:3365-3424`. | **Opus 5** | L | B1 |
 | B5 | Crew portal "Cancelled" group + label; new `crewCancelledWithPay` template in `data/settings.js` with `{{shifts}}` + `{{cancellationPay}}` and its byte-identical `_NOTIFY_FALLBACKS` entry in `backend/routes/crew.py`; tray routing (pay > 0 → new template, else the existing `crewCancelled`); Settings `cancellationDefaultBillPct` / `cancellationDefaultPayPct` = 50 in `data/settings.js` + `modules/settings.js`; `tests/test_crew_portal.py` + template round-trip test. | **Opus 5** | S | B1 |
@@ -745,3 +745,68 @@ B3/B4/B5 in parallel (Opus, two branches), B2 (Fable) alongside, then C.
   lines rule until the QuickBooks spike in *Risks* says otherwise.
 - UI strings in this document are ceilings (decision 17); the builder may
   shorten any of them and must not add explanatory text beyond them.
+
+## Handoff notes for the Opus steps (what the built engines actually expose)
+
+Read these before A3–A7 and B3–B6; they are the places the build settled
+something this document had left open, or named differently.
+
+- **Signatures.** `LTP_laborDrift(doc, project, svcs, crewMins, fmtDate)`;
+  `LTP_laborDriftAll(doc, projects, svcs, crewMins, fmtDate)`;
+  `LTP_applyLaborSync(doc, drift, keys, genId, nowIso, {projectName,
+  fallbackQuoteId})` → `{sections, removedLinked, applied}`;
+  `LTP_keepLaborSync(doc, drift, keys, nowIso)` → sections;
+  `LTP_laborSyncChanges(drift, appliedKeys, keptKeys)`;
+  `LTP_laborDriftNotice(project, quotes, invoices, services, clientRates,
+  contacts, fmtDate)` resolves each document's own rate card itself;
+  `LTP_adoptLaborLines(doc, project, svcs, crewMins, fmtDate, nowIso)` →
+  `{sections, linked, unlinked}`; `LTP_laborDifferenceInvoice(sent, drift,
+  keys, genId, nowIso, {id, shareToken, today, time, user, dueDate,
+  projectName, sentRef, notes, terms, fmtDate})` → `{invoice, sentSections,
+  sentActivity, lines, unrecorded}`. `svcs` is always the document's
+  client-resolved card (`LTP_servicesForClient`), `fmtDate` the same formatter
+  the schedule builder sends with (`LTP_formatDate`).
+- **Drift rows compare `dates`, not `notes`.** A snapshot without `dates`
+  (adopted or hand-built) is never flagged for its days; `notes` is rewritten
+  on apply whenever any field moved. `handEdited` is net of `adjustments`.
+- **Every helper returns the input array when nothing changed** — compare by
+  identity before calling `setDraft`.
+- **Difference invoices** carry `basis` on their section marker as well as
+  on each line; both are skipped everywhere. Recording on the sent invoice is
+  a marker-only write; do it through a dedicated `setInvoices` mapping (not
+  the locked mutators), then `LTP_adoptServerRow` is not needed — the
+  debounced PUT carries it. `unrecorded` non-empty means a key could not be
+  written back (no section for it); surface it as a `credit`-style caption.
+- **Sent-invoice banner gating.** `LTP_laborMarkedLines(doc, projectId)`
+  non-empty is the condition for the sync banner on a non-draft invoice;
+  `LTP_laborLinkable` is the condition for the Link step on a draft.
+- **Cancellation.** `LTP_cancelDefaults(settings)` gives the dialog's
+  pre-fill; `LTP_cancelReference(shift, position, svcs, crewMins)` the two
+  reference figures to show; `LTP_cancelShare(ref, mode, value)` the live
+  total per side; `LTP_cancelPosition(schedule, shiftId, posId, {bill:{mode,
+  value}, pay:{mode, value}}, svcs, crewMins, {at, by, byId, reason})` the
+  write. Edits use `LTP_setCancellationShares(schedule, shiftId, posId,
+  shares, meta)`; Restore is `LTP_restorePosition(schedule, shiftId, posId,
+  svcs, crewMins, lockedAt)`. The flat-rate mirrors take `(fixedPositions,
+  posId, …)`. All are open to every producer; the Payouts-tab actions go
+  through a `guardPaid` variant that skips its admin check but keeps the
+  paid-day check.
+- **Reassign / reopen.** Any code path that changes a position's crew or
+  sends it back to `open` must merge `LTP_SNAPSHOT_CLEAR` into the patch
+  (or use `LTP_reassignPatch(pos, crewId)`); the Labor tab cascade, the Labor
+  reassign and the schedule editor's assign already do.
+- **Payout rows** carry `cancellations: [{posId, total, cancel}]` and
+  `cancelTotal`; a cancel-only day has `signed.state === "cancelled"` and
+  `signed.pay.tier === "cancel"`. Python days carry `cancel_total` and
+  `cancellations`, and each unit a `kind`. A cancellation on a still-unsigned
+  day waits with the day (pending); say so on the row rather than inventing
+  a second entry.
+- **Generator (B3).** `LTP_scheduleLaborSections` does not yet exclude
+  cancelled positions or emit `cancel:` lines — until B3 lands, a cancelled
+  position still bills in full through the day pools. B3 must add the
+  `"cancel"` rate type to `_RATE_TYPE_ORDER` (after `ot`) and read
+  `position.cancel.bill.total` / `cancel.pay.total` for the line.
+- **`components/status-enums.js` does not exist** (the model comment is
+  stale); the position status maps live in `modules/labor.js` (`POS_STATUSES`,
+  `SEVERITY`), `components/schedule-editor.js` and `modules/schedule-builder.js`
+  (`POS_COLORS`). Add `cancelled` to each.
