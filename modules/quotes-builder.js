@@ -2800,6 +2800,14 @@
       invPickerData && h(window.LTPModal, { title: "Send to Invoice", onClose: function() { setInvPickerData(null); } },
         h("p", { style: { fontSize: "12px", color: B.textMut, marginBottom: 14 } },
           "Add these items to one of this client\u2019s draft invoices \u2014 they arrive as new sections, leaving what\u2019s already there untouched \u2014 or create a new invoice."),
+        // The schedule moved after this (accepted) quote's labor was priced. The
+        // invoice these lines land on shows the review; here, a chip is enough
+        // (decision 17) so it is no surprise there.
+        window.LTP_laborDriftAll(draft, projects, svcs, window.LTP_crewMinMap(contacts), fmt).length > 0
+          && h("div", { style: { marginTop: -8, marginBottom: 12 } },
+               h("span", { title: "The schedule changed since this labor was priced",
+                 style: { fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap" } },
+                 "Labor changed")),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
           (function() {
             // The eligibility rule (draft-only, same billing party, any

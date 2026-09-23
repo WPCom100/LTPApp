@@ -402,7 +402,10 @@
 // builders' "Labor out of sync" banner and review); invoices.js's QuickBooks
 // fingerprint now counts line notes. The component itself is picked up by the
 // runtime /components/ rule.
-var CACHE_VERSION = 'ltp-shell-v112';
+// v113: quote and invoice lists (and a project's document lists) show "Labor
+// changed"; a schedule save that changes what it bills says which documents
+// now differ; the schedule's Send routes an already-linked draft to its review.
+var CACHE_VERSION = 'ltp-shell-v113';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

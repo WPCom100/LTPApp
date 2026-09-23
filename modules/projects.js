@@ -123,6 +123,8 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     projects:  projects, setProjects: setProjects,
     quotes: quotes || [],
     services: services || [],
+    // Each document's "Labor changed" chip prices on its client's card.
+    clientRates: clientRates || [],
     invoices: invoices || [],
     selectedProject: selectedProject,
     setSelectedProjectId: setSelectedProjectId,

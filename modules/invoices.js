@@ -86,7 +86,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LIST
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvoiceList({ invoices, companies, contacts, projects, quotes }) {
+  function InvoiceList({ invoices, companies, contacts, projects, quotes, services, clientRates }) {
     var isMobile = window.LTP_useIsMobile();
     // Filter / sort / search deliberately stay OUT of the URL, but Back must
     // still put this list back the way the user left it — so they hang off the
@@ -264,7 +264,9 @@
                   h("div", { style: { flex: 1, minWidth: 0 } }),
                   h("div", { style: { fontSize: "14px", fontWeight: 700, color: overdue ? B.danger : B.accent, flexShrink: 0 } }, "$" + window.LTP_money(t.total)),
                   h(window.Badge, { status: window.LTP_displayStatus(inv) })),
-                proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 3 } }, proj),
+                proj && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text, marginTop: 3, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                  proj,
+                  window.LTPLaborDriftChip && h(window.LTPLaborDriftChip, { doc: inv, kind: "invoice", projects: projects, services: services, clientRates: clientRates, contacts: contacts })),
                 clientLine && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, clientLine),
                 tailLine.length > 0 && h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 1 } }, tailLine)
               );
@@ -282,6 +284,7 @@
                 // The job name gives up width first; the quote this was raised
                 // from stays legible beside it.
                 [h("span", { key: "j", style: Object.assign({ fontSize: "13px", fontWeight: 600, color: B.text }, grow) }, job || "\u2014"),
+                 window.LTPLaborDriftChip && h(window.LTPLaborDriftChip, { key: "l", doc: inv, kind: "invoice", projects: projects, services: services, clientRates: clientRates, contacts: contacts }),
                  qRef && h("span", { key: "q", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, qRef)],
                 [h("span", { key: "c", style: Object.assign({ fontSize: "12px", color: B.textSec }, grow) }, comp || "\u2014"),
                  contact && h("span", { key: "p", style: { fontSize: "10px", color: B.textMut, flexShrink: 0 } }, contact)],
@@ -2714,6 +2717,8 @@
     }
     return h(InvoiceList, {
       invoices: props.invoices, companies: props.companies, contacts: props.contacts, projects: props.projects, quotes: props.quotes,
+      // For the "Labor changed" chip — each invoice checked on its client's card.
+      services: props.services, clientRates: props.clientRates,
     });
   };
 })();

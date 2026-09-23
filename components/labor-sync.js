@@ -206,6 +206,69 @@
     };
   };
 
+  // ── Lists: which documents have drifted ────────────────────────────────────
+  // Whether `doc` (a quote or invoice) has schedule labor that no longer
+  // matches its schedule — for the list chip. Only documents that can still
+  // act on it count: draft/sent quotes, and invoices that are not paid (the
+  // same set LTP_laborDriftNotice counts). A document with no marked lines is
+  // never checked. Each document is priced on ITS client's rate card.
+  //
+  // Cached per document object: a list re-renders its rows far more often than
+  // any of these inputs change, and a check runs the schedule generator. A
+  // new document object, or any input that is a new array, recomputes.
+  var _driftCache = typeof WeakMap === "function" ? new WeakMap() : null;
+  window.LTP_docLaborDrifted = function(doc, kind, projects, services, clientRates, contacts) {
+    if (!doc) return false;
+    if (kind === "quote" ? (doc.status !== "draft" && doc.status !== "sent") : doc.status === "paid") return false;
+    var deps = [projects, services, clientRates, contacts];
+    var hit = _driftCache && _driftCache.get(doc);
+    if (hit && hit.deps.every(function(d, i) { return d === deps[i]; })) return hit.value;
+    var marked = (doc.sections || []).some(function(s) {
+      return (s.items || []).some(function(it) { return it && it.laborSync && !it.laborSync.basis; });
+    });
+    var value = false;
+    if (marked) {
+      var svcs = window.LTP_servicesForClient(services, clientRates, window.LTP_clientRef(doc));
+      value = window.LTP_laborDriftAll(doc, projects, svcs, window.LTP_crewMinMap(contacts), window.LTP_formatDate).length > 0;
+    }
+    if (_driftCache) _driftCache.set(doc, { deps: deps, value: value });
+    return value;
+  };
+
+  // "Labor changed" on a quote or invoice row — the list-level half of the
+  // builder's banner, beside LTPRentalDriftChip. Renders nothing when there is
+  // nothing to say, so it can sit in any row.
+  window.LTPLaborDriftChip = function(p) {
+    if (!window.LTP_docLaborDrifted(p.doc, p.kind, p.projects, p.services, p.clientRates, p.contacts)) return null;
+    return h("span", {
+      title: "The schedule changed since this labor was billed",
+      style: { fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap" } },
+      "Labor changed");
+  };
+
+  // After a schedule save: when what the schedule bills changed, tell whoever
+  // saved it which live documents now differ — the schedule-side twin of
+  // LTP_toastRentalDrift. A save that moves nothing billable (a note, a crew
+  // swap, a break that doesn't change the day) says nothing, so saving twice
+  // does not nag twice. before/after are the project with its schedule as it
+  // was saved last and as it is now.
+  window.LTP_toastLaborDrift = function(before, after, quotes, invoices, services, clientRates, contacts) {
+    if (!before || !after || !window.LTP_toast) return;
+    var svcs = window.LTP_servicesForClient(services, clientRates, window.LTP_clientRef(after));
+    var crewMins = window.LTP_crewMinMap(contacts);
+    function billed(p) {
+      var secs = window.LTP_scheduleLaborSections(p.schedule, svcs, crewMins, "one", function(d) { return d; },
+        function(x) { return x; }, p.fixedPositions, p.id, "-");
+      return JSON.stringify(((secs[0] && secs[0].items) || []).map(function(it) {
+        var sn = it.laborSync.snap;
+        return [it.laborSync.key, sn.qty, sn.unitPrice, sn.cost, sn.dates];
+      }));
+    }
+    if (billed(before) === billed(after)) return;
+    var n = window.LTP_laborDriftNotice(after, quotes, invoices, services, clientRates, contacts, window.LTP_formatDate);
+    if (n) window.LTP_toast(n.title, { message: n.message, variant: "warn", duration: 12000 });
+  };
+
   // ── Banner ──────────────────────────────────────────────────────────────────
   // p: { projectName, drift, mode, onReview, onKeepAll, onRecall, recallBlocked, onNewInvoice }
   window.LTPLaborSyncBanner = function(p) {

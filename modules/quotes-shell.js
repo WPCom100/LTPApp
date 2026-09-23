@@ -95,6 +95,8 @@
       activeTab === "quotes"   && h(window.QuotesList, {
         quotes: quotes, setQuotes: setQuotes,
         companies: companies, contacts: contacts, projects: projects,
+        // For the "Labor changed" chip — each quote checked on its client's card.
+        services: services, clientRates: clientRates,
       }),
 
       activeTab === "products" && h(window.QuotesProducts, {

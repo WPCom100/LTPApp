@@ -571,6 +571,16 @@
         });
       });
 
+      // When what the schedule bills changed, say which live quotes and
+      // invoices now differ from it (components/labor-sync.js). The documents
+      // themselves show it on their next open; this is the heads-up now.
+      if (window.LTP_toastLaborDrift) {
+        window.LTP_toastLaborDrift(
+          Object.assign({}, project, { schedule: cleanRef.current.schedule, fixedPositions: cleanRef.current.fixedPositions }),
+          Object.assign({}, project, { schedule: cleanSchedule, fixedPositions: cleanFixed }),
+          quotes, invoices, services, clientRates, contacts);
+      }
+
       var saved = { schedule: cleanSchedule, fixedPositions: cleanFixed, scheduleNotes: draft.scheduleNotes, scheduleActivity: newActivity };
       setDraftRaw(saved);
       cleanRef.current = saved;
@@ -690,6 +700,19 @@
         return;
       }
       setSendDlg({ kind: kind, step: "target", grouping: grouping, sections: sections });
+    }
+
+    // A draft that already carries this project's schedule labor is brought
+    // back in step through its review instead of getting a second copy of the
+    // labor (decision 5): hand the document the review to open, and go there.
+    // "Append anyway" on the same row keeps the old behaviour for the odd case.
+    function linkedTo(doc) { return window.LTP_laborMarkedLines(doc, project.id).length > 0; }
+    function openSyncReview(doc) {
+      if (!sendDlg) return;
+      var K = KIND[sendDlg.kind];
+      window.__LTP_OPEN_LABOR_REVIEW = { kind: sendDlg.kind, id: doc.id, projectId: project.id };
+      setSendDlg(null);
+      nav(K.route + "/" + doc.id);
     }
 
     function executeSend(targetId) {
@@ -1111,12 +1134,18 @@
               // from another project is a legitimate target at all.
               var names = window.LTP_docProjectNames(d, projects);
               var total = (K.totals(d) || {}).total || 0;
-              return h("button", { key: d.id, onClick: function() { executeSend(d.id); },
+              var linked = linkedTo(d);
+              return h("button", { key: d.id, onClick: function() { if (linked) openSyncReview(d); else executeSend(d.id); },
                 style: { background: B.surface, border: "1px solid " + B.border, borderRadius: "6px", padding: "10px 14px", cursor: "pointer", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, fontFamily: "inherit" },
                 onMouseOver: function(e) { e.currentTarget.style.borderColor = B.accent; },
                 onMouseOut:  function(e) { e.currentTarget.style.borderColor = B.border; } },
                 h("div", { style: { minWidth: 0 } },
-                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text } }, K.ref(d)),
+                  h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" } }, K.ref(d),
+                    linked && h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.info, border: "1px solid " + B.info + "66", borderRadius: "10px", padding: "0 6px" } }, "Linked · review"),
+                    linked && h("span", { role: "button", tabIndex: 0,
+                      onClick: function(e) { e.stopPropagation(); executeSend(d.id); },
+                      onKeyDown: function(e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); executeSend(d.id); } },
+                      style: { fontSize: "10px", color: B.textMut, textDecoration: "underline", cursor: "pointer" } }, "Append anyway")),
                   h("div", { style: { fontSize: "10px", color: B.textMut } },
                     itemCount + " item" + (itemCount !== 1 ? "s" : "") + " · " + (fmt(K.date(d)) || "—")),
                   names.length > 0 && h("div", { style: { fontSize: "10px", color: names.length > 1 ? B.info : B.textMut, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } },

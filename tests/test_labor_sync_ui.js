@@ -205,6 +205,54 @@ const line = (doc, key) => { for (const s of doc.sections) for (const it of s.it
   window.__LTP_OPEN_LABOR_REVIEW = null;
 }
 
+// ── The list chip's check ────────────────────────────────────────────────────
+{
+  const D = window.LTP_docLaborDrifted;
+  const drifted = docFrom(S0);
+  const projects = P(S1), stepProjects = P(S0);
+  eq("C0 a drifted draft quote", D(drifted, "quote", projects, SVCS, [], []), true);
+  eq("C1 the same quote in step", D(docFrom(S0), "quote", stepProjects, SVCS, [], []), false);
+  eq("C2 an accepted quote is never flagged", D(Object.assign({}, drifted, { status: "accepted" }), "quote", projects, SVCS, [], []), false);
+  eq("C3 a sent quote is", D(Object.assign({}, drifted, { status: "sent" }), "quote", projects, SVCS, [], []), true);
+  eq("C4 a sent invoice is", D(Object.assign({}, drifted, { status: "sent" }), "invoice", projects, SVCS, [], []), true);
+  eq("C5 a paid invoice is not", D(Object.assign({}, drifted, { status: "paid" }), "invoice", projects, SVCS, [], []), false);
+  const hand = Object.assign({}, drifted, { sections: drifted.sections.map((s) => Object.assign({}, s, { items: s.items.map((it) => { const c = Object.assign({}, it); delete c.laborSync; return c; }) })) });
+  eq("C6 no marked lines, no check", D(hand, "quote", projects, SVCS, [], []), false);
+  // Cached per document: the same inputs answer from the cache; a new rate card recomputes.
+  const doc = docFrom(S0), NO_RATES = [], NO_CREW = [];
+  let calls = 0; const real = window.LTP_laborDriftAll;
+  window.LTP_laborDriftAll = function () { calls++; return real.apply(this, arguments); };
+  D(doc, "quote", projects, SVCS, NO_RATES, NO_CREW); D(doc, "quote", projects, SVCS, NO_RATES, NO_CREW);
+  const cachedCalls = calls;
+  D(doc, "quote", projects, SVCS.slice(), NO_RATES, NO_CREW);
+  window.LTP_laborDriftAll = real;
+  eq("C7 the same row re-rendering is answered from the cache", cachedCalls, 1);
+  eq("C8 a new input recomputes", calls, 2);
+  // Each document is checked on ITS client's card: a negotiated rate the lines
+  // weren't priced at counts as drift even with the schedule unchanged.
+  const RATES = [{ id: 1, clientType: "company", companyId: 7, serviceId: 1, dayRate: 550, active: true }];
+  eq("C9 a client's negotiated card applies", D(docFrom(S0), "quote", stepProjects, SVCS, RATES, []), true);
+}
+
+// ── The toast after a schedule save ──────────────────────────────────────────
+{
+  toasts = [];
+  const T = window.LTP_toastLaborDrift;
+  const before = P(S0)[0], after = P(S1)[0];
+  const q = docFrom(S0, { id: 12, status: "draft", createdDate: "2026-09-01" });
+  T(before, after, [q], [], SVCS, [], []);
+  eq("T0 a save that changes the bill names the documents it left behind", toasts, ["Labor out of sync"]);
+  toasts = [];
+  const renamed = P(S0.map((s) => Object.assign({}, s, { title: "Renamed" })))[0];
+  T(before, renamed, [docFrom(S1, { id: 12 })], [], SVCS, [], []);
+  eq("T1 a save that bills the same says nothing, even with drift elsewhere", toasts, []);
+  T(before, after, [docFrom(S1, { id: 12 })], [], SVCS, [], []);
+  eq("T2 nothing out of sync, nothing said", toasts, []);
+  const swap = P(S0.map((s) => Object.assign({}, s, { positions: s.positions.map((p) => Object.assign({}, p, { crewId: 9 })) })))[0];
+  T(before, swap, [q], [], SVCS, [], []);
+  eq("T3 a crew swap is not a billing change", toasts, []);
+}
+
 console.log("labor-sync-ui suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
