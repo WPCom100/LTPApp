@@ -511,6 +511,39 @@ def test_build_bill_lines_hours_and_adjustment_only():
     assert wl[0]["amount"] == 1050.0 and "10h +5h OT" in wl[0]["description"]
 
 
+def test_build_bill_lines_cancellation_is_its_own_line():
+    # A cancelled shift's share posts to its role's account on a line of its
+    # own, labelled "Cancellation" — beside the day's worked hours when there
+    # are any, alone when the day was nothing but the cancellation.
+    accts = {"default_expense": "80", "ap": None, "by_service": {2: "81"}}
+    mixed = {"project_name": "Fest", "date": "2026-07-13", "tier": "full", "payable": 780.0,
+             "adj_total": 0.0, "adjustments": [],
+             "units": [{"service_id": 1, "amount": 600.0, "paid_hours": 10, "ot_hours": 0, "kind": "work"},
+                       {"service_id": 2, "amount": 180.0, "paid_hours": 0, "ot_hours": 0, "kind": "cancel"}]}
+    assert qbo_payouts.build_bill_lines([mixed], accts) == [
+        {"account_id": "80", "amount": 600.0, "description": "Fest · 2026-07-13 · Full day · 10h"},
+        {"account_id": "81", "amount": 180.0, "description": "Fest · 2026-07-13 · Cancellation"},
+    ]
+    alone = {"project_name": "Fest", "date": "2026-07-12", "tier": "cancel", "payable": 150.0,
+             "adj_total": 0.0, "adjustments": [],
+             "units": [{"service_id": 2, "amount": 150.0, "paid_hours": 0, "ot_hours": 0, "kind": "cancel"}]}
+    assert qbo_payouts.build_bill_lines([alone], accts) == [
+        {"account_id": "81", "amount": 150.0, "description": "Fest · 2026-07-12 · Cancellation"}]
+    # The same role worked and cancelled on one day: two lines on one account,
+    # the rounding residual landing on the larger of them, summing to payable.
+    same = {"project_name": "Fest", "date": "2026-07-13", "tier": "full", "payable": 750.01,
+            "adj_total": 0.0, "adjustments": [],
+            "units": [{"service_id": 1, "amount": 600.0, "paid_hours": 10, "ot_hours": 0, "kind": "work"},
+                      {"service_id": 1, "amount": 150.0, "paid_hours": 0, "ot_hours": 0, "kind": "cancel"}]}
+    two = qbo_payouts.build_bill_lines([same], accts)
+    assert [(ln["account_id"], ln["amount"]) for ln in two] == [("80", 600.01), ("80", 150.0)]
+    assert round(sum(ln["amount"] for ln in two), 2) == 750.01
+    # An adjustment on a cancel-only day rides on the role's account, not the default.
+    with_adj = dict(alone, payable=170.0, adj_total=20.0, adjustments=[{"label": "Travel", "amount": 20.0}])
+    assert qbo_payouts.build_bill_lines([with_adj], accts)[1] == {
+        "account_id": "81", "amount": 20.0, "description": "Fest · 2026-07-12 · Travel"}
+
+
 async def test_amount_reconciliation_mismatch_stamped():
     async with _db() as db:
         c = await _seed_contact(db)

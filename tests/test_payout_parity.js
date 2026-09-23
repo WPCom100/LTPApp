@@ -39,6 +39,36 @@ Object.keys(snap.expected.byCrew).forEach((cid) => {
   eq("PS total crew " + cid, g ? g.total : null, snap.expected.byCrew[cid]);
 });
 
+// ── Cancellations: the rows a cancelled shift produces (crew 9 in the fixture) ──
+// Python's derive_payout_drafts mirrors each of these (tests/test_payout_bills.py).
+{
+  const eli = pr.groups.find((g) => g.crewId === 9);
+  ok("PC0 the cancellation crew member has rows", !!eli && eli.rows.length === 4, eli && eli.rows.length);
+  const byKey = {}; (eli ? eli.rows : []).forEach((r) => { byKey[r.date + (r.kind === "flat" ? "F" : "")] = r; });
+  const alone = byKey["2026-07-12"];
+  ok("PC1 a day of nothing but a cancellation is signed by its share",
+     !!alone && alone.signed && alone.signed.state === "cancelled" && alone.signed.pay.tier === "cancel"
+     && alone.payable === alone.cancelTotal && alone.payable > 0, JSON.stringify(alone && alone.signed));
+  ok("PC2 its cancellations name the position and carry the record",
+     !!alone && alone.cancellations.length === 1 && alone.cancellations[0].posId === "p9" && alone.cancellations[0].cancel.pay.value === 50);
+  const mixed = byKey["2026-07-13"];
+  ok("PC3 a worked day carries its cancellation on top of the sign-off",
+     !!mixed && mixed.signed && mixed.signed.state === "worked" && mixed.cancelTotal > 0
+     && mixed.payable === Math.round((mixed.signed.pay.total + mixed.adjTotal + mixed.cancelTotal) * 100) / 100,
+     JSON.stringify(mixed && [mixed.signed && mixed.signed.state, mixed.payable, mixed.cancelTotal]));
+  const pending = byKey["2026-07-14"];
+  ok("PC4 an unsigned day stays pending, its cancellation waiting with it",
+     !!pending && !pending.signed && pending.payable === null && pending.cancelTotal > 0 && pending.estimate > pending.cancelTotal,
+     JSON.stringify(pending && [pending.payable, pending.cancelTotal, pending.estimate]));
+  const flat = byKey["2026-07-15F"];
+  ok("PC5 a cancelled flat-rate position is a signed flat row at its share",
+     !!flat && flat.kind === "flat" && flat.signed.state === "cancelled" && flat.payable === 250 && flat.cancel && flat.cancel.pay.total === 250,
+     JSON.stringify(flat && [flat.signed && flat.signed.state, flat.payable]));
+  // Nothing about a cancellation is ever "pending" or "drift".
+  ok("PC6 cancellation rows never count as pending or drifted",
+     [alone, flat].every((r) => r && r.signed && !r.drift));
+}
+
 // ── Period parity: helpers still match the recorded vectors ───────────────────
 periods.cases.forEach((c, i) => {
   eq("PP index " + i, window.LTP_payPeriodIndex(c.anchor, c.length, c.date), c.index);

@@ -185,6 +185,16 @@ def _num(x):
         return 0.0
 
 
+def _is_cancelled_with_pay(p) -> bool:
+    """A cancelled position whose pay share was frozen (components/domain-crew.js
+    LTP_cancelPosition writes ``work`` with state "cancelled"). One with nothing
+    frozen — nobody was on it — is not payout work at all."""
+    if not isinstance(p, dict) or p.get("status") != "cancelled":
+        return False
+    work = p.get("work")
+    return isinstance(work, dict) and work.get("state") == "cancelled" and isinstance(work.get("pay"), dict)
+
+
 def _rollup_state(states):
     """Day-state label from the position work-states (description only), matching
     LTP_payoutRows: all no-show -> 'no_show'; any adjusted/mixed -> 'adjusted';
@@ -225,7 +235,8 @@ def _flat_units(fp, work_pay):
         if amt == 0:
             continue  # full-margin flat-rate position carries no line
         out.append({"service_id": u.get("serviceId"), "amount": amt,
-                    "paid_hours": 0.0, "ot_hours": 0.0})
+                    "paid_hours": 0.0, "ot_hours": 0.0,
+                    "kind": "cancel" if u.get("tier") == "cancel" else "work"})
     return out
 
 
@@ -289,18 +300,32 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
             by_date.setdefault(d, []).append(s)
 
         for d, items in by_date.items():
-            seen = {}  # crew_id -> {"work", "adj", "states"}
+            seen = {}  # crew_id -> {"confirmed", "work", "adj", "states", "cancels", "cancel_adj"}
             for s in items:
                 for p in (s.get("positions") or []):
                     if not isinstance(p, dict):
                         continue
                     cid = p.get("crewId")
-                    if cid is None or p.get("status") != "confirmed":
+                    if cid is None:
+                        continue
+                    work = p.get("work")
+                    # A cancelled shift with its frozen share (components/domain-crew.js
+                    # LTP_cancelPosition) rides on the person's day — its own bill
+                    # line, added to the day's payable. Mirrors LTP_payoutRows.
+                    is_cancel = _is_cancelled_with_pay(p)
+                    if p.get("status") != "confirmed" and not is_cancel:
                         continue
                     e = seen.get(cid)
                     if e is None:
-                        e = seen[cid] = {"work": None, "adj": None, "states": set()}
-                    work = p.get("work")
+                        e = seen[cid] = {"confirmed": False, "work": None, "adj": None, "states": set(),
+                                         "cancels": [], "cancel_adj": None}
+                    if is_cancel:
+                        e["cancels"].append({"position_id": p.get("id"), "pay": work["pay"]})
+                        adj = p.get("adj")
+                        if adj and e["cancel_adj"] is None:
+                            e["cancel_adj"] = adj
+                        continue
+                    e["confirmed"] = True
                     if work:
                         if e["work"] is None:
                             e["work"] = work
@@ -317,15 +342,32 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                     grp = by_crew[cid] = {"days": [], "pending": []}
                 work = e["work"]
                 work_pay = work.get("pay") if isinstance(work, dict) else None
-                if not work_pay:
+                cancels = e["cancels"]
+                cancel_total = js_round2(sum(_num(c["pay"].get("total")) for c in cancels))
+                if e["confirmed"] and not work_pay:
                     # Confirmed but not signed off -> not payable; report as pending.
+                    # A cancelled shift on the same day waits with it (one ledger
+                    # entry per person-day).
                     grp["pending"].append({"project_id": pid, "project_name": pname, "date": d})
                     continue
-                adj = e["adj"] or []
+                unit_sources = []
+                if not e["confirmed"]:
+                    # Only cancellations on the day: they ARE the signed figure.
+                    work_pay = {"total": cancel_total, "tier": "cancel", "paidHours": 0, "otHours": 0}
+                    state = "cancelled"
+                    cancel_extra = 0.0
+                    adj = e["cancel_adj"] or []
+                else:
+                    state = _rollup_state(e["states"])
+                    cancel_extra = cancel_total
+                    adj = e["adj"] or e["cancel_adj"] or []
+                    unit_sources.extend(work_pay.get("units") or [])
+                for c in cancels:
+                    unit_sources.extend(c["pay"].get("units") or [])
                 adj_total = js_round2(sum(_num(a.get("amount")) for a in adj if isinstance(a, dict)))
-                payable = js_round2(_num(work_pay.get("total")) + adj_total)
+                payable = js_round2(_num(work_pay.get("total")) + adj_total + cancel_extra)
                 units_out = []
-                for u in (work_pay.get("units") or []):
+                for u in unit_sources:
                     if not isinstance(u, dict):
                         continue
                     amt = js_round2(_num(u.get("total")))
@@ -335,6 +377,7 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                         "service_id": u.get("serviceId"), "amount": amt,
                         "paid_hours": js_round2(_num(u.get("paidHours"))),
                         "ot_hours": js_round2(_num(u.get("otHours"))),
+                        "kind": "cancel" if u.get("tier") == "cancel" else "work",
                     })
                 # Itemized adjustments (label + amount) so the bill lists each one
                 # separately; drop zero-amount entries (they carry no line).
@@ -344,11 +387,14 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
                 ]
                 grp["days"].append({
                     "project_id": pid, "project_name": pname, "date": d,
-                    "tier": work_pay.get("tier") or "", "state": _rollup_state(e["states"]),
+                    "tier": work_pay.get("tier") or "", "state": state,
                     "payable": payable, "adj_total": adj_total,
                     "paid_hours": js_round2(_num(work_pay.get("paidHours"))),
                     "ot_hours": js_round2(_num(work_pay.get("otHours"))),
                     "units": units_out, "adjustments": adjustments,
+                    "cancel_total": cancel_total,
+                    "cancellations": [{"position_id": c["position_id"], "amount": js_round2(_num(c["pay"].get("total")))}
+                                      for c in cancels],
                 })
 
         # Flat-rate positions: one entry per confirmed position, dated on the
@@ -365,7 +411,8 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
             if not isinstance(fp, dict):
                 continue
             cid = fp.get("crewId")
-            if cid is None or fp.get("status") != "confirmed":
+            is_cancel = _is_cancelled_with_pay(fp)
+            if cid is None or (fp.get("status") != "confirmed" and not is_cancel):
                 continue
             d = fixed_pay_date(proj_end)
             if not d:
@@ -386,7 +433,7 @@ def derive_payout_drafts(projects, contacts_by_id, start_iso, end_iso):
             adj_total = js_round2(sum(_num(a.get("amount")) for a in adj if isinstance(a, dict)))
             flat = {
                 "project_id": pid, "project_name": pname, "date": d,
-                "tier": "flat", "state": "worked",
+                "tier": "cancel" if is_cancel else "flat", "state": "cancelled" if is_cancel else "worked",
                 "payable": js_round2(_num(work_pay.get("total")) + adj_total), "adj_total": adj_total,
                 "paid_hours": 0.0, "ot_hours": 0.0,
                 "units": _flat_units(fp, work_pay),

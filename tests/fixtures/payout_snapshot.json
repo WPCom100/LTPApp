@@ -61,6 +61,13 @@
       "firstName": "Dana",
       "lastName": "Designer",
       "minDayCost": 0
+    },
+    {
+      "id": 9,
+      "isCrew": true,
+      "firstName": "Eli",
+      "lastName": "Cancelled",
+      "minDayCost": 0
     }
   ],
   "projects": [
@@ -401,6 +408,255 @@
               "fullMargin": false
             }
           ]
+        },
+        {
+          "id": "s8",
+          "date": "2026-07-12",
+          "time": "09:00",
+          "endTime": "14:00",
+          "breaks": [],
+          "positions": [
+            {
+              "id": "p9",
+              "crewId": 9,
+              "serviceId": 1,
+              "role": "L1",
+              "status": "cancelled",
+              "fullMargin": false,
+              "cancel": {
+                "at": "2026-07-05T09:00:00Z",
+                "by": "tester",
+                "byId": 1,
+                "reason": "fixture",
+                "ref": {
+                  "bill": 500,
+                  "pay": 300
+                },
+                "bill": {
+                  "mode": "percent",
+                  "value": 50,
+                  "total": 250
+                },
+                "pay": {
+                  "mode": "percent",
+                  "value": 50,
+                  "total": 150
+                }
+              },
+              "work": {
+                "state": "cancelled",
+                "signedAt": "2026-07-05T09:00:00Z",
+                "signedBy": "tester",
+                "pay": {
+                  "total": 150,
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "mealPenaltyHours": 0,
+                  "tier": "cancel",
+                  "units": [
+                    {
+                      "serviceId": 1,
+                      "tier": "cancel",
+                      "paidHours": 0,
+                      "otHours": 0,
+                      "dayCost": 150,
+                      "otCost": 0,
+                      "minApplied": false,
+                      "minHoursApplied": false,
+                      "fullMargin": false,
+                      "total": 150
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "s9",
+          "date": "2026-07-13",
+          "time": "08:00",
+          "endTime": "18:00",
+          "breaks": [],
+          "positions": [
+            {
+              "id": "p10",
+              "crewId": 9,
+              "serviceId": 1,
+              "role": "L1",
+              "status": "confirmed",
+              "fullMargin": false,
+              "work": {
+                "state": "worked",
+                "signedAt": "2026-07-13T20:00:00Z",
+                "signedBy": "tester",
+                "pay": {
+                  "total": 1050,
+                  "paidHours": 10,
+                  "otHours": 5,
+                  "mealPenaltyHours": 5,
+                  "tier": "full",
+                  "units": [
+                    {
+                      "serviceId": 1,
+                      "tier": "full",
+                      "paidHours": 10,
+                      "otHours": 5,
+                      "dayCost": 600,
+                      "otCost": 90,
+                      "minApplied": false,
+                      "minHoursApplied": false,
+                      "fullMargin": false,
+                      "total": 1050
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "s10",
+          "date": "2026-07-13",
+          "time": "08:00",
+          "endTime": "18:00",
+          "breaks": [],
+          "positions": [
+            {
+              "id": "p11",
+              "crewId": 9,
+              "serviceId": 2,
+              "role": "A1",
+              "status": "cancelled",
+              "fullMargin": false,
+              "cancel": {
+                "at": "2026-07-05T09:00:00Z",
+                "by": "tester",
+                "byId": 1,
+                "reason": "fixture",
+                "ref": {
+                  "bill": 1400,
+                  "pay": 840
+                },
+                "bill": {
+                  "mode": "percent",
+                  "value": 50,
+                  "total": 700
+                },
+                "pay": {
+                  "mode": "percent",
+                  "value": 25,
+                  "total": 210
+                }
+              },
+              "work": {
+                "state": "cancelled",
+                "signedAt": "2026-07-05T09:00:00Z",
+                "signedBy": "tester",
+                "pay": {
+                  "total": 210,
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "mealPenaltyHours": 0,
+                  "tier": "cancel",
+                  "units": [
+                    {
+                      "serviceId": 2,
+                      "tier": "cancel",
+                      "paidHours": 0,
+                      "otHours": 0,
+                      "dayCost": 210,
+                      "otCost": 0,
+                      "minApplied": false,
+                      "minHoursApplied": false,
+                      "fullMargin": false,
+                      "total": 210
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "id": "s11",
+          "date": "2026-07-14",
+          "time": "08:00",
+          "endTime": "18:00",
+          "breaks": [],
+          "positions": [
+            {
+              "id": "p12",
+              "crewId": 9,
+              "serviceId": 1,
+              "role": "L1",
+              "status": "confirmed",
+              "fullMargin": false
+            }
+          ]
+        },
+        {
+          "id": "s12",
+          "date": "2026-07-14",
+          "time": "08:00",
+          "endTime": "18:00",
+          "breaks": [],
+          "positions": [
+            {
+              "id": "p13",
+              "crewId": 9,
+              "serviceId": 2,
+              "role": "A1",
+              "status": "cancelled",
+              "fullMargin": false,
+              "cancel": {
+                "at": "2026-07-05T09:00:00Z",
+                "by": "tester",
+                "byId": 1,
+                "reason": "fixture",
+                "ref": {
+                  "bill": 1400,
+                  "pay": 840
+                },
+                "bill": {
+                  "mode": "percent",
+                  "value": 50,
+                  "total": 700
+                },
+                "pay": {
+                  "mode": "percent",
+                  "value": 50,
+                  "total": 420
+                }
+              },
+              "work": {
+                "state": "cancelled",
+                "signedAt": "2026-07-05T09:00:00Z",
+                "signedBy": "tester",
+                "pay": {
+                  "total": 420,
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "mealPenaltyHours": 0,
+                  "tier": "cancel",
+                  "units": [
+                    {
+                      "serviceId": 2,
+                      "tier": "cancel",
+                      "paidHours": 0,
+                      "otHours": 0,
+                      "dayCost": 420,
+                      "otCost": 0,
+                      "minApplied": false,
+                      "minHoursApplied": false,
+                      "fullMargin": false,
+                      "total": 420
+                    }
+                  ]
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -533,6 +789,85 @@
             "signedAt": "2026-07-16T20:00:00Z",
             "signedBy": "tester"
           }
+        },
+        {
+          "id": "f6",
+          "serviceId": 3,
+          "role": "LD",
+          "crewId": 9,
+          "status": "cancelled",
+          "fee": 500,
+          "bill": 650,
+          "fullMargin": false,
+          "note": "",
+          "pay": {
+            "lockedAt": "2026-07-01T09:00:00Z",
+            "total": 500,
+            "paidHours": 0,
+            "otHours": 0,
+            "mealPenaltyHours": 0,
+            "tier": "flat",
+            "units": [
+              {
+                "serviceId": 3,
+                "tier": "flat",
+                "paidHours": 0,
+                "otHours": 0,
+                "dayCost": 500,
+                "otCost": 0,
+                "minApplied": false,
+                "minHoursApplied": false,
+                "fullMargin": false,
+                "total": 500
+              }
+            ]
+          },
+          "cancel": {
+            "at": "2026-07-05T09:00:00Z",
+            "by": "tester",
+            "byId": 1,
+            "reason": "fixture",
+            "ref": {
+              "bill": 650,
+              "pay": 500
+            },
+            "bill": {
+              "mode": "percent",
+              "value": 50,
+              "total": 325
+            },
+            "pay": {
+              "mode": "percent",
+              "value": 50,
+              "total": 250
+            }
+          },
+          "work": {
+            "state": "cancelled",
+            "signedAt": "2026-07-05T09:00:00Z",
+            "signedBy": "tester",
+            "pay": {
+              "total": 250,
+              "paidHours": 0,
+              "otHours": 0,
+              "mealPenaltyHours": 0,
+              "tier": "cancel",
+              "units": [
+                {
+                  "serviceId": 3,
+                  "tier": "cancel",
+                  "paidHours": 0,
+                  "otHours": 0,
+                  "dayCost": 250,
+                  "otCost": 0,
+                  "minApplied": false,
+                  "minHoursApplied": false,
+                  "fullMargin": false,
+                  "total": 250
+                }
+              ]
+            }
+          }
         }
       ],
       "schedule": [
@@ -663,7 +998,7 @@
     }
   ],
   "expected": {
-    "grandTotal": 5635,
+    "grandTotal": 7295,
     "rows": [
       {
         "crewId": 5,
@@ -718,13 +1053,38 @@
         "projectName": "Warehouse",
         "date": "2026-07-15",
         "payable": 1550
+      },
+      {
+        "crewId": 9,
+        "projectName": "Summer Fest",
+        "date": "2026-07-12",
+        "payable": 150
+      },
+      {
+        "crewId": 9,
+        "projectName": "Summer Fest",
+        "date": "2026-07-13",
+        "payable": 1260
+      },
+      {
+        "crewId": 9,
+        "projectName": "Summer Fest",
+        "date": "2026-07-14",
+        "payable": null
+      },
+      {
+        "crewId": 9,
+        "projectName": "Warehouse",
+        "date": "2026-07-15",
+        "payable": 250
       }
     ],
     "byCrew": {
       "5": 2460,
       "6": 1625,
       "7": 0,
-      "8": 1550
+      "8": 1550,
+      "9": 1660
     }
   }
 }

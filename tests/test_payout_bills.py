@@ -214,6 +214,78 @@ def test_derive_confirmed_unsigned_is_pending_not_billable():
     assert drafts[0]["pending"] == [{"project_id": 1, "project_name": "P", "date": "2026-07-08"}]
 
 
+# ── Cancelled positions (components/domain-crew.js LTP_cancelPosition) ──────
+
+_CREW = {5: {"first_name": "A", "last_name": "B"}}
+
+
+def _cancelled_pos(crew, total, service_id=2, adj=None, pos_id="c1"):
+    p = {"id": pos_id, "crewId": crew, "serviceId": service_id, "status": "cancelled",
+         "cancel": {"ref": {"bill": 800.0, "pay": 480.0}, "pay": {"mode": "percent", "value": 25, "total": total}},
+         "work": {"state": "cancelled", "pay": {"total": total, "tier": "cancel",
+                  "units": [{"serviceId": service_id, "tier": "cancel", "total": total}]}}}
+    if adj is not None:
+        p["adj"] = adj
+    return p
+
+
+def test_derive_cancel_only_day_is_signed_by_the_share():
+    proj = {"id": 1, "name": "P", "schedule": [
+        {"date": "2026-07-12", "positions": [_cancelled_pos(5, 150.0, adj=[{"label": "Travel", "amount": 20.0}])]}]}
+    drafts = derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31")
+    day = drafts[0]["days"][0]
+    assert drafts[0]["pending"] == []
+    assert (day["state"], day["tier"], day["payable"], day["adj_total"]) == ("cancelled", "cancel", 170.0, 20.0)
+    assert day["units"] == [{"service_id": 2, "amount": 150.0, "paid_hours": 0.0, "ot_hours": 0.0, "kind": "cancel"}]
+    assert day["cancellations"] == [{"position_id": "c1", "amount": 150.0}] and day["cancel_total"] == 150.0
+    assert day["adjustments"] == [{"label": "Travel", "amount": 20.0}]
+
+
+def test_derive_mixed_day_adds_the_share_on_its_own_unit():
+    proj = {"id": 1, "name": "P", "schedule": [
+        {"date": "2026-07-13", "positions": [_pos(5, _PAY500)]},
+        {"date": "2026-07-13", "positions": [_cancelled_pos(5, 120.0)]},
+    ]}
+    drafts = derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31")
+    day = drafts[0]["days"][0]
+    assert (day["state"], day["tier"], day["payable"], day["cancel_total"]) == ("worked", "full", 620.0, 120.0)
+    assert [(u["service_id"], u["amount"], u["kind"]) for u in day["units"]] == [(1, 500.0, "work"), (2, 120.0, "cancel")]
+    assert abs(sum(u["amount"] for u in day["units"]) + day["adj_total"] - day["payable"]) < 0.005
+    # Two cancellations on one day both count.
+    proj["schedule"].append({"date": "2026-07-13", "positions": [_cancelled_pos(5, 80.0, pos_id="c2")]})
+    day = derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31")[0]["days"][0]
+    assert (day["payable"], day["cancel_total"], len(day["cancellations"])) == (700.0, 200.0, 2)
+
+
+def test_derive_pending_day_holds_its_cancellation():
+    proj = {"id": 1, "name": "P", "schedule": [
+        {"date": "2026-07-14", "positions": [_pos(5, work_pay=None)]},
+        {"date": "2026-07-14", "positions": [_cancelled_pos(5, 120.0)]},
+    ]}
+    drafts = derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31")
+    assert drafts[0]["days"] == []
+    assert drafts[0]["pending"] == [{"project_id": 1, "project_name": "P", "date": "2026-07-14"}]
+
+
+def test_derive_cancelled_without_frozen_pay_is_not_payout_work():
+    # Nobody was on it (no crew → no work written), or the freeze is missing: ignored.
+    bare = {"id": "c9", "crewId": 5, "serviceId": 2, "status": "cancelled", "cancel": {"pay": {"total": 99.0}}}
+    proj = {"id": 1, "name": "P", "schedule": [{"date": "2026-07-12", "positions": [bare]}]}
+    assert derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31") == []
+
+
+def test_derive_cancelled_flat_position():
+    proj = {"id": 1, "name": "P", "end_date": "2026-07-15", "schedule": [], "fixed_positions": [
+        {"id": "f6", "crewId": 5, "serviceId": 3, "status": "cancelled", "fee": 500, "bill": 650,
+         "cancel": {"ref": {"bill": 650.0, "pay": 500.0}, "pay": {"mode": "percent", "value": 50, "total": 250.0}},
+         "work": {"state": "cancelled", "pay": {"total": 250.0, "tier": "cancel",
+                  "units": [{"serviceId": 3, "tier": "cancel", "total": 250.0}]}}}]}
+    drafts = derive_payout_drafts([proj], _CREW, "2026-07-01", "2026-07-31")
+    day = drafts[0]["days"][0]
+    assert (day["date"], day["state"], day["tier"], day["payable"], day["flat"]) == ("2026-07-15", "cancelled", "cancel", 250.0, True)
+    assert day["units"] == [{"service_id": 3, "amount": 250.0, "paid_hours": 0.0, "ot_hours": 0.0, "kind": "cancel"}]
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]

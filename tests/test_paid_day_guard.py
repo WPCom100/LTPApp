@@ -193,6 +193,11 @@ def test_signature_moves_on_every_repricing_input():
         "status": [_shift("s1", "2026-11-02", [_pos("p1", C_PAID, status="open", work=dict(_WORK))])],
         "the billed pay itself": [_shift("s1", "2026-11-02",
                                          [_pos("p1", C_PAID, work={"pay": {"total": 999.0}, "state": "signed"})])],
+        # Cancelling a paid day changes what is owed (the share replaces the
+        # sign-off), so it must trip the guard like any other repricing.
+        "a cancellation": [_shift("s1", "2026-11-02",
+                                  [_pos("p1", C_PAID, status="cancelled",
+                                        work={"state": "cancelled", "pay": {"total": 150.0}})])],
     }
     for label, sched in variants.items():
         assert payouts.paid_day_signature(sched).get(key) != original, \
