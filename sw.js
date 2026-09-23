@@ -395,7 +395,10 @@
 // v110: schedule-generated labor lines and sections carry a laborSync marker,
 // and the builders' section whitelists keep it — the memory the labor sync
 // (a document brought back in step with its schedule) diffs against.
-var CACHE_VERSION = 'ltp-shell-v110';
+// v111: a cancelled position bills its share on a "cancellation" line of its own
+// and leaves the day pools; the builders learn the rate type (and a locked
+// flat line stops reading "OT"); the online view prints a cancellation's note.
+var CACHE_VERSION = 'ltp-shell-v111';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

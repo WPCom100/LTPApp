@@ -425,13 +425,15 @@
         if (!dateMap[d]) dateMap[d] = { items: [] };
         dateMap[d].items.push(s);
         (s.positions || []).forEach(function(p) {
+          if (p.status === "cancelled") return;   // counted with the cancellations below
           totalPos++;
           if (p.status === "confirmed") filledPos++;
         });
       });
       var crewMins = window.LTP_crewMinMap(contacts);
       Object.keys(dateMap).forEach(function(d) {
-        var dayLabor = window.LTP_calcDayLabor(dateMap[d].items, svcs, crewMins);
+        // A cancelled position bills its share, not the day (added below).
+        var dayLabor = window.LTP_calcDayLabor(window.LTP_withoutCancelled(dateMap[d].items), svcs, crewMins);
         totalRate += dayLabor.rateTotal;
         totalCost += dayLabor.costTotal;
       });
@@ -443,8 +445,14 @@
       totalCost += flat.costTotal;
       totalPos += flat.count;
       filledPos += flat.filled;
+      // Cancelled positions, shift and flat-rate: the shares chosen when each
+      // was cancelled, in place of the labor they no longer bill.
+      var canc = window.LTP_cancellationTotals(draft.schedule, draft.fixedPositions);
+      totalRate += canc.rateTotal;
+      totalCost += canc.costTotal;
       return { days: days, totalPos: totalPos, filledPos: filledPos, totalRate: Math.round(totalRate), totalCost: Math.round(totalCost), margin: Math.round(totalRate - totalCost),
-               flatCount: flat.count, flatFilled: flat.filled, flatRate: Math.round(flat.rateTotal), flatCost: Math.round(flat.costTotal) };
+               flatCount: flat.count, flatFilled: flat.filled, flatRate: Math.round(flat.rateTotal), flatCost: Math.round(flat.costTotal),
+               cancelCount: canc.count, cancelRate: Math.round(canc.rateTotal), cancelCost: Math.round(canc.costTotal) };
     }, [draft.schedule, draft.fixedPositions, contacts]);
 
     // ── Compute changes for activity ─────────────────────────────────────────
@@ -917,6 +925,10 @@
               h("span", { style: { fontSize: "11px", color: B.textSec } }, "Flat-rate"),
               h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text }, title: "Bill $" + stats.flatRate.toLocaleString() + " · cost $" + stats.flatCost.toLocaleString() + " (included in the totals below)" },
                 stats.flatFilled + " / " + stats.flatCount + " confirmed \u00b7 $" + stats.flatRate.toLocaleString())),
+            stats.cancelCount > 0 && h("div", { style: { display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: "1px solid " + B.border } },
+              h("span", { style: { fontSize: "11px", color: B.textSec } }, "Cancelled"),
+              h("span", { style: { fontSize: "11px", fontWeight: 600, color: B.text }, title: "Charged $" + stats.cancelRate.toLocaleString() + " · paid $" + stats.cancelCost.toLocaleString() + " (included in the totals below)" },
+                stats.cancelCount + " \u00b7 $" + stats.cancelRate.toLocaleString())),
             h("div", { style: { display: "flex", justifyContent: "space-between", padding: "6px 0 4px", borderTop: "1px solid " + B.border, marginTop: 4 } },
               h("span", { style: { fontSize: "12px", fontWeight: 700, color: B.text } }, "Total Rate"),
               h("span", { style: { fontSize: "13px", fontWeight: 700, color: B.accent } }, "$" + stats.totalRate.toLocaleString())),

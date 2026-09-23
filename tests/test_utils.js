@@ -147,6 +147,15 @@ const CLL = window.LTP_compareLaborLines;
 eqj("RO7 lines of one position run flat, day, half, hourly, OT",
    [{ role: "PM", rateType: "ot" }, { role: "PM", rateType: "half" }, { role: "PM", rateType: "flat" }, { role: "PM", rateType: "hourly" }, { role: "PM", rateType: "day" }].sort(CLL).map((l) => l.rateType),
    ["flat", "day", "half", "hourly", "ot"]);
+eqj("RO7b a cancelled call's charge reads last among its position's lines",
+   [{ role: "PM", rateType: "cancel" }, { role: "PM", rateType: "ot" }, { role: "PM", rateType: "flat" }, { role: "PM", rateType: "day" }].sort(CLL).map((l) => l.rateType),
+   ["flat", "day", "ot", "cancel"]);
+// The builders' rate-type vocabulary: every tier named, flat and cancellation
+// never falling through to another tier's label (a locked flat line read "OT").
+eqj("RO7c rate-type labels", ["day", "half", "hourly", "ot", "flat", "cancel", undefined, "bogus"].map(window.LTP_rateTypeLabel),
+   ["Day", "Half Day", "Hourly", "OT", "Flat", "Cancelled", "Day", "Day"]);
+eqj("RO7d only rate-card tiers get a contract-rate hint", ["day", "half", "hourly", "ot", "flat", "cancel", undefined].map(window.LTP_isTierRateType),
+   [true, true, true, true, false, false, true]);
 eqj("RO8 positions before rate types", [{ role: "L1", rateType: "day" }, { role: "PM", rateType: "ot" }, { role: "L1", rateType: "flat" }].sort(CLL).map((l) => l.role + ":" + l.rateType),
    ["PM:ot", "L1:flat", "L1:day"]);
 

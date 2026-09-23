@@ -439,6 +439,41 @@ const PLUS_DAY = project(S0.concat([day("d3", "2026-08-12", [pos("p4", 1)])])); 
   eq("DI18 in step after the second one", DRIFT({ sections: r2.sentSections }, AGAIN, SVCS, {}, fmt).count, 0);
 }
 
+// ── A cancellation reaches the document through the review ───────────────────
+// Cancelling a booked shift shows up as two rows the producer decides on
+// separately: the day line losing that day, and a cancellation line at the
+// share. Taking both leaves the document exactly what a fresh send would bill;
+// keeping the day line instead is how "cut the labor, still charge the client"
+// is recorded.
+{
+  const P1 = project(S0.map((s) => Object.assign({}, s, { positions: s.positions.map((p) => Object.assign({}, p, { crewId: 5 })) })));
+  const doc = docFrom(P1, "one");
+  const CP = project(window.LTP_cancelPosition(P1.schedule, "d2", "p3",
+    { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, SVCS, {}, { at: NOW, by: "t" }));
+  const d = DRIFT(doc, CP, SVCS, {}, fmt);
+  eq("CX0 two rows: the day comes out, a cancellation goes in", d.changes.map((c) => [c.kind, c.key, c.delta]),
+     [["changed", "svc:1|day", -600], ["added", "cancel:p3", 300]]);
+  eq("CX1 the added row carries the charge and the note", [d.changes[1].expected.unitPrice, d.changes[1].expected.cost, d.changes[1].expected.notes, d.changes[1].rateType],
+     [300, 150, "Cancelled 2026-08-11 · 50% charged", "cancel"]);
+  const a = APPLY(doc, d, ["svc:1|day", "cancel:p3"], gen, LATER);
+  eq("CX2 taking both leaves what a fresh send would bill",
+     a.sections[0].items.map((i) => [i.laborSync.key, i.rateType, i.qty, i.unitPrice, i.cost, i.notes]),
+     SECTIONS(CP.schedule, SVCS, {}, "one", fmt, gen, [], 42, NOW)[0].items.map((i) => [i.laborSync.key, i.rateType, i.qty, i.unitPrice, i.cost, i.notes]));
+  eq("CX3 in step afterwards", DRIFT({ sections: a.sections }, CP, SVCS, {}, fmt).count, 0);
+  // Cut the labor, still charge the client: keep the day line, don't add the charge.
+  const kept = KEEP(doc, d, ["svc:1|day", "cancel:p3"], LATER);
+  eq("CX4 keeping both leaves the billed day and adds nothing", [line({ sections: kept }, "svc:1|day").qty, line({ sections: kept }, "cancel:p3")], [2, null]);
+  eq("CX5 and the notice goes quiet", DRIFT({ sections: kept }, CP, SVCS, {}, fmt).count, 0);
+  // Changing the share later surfaces the cancellation line again.
+  const CP2 = project(window.LTP_setCancellationShares(CP.schedule, "d2", "p3",
+    { bill: { mode: "percent", value: 100 }, pay: { mode: "percent", value: 50 } }, { at: LATER, by: "t" }));
+  const d2 = DRIFT({ sections: a.sections }, CP2, SVCS, {}, fmt);
+  eq("CX6 a new share reprices the cancellation line", d2.changes.map((c) => [c.key, c.fields, c.expected.unitPrice, c.expected.notes]),
+     [["cancel:p3", ["unitPrice"], 600, "Cancelled 2026-08-11 · 100% charged"]]);
+  eq("CX7 applying it rewrites the note the client reads", line({ sections: APPLY({ sections: a.sections }, d2, ["cancel:p3"], gen, LATER).sections }, "cancel:p3").notes,
+     "Cancelled 2026-08-11 · 100% charged");
+}
+
 console.log("labor-sync suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

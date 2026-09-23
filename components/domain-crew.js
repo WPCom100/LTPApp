@@ -40,7 +40,9 @@
 //   { projectId, key, at, snap: { qty, unitPrice, cost, notes, dates } }
 //   key    the line's identity across regenerations — "svc:<serviceId>|<rateType>"
 //          for a pooled day/half/hourly/ot line, "flat:<positionId>" for a
-//          flat-rate position. Re-running this function on the changed
+//          flat-rate position, "cancel:<positionId>" for a cancelled position
+//          (shift or flat-rate) that still charges the client its share.
+//          Re-running this function on the changed
 //          schedule yields the same keys, which is what makes a line-level
 //          diff possible without changing what the client sees.
 //   snap   what the schedule produced when the line was last written or
@@ -69,15 +71,20 @@
 //             a rate-card role and a bill amount > 0 becomes ONE "flat" line:
 //             qty 1 at the bill amount, cost = the fee ($0 full-margin)
 //
+// A CANCELLED position never bills through the day pools (LTP_withoutCancelled);
+// when its cancellation charges the client a share it is billed on a line of
+// its own — rateType "cancel", qty 1 at that share (see cancelLine below).
+//
 // Returns [] when the schedule bills nothing — no dated+timed day carries a
-// position with a serviceId and no flat-rate position bills the client. Callers
-// treat that as "nothing to send".
+// position with a serviceId, no flat-rate position bills the client, and no
+// cancellation charges anything. Callers treat that as "nothing to send".
 // The order the lines are read in, on a quote or an invoice: letters-only
 // positions first (PM, SPOT, LD, SM), then numbered ones (L1, L2, L3), each
 // group alphabetical (LTP_compareRoleGroups); every position's lines sit
 // together, largest unit first — flat (the whole project), day, half day, then
-// hours (hourly, then overtime). a/b: { role, description, rateType }.
-var _RATE_TYPE_ORDER = { flat: 0, day: 1, half: 2, hourly: 3, ot: 4 };
+// hours (hourly, then overtime), and a cancelled call's charge last.
+// a/b: { role, description, rateType }.
+var _RATE_TYPE_ORDER = { flat: 0, day: 1, half: 2, hourly: 3, ot: 4, cancel: 5 };
 window.LTP_compareLaborLines = function(a, b) {
   var ra = _RATE_TYPE_ORDER[a && a.rateType], rb = _RATE_TYPE_ORDER[b && b.rateType];
   return window.LTP_compareRoleGroups(a && a.role, b && b.role)
@@ -123,7 +130,9 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       if (isoDate && li.iso.indexOf(isoDate) === -1) li.iso.push(isoDate);
     }
 
-    window.LTP_calcDayLabor(g.items, svcs, crewMins).units.forEach(function(u) {
+    // Cancelled positions are billed below, one line each, from their own
+    // cancellation record — never through the day pools.
+    window.LTP_calcDayLabor(window.LTP_withoutCancelled(g.items), svcs, crewMins).units.forEach(function(u) {
       if (u.tier === "hourly") {
         // An hourly role: this person's straight hours join ONE line for the
         // role (qty = hours across every person and day, like the OT pool
@@ -240,6 +249,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
   var span = dated.length ? (dated[0] === lastDay ? fmt(dated[0]) : fmt(dated[0]) + " – " + fmt(lastDay)) : "";
   (fixedPositions || []).forEach(function(p) {
     if (!p || !p.serviceId) return;
+    if (p.status === "cancelled") return;   // billed below as a cancellation, at its share
     var svc = svcById[p.serviceId];
     if (!svc) return;
     var bill = Math.round((Number(p.bill) || 0) * 100) / 100;
@@ -254,6 +264,44 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       notes: "Flat-rate position" + (span ? " · " + span : ""),
       deliveredQty: 0, invoicedQty: 0
     } });
+  });
+
+  // Cancelled positions (see "Cancellation" below): each one that still
+  // charges the client is its own line — qty 1 at the bill share chosen when
+  // it was cancelled — keyed on the POSITION, so the sync review shows the
+  // day it came out of and the cancellation it became side by side, and the
+  // producer can take either, both or neither. A flat-rate position is
+  // handled the same way: its flat line drops out (skipped above) and a
+  // cancellation line takes its place. The note is also what the client reads
+  // beside the line (backend/doc_units.py::line_detail): the day and the
+  // percentage charged — decision 9 in docs/LABOR_SYNC_PLAN.md.
+  function cancelLine(p, svc, isoDate) {
+    var c = p.cancel;
+    var bill = Math.round((Number(c && c.bill && c.bill.total) || 0) * 100) / 100;
+    if (bill <= 0) return;   // cancelled at no charge — nothing to bill
+    var pay = Math.round((Number(c.pay && c.pay.total) || 0) * 100) / 100;
+    laborItems.push({ dept: svc.department || "Other", role: svc.role, description: svc.description, rateType: "cancel",
+                      key: "cancel:" + (p.id != null ? p.id : ""), iso: isoDate ? [isoDate] : [], item: {
+      id: gen("item"), type: "service", serviceId: svc.id,
+      name: svc.role + " — " + svc.description,
+      rateType: "cancel",
+      qty: 1, unitPrice: bill, adjustedPrice: null,
+      cost: p.fullMargin ? 0 : pay,
+      notes: window.LTP_cancellationNote(c, isoDate ? fmt(isoDate) : ""),
+      deliveredQty: 0, invoicedQty: 0
+    } });
+  }
+  (schedule || []).forEach(function(s) {
+    ((s && s.positions) || []).forEach(function(p) {
+      if (!p || p.status !== "cancelled" || !p.cancel || !p.serviceId) return;
+      var svc = svcById[p.serviceId];
+      if (svc) cancelLine(p, svc, s.date || "");
+    });
+  });
+  (fixedPositions || []).forEach(function(p) {
+    if (!p || p.status !== "cancelled" || !p.cancel || !p.serviceId) return;
+    var svc = svcById[p.serviceId];
+    if (svc) cancelLine(p, svc, "");
   });
 
   if (laborItems.length === 0) return [];
@@ -648,6 +696,34 @@ window.LTP_cancelShare = function(ref, mode, value) {
   if (mode === "none") return 0;
   if (mode === "amount") return Math.max(0, Math.round(v * 100) / 100);
   return Math.max(0, Math.round(r * v) / 100);
+};
+
+// What one side's share comes to as a percentage of its reference, as display
+// text ("50", "41.7") — the chosen percent, or what a typed amount works out
+// to. "" when there is nothing to measure against (no reference, no share).
+window.LTP_cancelSharePct = function(side, ref) {
+  if (!side || side.mode === "none") return "";
+  var pct;
+  if (side.mode === "amount") {
+    var r = Number(ref) || 0;
+    if (r <= 0) return "";
+    pct = (Number(side.total) || 0) / r * 100;
+  } else {
+    pct = Number(side.value) || 0;
+  }
+  var rounded = Math.round(pct * 10) / 10;
+  return String(rounded === 0 ? 0 : rounded);
+};
+
+// The note a cancellation line carries on a quote or invoice — and the aside
+// the client reads beside it on the PDF and the online view
+// (backend/doc_units.py::line_detail): "Cancelled Jun 5 · 50% charged". The
+// owner chose to show the percentage (docs/LABOR_SYNC_PLAN.md, decision 9).
+// dayLabel is the formatted shift date; "" for a flat-rate position or an
+// undated shift.
+window.LTP_cancellationNote = function(cancel, dayLabel) {
+  var pct = window.LTP_cancelSharePct(cancel && cancel.bill, cancel && cancel.ref && cancel.ref.bill);
+  return "Cancelled" + (dayLabel ? " " + dayLabel : "") + (pct !== "" ? " · " + pct + "% charged" : "");
 };
 
 // The frozen pay for a cancelled position, in the shape a sign-off writes.
@@ -1346,7 +1422,8 @@ window.LTP_diffRemovedFixed = function(before, after, contacts, services) {
 window.LTP_fixedPositionsTotals = function(fixedPositions) {
   var rate = 0, cost = 0, n = 0, filled = 0;
   (fixedPositions || []).forEach(function(p) {
-    if (!p) return;
+    // A cancelled one bills and pays its share instead (LTP_cancellationTotals).
+    if (!p || p.status === "cancelled") return;
     n++;
     if (p.status === "confirmed") filled++;
     rate += Number(p.bill) || 0;
@@ -1354,4 +1431,23 @@ window.LTP_fixedPositionsTotals = function(fixedPositions) {
   });
   return { rateTotal: Math.round(rate * 100) / 100, costTotal: Math.round(cost * 100) / 100,
            margin: Math.round((rate - cost) * 100) / 100, count: n, filled: filled };
+};
+
+// Bill / cost across a project's CANCELLED positions, shift and flat-rate —
+// the shares chosen when each was cancelled (LTP_cancelPosition), which the
+// Schedule Builder adds to its totals in place of the day labor those
+// positions no longer bill. A full-margin position's pay share is $0.
+window.LTP_cancellationTotals = function(schedule, fixedPositions) {
+  var rate = 0, cost = 0, n = 0;
+  function add(p) {
+    if (!p || p.status !== "cancelled") return;
+    n++;
+    var c = p.cancel || {};
+    rate += Number(c.bill && c.bill.total) || 0;
+    cost += p.fullMargin ? 0 : (Number(c.pay && c.pay.total) || 0);
+  }
+  (schedule || []).forEach(function(s) { ((s && s.positions) || []).forEach(add); });
+  (fixedPositions || []).forEach(add);
+  return { rateTotal: Math.round(rate * 100) / 100, costTotal: Math.round(cost * 100) / 100,
+           margin: Math.round((rate - cost) * 100) / 100, count: n };
 };

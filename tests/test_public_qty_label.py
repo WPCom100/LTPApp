@@ -26,10 +26,13 @@ ITEMS = [
     {"id": "i", "type": "fee", "name": "Consultation", "unit": "flat", "qty": 1, "unitPrice": 300, "adjustedPrice": 250, "cost": 0},
     {"id": "j", "type": "product", "name": "Gaffer Tape", "qty": 3, "unitPrice": 22, "adjustedPrice": None, "cost": 11, "productVariantId": "v9"},
     {"id": "k", "type": "note", "text": "A caption between lines", "name": ""},
+    {"id": "l", "type": "service", "name": "A1 — Audio Lead", "rateType": "cancel", "qty": 1, "unitPrice": 300, "adjustedPrice": None, "cost": 150,
+     "notes": "Cancelled Jun 5 · 50% charged", "serviceId": 1},
 ]
 EXPECTED = {
     "a": "flat rate", "b": "days", "c": "half day", "d": "hours", "e": "OT hours",
     "f": "days", "g": "units", "h": "trips", "i": "flat rate", "j": "ea",
+    "l": "cancellation",
 }
 
 
@@ -72,3 +75,56 @@ def test_public_payload_does_not_mutate_its_input():
     before = [dict(it) for it in ITEMS]
     public_section_items([{"id": "s1", "label": "Labor", "items": ITEMS}])
     assert ITEMS == before
+
+
+# ── A cancellation's aside: the one line whose note the client reads ────────
+# The owner chose to show which call was cancelled and the percentage charged
+# (docs/LABOR_SYNC_PLAN.md, decision 9). It reaches the online view as a
+# DERIVED `detail`, only on a cancellation line; every other line's note stays
+# internal exactly as before.
+
+def test_cancellation_line_carries_its_detail():
+    pub = _public_items()
+    assert pub["l"]["detail"] == "Cancelled Jun 5 · 50% charged"
+    assert "notes" not in pub["l"] and "rateType" not in pub["l"] and "cost" not in pub["l"]
+
+
+def test_no_other_line_gets_a_detail():
+    pub = _public_items()
+    for it in ITEMS:
+        if it["id"] != "l":
+            assert "detail" not in pub[it["id"]], it["id"]
+    # A day line with a note keeps it internal.
+    out = public_section_items([{"id": "s", "label": "L", "items": [
+        {"id": "x", "type": "service", "rateType": "day", "name": "PM", "qty": 1, "unitPrice": 1, "notes": "Jun 4, Jun 5"}]}])
+    assert "detail" not in out[0]["items"][0] and "notes" not in out[0]["items"][0]
+
+
+def test_line_detail_rules():
+    from backend.doc_units import line_detail
+    assert line_detail({"type": "service", "rateType": "cancel", "notes": "  Cancelled · 25% charged "}) == "Cancelled · 25% charged"
+    assert line_detail({"type": "service", "rateType": "cancel", "notes": ""}) == ""
+    assert line_detail({"type": "service", "rateType": "day", "notes": "x"}) == ""
+    assert line_detail({"type": "fee", "rateType": "cancel", "notes": "x"}) == ""
+    assert line_detail(None) == ""
+
+
+def test_client_view_reads_the_detail():
+    with open(os.path.join(_root, "modules", "client-view.js"), encoding="utf-8") as f:
+        src = f.read()
+    assert "it.detail" in src
+
+
+def test_builders_and_backend_name_the_same_rate_types():
+    """The builders print a service line's unit from LTP_RATE_TYPE_QTY
+    (components/domain-docs.js); the PDF and the online view from
+    doc_units.SERVICE_UNITS. A rate type known to one and not the other prints
+    a wrong unit somewhere — keep the two key sets identical."""
+    import re
+    from backend.doc_units import SERVICE_UNITS
+    with open(os.path.join(_root, "components", "domain-docs.js"), encoding="utf-8") as f:
+        src = f.read()
+    m = re.search(r"window\.LTP_RATE_TYPE_QTY\s*=\s*\{([^}]*)\}", src)
+    assert m, "LTP_RATE_TYPE_QTY not found"
+    js_keys = set(re.findall(r"(\w+)\s*:", m.group(1)))
+    assert js_keys == set(SERVICE_UNITS), (sorted(js_keys), sorted(SERVICE_UNITS))

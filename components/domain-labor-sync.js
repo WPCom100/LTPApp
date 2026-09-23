@@ -496,8 +496,8 @@ window.LTP_laborLinkable = function(doc, projectId) {
     return (s.items || []).some(function(it) { return it && it.type === "service" && !it.laborSync; });
   });
 };
-// Match unmarked service lines to the schedule by role + rate type (a flat
-// line also by its amount) and stamp them with a snapshot of THEIR OWN values,
+// Match unmarked service lines to the schedule by role + rate type (a flat or
+// cancellation line also by its amount) and stamp them with a snapshot of THEIR OWN values,
 // so the next drift pass shows the genuine differences for review. Anything
 // with no match or more than one candidate stays unmarked and is reported.
 // Returns { sections, linked: [key], unlinked: [{ sectionId, itemId, name,
@@ -517,7 +517,7 @@ window.LTP_adoptLaborLines = function(doc, project, svcs, crewMins, fmtDate, now
       var matches = exp.order.filter(function(k) {
         var e = exp.byKey[k];
         return !claimed[k] && e.serviceId === it.serviceId && e.rateType === it.rateType
-            && (e.rateType !== "flat" || _lsR2(e.unitPrice) === _lsR2(it.unitPrice));
+            && ((e.rateType !== "flat" && e.rateType !== "cancel") || _lsR2(e.unitPrice) === _lsR2(it.unitPrice));
       });
       if (matches.length !== 1) {
         unlinked.push({ sectionId: sec.id, itemId: it.id, name: it.name || "", reason: matches.length ? "ambiguous" : "no match" });

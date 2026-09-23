@@ -104,6 +104,10 @@
           cx.font = "400 10px " + FONT;
           w += cx.measureText(" (" + it.rentalLabel + ")").width;
         }
+        if (it.detail) {
+          cx.font = "400 10px " + FONT;
+          w += cx.measureText(" (" + it.detail + ")").width;
+        }
         widths.push(w);
       });
     });
@@ -372,7 +376,10 @@
       return h("div", { key: key, style: { display: "grid", gridTemplateColumns: cols, columnGap: colGap, padding: "12px 0", borderBottom: isLast ? "none" : "1px solid " + HAIR, alignItems: "baseline" } },
         h("div", { style: nameStyle },
           it.name || "",
-          (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: compact ? ((nameFont || 11) - 1) + "px" : "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")")),
+          (it.rentalLabel && it.type === "equipment") && h("span", { style: { fontSize: compact ? ((nameFont || 11) - 1) + "px" : "11px", fontWeight: 400, color: MUTE } }, "  (" + it.rentalLabel + ")"),
+          // A cancellation's aside ("Cancelled Jun 5 · 50% charged"), derived
+          // server-side (backend/doc_units.py::line_detail) like qtyLabel.
+          it.detail && h("span", { style: { fontSize: compact ? ((nameFont || 11) - 1) + "px" : "11px", fontWeight: 400, color: MUTE } }, "  (" + it.detail + ")")),
         qtyCell(fmtQty(qty), it.qtyLabel),
         h("div", { style: { textAlign: "right", fontSize: moneySize, color: TEXT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } },
           hasAdj

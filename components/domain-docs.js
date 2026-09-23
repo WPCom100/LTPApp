@@ -28,6 +28,20 @@
 // LTP_badgeFromHex) stayed behind in theme.js on purpose.
 
 
+// A service line's rate type the way both builders label it — the rate
+// select's option text and the read-only label on a locked line. One map, so a
+// flat-rate or cancellation line never falls through to another tier's name
+// (a locked flat line used to read "OT" on a quote and "Day" on an invoice).
+// "cancel" is written only by the schedule generator (domain-crew.js).
+window.LTP_RATE_TYPE_LABEL = { day: "Day", half: "Half Day", hourly: "Hourly", ot: "OT", flat: "Flat", cancel: "Cancelled" };
+window.LTP_rateTypeLabel = function(rt) { return window.LTP_RATE_TYPE_LABEL[rt || "day"] || "Day"; };
+// The unit beside a service line's quantity field ("days", "OT hours",
+// "cancellation") — the builders' twin of backend/doc_units.py SERVICE_UNITS.
+window.LTP_RATE_TYPE_QTY = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat", cancel: "cancellation" };
+// Rate types priced by the rate card's tiers — the only ones a contract-rate
+// hint can compare against. A flat or cancellation line carries a typed amount.
+window.LTP_isTierRateType = function(rt) { var t = rt || "day"; return t === "day" || t === "half" || t === "hourly" || t === "ot"; };
+
 window.LTP_INVOICE_REF = function(inv) {
   if (!inv) return "INV-?";
   var year = (inv.invoiceDate || "").substring(0, 4) || new Date().getFullYear();

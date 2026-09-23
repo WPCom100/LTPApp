@@ -419,7 +419,9 @@
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
-          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs, crewMins);
+          // A cancelled position bills its own share, never the day
+          // (LTP_withoutCancelled keeps everyone else's person-slot as it was).
+          var dayLabor = window.LTP_calcDayLabor(window.LTP_withoutCancelled(dayItemList), svcs, crewMins);
           // Map each position to its labor unit, and pick the PRIMARY position
           // per unit (earliest shift in the day) — the per-person rate shows on
           // that row once; the person's other shifts read "same person" so the
@@ -442,8 +444,9 @@
           var dayMealPenaltyHours = Math.round(dayLabor.units.reduce(function(t, u) { return t + u.mealPenaltyHours; }, 0) * 100) / 100;
           var dayHasMealPenalty = dayMealPenaltyHours > 0;
           var dayHasOT = dayLabor.units.some(function(u) { return u.paidHours > 10; });
-          var dayPosCount = allPositions.length;
-          var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
+          var livePositions = allPositions.filter(function(p) { return p.status !== "cancelled"; });
+          var dayPosCount = livePositions.length;
+          var dayFilled = livePositions.filter(function(p) { return p.status === "confirmed"; }).length;
           // Day state shows in the top rule: brand orange normally, warn/danger
           // when the day carries OT or a meal penalty (flat ledger panel — the
           // rounded 2px-outlined card is gone).
@@ -464,7 +467,9 @@
                     return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
                   }) });
                 });
-                var labor = window.LTP_calcDayLabor(clearedItems, svcs);
+                // Cancelled positions work no hours: price the day without them
+                // and never hand one a break (its slot is its own either way).
+                var labor = window.LTP_calcDayLabor(window.LTP_withoutCancelled(clearedItems), svcs);
                 var breaksByPos = {};
                 labor.units.forEach(function(u) {
                   if (!(u.mealPenaltyHours > 0)) return;
@@ -473,7 +478,7 @@
                   clearedItems.forEach(function(it) {
                     var slots = window.LTP_effectiveSlots(it.positions);
                     (it.positions || []).forEach(function(p) {
-                      if (!p.serviceId) return;
+                      if (!p.serviceId || p.status === "cancelled") return;
                       if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
                       shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
                     });

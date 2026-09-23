@@ -629,7 +629,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
+    var RATE_TYPES = window.LTP_RATE_TYPE_QTY;
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var isAccepted = quoteStatus === "accepted";
@@ -661,7 +661,7 @@
     // snapshotted price — re-pricing on the client's behalf would silently
     // rewrite a sent quote — so a mismatch is surfaced with a one-click apply.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
+      if (!svcData || !svcData.clientRate || !window.LTP_isTierRateType(svcRateType)) return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -708,7 +708,8 @@
         }, style: selStyle },
         h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
-        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"));
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"),
+        svcRateType === "cancel" && h("option", { value: "cancel" }, window.LTP_rateTypeLabel("cancel")));
       var variantSel = item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
           value: lineVariantId, "aria-label": "Pricing variant", onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
@@ -787,12 +788,14 @@
         // A flat-rate position line (from the schedule's flat-rate positions)
         // keeps its typed price; the option exists so the select reads "Flat"
         // rather than falling back to the first option.
-        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"),
+        // Likewise a cancelled call billed at a share of its rate.
+        svcRateType === "cancel" && h("option", { value: "cancel" }, window.LTP_rateTypeLabel("cancel"))
       ),
       // Read-only rate-type label when locked, OR when the source service was
       // deleted (no svcData to recompute prices from — see Option B).
       item.type === "service" && (isLocked || !svcData) && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
-        svcRateType === "day" ? "Day" : svcRateType === "half" ? "Half Day" : svcRateType === "hourly" ? "Hourly" : "OT"),
+        window.LTP_rateTypeLabel(svcRateType)),
       // Pricing-variant selector (products with variants only). Switching
       // re-snapshots name/price/cost from the chosen variant, like a service
       // rate-type change. No selector when locked or the product was deleted —
