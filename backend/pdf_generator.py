@@ -35,7 +35,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.lib.utils import ImageReader
 
-from backend.doc_units import qty_label
+from backend.doc_units import line_detail, qty_label
 
 
 # ── Brand palette (light theme) ─────────────────────────────────────────────
@@ -924,6 +924,11 @@ class _DocPDF:
             rl = it.get("rentalLabel", "") or ""
             if rl and it.get("type") == "equipment":
                 name = f"{name}  ({rl})"
+            # A cancellation says which call and how much of it was charged,
+            # the way a rental line says its period (doc_units.line_detail).
+            detail = line_detail(it)
+            if detail:
+                name = f"{name}  ({detail})"
             max_w = col["qty"] - col["item"] - 10
             c.setFont("Roboto", fs)
             while c.stringWidth(name, "Roboto", fs) > max_w and len(name) > 20:

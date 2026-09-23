@@ -24,7 +24,7 @@ Three routers, mirroring the public/producer split crew.py already uses:
 
   CREW (require_crew — the ltp_crew_session cookie):
     GET  /me · PUT /me {phone}
-    GET  /dashboard?today=YYYY-MM-DD   → requests, upcoming, recent, stats, payouts
+    GET  /dashboard?today=YYYY-MM-DD   → requests, upcoming, past, cancelled, recent, stats, payouts
     GET  /dashboard/version            → {doc, app} for the freshness poll
     POST /requests/{id}/respond        {decision, comment?} → own request only
 
@@ -106,6 +106,16 @@ _PP_DEFAULT_LENGTH = 14
 _PP_DEFAULT_OFFSET = 5
 
 _UPCOMING_STATUSES = ("requested", "accepted", "confirmed")
+
+
+def _cancel_share(pos) -> float:
+    """What a cancelled position still pays the person on it: the share frozen
+    when it was cancelled (``work.pay.total`` with ``work.state ==
+    "cancelled"``, components/domain-crew.js), else 0."""
+    work = pos.get("work") if isinstance(pos.get("work"), dict) else None
+    if not work or work.get("state") != "cancelled" or not isinstance(work.get("pay"), dict):
+        return 0.0
+    return payouts.js_round2(payouts._num(work["pay"].get("total")))
 
 # Sign-in surface (public) + crew-session routes.
 crew_portal_router = APIRouter(prefix="/api/crew-portal", tags=["crew-portal"])
@@ -968,6 +978,9 @@ async def _payouts_section(db, contact, projects, contacts_by_id, settings, toda
                         "tier": d["tier"], "state": d["state"], "payable": d["payable"],
                         "adjTotal": d["adj_total"], "adjustments": d["adjustments"],
                         "paidHours": d["paid_hours"], "otHours": d["ot_hours"], "flat": bool(d.get("flat")),
+                        # What cancelled shifts add to the day (all of it on a
+                        # cancel-only day, whose tier reads "cancel").
+                        "cancelTotal": payouts.js_round2(payouts._num(d.get("cancel_total"))),
                     })
             for p in mine["pending"]:
                 if pp["start"] <= p["date"] <= pp["end"]:
@@ -1087,7 +1100,9 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
     recent_out.sort(key=lambda x: x["respondedAt"] or "", reverse=True)
 
     # ── Schedule: every position of theirs, split around today ───────────
-    upcoming, past = [], []
+    # A call that was called off is listed on its own ("Cancelled"), over the
+    # same span as past calls, with any share the person is still paid.
+    upcoming, past, cancelled = [], [], []
     past_floor = _add_days(today, -_PAST_DAYS)
     for p in proj_rows:
         if (p.status or "") == "cancelled":
@@ -1103,9 +1118,12 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
                 if not isinstance(pos, dict) or pos.get("crewId") != cid:
                     continue
                 st = pos.get("status")
-                if st not in _UPCOMING_STATUSES:
+                if st == "cancelled":
+                    if d < past_floor:
+                        continue
+                elif st not in _UPCOMING_STATUSES:
                     continue
-                if d < today and (st != "confirmed" or d < past_floor):
+                elif d < today and (st != "confirmed" or d < past_floor):
                     continue
                 if head is None:
                     head = await _project_head(p)
@@ -1119,19 +1137,27 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
                     "shiftTitle": s.get("title") or "", "role": code, "roleLabel": label,
                     "department": dept, "status": st, "note": (pos.get("note") or "").strip(),
                     "requestId": req.id if req else None, "requestToken": req.token if req else None,
-                    "signedOff": bool(work and work.get("pay")),
+                    "signedOff": bool(work and work.get("pay")) and st != "cancelled",
                     "flat": False,
                 })
-                (upcoming if d >= today else past).append(entry)
+                if st == "cancelled":
+                    entry["cancellationPay"] = _cancel_share(pos)
+                    cancelled.append(entry)
+                else:
+                    (upcoming if d >= today else past).append(entry)
         # Flat-rate positions: one entry for the whole project, listed while the
         # project's dates haven't passed (or when it has no dates at all).
         outline = None
         for fp in _fixed_list(p):
-            if fp.get("crewId") != cid or fp.get("status") not in _UPCOMING_STATUSES:
+            fst = fp.get("status")
+            if fp.get("crewId") != cid or (fst not in _UPCOMING_STATUSES and fst != "cancelled"):
                 continue
             end = (p.end_date or "").strip() or (p.start_date or "").strip()
             is_past = bool(end) and end < today
-            if is_past and (fp.get("status") != "confirmed" or end < past_floor):
+            if fst == "cancelled":
+                if end and end < past_floor:
+                    continue
+            elif is_past and (fst != "confirmed" or end < past_floor):
                 continue
             if head is None:
                 head = await _project_head(p)
@@ -1146,14 +1172,19 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
                 "startTime": "", "endTime": "", "shiftTitle": "", "role": code, "roleLabel": label,
                 "department": dept, "status": fp.get("status"), "note": (fp.get("note") or "").strip(),
                 "requestId": req.id if req else None, "requestToken": req.token if req else None,
-                "signedOff": bool(work and work.get("pay")),
+                "signedOff": bool(work and work.get("pay")) and fst != "cancelled",
                 "flat": True, "fee": payouts.js_round2(payouts._num(fp.get("fee"))),
                 "projectStart": (p.start_date or ""), "projectEnd": (p.end_date or ""),
                 "projectDates": outline,
             })
-            (past if is_past else upcoming).append(entry)
+            if fst == "cancelled":
+                entry["cancellationPay"] = _cancel_share(fp)
+                cancelled.append(entry)
+            else:
+                (past if is_past else upcoming).append(entry)
     upcoming.sort(key=lambda e: (e["date"] or "9999", e["startTime"] or "", e["projectName"]))
     past.sort(key=lambda e: (e["date"] or "", e["startTime"] or ""), reverse=True)
+    cancelled.sort(key=lambda e: (e["date"] or "9999", e["startTime"] or "", e["projectName"]))
 
     next_confirmed = next((e for e in upcoming if e["status"] == "confirmed"), None)
     stats = {
@@ -1177,6 +1208,7 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
         "recent": recent_out,
         "upcoming": upcoming,
         "past": past,
+        "cancelled": cancelled,
         "stats": stats,
         "payouts": pay,
         "settings": public_settings(settings),

@@ -299,8 +299,24 @@ def _coerce_shifts(raw) -> list:
             # card (no date/time line). Flag only — no fee, no dates: a
             # cancellation doesn't restate the offer.
             "flat": s.get("flat") is True,
+            # A paid cancellation's share for this shift (the notify tray sets
+            # it per shift so merged notices still add up); summed into
+            # {{cancellationPay}}. A number, never text.
+            "cancellationPay": _cancellation_pay(s.get("cancellationPay")),
         })
     return out
+
+
+def _cancellation_pay(v) -> float:
+    """One shift's cancellation share from a client snapshot: a finite,
+    non-negative amount to the cent, else 0."""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return 0.0
+    if n != n or n in (float("inf"), float("-inf")) or n <= 0:
+        return 0.0
+    return round(min(n, 1_000_000.0), 2)
 
 
 def _request_dict(r: models.CrewRequest) -> dict:
@@ -592,7 +608,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
 # resolve the legacy single-shift template vars ({{role}}/{{date}}/{{callTime}}/…)
 # from a representative position, so the shipped template bodies AND their
 # Settings previews stay valid without a redesign.
-_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"}
+_CREW_NOTIFY_TEMPLATES = {"crewConfirmed", "crewCancelled", "crewCancelledWithPay", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"}
 
 # Server-side fallbacks for the notify templates, used when the workspace hasn't
 # saved that template to the DB yet (load_settings reads the DB, which doesn't
@@ -625,6 +641,15 @@ _NOTIFY_FALLBACKS = {
                  "following shifts are affected:\n\n{{shifts}}\n\nWe apologize for "
                  "any inconvenience and hope to work with you on future "
                  "projects.\n\n{{signature}}"),
+    },
+    "crewCancelledWithPay": {
+        "subject": "Schedule Update: {{projectName}} — position cancelled",
+        "body": ("Hi {{crewName}},\n\nWe're writing to let you know that your "
+                 "confirmed position on {{projectName}} has been cancelled. The "
+                 "following shifts are affected:\n\n{{shifts}}\n\nYou'll still be "
+                 "paid {{cancellationPay}} for the cancelled shifts.\n\nWe "
+                 "apologize for any inconvenience and hope to work with you on "
+                 "future projects.\n\n{{signature}}"),
     },
     "crewNotSelected": {
         "subject": "Update: {{projectName}}",
@@ -705,6 +730,8 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
             "{{wrapTime}}": _fmt_hhmm(first.get("endTime")) if first.get("endTime") else "",
             "{{location}}": location,
+            # The crewCancelledWithPay share, summed over the notice's shifts.
+            "{{cancellationPay}}": "${:,.2f}".format(sum(_cancellation_pay(s.get("cancellationPay")) for s in (shifts or []))),
         }
 
         def _sub(t):

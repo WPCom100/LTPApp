@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import models
-from backend.doc_units import qty_label
+from backend.doc_units import line_detail, qty_label
 
 
 async def doc_display_name(db: AsyncSession, row) -> str:
@@ -253,9 +253,11 @@ async def load_settings(db: AsyncSession) -> dict:
 # it.name, it.qty, it.unitPrice, it.adjustedPrice, it.rentalLabel, plus
 # it.qtyLabel — which is DERIVED in public_section_items ("days", "half day",
 # "OT hours", "units", "trips", "ea"; the PDF's vocabulary), never copied — and
-# for a note row n.text / n.name / n.id. Everything else — cost, deliveredQty,
-# invoicedQty, notes, taxable, rateType, unit and every *Id foreign key — is
-# internal.
+# it.detail, likewise derived: a cancellation line's generated aside ("Cancelled
+# Jun 5 · 50% charged", doc_units.line_detail), absent on every other line —
+# and for a note row n.text / n.name / n.id. Everything else — cost,
+# deliveredQty, invoicedQty, notes, taxable, rateType, unit and every *Id
+# foreign key — is internal.
 # NOTE: this scrub feeds ONLY the JSON at GET /api/view/{token}. The public PDF
 # (routes/view.py::public_pdf) renders from the unsanitized quote_dict, so
 # narrowing here cannot change what the PDF prints.
@@ -308,6 +310,11 @@ def public_section_items(sections: list) -> list:
             # the internal rateType/unit fields it is worked out from.
             if scrubbed.get("type") != "note":
                 scrubbed["qtyLabel"] = qty_label(it, it.get("qty"))
+            # Derived too: only a cancellation line has one, the same words the
+            # PDF prints after its name.
+            detail = line_detail(it)
+            if detail:
+                scrubbed["detail"] = detail
             scrubbed_items.append(scrubbed)
         out.append({
             "id": sec.get("id"),

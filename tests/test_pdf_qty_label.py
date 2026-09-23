@@ -24,6 +24,8 @@ from backend.pdf_generator import _qty_label, generate_pdf  # noqa: E402
     ({"type": "service", "rateType": "ot"}, 1, "OT hour"),
     ({"type": "service", "rateType": "ot"}, 5, "OT hours"),
     ({"type": "service", "rateType": "flat"}, 1, "flat rate"),
+    ({"type": "service", "rateType": "cancel"}, 1, "cancellation"),
+    ({"type": "service", "rateType": "cancel"}, 2, "cancellations"),
     ({"type": "equipment", "rentalLabel": "3-Day"}, 1, "unit"),
     ({"type": "equipment", "rentalLabel": "3-Day"}, 12, "units"),
     ({"type": "fee", "unit": "trip"}, 1, "trip"),
@@ -60,6 +62,7 @@ def _doc(kind):
             {"id": "i5", "type": "fee", "name": "Delivery", "unit": "trip", "qty": 2, "unitPrice": 250, "adjustedPrice": None, "cost": 120, "notes": ""},
             {"id": "i6", "type": "product", "name": "Gaffer Tape", "qty": 3, "unitPrice": 22, "adjustedPrice": None, "cost": 11, "notes": ""},
             {"id": "i7", "type": "note", "text": "A caption between lines", "name": ""},
+            {"id": "i8", "type": "service", "name": "A1 — Audio Lead", "rateType": "cancel", "qty": 1, "unitPrice": 300, "adjustedPrice": None, "cost": 150, "notes": "Cancelled Jun 5 · 50% charged"},
         ]}],
     }
 
@@ -134,3 +137,19 @@ def test_quantities_share_a_right_edge_and_units_a_left_edge():
     label_x = {x for x, t in left if t in labels}
     assert len(label_x) == 1, f"unit labels drawn at several left edges: {sorted(label_x)}"
     assert label_x.pop() > num_x.pop()
+
+
+def test_cancellation_line_prints_its_detail_after_the_name():
+    """A cancellation says which call and how much of it was charged, the way
+    a rental line says its period; a day line's internal note never prints."""
+    items = [
+        {"id": "c", "type": "service", "name": "A1 — Audio Lead", "rateType": "cancel", "qty": 1, "unitPrice": 300,
+         "adjustedPrice": None, "cost": 150, "notes": "Cancelled Jun 5 · 50% charged"},
+        {"id": "d", "type": "service", "name": "PM — Manager", "rateType": "day", "qty": 2, "unitPrice": 800,
+         "adjustedPrice": None, "cost": 400, "notes": "Jun 4, Jun 5"},
+    ]
+    _right, left = _spy_section(items)
+    texts = [t for _x, t in left]
+    assert "A1 — Audio Lead  (Cancelled Jun 5 · 50% charged)" in texts, texts
+    assert "PM — Manager" in texts and not any("Jun 4, Jun 5" in t for t in texts), texts
+    assert "cancellation" in texts, texts

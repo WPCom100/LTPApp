@@ -265,7 +265,8 @@ def doc_number(period) -> str:
 
 # "hourly" is an hourly-priced role's day (components/domain-labor.js::
 # LTP_calcDayLabor); its hours read the same way as a day-rate day's.
-_TIER_LABEL = {"half": "Half day", "full": "Full day", "hourly": "Hourly", "mixed": "Mixed", "flat": "Flat rate"}
+_TIER_LABEL = {"half": "Half day", "full": "Full day", "hourly": "Hourly", "mixed": "Mixed", "flat": "Flat rate",
+               "cancel": "Cancellation"}
 
 
 def _f(x):
@@ -284,9 +285,11 @@ def _hours_label(paid_hours, ot_hours):
     return base + (" +%gh OT" % oth if oth > 0 else "")
 
 
-def _work_line_desc(day, hours_label) -> str:
+def _work_line_desc(day, hours_label, kind="work") -> str:
     parts = [day.get("project_name") or "Payout", day.get("date") or ""]
-    tier = _TIER_LABEL.get(day.get("tier") or "", (day.get("tier") or ""))
+    # A cancelled shift's share is its own line, labelled as such whatever the
+    # day's tier reads (a worked day can carry one alongside).
+    tier = "Cancellation" if kind == "cancel" else _TIER_LABEL.get(day.get("tier") or "", (day.get("tier") or ""))
     if tier:
         parts.append(tier)
     if hours_label:
@@ -311,34 +314,39 @@ def build_bill_lines(billable, accounts) -> list[dict]:
     account can be resolved."""
     lines = []
     for day in billable:
-        groups = {}   # account_id -> {"cents", "paid", "ot"}
-        order = []    # first-seen account order -> deterministic primary
+        # Units group by account AND kind: a cancelled shift's share posts to
+        # its role's account like worked hours do, but on its own line so the
+        # bill reads "Cancellation" rather than folding it into the day's hours.
+        groups = {}   # (account_id, kind) -> {"cents", "paid", "ot"}
+        order = []    # first-seen order -> deterministic primary
         for u in day.get("units") or []:
             acct = accounts["by_service"].get(u.get("service_id")) or accounts["default_expense"]
             if not acct:
                 raise PayoutNotBillable("no expense account configured for this payout")
-            if acct not in groups:
-                groups[acct] = {"cents": 0, "paid": 0.0, "ot": 0.0}
-                order.append(acct)
-            groups[acct]["cents"] += int(round(u["amount"] * 100))
-            groups[acct]["paid"] += _f(u.get("paid_hours"))
-            groups[acct]["ot"] += _f(u.get("ot_hours"))
+            key = (acct, "cancel" if u.get("kind") == "cancel" else "work")
+            if key not in groups:
+                groups[key] = {"cents": 0, "paid": 0.0, "ot": 0.0}
+                order.append(key)
+            groups[key]["cents"] += int(round(u["amount"] * 100))
+            groups[key]["paid"] += _f(u.get("paid_hours"))
+            groups[key]["ot"] += _f(u.get("ot_hours"))
 
         adjustments = day.get("adjustments") or []
         adj_cents = sum(int(round(_f(a.get("amount")) * 100)) for a in adjustments)
         payable_cents = int(round(day["payable"] * 100))
-        work_total_cents = payable_cents - adj_cents   # == round(work.pay.total)
+        work_total_cents = payable_cents - adj_cents   # == round(work.pay.total + cancellations)
 
         if order:
-            primary = max(order, key=lambda a: (groups[a]["cents"], -order.index(a)))
-            non_primary = sum(groups[a]["cents"] for a in order if a != primary)
-            groups[primary]["cents"] = work_total_cents - non_primary  # absorb residual
-            for a in order:
-                c = groups[a]["cents"]
+            primary_key = max(order, key=lambda k: (groups[k]["cents"], -order.index(k)))
+            non_primary = sum(groups[k]["cents"] for k in order if k != primary_key)
+            groups[primary_key]["cents"] = work_total_cents - non_primary  # absorb residual
+            for k in order:
+                c = groups[k]["cents"]
                 if c == 0:
                     continue
-                lines.append({"account_id": a, "amount": round(c / 100.0, 2),
-                              "description": _work_line_desc(day, _hours_label(groups[a]["paid"], groups[a]["ot"]))})
+                lines.append({"account_id": k[0], "amount": round(c / 100.0, 2),
+                              "description": _work_line_desc(day, _hours_label(groups[k]["paid"], groups[k]["ot"]), k[1])})
+            primary = primary_key[0]
         else:
             # No worked units (adjustment-only day) — adjustments fall to the default.
             primary = accounts["default_expense"]

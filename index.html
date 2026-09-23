@@ -339,6 +339,7 @@
   <script src="components/domain-email.js"></script>
   <script src="components/domain-docs.js"></script>
   <script src="components/domain-qbo.js"></script>
+  <script src="components/domain-labor-sync.js"></script>
 
   <!-- 4. Data fallbacks — used as usePersistentState fallback arguments.
        Mostly empty post-migration; data/settings.js still ships UI defaults
@@ -416,6 +417,12 @@
   <script src="components/doc-pdf.js"></script>
   <!-- Revision-log detail popup, shared by both document builders. -->
   <script src="components/doc-activity-detail.js"></script>
+  <!-- Schedule labor sync banner + review, shared by both document builders
+       (engine: components/domain-labor-sync.js). -->
+  <script src="components/labor-sync.js"></script>
+  <!-- The "Cancel…" dialog (charge / pay shares) shared by the Labor tab and
+       the schedule editor (engine: components/domain-crew.js). -->
+  <script src="components/cancel-labor.js"></script>
   <script src="components/schedule-editor.js"></script>
   <script src="components/confirm-dialog.js"></script>
   <script src="components/error-boundary.js"></script>

@@ -170,7 +170,8 @@
         h("div", { style: { display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 12, flexWrap: "wrap" } },
           h("div", { style: { fontSize: (compact ? "13px" : "15px"), fontWeight: 600, color: ORANGE_SOFT } }, "Flat-rate position" + (range ? "  ·  " + range : "")),
           s.fee != null && h("div", { style: { flexShrink: 0, whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 600, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, fmtMoney(s.fee))),
-        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: 6 } }, (s.roleLabel || "Crew")),
+        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: s.status === "cancelled" ? MUTE : WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: 6 } },
+          h("span", { style: { textDecoration: s.status === "cancelled" ? "line-through" : "none" } }, (s.roleLabel || "Crew")), cancelledBadge(s)),
         s.department && h("div", { style: { marginTop: 6 } },
           h("span", { style: { fontSize: "11px", fontWeight: 700, color: ORANGE_SOFT, letterSpacing: "0.08em", textTransform: "uppercase", border: "1px solid " + HAIR, padding: "2px 6px", borderRadius: 3 } }, s.department)),
         outline.length > 0 && h("div", { style: { marginTop: 12, padding: "10px 12px", background: INSET, borderRadius: 6 } },
@@ -186,6 +187,13 @@
   }
 
   // ── A single ruled "call line" ─────────────────────────────────────────────
+  // A call that was cancelled keeps its line, badged, instead of vanishing.
+  function cancelledBadge(s) {
+    return s && s.status === "cancelled"
+      ? h("span", { style: { marginLeft: 10, fontSize: "11px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: DECLINE, border: "1px solid " + DECLINE_BD, background: DECLINE_BG, padding: "2px 6px", borderRadius: 3, verticalAlign: "middle" } }, "Cancelled")
+      : null;
+  }
+
   function renderShift(s, i, isLast, compact) {
     if (s && s.flat) return renderFlatPosition(s, i, isLast, compact);
     var dateLine = fmtDate(s.date);
@@ -219,7 +227,8 @@
           timeRange && h("div", { style: { flexShrink: 0, whiteSpace: "nowrap", fontSize: (compact ? "13px" : "16px"), fontWeight: 500, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums" } }, timeRange)),
         // position title — its own full-width line below the timeframe, so a long
         // role can run the whole width instead of fighting the time column.
-        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: hasTimeframe ? 6 : 0 } }, (s.roleLabel || "Crew")),
+        h("div", { style: { fontSize: (compact ? "17px" : "19px"), fontWeight: 700, color: s.status === "cancelled" ? MUTE : WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, marginTop: hasTimeframe ? 6 : 0 } },
+          h("span", { style: { textDecoration: s.status === "cancelled" ? "line-through" : "none" } }, (s.roleLabel || "Crew")), cancelledBadge(s)),
         subMeta,
         noteRow)
     );
@@ -272,7 +281,7 @@
 
   function calButtons(shifts, projectName, location) {
     if (!window.LTP_gcalUrl) return null;
-    var usable = (shifts || []).filter(function(s) { return s.date || (s.flat && s.projectStart); });
+    var usable = (shifts || []).filter(function(s) { return s.status !== "cancelled" && (s.date || (s.flat && s.projectStart)); });
     if (!usable.length) return null;
     var single = usable.length === 1;
     // Each call is its own event (its own date + call/wrap time), so a crew
@@ -497,7 +506,10 @@
     // accepted → confirmed. So "confirmed" is derived from the shift statuses,
     // not the request status — the page must not claim a hold is confirmed until
     // the production manager has actually confirmed the positions.
-    var activeShifts = shifts.filter(function(s) { return s.status !== "declined"; });
+    // A cancelled call is neither held nor confirmed: the rest decide. When
+    // every call on the request was cancelled, the page says so.
+    var activeShifts = shifts.filter(function(s) { return s.status !== "declined" && s.status !== "cancelled"; });
+    var allCancelled = shifts.length > 0 && shifts.every(function(s) { return s.status === "cancelled"; });
     var isConfirmed = status === "accepted" && activeShifts.length > 0 &&
       activeShifts.every(function(s) { return s.status === "confirmed"; });
 
@@ -509,7 +521,8 @@
 
     // Overline status eyebrow per state. An accepted-but-unconfirmed hold reads
     // "Awaiting Confirmation" (never "Confirmed") until the production manager confirms.
-    var statusEyebrow = status === "accepted"
+    var statusEyebrow = allCancelled && !withdrawn ? { t: "Cancelled", c: DECLINE }
+      : status === "accepted"
         ? (isConfirmed ? { t: "Confirmed", c: SUCCESS } : { t: "Awaiting Confirmation", c: ORANGE_SOFT })
       : status === "declined" ? { t: "Declined", c: DECLINE }
       : status === "withdrawn" ? { t: "Withdrawn", c: NEUTRAL }
@@ -519,6 +532,7 @@
     var hasFlat = shifts.some(function(s) { return s.flat; });
     var what = flatOnly ? "this position" : (hasFlat ? "this project" : "these calls");
     var intent = withdrawn ? null
+      : allCancelled ? (shifts.length === 1 ? "This call was cancelled." : "These calls were cancelled.")
       : status === "accepted"
         ? (isConfirmed ? "You're confirmed for the following." : "You've accepted " + what + ". A production manager will confirm you shortly.")
       : status === "declined" ? "Here is what was on this request."
@@ -622,8 +636,8 @@
     });
 
     var actionZone;
-    if (isConfirmed) {
-      actionZone = null;                                   // shown at the top instead
+    if (isConfirmed || (allCancelled && !withdrawn)) {
+      actionZone = null;                                   // shown at the top instead / nothing left to answer
     } else if (terminal) {
       actionZone = h("div", { style: { marginTop: 40 } }, bannerNode);
     } else {
@@ -654,7 +668,7 @@
     }
 
     // ── Mobile sticky action bar (pending only, before a choice is made) ──────
-    var showSticky = isMobile && status === "pending" && respondMode === null;
+    var showSticky = isMobile && status === "pending" && respondMode === null && !allCancelled;
     var stickyBar = showSticky
       ? h("div", { style: { position: "fixed", left: 0, right: 0, bottom: 0, background: INSET, borderTop: "1px solid " + HAIR, zIndex: 3000 } },
           h("div", { style: { height: 4, background: GRAD_RULE } }),

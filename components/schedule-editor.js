@@ -9,7 +9,7 @@
 
   var inp = { background: B.bg, border: "1px solid " + B.border, borderRadius: "4px", padding: "6px 8px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", width: "100%" };
   var lbl = { fontSize: "10px", color: B.textMut, marginBottom: 2 };
-  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+  var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info, cancelled: B.textMut };
 
   // Helper: add minutes to a time string
   function _addTime(timeStr, minutes) {
@@ -25,12 +25,16 @@
   // declinedCrewFor([{ schedItemId }]) → crew who declined a request for that
   // day row (the builder resolves it off LTP_declinedCrewIndex); optional, so
   // the editor still works without the crew-request feed.
-  window.ScheduleEditor = function({ schedule, onChange, contacts, services, checkCrewConflict, declinedCrewFor }) {
+  window.ScheduleEditor = function({ schedule, onChange, contacts, services, checkCrewConflict, declinedCrewFor, settings }) {
     var isMobile = window.LTP_useIsMobile();
     var [assignCrewModal, setAssignCrewModal] = useState(false);
     var [crewSearch, setCrewSearch] = useState("");
     var [deletionDlg, setDeletionDlg] = useState(null);
     var [conflictWarn, setConflictWarn] = useState(null);
+    // The cancel dialog (components/cancel-labor.js): { booking, scope, label }.
+    var [cancelDlg, setCancelDlg] = useState(null);
+    // Shift rows whose cancelled positions are unfolded (folded by default).
+    var [showCancelled, setShowCancelled] = useState({});
     var crew = (contacts || []).filter(function(c) { return c.isCrew && c.crewStatus === "active"; });
     var svcs = services || [];
     // Per-crew negotiated minimums, so the cost totals below reflect what each
@@ -46,7 +50,7 @@
         return hay.indexOf(cq) !== -1;
       });
     })();
-    var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info };
+    var POS_COLORS = { open: B.textMut, requested: B.warn, accepted: B.success, declined: B.danger, confirmed: B.info, cancelled: B.textMut };
 
     // Removing a day/position that has crew assigned just confirms here — the
     // crew-removal notice is parked on save by the parent (LTP_diffRemovedCrew →
@@ -73,7 +77,7 @@
       (schedule || []).forEach(function(s) {
         if (!s.date) return;
         (s.positions || []).forEach(function(p) {
-          if (!p.crewId || p.status === "declined") return;
+          if (!p.crewId || p.status === "declined" || p.status === "cancelled") return;
           var key = p.crewId + "|" + s.date;
           if (!byCrewDate[key]) byCrewDate[key] = [];
           byCrewDate[key].push({ posId: p.id, serviceId: p.serviceId, status: p.status, schedTitle: s.title, projectName: "this project",
@@ -104,7 +108,7 @@
         (schedule || []).forEach(function(s) {
           if (!s.date) return;
           (s.positions || []).forEach(function(p) {
-            if (!p.crewId || p.status === "declined" || p.status === "confirmed") return;
+            if (!p.crewId || p.status === "declined" || p.status === "confirmed" || p.status === "cancelled") return;
             (checkCrewConflict(p.crewId, s.date) || []).forEach(function(ob) {
               add(p.id, Object.assign({ posId: "ext" }, ob, { overlap: window.LTP_shiftTimesOverlap(s, ob) }));
             });
@@ -143,11 +147,15 @@
       var activeCrew = (item.positions || []).filter(function(p) {
         return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
       });
-      if (activeCrew.length > 0) {
+      var held = (item.positions || []).filter(holdsMoney);
+      if (activeCrew.length > 0 || held.length > 0) {
+        var msg = [];
+        if (activeCrew.length) msg.push("This day has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") +
+          ". The shifts will be removed — the crew are added to the notify tray when you save, where you can email them or decline.");
+        if (held.length) msg.push(cancelNote(held));
         setDeletionDlg({
           title: "Delete \"" + (item.title || "Untitled") + "\"",
-          message: "This day has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") +
-            ". The shifts will be removed — the crew are added to the notify tray when you save, where you can email them or decline.",
+          message: msg.join(" "),
           confirmLabel: "Delete Day",
           onConfirm: function() { doRemove(); setDeletionDlg(null); },
         });
@@ -177,10 +185,9 @@
     // assignee). Without this, swapping a confirmed slot to a new person would
     // leave them "confirmed", which the suppress-confirmed conflict rule would
     // then hide — a double-booking for someone who never accepted. Re-picking
-    // the same person keeps the status.
-    function reassignStatus(pos, crewId) {
-      return (crewId && crewId === pos.crewId) ? pos.status : "open";
-    }
+    // the same person keeps the status. The rule now lives in
+    // LTP_reassignPatch (components/domain-crew.js), which also takes the
+    // previous holder's locked pay / sign-off / adjustments off the slot.
     // Put the picked person on the ONE position that was clicked. This used to
     // also pencil them into every open, unfilled slot of the same role on every
     // other row that day ("assign to the day"), which read as the app assigning
@@ -188,7 +195,7 @@
     // role both filled from one pick — so that spread is gone. Each shift is
     // filled by its own pick, the same as the Labor tab's assignment path.
     function doAssignCrew(schedId, pos, crewId) {
-      updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
+      updatePosition(schedId, pos.id, window.LTP_reassignPatch(pos, crewId));
     }
 
     // The other shift's times, and whether they overlap the one being filled,
@@ -271,6 +278,11 @@
           return Object.assign({}, s, { positions: (s.positions || []).filter(function(p) { return p.id !== posId; }) });
         }));
       };
+      if (pos && holdsMoney(pos)) {
+        setDeletionDlg({ title: "Remove Cancellation", message: cancelNote([pos]), confirmLabel: "Remove",
+          onConfirm: function() { doRemove(); setDeletionDlg(null); } });
+        return;
+      }
       if (pos && pos.crewId && (pos.status === "requested" || pos.status === "accepted" || pos.status === "confirmed")) {
         var cm = (contacts || []).find(function(c) { return c.id === pos.crewId; });
         var crewName = cm ? cm.firstName + " " + cm.lastName : "Assigned crew";
@@ -283,6 +295,51 @@
         return;
       }
       doRemove();
+    }
+
+    // ── Cancelled labor (components/cancel-labor.js) ────────────────────────
+    // A position, a shift or a whole day (B6) is cancelled into the draft like
+    // any edit; the save logs it and parks each person's notice
+    // (LTP_diffRemovedCrew). `svcs` is this project's client card.
+    function cancelMoney(list) {
+      var m = { bill: 0, pay: 0 };
+      (list || []).forEach(function(p) {
+        var c = (p && p.cancel) || {};
+        m.bill += Number(c.bill && c.bill.total) || 0; m.pay += Number(c.pay && c.pay.total) || 0;
+      });
+      return m;
+    }
+    // A cancellation still billing or paying a share: removing it drops that
+    // money, so it asks first, like a staffed position does.
+    function holdsMoney(p) {
+      if (!p || p.status !== "cancelled") return false;
+      var m = cancelMoney([p]);
+      return m.bill > 0 || m.pay > 0;
+    }
+    function cancelNote(list) {
+      var m = cancelMoney(list), n = list.length;
+      return (n === 1 ? "This cancellation" : n + " cancellations") + " (bill $" + window.LTP_money(m.bill) + " \u00b7 pay $" + window.LTP_money(m.pay) + ") " + (n === 1 ? "goes" : "go") + " with it.";
+    }
+    function openCancel(ids, scope, label) {
+      var bk = window.LTP_projectBooking({ schedule: schedule }, ids, svcs, crewMins);
+      if (!bk) return;
+      // A signed-off day (LTP_projectBooking.signedDay): nothing moves until
+      // the sign-off is undone in Payouts.
+      if (bk.signedDay && !bk.cancelled) { setCancelDlg({ blocked: true, label: label }); return; }
+      setCancelDlg({ booking: bk, scope: scope, label: label });
+    }
+    function applyCancel(action, shares, reason) {
+      var d = cancelDlg;
+      setCancelDlg(null);
+      if (!d) return;
+      var meta = { at: new Date().toISOString(), by: window.LTP_CURRENT_USER || "User",
+                   byId: window.LTP_CURRENT_USER_ID != null ? window.LTP_CURRENT_USER_ID : null, reason: reason };
+      var w = window.LTP_projectBookingWrite({ schedule: schedule }, d.booking, action, shares, svcs, crewMins, meta, genId);
+      if (w.project.schedule && w.project.schedule !== schedule) onChange(w.project.schedule);
+    }
+    function crewLabel(id) {
+      var cm = id != null ? (contacts || []).find(function(c) { return c.id === id; }) : null;
+      return cm ? (cm.firstName + " " + cm.lastName).trim() : "";
     }
 
     // Break helpers
@@ -335,7 +392,7 @@
     }
 
     // Total positions stats — only confirmed counts as filled
-    var totalPositions = schedule.reduce(function(n, s) { return n + (s.positions || []).length; }, 0);
+    var totalPositions = schedule.reduce(function(n, s) { return n + (s.positions || []).filter(function(p) { return p.status !== "cancelled"; }).length; }, 0);
     var filledPositions = schedule.reduce(function(n, s) { return n + (s.positions || []).filter(function(p) { return p.status === "confirmed"; }).length; }, 0);
 
     // ── Density presets ──────────────────────────────────────────────────────
@@ -372,6 +429,39 @@
     var dashedBtn = M
       ? { background: "transparent", border: "1px dashed " + B.accent + "55", color: B.accent, cursor: "pointer", fontSize: "12px", fontWeight: 600, padding: "0 10px", height: 34, borderRadius: "8px", width: "100%", fontFamily: "inherit" }
       : null;
+
+    // A shift's cancelled positions: folded under one line by default, each
+    // struck through with what it bills and pays — Edit… re-shares or
+    // restores it, Refill opens the role again for someone else.
+    function cancelledRow(s, pos) {
+      var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
+      var m = cancelMoney([pos]);
+      var who = crewLabel(pos.crewId);
+      var ctl = { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
+                  height: M ? 30 : undefined, padding: M ? "0 10px" : "2px 7px", borderRadius: M ? "7px" : "3px", fontSize: M ? "11px" : "9px" };
+      return h("div", { key: pos.id, style: { background: B.surface, border: "1px dashed " + B.border, borderRadius: M ? "10px" : "3px", padding: M ? "8px" : "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+        h("span", { style: { fontSize: M ? "13px" : "10px", fontWeight: 600, color: B.textMut, textDecoration: "line-through" } },
+          svc ? svc.role + (svc.description ? " \u2014 " + svc.description : "") : (pos.role || "Role")),
+        h("span", { style: { fontSize: M ? "12px" : "10px", color: B.textSec } }, who || "Nobody booked"),
+        h("span", { style: { marginLeft: "auto", fontSize: M ? "11px" : "9px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
+          "bill $" + window.LTP_money(m.bill) + (pos.work ? " \u00b7 pay $" + window.LTP_money(m.pay) : "")),
+        h("button", { onClick: function() { openCancel([pos.id], "position", [who, svc ? svc.role : (pos.role || ""), s.date ? fmt(s.date) : ""].filter(Boolean).join(" \u00b7 ")); }, style: ctl }, "Edit\u2026"),
+        h("button", { onClick: function() { var r = window.LTP_refillPosition(schedule, s.id, pos.id, genId); if (r.positionId) onChange(r.schedule); }, style: ctl }, "Refill"),
+        h("button", { onClick: function() { removePosition(s.id, pos.id); }, "aria-label": "Remove position",
+          style: M ? glyphBtn(B.danger, "22px") : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "\u00d7"));
+    }
+    function cancelledBlock(s, list) {
+      var gone = (list || []).filter(function(p) { return p.status === "cancelled"; });
+      if (!gone.length) return null;
+      var open = !!showCancelled[s.id];
+      var m = cancelMoney(gone);
+      var toggle = h("button", { key: "cx-toggle", "aria-expanded": open,
+        onClick: function() { var next = Object.assign({}, showCancelled); next[s.id] = !open; setShowCancelled(next); },
+        style: { alignSelf: "flex-start", background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontFamily: "inherit",
+                 fontSize: M ? "11px" : "9px", fontWeight: 600, padding: M ? "6px 2px" : "2px 0", fontVariantNumeric: "tabular-nums" } },
+        (open ? "\u25be " : "\u25b8 ") + gone.length + " cancelled \u00b7 bill $" + window.LTP_money(m.bill) + " \u00b7 pay $" + window.LTP_money(m.pay));
+      return [toggle].concat(open ? gone.map(function(pos) { return cancelledRow(s, pos); }) : []);
+    }
 
     return h("div", { style: { display: "flex", flexDirection: "column", gap: 8 } },
       // Header
@@ -420,7 +510,9 @@
           // one span; real gaps are unpaid) — NOT a flat call→wrap span.
           // Day rate/cost totals bill per PERSON per day (same model as the quote),
           // so the footer matches what will be billed — not a per-position sum.
-          var dayLabor = window.LTP_calcDayLabor(dayItemList, svcs, crewMins);
+          // A cancelled position bills its own share, never the day
+          // (LTP_withoutCancelled keeps everyone else's person-slot as it was).
+          var dayLabor = window.LTP_calcDayLabor(window.LTP_withoutCancelled(dayItemList), svcs, crewMins);
           // Map each position to its labor unit, and pick the PRIMARY position
           // per unit (earliest shift in the day) — the per-person rate shows on
           // that row once; the person's other shifts read "same person" so the
@@ -443,8 +535,10 @@
           var dayMealPenaltyHours = Math.round(dayLabor.units.reduce(function(t, u) { return t + u.mealPenaltyHours; }, 0) * 100) / 100;
           var dayHasMealPenalty = dayMealPenaltyHours > 0;
           var dayHasOT = dayLabor.units.some(function(u) { return u.paidHours > 10; });
-          var dayPosCount = allPositions.length;
-          var dayFilled = allPositions.filter(function(p) { return p.status === "confirmed"; }).length;
+          var livePositions = allPositions.filter(function(p) { return p.status !== "cancelled"; });
+          var dayCancelled = allPositions.filter(function(p) { return p.status === "cancelled"; });
+          var dayPosCount = livePositions.length;
+          var dayFilled = livePositions.filter(function(p) { return p.status === "confirmed"; }).length;
           // Day state shows in the top rule: brand orange normally, warn/danger
           // when the day carries OT or a meal penalty (flat ledger panel — the
           // rounded 2px-outlined card is gone).
@@ -465,7 +559,9 @@
                     return (p.breaks && p.breaks.length) ? Object.assign({}, p, { breaks: [] }) : p;
                   }) });
                 });
-                var labor = window.LTP_calcDayLabor(clearedItems, svcs);
+                // Cancelled positions work no hours: price the day without them
+                // and never hand one a break (its slot is its own either way).
+                var labor = window.LTP_calcDayLabor(window.LTP_withoutCancelled(clearedItems), svcs);
                 var breaksByPos = {};
                 labor.units.forEach(function(u) {
                   if (!(u.mealPenaltyHours > 0)) return;
@@ -474,7 +570,7 @@
                   clearedItems.forEach(function(it) {
                     var slots = window.LTP_effectiveSlots(it.positions);
                     (it.positions || []).forEach(function(p) {
-                      if (!p.serviceId) return;
+                      if (!p.serviceId || p.status === "cancelled") return;
                       if (p.serviceId + "#" + (slots[p.id] || 1) !== unitKey) return;
                       shifts.push({ time: it.time, endTime: it.endTime, breaks: it.breaks || [], positionId: p.id });
                     });
@@ -495,7 +591,14 @@
               },
               title: "Auto-insert a meal break for each person who has a penalty (theirs only — others on the shift aren't affected)",
               style: { color: B.btnInk, background: B.danger, fontSize: "9px", fontWeight: 700, padding: M ? "3px 7px" : "2px 6px", borderRadius: M ? "5px" : "3px", cursor: "pointer", whiteSpace: "nowrap" } },
-              "MEAL PENALTY: " + dayMealPenaltyHours + "h — fix")
+              "MEAL PENALTY: " + dayMealPenaltyHours + "h — fix"),
+            // B6: every position still on the day, one share pair, each still
+            // editable on its own afterwards. No project-wide action (decision 14).
+            group.date !== "_unscheduled" && livePositions.length > 0 && h("button", { key: "cx",
+              onClick: function() { openCancel(livePositions.map(function(p) { return p.id; }), "day", fmt(group.date)); },
+              style: { background: "transparent", border: "1px solid " + B.border, color: B.textMut, fontSize: M ? "11px" : "9px", fontWeight: 600,
+                       padding: M ? "0 10px" : "2px 8px", height: M ? 28 : undefined, borderRadius: M ? "7px" : "3px", cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit" } },
+              "Cancel day\u2026")
           ];
           var dayMeta = [
             dayCall && h("span", { key: "t", style: { fontSize: M ? "11px" : "10px", color: B.textMut } }, window.LTP_formatTime(dayCall) + " → " + window.LTP_formatTime(dayWrap)),
@@ -576,6 +679,12 @@
                   style: M ? pill(s.showOnCalendar, B.accent, 30)
                            : { flexShrink: 0, background: s.showOnCalendar ? B.accent + "22" : "transparent", border: "1px solid " + (s.showOnCalendar ? B.accent : B.border), borderRadius: "3px", padding: "2px 6px", color: s.showOnCalendar ? B.accent : B.textMut, fontSize: "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
                   s.showOnCalendar ? "✓ Cal" : "Cal");
+                var itemLiveIds = itemPositions.filter(function(p) { return p.status !== "cancelled"; }).map(function(p) { return p.id; });
+                var cancelItemBtn = dayItems.length > 1 && itemLiveIds.length > 0 && h("button", {
+                  onClick: function() { openCancel(itemLiveIds, "shift", [s.title || "Shift", s.date ? fmt(s.date) : ""].filter(Boolean).join(" \u00b7 ")); },
+                  style: M ? pill(false, B.textMut, 30)
+                           : { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 6px", color: B.textMut, fontSize: "8px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap" } },
+                  "Cancel\u2026");
                 var delItemBtn = h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Delete item",
                   style: M ? glyphBtn(B.danger, "22px") : { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "×");
 
@@ -587,7 +696,7 @@
                   // Desktop: the single line it has always been.
                   M
                     ? [
-                        h("div", { key: "t", style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6 } }, titleInput, delItemBtn),
+                        h("div", { key: "t", style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6 } }, titleInput, cancelItemBtn, delItemBtn),
                         h("div", { key: "w", style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 6 } },
                           dateField, pastTag, seg(startField, endField), hoursLabel, calBtn)
                       ]
@@ -596,7 +705,7 @@
                         h("div", { style: { display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" } },
                           dateField, pastTag, startField,
                           h("span", { style: { color: B.textMut, fontSize: "10px" } }, "→"),
-                          endField, hoursLabel, calBtn, delItemBtn)),
+                          endField, hoursLabel, calBtn, cancelItemBtn, delItemBtn)),
                   // Heads-up when this shift has crew already committed — editing
                   // its date/times will queue them to be re-notified on save.
                   committedCrew.length > 0 && h("div", { style: { fontSize: M ? "11px" : "10px", color: B.warn, background: B.warn + "14", border: "1px solid " + B.warn + "44", borderRadius: M ? "8px" : "4px", padding: M ? "6px 10px" : "3px 8px", marginBottom: M ? 6 : 4, display: "flex", alignItems: "center", gap: 5, lineHeight: 1.4 } },
@@ -639,7 +748,7 @@
                   ),
                   // Item positions
                   itemPositions.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: M ? 6 : 3 } },
-                    itemPositions.map(function(pos) {
+                    itemPositions.filter(function(p) { return p.status !== "cancelled"; }).map(function(pos) {
                       var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
                       var crewMember = pos.crewId ? contacts.find(function(c) { return c.id === pos.crewId; }) : null;
                       // Per-row rate reflects THIS shift's hours (its own item),
@@ -736,6 +845,12 @@
                       var statusChip = h("span", { style: M
                           ? { flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "6px", padding: "0 8px", height: 28, display: "inline-flex", alignItems: "center", lineHeight: 1 }
                           : { flexShrink: 0, width: 70, textAlign: "center", fontSize: "9px", fontWeight: 600, color: pc, background: pc + "18", border: "1px solid " + pc + "33", borderRadius: "3px", padding: "4px 6px" } }, pos.status);
+                      // Cancel — the dialog (charge / pay shares) for a staffed position.
+                      var cancelBtn = pos.crewId && (pos.status === "requested" || pos.status === "accepted" || pos.status === "confirmed") && h("button", {
+                        onClick: function() { openCancel([pos.id], "position", [crewLabel(pos.crewId), svc ? svc.role : (pos.role || ""), s.date ? fmt(s.date) : ""].filter(Boolean).join(" \u00b7 ")); },
+                        style: M ? pill(false, B.textMut)
+                                 : { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, borderRadius: "3px", padding: "2px 5px", color: B.textMut, fontSize: "8px", fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" } },
+                        "Cancel\u2026");
                       // Full-margin toggle — bills the rate, zeroes the cost (e.g. owner working)
                       var mgnBtn = h("button", { onClick: function() { updatePosition(s.id, pos.id, { fullMargin: !pos.fullMargin }); },
                         title: pos.fullMargin ? "Full margin: company cost is $0 for this position (rate still billed). Click to cost it normally." : "Mark full margin — zero the company cost (rate still billed), e.g. the owner working.",
@@ -804,13 +919,14 @@
                         ? h("div", { key: pos.id, style: { background: rowBg, border: rowBd, borderRadius: "10px", padding: "8px" } },
                             h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } }, conflictDot, roleSel, slotSel, crewSel),
                             h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6, minWidth: 0 } },
-                              statusChip, mgnBtn, indivBreaks,
+                              statusChip, cancelBtn, mgnBtn, indivBreaks,
                               // Rate + the two glyphs stay right-aligned even on a
                               // row that has no rate yet (no role picked).
                               h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: "auto" } }, rateBox, copyBtn, delBtn)))
                         : h("div", { key: pos.id, style: { background: rowBg, border: rowBd, borderRadius: "3px", padding: "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "nowrap" } },
-                            conflictDot, roleSel, slotSel, crewSel, statusChip, mgnBtn, indivBreaks, rateBox, delBtn, copyBtn);
-                    })
+                            conflictDot, roleSel, slotSel, crewSel, statusChip, cancelBtn, mgnBtn, indivBreaks, rateBox, delBtn, copyBtn);
+                    }),
+                    cancelledBlock(s, itemPositions)
                   ),
                   // Add position button
                   h("button", { onClick: function() { addPosition(s.id); },
@@ -859,6 +975,8 @@
                   });
                 })(),
                 h("div", { style: { display: "flex", justifyContent: "flex-end", gap: 14, marginTop: 2, paddingTop: M ? 5 : 3, borderTop: "1px solid " + B.border, fontSize: M ? "12px" : undefined } },
+                  dayCancelled.length > 0 && h("span", { style: { color: B.textMut } },
+                    "Cancelled: $" + Math.round(cancelMoney(dayCancelled).bill) + " / $" + Math.round(cancelMoney(dayCancelled).pay)),
                   h("span", { style: { color: B.accent, fontWeight: 700 } }, "Rate: $" + Math.round(dayLabor.rateTotal)),
                   h("span", { style: { color: B.textMut } }, "Cost: $" + Math.round(dayLabor.costTotal)))
               )
@@ -866,6 +984,21 @@
           );
         });
       }(),
+      cancelDlg && cancelDlg.blocked && h(window.LTPModal, { title: "Day signed off", onClose: function() { setCancelDlg(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } }, cancelDlg.label + " \u2014 undo the sign-off in Payouts first."),
+        h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h(window.Btn, { variant: "ghost", onClick: function() { setCancelDlg(null); } }, "Back"))),
+      cancelDlg && !cancelDlg.blocked && h(window.LTPCancelDialog, { key: cancelDlg.booking.ids.join(","),
+        title: cancelDlg.booking.cancelled ? "Cancellation" : cancelDlg.scope === "day" ? "Cancel day" : "Cancel shift",
+        subtitle: cancelDlg.label,
+        refBill: cancelDlg.booking.ref.bill, refPay: cancelDlg.booking.ref.pay,
+        hasCrew: cancelDlg.booking.paysCrew, fullMargin: cancelDlg.booking.fullMargin,
+        initial: cancelDlg.booking.cancelled ? cancelDlg.booking.shares : window.LTP_cancelDefaults(settings),
+        reason: cancelDlg.booking.reason, edit: cancelDlg.booking.cancelled, notify: null,
+        confirmLabel: cancelDlg.scope === "day" ? "Cancel day" : "Cancel shift",
+        onClose: function() { setCancelDlg(null); },
+        onRestore: cancelDlg.booking.cancelled && !cancelDlg.booking.signedDay ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
+        onConfirm: function(shares, reason) { applyCancel(cancelDlg.booking.cancelled ? "edit" : "cancel", shares, reason); } }),
+
       // Assign crew to all days modal
       // Not a dropdown (each row is a person × one button per role they hold),
       // so it keeps its list shape — but it gets the same search box, because

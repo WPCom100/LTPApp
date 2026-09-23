@@ -133,13 +133,18 @@
       // or editing the quote silently drops it — `projectId` records which job
       // an appended section came from.
       sections: (q.sections || []).map(function(s) {
-        return { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
+        var out = { id: s.id, label: s.label, customDates: !!s.customDates, startDate: s.startDate || "", endDate: s.endDate || "",
                  projectId: s.projectId != null ? s.projectId : null,
                  // The window its equipment was last priced for — how a later
                  // change to the project's dates is noticed. See
                  // components/domain-docs.js::LTP_staleRentalSections.
                  pricedStartDate: s.pricedStartDate || "", pricedEndDate: s.pricedEndDate || "",
                  items: (s.items || []).map(function(i) { return Object.assign({}, i); }) };
+        // The schedule-sync marker on a section generated from a project
+        // schedule (components/domain-crew.js::LTP_scheduleLaborSections).
+        // Only present on such sections, so it is carried rather than defaulted.
+        if (s.laborSync) out.laborSync = s.laborSync;
+        return out;
       }),
       notes: q.notes || "",
       terms: q.terms || "",
@@ -624,7 +629,7 @@
     var isFee = item.type === "fee";
     var typeBadge = item.type === "equipment" ? "EQ" : item.type === "product" ? "PR" : isFee ? "FEE" : "SV";
     var typeBadgeColor = item.type === "equipment" ? B.info : item.type === "product" ? B.success : isFee ? FEE_COLOR : B.warn;
-    var RATE_TYPES = { day: "days", half: "half days", hourly: "hours", ot: "OT hours", flat: "flat" };
+    var RATE_TYPES = window.LTP_RATE_TYPE_QTY;
     var svcRateType = item.type === "service" ? (item.rateType || "day") : null;
     var qtyLabel = svcRateType ? (RATE_TYPES[svcRateType] || "days") : (isFee && item.unit && item.unit !== "flat" ? item.unit + "s" : "qty");
     var isAccepted = quoteStatus === "accepted";
@@ -656,7 +661,7 @@
     // snapshotted price — re-pricing on the client's behalf would silently
     // rewrite a sent quote — so a mismatch is surfaced with a one-click apply.
     function clientRateNote(small) {
-      if (!svcData || !svcData.clientRate || svcRateType === "flat") return null;
+      if (!svcData || !svcData.clientRate || !window.LTP_isTierRateType(svcRateType)) return null;
       var maps = window.LTP_serviceRateMaps(svcData);
       var live = Math.round((maps.priceMap[svcRateType] || 0) * 100) / 100;
       var stale = Math.abs(live - unitP) > 0.005;
@@ -703,7 +708,8 @@
         }, style: selStyle },
         h("option", { value: "day" }, "Day"), h("option", { value: "half" }, "Half Day"),
         h("option", { value: "hourly" }, "Hourly"), h("option", { value: "ot" }, "OT"),
-        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"));
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"),
+        svcRateType === "cancel" && h("option", { value: "cancel" }, window.LTP_rateTypeLabel("cancel")));
       var variantSel = item.type === "product" && !isLocked && prodData && prodVariants.length > 0 && h("select", {
           value: lineVariantId, "aria-label": "Pricing variant", onChange: function(e) {
             var v = window.LTP_findProductVariant(prodData, e.target.value);
@@ -782,12 +788,14 @@
         // A flat-rate position line (from the schedule's flat-rate positions)
         // keeps its typed price; the option exists so the select reads "Flat"
         // rather than falling back to the first option.
-        svcRateType === "flat" && h("option", { value: "flat" }, "Flat")
+        svcRateType === "flat" && h("option", { value: "flat" }, "Flat"),
+        // Likewise a cancelled call billed at a share of its rate.
+        svcRateType === "cancel" && h("option", { value: "cancel" }, window.LTP_rateTypeLabel("cancel"))
       ),
       // Read-only rate-type label when locked, OR when the source service was
       // deleted (no svcData to recompute prices from — see Option B).
       item.type === "service" && (isLocked || !svcData) && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600, width: 82, textAlign: "center" } },
-        svcRateType === "day" ? "Day" : svcRateType === "half" ? "Half Day" : svcRateType === "hourly" ? "Hourly" : "OT"),
+        window.LTP_rateTypeLabel(svcRateType)),
       // Pricing-variant selector (products with variants only). Switching
       // re-snapshots name/price/cost from the chosen variant, like a service
       // rate-type change. No selector when locked or the product was deleted —
@@ -1181,6 +1189,7 @@
       cleanRef.current = initial;
       skipDateRecalcRef.current = true;
       setIsDirty(false);
+      if (laborSync) laborSync.resetLog();
     }, [quoteId, isNew]);
 
     // Someone else saved this quote while we have it open. Adopt it if we have
@@ -1197,6 +1206,9 @@
         // equipment off today's inventory rates — same reasoning as the quote
         // switch above.
         skipDateRecalcRef.current = true;
+        // Only reached with no unsaved edits, so nothing the labor review did
+        // is pending — but the log belongs to the replaced draft either way.
+        if (laborSync) laborSync.resetLog();
       },
       { title: "This quote changed elsewhere",
         message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
@@ -1457,6 +1469,10 @@
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Quote saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
+      // What the labor review applied and kept this session, one entry per
+      // project (components/labor-sync.js) — the save entry above only sees the
+      // line values that moved, never a Keep.
+      var laborEntries = laborSync.takeActivity({ date: saveEntry.date, time: saveEntry.time, user: saveEntry.user });
       if (draft.id == null) {
         var newId = getNextQuoteId();
         // Mint shareToken client-side so the Preview button (gated on
@@ -1464,7 +1480,7 @@
         // client-supplied token (only mints when absent), so this is the
         // source of truth and matches the same value on the server.
         var newToken = draft.shareToken || window.LTP_genShareToken();
-        var toSave = Object.assign({}, toSaveDraft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
+        var toSave = Object.assign({}, toSaveDraft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat(laborEntries, [saveEntry]) });
         setQuotes(function(prev) { return prev.concat([toSave]); });
         setDraftRaw(toSave);
         cleanRef.current = toSave;
@@ -1474,7 +1490,7 @@
         // Backfill shareToken on existing-but-tokenless quotes (older rows
         // from before the share_token column was added). Once minted on
         // first save, the token persists via the standard spread.
-        var existingPatch = { activity: (draft.activity || []).concat([saveEntry]) };
+        var existingPatch = { activity: (draft.activity || []).concat(laborEntries, [saveEntry]) };
         if (!draft.shareToken) existingPatch.shareToken = window.LTP_genShareToken();
         var updated = Object.assign({}, toSaveDraft, existingPatch);
         setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
@@ -1495,6 +1511,7 @@
         onConfirm: function() {
           setDraftRaw(cleanRef.current);
           setIsDirty(false);
+          laborSync.resetLog();
           setDlg(null);
         },
       });
@@ -2014,6 +2031,18 @@
     var staleById = {};
     staleSections.forEach(function(s) { staleById[s.id] = s; });
 
+    // The schedule-built labor on this quote against the schedule as it is now
+    // (components/labor-sync.js over components/domain-labor-sync.js). Draft and
+    // sent quotes only — an accepted or converted quote is what the client
+    // agreed to, and a declined one is over. Apply and Keep are ordinary edits
+    // (a sent quote gets the usual "Editing Sent Quote" reminder); save()
+    // records what was done.
+    var laborSync = window.LTP_useLaborSync({
+      kind: "quote", draft: draft, projects: projects, svcs: svcs, contacts: contacts,
+      mode: (draft.status === "draft" || draft.status === "sent") ? "edit" : "off",
+      setDraft: setDraft, genId: genId,
+    });
+
     // ── Recompute equipment prices when dates change ───────────────────────────
     // Equipment unitPrice and rateType are derived from the effective rental dates
     // for each section. When project dates, custom dates, or section custom dates
@@ -2501,6 +2530,15 @@
             )
       ),
 
+      // The schedule moved after this quote's labor was priced — one line per
+      // project, nothing re-priced until the editor reviews (labor-sync.js).
+      laborSync.banners.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6, padding: isMobile ? "0 12px" : 0 } },
+        laborSync.banners.map(function(b) {
+          return h(window.LTPLaborSyncBanner, { key: "ls-" + b.projectId, projectName: laborSync.nameOf(b.projectId), drift: b.drift, mode: "edit",
+            onReview: function() { laborSync.openReview(b.projectId); },
+            onKeepAll: function() { laborSync.keepAll(b.projectId); } });
+        })),
+
       // Sections
       h("div", null,
         draft.sections.map(function(sec, secIdx) {
@@ -2744,6 +2782,12 @@
       }(),
 
       // Generic confirm / alert dialog
+      laborSync.review && h(window.LTPLaborSyncReview, { key: "ls-review-" + laborSync.review.projectId, drift: laborSync.review.drift,
+        projectName: laborSync.nameOf(laborSync.review.projectId), mode: "edit", linking: laborSync.review.linking,
+        onApply: function(keys) { laborSync.apply(laborSync.review.projectId, keys); },
+        onKeep: function(keys) { laborSync.keep(laborSync.review.projectId, keys); },
+        onClose: laborSync.closeReview,
+        invoiceRef: function(id) { var inv = (invoices || []).find(function(x) { return x.id === id; }); return inv ? window.LTP_INVOICE_REF(inv) : "INV-" + id; } }),
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Activity detail popup
@@ -2756,6 +2800,14 @@
       invPickerData && h(window.LTPModal, { title: "Send to Invoice", onClose: function() { setInvPickerData(null); } },
         h("p", { style: { fontSize: "12px", color: B.textMut, marginBottom: 14 } },
           "Add these items to one of this client\u2019s draft invoices \u2014 they arrive as new sections, leaving what\u2019s already there untouched \u2014 or create a new invoice."),
+        // The schedule moved after this (accepted) quote's labor was priced. The
+        // invoice these lines land on shows the review; here, a chip is enough
+        // (decision 17) so it is no surprise there.
+        window.LTP_laborDriftAll(draft, projects, svcs, window.LTP_crewMinMap(contacts), fmt).length > 0
+          && h("div", { style: { marginTop: -8, marginBottom: 12 } },
+               h("span", { title: "The schedule changed since this labor was priced",
+                 style: { fontSize: "9px", fontWeight: 700, color: B.warn, background: B.warnBg, border: "1px solid " + B.warnBd, borderRadius: "10px", padding: "1px 7px", whiteSpace: "nowrap" } },
+                 "Labor changed")),
         h("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14, maxHeight: 260, overflowY: "auto" } },
           (function() {
             // The eligibility rule (draft-only, same billing party, any

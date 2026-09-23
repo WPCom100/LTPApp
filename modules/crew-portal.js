@@ -163,6 +163,7 @@
     var out = Object.assign({}, d, {
       upcoming: (d.upcoming || []).map(fix),
       past: (d.past || []).map(fix),
+      cancelled: (d.cancelled || []).map(fix),
       requests: (d.requests || []).map(function(r) { return Object.assign({}, r, { shifts: (r.shifts || []).map(fix) }); }),
     });
     if (d.stats && d.stats.nextCall) out.stats = Object.assign({}, d.stats, { nextCall: fix(d.stats.nextCall) });
@@ -268,6 +269,7 @@
     if (status === "accepted") return Chip("Awaiting confirmation", "amber");
     if (status === "requested") return Chip("Needs your answer", "info");
     if (status === "declined") return Chip("Declined", "danger");
+    if (status === "cancelled") return Chip("Cancelled", "danger");
     return Chip(status || "Unknown");
   }
   function Card(children, style) {
@@ -715,13 +717,14 @@
         h("div", { style: { fontSize: "13px", fontWeight: 600, color: WHITE, marginTop: 2, lineHeight: 1.25 } }, e.flat ? when : fmtMonthDay(e.date))),
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline", flexWrap: "wrap" } },
-          h("div", { style: { fontSize: compact ? "14px" : "15px", fontWeight: 700, color: WHITE, letterSpacing: "-0.01em", lineHeight: 1.25 } }, e.roleLabel || "Crew"),
+          h("div", { style: { fontSize: compact ? "14px" : "15px", fontWeight: 700, color: e.status === "cancelled" ? MUTE : WHITE, letterSpacing: "-0.01em", lineHeight: 1.25, textDecoration: e.status === "cancelled" ? "line-through" : "none" } }, e.roleLabel || "Crew"),
           time && h("div", { style: { fontSize: "12px", fontWeight: 500, color: ORANGE_SOFT, fontFamily: MONO, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, time)),
         h("div", { style: { fontSize: "12px", color: MUTE, marginTop: 3, lineHeight: 1.4 } },
           e.projectName + (e.shiftTitle ? "  ·  " + e.shiftTitle : "") + (e.venue ? "  ·  " + e.venue : "")),
         !compact && e.note && h("div", { style: { marginTop: 8, padding: "7px 10px", background: PANEL, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "12px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, e.note),
         h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 } },
           statusChip(e.status),
+          e.cancellationPay > 0 && Chip("Cancellation pay " + fmtMoney(e.cancellationPay), "success"),
           e.signedOff && Chip("Signed off", "success"),
           !compact && e.siteAddress && h("a", { href: mapsHref(e.siteAddress), target: "_blank", rel: "noopener", style: { fontSize: "12px", color: MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" } }, e.siteAddress),
           !compact && cal && h("a", { href: cal, target: "_blank", rel: "noopener", style: { display: "inline-flex", alignItems: "center", gap: 6, fontSize: "12px", fontWeight: 600, color: SUCCESS, textDecoration: "none" } }, calGlyph(SUCCESS), "Add to calendar"),
@@ -875,7 +878,7 @@
     var viewState = useState("upcoming"), view = viewState[0], setView = viewState[1];     // list only: upcoming | past
     var anchorState = useState(today), anchor = anchorState[0], setAnchor = anchorState[1]; // a day inside the shown week or month
     var pickState = useState(today), picked = pickState[0], setPicked = pickState[1];     // month view: the day whose calls are listed
-    var upcoming = d.upcoming || [], past = d.past || [];
+    var upcoming = d.upcoming || [], past = d.past || [], cancelled = d.cancelled || [];
     var confirmedCal = upcoming.filter(function(e) { return e.status === "confirmed"; });
     var byDate = entriesByDate(upcoming.concat(past));
 
@@ -993,7 +996,7 @@
 
     // List: grouped by date so a multi-call day reads as one block.
     function listView() {
-      var list = view === "upcoming" ? upcoming : past;
+      var list = view === "upcoming" ? upcoming : view === "cancelled" ? cancelled : past;
       var groups = [];
       list.forEach(function(e) {
         var key = e.flat ? "flat:" + e.projectId : e.date;
@@ -1003,7 +1006,7 @@
       });
       return h("div", { style: { marginTop: 18 } },
         groups.length === 0
-          ? Empty(view === "upcoming" ? "No upcoming calls. When a production manager books you, your calls appear here." : "No recent calls to show.")
+          ? Empty(view === "upcoming" ? "No upcoming calls. When a production manager books you, your calls appear here." : view === "cancelled" ? "No cancelled calls." : "No recent calls to show.")
           : groups.map(function(g) {
               return h("div", { key: g.key, style: { marginBottom: 22 } },
                 h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 8 } },
@@ -1021,7 +1024,9 @@
         ? "Tap a day to see its calls underneath. Past days show the last few weeks of confirmed work."
         : view === "upcoming"
           ? "Every call you're on, from today forward. A call is only locked in once it says Confirmed. Until then a production manager still has to confirm you."
-          : "Confirmed calls from the last few weeks. Signed off means the day's pay has been finalized and is on its way through payroll.";
+          : view === "cancelled"
+            ? "Calls the production called off. Any cancellation pay shows on the call and in Pay."
+            : "Confirmed calls from the last few weeks. Signed off means the day's pay has been finalized and is on its way through payroll.";
 
     return h("div", null,
       h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
@@ -1029,7 +1034,8 @@
           setMode(id);
           if (id !== "list") { setAnchor(today); setPicked(today); }
         }),
-        mode === "list" && segRow([{ id: "upcoming", label: "Upcoming (" + upcoming.length + ")" }, { id: "past", label: "Recently worked (" + past.length + ")" }], view, setView)),
+        mode === "list" && segRow([{ id: "upcoming", label: "Upcoming (" + upcoming.length + ")" }, { id: "past", label: "Recently worked (" + past.length + ")" }]
+          .concat(cancelled.length ? [{ id: "cancelled", label: "Cancelled (" + cancelled.length + ")" }] : []), view, setView)),
       h("div", { style: { fontSize: "12px", color: FAINT, marginTop: 10, lineHeight: 1.5 } }, intro),
       mode === "week" ? weekView() : mode === "month" ? monthView() : listView());
   }
@@ -1046,7 +1052,7 @@
     var p = props.period, isMobile = props.isMobile;
     var openState = useState(!!props.defaultOpen), open = openState[0], setOpen = openState[1];
     var hasRows = p.days.length + p.pending.length > 0;
-    var tierLabel = { day: "Day", half: "Half day", hourly: "Hourly", ot: "OT", flat: "Flat rate", mixed: "Day + flat" };
+    var tierLabel = { day: "Day", half: "Half day", hourly: "Hourly", ot: "OT", flat: "Flat rate", mixed: "Day + flat", cancel: "Cancellation" };
     return h("div", { style: { background: INSET, border: "1px solid " + (p.current ? "rgba(249,185,152,0.45)" : HAIR), borderRadius: 14, overflow: "hidden", opacity: (hasRows || p.current || p.upcoming) ? 1 : 0.62 } },
       h("button", { type: "button", className: "ltp-cp-tap", onClick: function() { if (hasRows) setOpen(!open); }, "aria-expanded": open,
         style: { display: "flex", width: "100%", alignItems: "center", gap: 14, padding: 16, background: "transparent", border: "none", color: TEXT, fontFamily: "inherit", textAlign: "left", cursor: hasRows ? "pointer" : "default" } },
@@ -1070,7 +1076,8 @@
                 h("div", { style: { fontSize: "13px", fontWeight: 600, color: WHITE } }, fmtDateShort(day.date) + "  ·  " + day.projectName),
                 h("div", { style: { fontSize: "11px", color: MUTE, marginTop: 2 } },
                   [tierLabel[day.tier] || day.tier || "", day.paidHours ? day.paidHours + "h paid" : "", day.otHours ? day.otHours + "h OT" : "",
-                   day.state === "no_show" ? "no show" : day.state === "adjusted" ? "adjusted" : ""].filter(Boolean).join("  ·  "))),
+                   day.state === "no_show" ? "no show" : day.state === "adjusted" ? "adjusted" : "",
+                   day.cancelTotal > 0 && day.tier !== "cancel" ? "+" + fmtMoney(day.cancelTotal) + " cancellation" : ""].filter(Boolean).join("  ·  "))),
               h("div", { style: { fontSize: "14px", fontWeight: 700, color: WHITE, fontFamily: MONO, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, fmtMoney(day.payable))),
             (day.adjustments || []).map(function(a, j) {
               return h("div", { key: "a" + j, style: { display: "flex", justifyContent: "space-between", gap: 10, fontSize: "11px", color: MUTE, marginTop: 4, paddingLeft: 10 } },

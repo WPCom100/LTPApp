@@ -38,6 +38,11 @@
 //   adjustments/adjTotal — manual extras/deductions for the day (LTP_setPayAdjustments)
 //   estimate — (locked else current) + adjustments: the pre-sign-off figure
 //   payable — the FINAL figure (signed.pay.total + adjustments); null until signed off.
+//   cancellations/cancelTotal — cancelled shifts of the person's on that day
+//             (status "cancelled" with a frozen share, see domain-crew.js
+//             LTP_cancelPosition). Their money is added to the day's payable
+//             and estimate; a day of nothing but cancellations is signed by
+//             them (state "cancelled"), never pending.
 // Payout requires sign-off: grandTotal sums signed days only; pending days are
 // counted separately (pendingCount/pendingTotal of estimates).
 //
@@ -60,7 +65,11 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
     // (crew, project, date), because the bill ledger is unique per those
     // three; the UI keeps them as two rows and the totals agree either way.
     (proj.fixedPositions || []).forEach(function(p) {
-      if (!p || p.crewId == null || p.status !== "confirmed") return;
+      if (!p || p.crewId == null) return;
+      // A cancelled flat-rate position with its frozen share is a signed row
+      // (state "cancelled"); one with nothing frozen is not a row at all.
+      var isCancel = p.status === "cancelled" && !!(p.work && p.work.state === "cancelled" && p.work.pay);
+      if (p.status !== "confirmed" && !isCancel) return;
       var d = window.LTP_fixedPayDate(proj);
       if (!d) return;
       if (startDate && d < startDate) return;
@@ -77,7 +86,7 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       var estimate = Math.round(((locked ? locked.total : current.total) + adjTotal) * 100) / 100;
       var svc = svcById[p.serviceId];
       if (!byCrew[k]) byCrew[k] = { crewId: p.crewId, rows: [] };
-      byCrew[k].rows.push({ kind: "flat", posId: p.id, serviceId: p.serviceId,
+      byCrew[k].rows.push({ kind: "flat", posId: p.id, serviceId: p.serviceId, cancel: isCancel ? (p.cancel || null) : null,
         roleLabel: svc ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")) : (p.role || "Flat rate"),
         fee: Number(p.fee) || 0, fullMargin: !!p.fullMargin,
         crewId: p.crewId, projectId: proj.id, projectName: proj.name,
@@ -96,12 +105,26 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       (byDate[s.date] = byDate[s.date] || []).push(s);
     });
     Object.keys(byDate).forEach(function(d) {
-      var seen = {};  // String(crewId) → { id, locked, work, states, adj }
+      var seen = {};  // String(crewId) → { id, confirmed, locked, work, states, adj, cancels, cancelAdj }
       byDate[d].forEach(function(s) {
         (s.positions || []).forEach(function(p) {
-          if (!p || p.crewId == null || p.status !== "confirmed") return;
+          if (!p || p.crewId == null) return;
+          // A cancelled shift with its frozen share (domain-crew.js
+          // LTP_cancelPosition) rides on the person's day: its own line on
+          // the bill, added to the day's payable. One with nothing frozen
+          // (nobody was on it) is not payout work at all.
+          var isCancel = p.status === "cancelled" && !!(p.work && p.work.state === "cancelled" && p.work.pay);
+          if (p.status !== "confirmed" && !isCancel) return;
           var k = String(p.crewId);
-          if (!seen[k]) seen[k] = { id: p.crewId, locked: null, work: null, states: {}, adj: null };
+          if (!seen[k]) seen[k] = { id: p.crewId, confirmed: false, locked: null, work: null, states: {}, adj: null, cancels: [], cancelAdj: null };
+          if (isCancel) {
+            seen[k].cancels.push({ posId: p.id, total: Math.round((Number(p.work.pay.total) || 0) * 100) / 100,
+                                   units: p.work.pay.units || [], signedAt: p.work.signedAt, signedBy: p.work.signedBy,
+                                   cancel: p.cancel || null });
+            if (p.adj && p.adj.length && !seen[k].cancelAdj) seen[k].cancelAdj = p.adj;
+            return;
+          }
+          seen[k].confirmed = true;
           if (p.pay && !seen[k].locked) seen[k].locked = p.pay;
           if (p.work) { if (!seen[k].work) seen[k].work = p.work; seen[k].states[p.work.state] = true; }
           if (p.adj && p.adj.length && !seen[k].adj) seen[k].adj = p.adj;
@@ -109,31 +132,48 @@ window.LTP_payoutRows = function(projects, contacts, services, startDate, endDat
       });
       Object.keys(seen).forEach(function(k) {
         var entry = seen[k];
-        var current = window.LTP_crewDayPay(byDate[d], entry.id, svcs, crewMins);
+        var cancelSum = Math.round(entry.cancels.reduce(function(t, c) { return t + c.total; }, 0) * 100) / 100;
+        var current = entry.confirmed ? window.LTP_crewDayPay(byDate[d], entry.id, svcs, crewMins) : null;
         var locked = entry.locked;
         var signed = null;
+        // What the cancellations add ON TOP of the day's own figure. On a day
+        // of nothing but cancellations they ARE the signed figure instead.
+        var extra = cancelSum;
         if (entry.work && entry.work.pay) {
           // Day state rolls up from the position states: all no-show → no_show,
           // any adjusted (or a dropped shift alongside worked ones) → adjusted.
           var st = entry.states.no_show && !entry.states.worked && !entry.states.adjusted ? "no_show"
             : (entry.states.adjusted || entry.states.no_show) ? "adjusted" : "worked";
           signed = { state: st, pay: entry.work.pay, signedAt: entry.work.signedAt, signedBy: entry.work.signedBy };
+        } else if (!entry.confirmed) {
+          // Only cancellations on the day: a frozen figure, never pending.
+          var first = entry.cancels[0];
+          signed = { state: "cancelled",
+                     pay: { total: cancelSum, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "cancel",
+                            units: entry.cancels.reduce(function(a, c) { return a.concat(c.units); }, []) },
+                     signedAt: first.signedAt, signedBy: first.signedBy };
+          extra = 0;
         }
+        // A confirmed shift still unsigned keeps the day pending — its
+        // cancellation waits with it (one ledger entry per person-day).
         var drift = !!(!signed && locked && (!current
           || Math.abs(locked.total - current.total) > 0.005
           || locked.paidHours !== current.paidHours
           || locked.otHours !== current.otHours));
         // Adjustments (extras/deductions) sit on top of both the pre-sign-off
         // estimate and the frozen final. Drift compares BASE figures only —
-        // an adjustment shifts locked and current equally.
-        var adjustments = entry.adj || [];
+        // an adjustment shifts locked and current equally. A cancelled shift's
+        // adjustments count only when no confirmed shift carries the day's.
+        var adjustments = entry.adj || entry.cancelAdj || [];
         var adjTotal = Math.round(adjustments.reduce(function(t, a) { return t + (a.amount || 0); }, 0) * 100) / 100;
-        var estimate = Math.round(((locked ? locked.total : (current ? current.total : 0)) + adjTotal) * 100) / 100;
+        var estimate = Math.round(((locked ? locked.total : (current ? current.total : 0)) + adjTotal + extra) * 100) / 100;
         if (!byCrew[k]) byCrew[k] = { crewId: entry.id, rows: [] };
         byCrew[k].rows.push({ crewId: entry.id, projectId: proj.id, projectName: proj.name,
           date: d, locked: locked, current: current, drift: drift,
           signed: signed, adjustments: adjustments, adjTotal: adjTotal, estimate: estimate,
-          payable: signed ? Math.round((signed.pay.total + adjTotal) * 100) / 100 : null });
+          cancellations: entry.cancels.map(function(c) { return { posId: c.posId, total: c.total, cancel: c.cancel }; }),
+          cancelTotal: cancelSum,
+          payable: signed ? Math.round((signed.pay.total + adjTotal + extra) * 100) / 100 : null });
       });
     });
   });

@@ -232,7 +232,8 @@
                       h("span", { style: { color: B.textMut } }, "\u00b7"),
                       h("span", { style: { color: B.text } }, project.name),
                       sharedChip(qt),
-                      h(window.LTPRentalDriftChip, { doc: qt, projects: ctx.projects })
+                      h(window.LTPRentalDriftChip, { doc: qt, projects: ctx.projects }),
+                      window.LTPLaborDriftChip && h(window.LTPLaborDriftChip, { doc: qt, kind: "quote", projects: ctx.projects, services: ctx.services, clientRates: ctx.clientRates, contacts: ctx.contacts })
                     ),
                     h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } }, itemCount + " line items \u00b7 " + (qt.sections || []).length + " sections \u00b7 " + fmt(qt.createdDate))
                   ),
@@ -269,7 +270,8 @@
                     h("div", { style: { minWidth: 0 } },
                       h("div", { style: { fontSize: "14px", fontWeight: 700, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
                         h("span", { style: { color: B.accent } }, ref),
-                        sharedChip(inv)),
+                        sharedChip(inv),
+                        window.LTPLaborDriftChip && h(window.LTPLaborDriftChip, { doc: inv, kind: "invoice", projects: ctx.projects, services: ctx.services, clientRates: ctx.clientRates, contacts: ctx.contacts })),
                       h("div", { style: { fontSize: "11px", color: B.textMut, marginTop: 2 } },
                         itemCount + " items \u00b7 " + fmt(inv.invoiceDate) + (inv.dueDate ? " \u00b7 Due: " + fmt(inv.dueDate) : ""))),
                     h("div", { style: { display: "flex", gap: 8, alignItems: "center" } },

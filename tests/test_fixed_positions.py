@@ -432,7 +432,7 @@ def test_derive_flat_pending_until_complete_and_dated_on_project_end():
     day = d["days"][0]
     assert day["date"] == "2026-09-20" and day["tier"] == "flat" and day["flat"] is True
     assert day["payable"] == 1500.0 and day["units"] == [
-        {"service_id": S_LD, "amount": 1500.0, "paid_hours": 0.0, "ot_hours": 0.0}]
+        {"service_id": S_LD, "amount": 1500.0, "paid_hours": 0.0, "ot_hours": 0.0, "kind": "work"}]
     assert d["total_signed"] == 1500.0
     # The end date alone picks the period: a range that excludes it sees nothing.
     assert payouts.derive_payout_drafts(projects, _CREW, "2026-10-01", "2026-10-31") == []

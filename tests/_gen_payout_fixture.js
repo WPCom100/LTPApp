@@ -27,6 +27,7 @@ const contacts = [
   { id: 6, isCrew: true, firstName: "Blair", lastName: "Tech", minDayCost: 700 }, // min floors L1 (700 > 600)
   { id: 7, isCrew: true, firstName: "Casey", lastName: "Owner", minDayCost: 0 },
   { id: 8, isCrew: true, firstName: "Dana", lastName: "Designer", minDayCost: 0 }, // flat-rate hire
+  { id: 9, isCrew: true, firstName: "Eli", lastName: "Cancelled", minDayCost: 0 },  // every cancellation case
 ];
 const crewMins = window.LTP_crewMinMap(contacts);
 
@@ -85,6 +86,27 @@ p11.fixedPositions = window.LTP_stampFixedPay(p11.fixedPositions, 8, "2026-07-01
 p11.fixedPositions = window.LTP_completeFixedPosition(p11.fixedPositions, "f1", null, "2026-07-14T20:00:00Z", "tester");
 p11.fixedPositions = window.LTP_setFixedAdjustments(p11.fixedPositions, "f1", [{ id: "adjf1", amount: 50, label: "Travel" }]);
 p11.fixedPositions = window.LTP_completeFixedPosition(p11.fixedPositions, "f5", null, "2026-07-16T20:00:00Z", "tester");
+
+// ── Cancellations (crew 9, Eli) — the cancellation section of domain-crew.js.
+// Kept to a crew member of their own so every row above stays what it was.
+const CANCEL_META = { at: "2026-07-05T09:00:00Z", by: "tester", byId: 1, reason: "fixture" };
+const HALF_HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } };
+p10.schedule = p10.schedule.concat([
+  shift("s8", "2026-07-12", "09:00", "14:00", [pos("p9", 9, 1, "L1")]),    // cancelled → a day of nothing but the share
+  shift("s9", "2026-07-13", "08:00", "18:00", [pos("p10", 9, 1, "L1")]),   // worked + signed…
+  shift("s10", "2026-07-13", "08:00", "18:00", [pos("p11", 9, 2, "A1")]),  // …with a second shift cancelled the same day
+  shift("s11", "2026-07-14", "08:00", "18:00", [pos("p12", 9, 1, "L1")]),  // confirmed, unsigned → pending…
+  shift("s12", "2026-07-14", "08:00", "18:00", [pos("p13", 9, 2, "A1")]),  // …its cancelled shift waits with it
+]);
+p10.schedule = window.LTP_cancelPosition(p10.schedule, "s8", "p9", HALF_HALF, services, crewMins, CANCEL_META);
+p10.schedule = window.LTP_cancelPosition(p10.schedule, "s10", "p11",
+  { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 25 } }, services, crewMins, CANCEL_META);
+p10.schedule = window.LTP_cancelPosition(p10.schedule, "s12", "p13", HALF_HALF, services, crewMins, CANCEL_META);
+p10.schedule = window.LTP_signOffDay(p10.schedule, 9, "2026-07-13", {}, services, crewMins, "2026-07-13T20:00:00Z", "tester");
+// A cancelled flat-rate position bills its share on the project's end date.
+p11.fixedPositions = p11.fixedPositions.concat([flat("f6", 9, 500)]);
+p11.fixedPositions = window.LTP_stampFixedPay(p11.fixedPositions, 9, "2026-07-01T09:00:00Z");
+p11.fixedPositions = window.LTP_cancelFixedPosition(p11.fixedPositions, "f6", HALF_HALF, CANCEL_META);
 
 const projects = [p10, p11];
 const range = { start: "2026-07-06", end: "2026-07-19" };

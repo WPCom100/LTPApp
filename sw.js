@@ -392,7 +392,20 @@
 // v109: links inside an equipment or container detail (the container chips,
 // the equipment chips) closed the popup before navigating, so the queued Back
 // undid the navigation and dropped you on a list with nothing open.
-var CACHE_VERSION = 'ltp-shell-v109';
+// v110: schedule-generated labor lines and sections carry a laborSync marker,
+// and the builders' section whitelists keep it — the memory the labor sync
+// (a document brought back in step with its schedule) diffs against.
+// v111: a cancelled position bills its share on a "cancellation" line of its own
+// and leaves the day pools; the builders learn the rate type (and a locked
+// flat line stops reading "OT"); the online view prints a cancellation's note.
+// v112: index.html gained components/labor-sync.js (the quote and invoice
+// builders' "Labor out of sync" banner and review); invoices.js's QuickBooks
+// fingerprint now counts line notes. The component itself is picked up by the
+// runtime /components/ rule.
+// v113: quote and invoice lists (and a project's document lists) show "Labor
+// changed"; a schedule save that changes what it bills says which documents
+// now differ; the schedule's Send routes an already-linked draft to its review.
+var CACHE_VERSION = 'ltp-shell-v116';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
@@ -416,6 +429,7 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/domain-email.js',
   '/components/domain-docs.js',
   '/components/domain-qbo.js',
+  '/components/domain-labor-sync.js',
   '/app.js',
   '/mount.js',
   // The brand masthead — the sidebar header and the sign-in screen both wear

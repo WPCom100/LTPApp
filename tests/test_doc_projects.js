@@ -365,6 +365,132 @@ const day = (id, date, time, endTime, positions, breaks) =>
   eq("HR18 the note says so", mn[0].items[0].notes, "2026-08-10 · 4-hour contract minimum applied");
 }
 
+{
+  // ── laborSync markers ─────────────────────────────────────────────────────
+  // Every generated line and section carries the memory the labor sync diffs
+  // against (components/domain-labor-sync.js): a key that survives
+  // regeneration, and a snapshot of what the schedule said when it was written.
+  const NOW = "2026-09-23T12:00:00.000Z";
+  const schedule = [
+    day("d1", "2026-08-10", "08:00", "22:00", [pos("p1", 1), pos("p2", 2)], MEAL2),   // A1 + LX, full day + 3h OT each
+    day("d2", "2026-08-11", "08:00", "16:00", [pos("p3", 1)], MEAL),                  // A1 again, plain full day
+  ];
+  const flat = [{ id: "f1", serviceId: 2, role: "LX", crewId: 9, status: "confirmed", fee: 500, bill: 800, fullMargin: false }];
+  const one = SECTIONS(schedule, SVCS, {}, "one", fmtDate, window.LTP_genId, flat, 42, NOW);
+  const byKey = {};
+  one[0].items.forEach((i) => { byKey[i.laborSync.key] = i; });
+  ok("M0 every line carries a marker for the project", one[0].items.every((i) => i.laborSync && i.laborSync.projectId === 42 && i.laborSync.at === NOW));
+  eq("M1 keys: service|rateType for pooled lines, flat:<id> for a flat position", Object.keys(byKey).sort(),
+     ["flat:f1", "svc:1|day", "svc:1|ot", "svc:2|day", "svc:2|ot"]);
+  eq("M2 snap mirrors the line, with the ISO days behind the note",
+     byKey["svc:1|day"].laborSync.snap,
+     { qty: 2, unitPrice: 600, cost: 300, notes: "2026-08-10, 2026-08-11", dates: ["2026-08-10", "2026-08-11"] });
+  eq("M3 an OT line's snap carries only its own days", byKey["svc:2|ot"].laborSync.snap.dates, ["2026-08-10"]);
+  eq("M4 a flat line's snap spans the scheduled days", byKey["flat:f1"].laborSync.snap.dates, ["2026-08-10", "2026-08-11"]);
+  eq("M5 section marker, single section", one[0].laborSync, { projectId: 42, grouping: "one", ignored: {} });
+  const split = SECTIONS(schedule, SVCS, {}, "split", fmtDate, window.LTP_genId, flat, 42, NOW);
+  eq("M6 section marker, per department", split.map((s) => s.laborSync).sort((a, b) => a.dept.localeCompare(b.dept)),
+     [{ projectId: 42, grouping: "dept", dept: "Audio", ignored: {} }, { projectId: 42, grouping: "dept", dept: "Lighting", ignored: {} }]);
+  // Same schedule → same keys whatever ids were minted. This is what makes a
+  // later diff possible at all.
+  const again = SECTIONS(schedule, SVCS, {}, "split", fmtDate, (p) => p + "-other", flat, 42, NOW);
+  eq("M7 keys are stable across regenerations",
+     again.map((s) => s.items.map((i) => i.laborSync.key)), split.map((s) => s.items.map((i) => i.laborSync.key)));
+  // A caller that doesn't say which project still gets a marker; it matches none.
+  eq("M8 unknown project → null projectId", SECTIONS(schedule, SVCS, {}, "one", fmtDate, window.LTP_genId)[0].items[0].laborSync.projectId, null);
+  // An undated day is labelled TBD in the note and contributes no ISO day.
+  const undated = SECTIONS([day("d1", "", "08:00", "16:00", [pos("p1", 1)], MEAL)], SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW);
+  eq("M9 undated day → no ISO day in the snap", undated[0].items[0].laborSync.snap.dates, []);
+  // The marker never leaks into the fields the rest of the app reads.
+  eq("M10 line fields are what they always were",
+     Object.keys(byKey["svc:1|day"]).sort(),
+     ["adjustedPrice", "cost", "deliveredQty", "id", "invoicedQty", "laborSync", "name", "notes", "qty", "rateType", "serviceId", "type", "unitPrice"]);
+}
+
+{
+  // ── Cancelled positions ───────────────────────────────────────────────────
+  // A cancelled position leaves the day pools and, when its cancellation
+  // charges the client a share, becomes a line of its own: rateType "cancel",
+  // qty 1 at the bill share, cost = the pay share, keyed on the position.
+  const NOW = "2026-09-23T12:00:00.000Z";
+  const META = { at: NOW, by: "t" };
+  const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } };
+  const base = [
+    day("d1", "2026-08-10", "08:00", "16:00", [pos("p1", 1, { crewId: 5 }), pos("p2", 2, { crewId: 6 })], MEAL),
+    day("d2", "2026-08-11", "08:00", "16:00", [pos("p3", 1, { crewId: 5 })], MEAL),
+  ];
+  const cancelled = window.LTP_cancelPosition(base, "d2", "p3", HALF, SVCS, {}, META);
+  const out = SECTIONS(cancelled, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items;
+  const byKey = {}; out.forEach((i) => { byKey[i.laborSync.key] = i; });
+  eq("CN0 the cancelled day leaves the pool", [byKey["svc:1|day"].qty, byKey["svc:1|day"].notes], [1, "2026-08-10"]);
+  const cl = byKey["cancel:p3"];
+  eq("CN1 the cancellation line", [cl.type, cl.serviceId, cl.name, cl.rateType, cl.qty, cl.unitPrice, cl.cost, cl.adjustedPrice, cl.deliveredQty, cl.invoicedQty],
+     ["service", 1, "A1 — Audio Lead", "cancel", 1, 300, 150, null, 0, 0]);
+  eq("CN2 its note names the day and the percentage charged", cl.notes, "Cancelled Aug 11 · 50% charged");
+  eq("CN3 its marker", [cl.laborSync.projectId, cl.laborSync.snap], [42, { qty: 1, unitPrice: 300, cost: 150, notes: cl.notes, dates: ["2026-08-11"] }]);
+  eq("CN4 read order: a role's cancellation after its day line", out.map((i) => i.laborSync.key), ["svc:2|day", "svc:1|day", "cancel:p3"]);
+  // An amount share prints what it works out to against the reference.
+  const amt = window.LTP_cancelPosition(base, "d2", "p3", { bill: { mode: "amount", value: 250 }, pay: { mode: "none", value: 0 } }, SVCS, {}, META);
+  const al = SECTIONS(amt, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items.find((i) => i.rateType === "cancel");
+  eq("CN5 an amount share: its own figure, the percentage it comes to, $0 cost", [al.unitPrice, al.cost, al.notes], [250, 0, "Cancelled Aug 11 · 41.7% charged"]);
+  // Cancelled at no charge: gone from the pool, nothing billed in its place.
+  const free = window.LTP_cancelPosition(base, "d2", "p3", { bill: { mode: "none", value: 0 }, pay: { mode: "percent", value: 50 } }, SVCS, {}, META);
+  const fo = SECTIONS(free, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items;
+  eq("CN6 no charge → no line", fo.map((i) => i.laborSync.key), ["svc:2|day", "svc:1|day"]);
+  // Full margin: the client is charged the share, the cost is $0.
+  const fm = window.LTP_cancelPosition(base.map((s) => s.id !== "d2" ? s : Object.assign({}, s, { positions: [pos("p3", 1, { crewId: 5, fullMargin: true })] })),
+                                       "d2", "p3", HALF, SVCS, {}, META);
+  const fml = SECTIONS(fm, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items.find((i) => i.rateType === "cancel");
+  eq("CN7 full-margin cancellation costs nothing", [fml.unitPrice, fml.cost], [300, 0]);
+  // An undated shift: no day in the note, no ISO day in the marker.
+  const undated = window.LTP_cancelPosition([day("u1", "", "08:00", "16:00", [pos("pu", 1, { crewId: 5 })], MEAL)], "u1", "pu", HALF, SVCS, {}, META);
+  const ul = SECTIONS(undated, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items;
+  eq("CN8 undated: the cancellation alone, no day", ul.map((i) => [i.rateType, i.notes, i.laborSync.snap.dates]), [["cancel", "Cancelled · 50% charged", []]]);
+  // A cancelled flat-rate position: its flat line drops out, a cancellation takes its place.
+  const flats = window.LTP_cancelFixedPosition([{ id: "f1", serviceId: 2, role: "LX", crewId: 9, status: "confirmed", fee: 500, bill: 800, fullMargin: false }],
+                                               "f1", { bill: { mode: "percent", value: 25 }, pay: { mode: "percent", value: 50 } }, META);
+  const fl = SECTIONS(base, SVCS, {}, "one", fmtDate, window.LTP_genId, flats, 42, NOW)[0].items;
+  eq("CN9 a cancelled flat-rate position bills its share as a cancellation",
+     fl.filter((i) => i.rateType === "flat" || i.rateType === "cancel").map((i) => [i.laborSync.key, i.rateType, i.unitPrice, i.cost, i.notes]),
+     [["cancel:f1", "cancel", 200, 250, "Cancelled · 25% charged"]]);
+  // Split by department: the cancellation lands with its role's department.
+  const split = SECTIONS(cancelled, SVCS, {}, "split", fmtDate, window.LTP_genId, null, 42, NOW);
+  eq("CN10 split: the cancellation sits in its department", split.map((s) => [s.label, s.items.map((i) => i.rateType)]).sort(),
+     [["Audio", ["day", "cancel"]], ["Lighting", ["day"]]]);
+  // Everything cancelled at no charge bills nothing at all.
+  const none = window.LTP_cancelPosition(undated, "u1", "pu", { bill: { mode: "none", value: 0 }, pay: { mode: "none", value: 0 } }, SVCS, {}, META);
+  eq("CN11 nothing chargeable → []", SECTIONS(none, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW), []);
+  // Pure note helper: percent, amount, none, no reference.
+  const NOTE = window.LTP_cancellationNote;
+  eq("CN12 note text", [
+    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 100, total: 600 } }, "2026-06-05"),
+    NOTE({ ref: { bill: 600 }, bill: { mode: "amount", value: 200, total: 200 } }, "2026-06-05"),
+    NOTE({ ref: { bill: 0 }, bill: { mode: "amount", value: 200, total: 200 } }, "2026-12-31"),
+    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 12.345, total: 74.07 } }, ""),
+    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 50, total: 300 } }, "not-a-date"),
+  ], ["Cancelled Jun 5 · 100% charged", "Cancelled Jun 5 · 33.3% charged", "Cancelled Dec 31", "Cancelled · 12.3% charged",
+      "Cancelled not-a-date · 50% charged"]);
+}
+{
+  // ── LTP_withoutCancelled: the day pools, and nobody re-paired ─────────────
+  // An implicit slot is positional, so taking one person's shift out must not
+  // hand the next position on that shift someone else's slot (their OT is
+  // pooled across the day by slot).
+  const W = window.LTP_withoutCancelled;
+  const rowA = day("a", "2026-08-10", "06:00", "12:00", [pos("a1", 1), pos("a2", 1)]);
+  const rowB = day("b", "2026-08-10", "12:00", "20:00", [pos("b1", 1, { status: "cancelled" }), pos("b2", 1)]);
+  const outW = W([rowA, rowB]);
+  ok("WC0 a row without a cancellation comes back as it was", outW[0] === rowA);
+  eq("WC1 the cancelled position is gone", outW[1].positions.map((p) => p.id), ["b2"]);
+  eq("WC2 the survivor keeps its slot (2), not the freed one (1)", outW[1].positions[0].slot, 2);
+  eq("WC3 an explicit slot is left alone", W([day("c", "2026-08-10", "06:00", "12:00", [pos("c1", 1, { status: "cancelled" }), pos("c2", 1, { slot: 7 })])])[0].positions[0].slot, 7);
+  // Slot 2 worked both shifts (06–12 and 12–20 → 14h); slot 1 only the first.
+  // Re-pairing would have swapped them.
+  const units = window.LTP_calcDayLabor(outW, SVCS, {}).units.map((u) => u.slot + ":" + u.paidHours).sort();
+  eq("WC4 so the second person's two shifts still pool as one day", units, ["1:6", "2:14"]);
+  eq("WC5 input untouched", rowB.positions.map((p) => p.slot), [undefined, undefined]);
+}
+
 // ── LTP_docHasProject ────────────────────────────────────────────────────────
 // The whole point: a project's Quotes/Invoices tabs must find documents where
 // it's a CONTRIBUTOR, not only ones it's primary on.
@@ -514,6 +640,36 @@ const ALLP = [GALA, SUMMIT];
   eq("C4 an exempt client's $0 survives", cloneDraft({ id: 6, sections: [], qbTaxTotal: 0 }).qbTaxTotal, 0);
   // And the totals helper agrees with what the PDF would compute.
   eq("C5 cloned draft totals are tax-inclusive", window.LTP_QUOTE_TOTALS(d).total, 10825);
+  // The schedule-sync marker is a section field too: it must be named in the
+  // whitelist to survive opening the quote, and stay ABSENT (not null) on a
+  // section that was built by hand — that absence is what marks a manual line.
+  const marked = cloneDraft({ id: 10, sections: [
+    { id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "one", ignored: {} },
+      items: [{ id: "i1", qty: 1, unitPrice: 5, laborSync: { projectId: 42, key: "svc:1|day", at: "t", snap: null } }] },
+    { id: "s2", label: "Extras", items: [] }] });
+  eq("C5a section marker survives the clone", marked.sections[0].laborSync, { projectId: 42, grouping: "one", ignored: {} });
+  eq("C5b line marker survives the clone", marked.sections[0].items[0].laborSync.key, "svc:1|day");
+  eq("C5c a hand-built section gets no marker", "laborSync" in marked.sections[1], false);
+  // modules/invoices.js::cloneInvoice is the same kind of whitelist rebuild —
+  // and the invoice is where the marker matters most (sync after acceptance).
+  // It closes over todayISO (supplied above) and window.LTP_docProjectIds.
+  const invSrc = fs.readFileSync(path.join(__dirname, "..", "modules", "invoices.js"), "utf8");
+  const invStart = invSrc.indexOf("function cloneInvoice(");
+  let invEnd = -1;
+  for (let j = invSrc.indexOf("{", invStart), depth = 0; j < invSrc.length; j++) {
+    if (invSrc[j] === "{") depth++;
+    else if (invSrc[j] === "}") { depth--; if (depth === 0) { invEnd = j + 1; break; } }
+  }
+  ok("C5d cloneInvoice located in the module", invStart !== -1 && invEnd !== -1);
+  const cloneInvoice = (0, eval)("(" + invSrc.slice(invStart, invEnd) + ")");
+  const markedInv = cloneInvoice({ id: 11, sections: [
+    { id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "dept", dept: "Audio", ignored: { "svc:9|ot": { qty: 1 } } },
+      items: [{ id: "i1", qty: 1, unitPrice: 5, laborSync: { projectId: 42, key: "svc:1|day", at: "t", snap: null } }] },
+    { id: "s2", label: "Extras", items: [] }] });
+  eq("C5e invoice section marker survives the clone", markedInv.sections[0].laborSync,
+     { projectId: 42, grouping: "dept", dept: "Audio", ignored: { "svc:9|ot": { qty: 1 } } });
+  eq("C5f invoice line marker survives the clone", markedInv.sections[0].items[0].laborSync.key, "svc:1|day");
+  eq("C5g a hand-built invoice section gets no marker", "laborSync" in markedInv.sections[1], false);
 
   // ── Expiry prefill ────────────────────────────────────────────────────────
   // The builder's date field must never open blank: a quote saved before the

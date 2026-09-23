@@ -13,6 +13,9 @@ the producer priced.
 SERVICE_UNITS = {
     "day": ("day", "days"), "half": ("half day", "half days"), "hourly": ("hour", "hours"),
     "ot": ("OT hour", "OT hours"), "flat": ("flat rate", "flat rate"),
+    # A cancelled call billed at a share of its rate — one line per position,
+    # written by the schedule generator (components/domain-crew.js).
+    "cancel": ("cancellation", "cancellations"),
 }
 NO_PLURAL = {"each", "ea", "percent", "%", "hrs", "hr"}
 
@@ -48,3 +51,24 @@ def qty_label(it, qty):
             return "ea"
         return unit if one else plural(unit)
     return ""
+
+
+def line_detail(it):
+    """The client-facing aside printed after a line's name, or "".
+
+    Only a CANCELLATION line has one: its note, "Cancelled Jun 5 · 50% charged",
+    which the owner chose to show the client (docs/LABOR_SYNC_PLAN.md, decision
+    9). A priced line's `notes` is otherwise internal — it never reaches the
+    PDF or the online view — and a cancellation's is safe to show because it
+    is generated, never typed: the builders offer no way to edit a priced
+    line's note, and the "cancel" rate type is only ever written by the
+    schedule generator (components/domain-crew.js::LTP_cancellationNote). One
+    helper so the PDF (pdf_generator) and the online view (routes/_shared,
+    as `detail`) print the same words."""
+    if not isinstance(it, dict):
+        return ""
+    if (it.get("type") or "").strip().lower() != "service":
+        return ""
+    if (it.get("rateType") or "").strip().lower() != "cancel":
+        return ""
+    return (it.get("notes") or "").strip()

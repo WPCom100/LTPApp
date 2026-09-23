@@ -844,6 +844,63 @@ def test_notify_with_snapshot_shifts_works_without_live_project():
     assert "Load-in" in captured["html_body"]  # the snapshot shift rendered
 
 
+def test_notify_cancelled_with_pay_sums_the_shares():
+    """crewCancelledWithPay (a cancellation that still pays a share): each
+    snapshot shift carries its own cancellationPay — the tray merges shifts
+    from several parks — and {{cancellationPay}} is their sum. Anything that
+    isn't a positive number counts as nothing."""
+    import backend.gmail as gmailmod
+    client, tok = _setup()
+    captured = {}
+
+    async def fake_send(**kw):
+        captured.update(kw)
+        return {"id": "cx-1"}
+
+    orig = gmailmod.send
+    gmailmod.send = fake_send
+    try:
+        r = client.post("/api/crew-requests/notify",
+                        json={"contactId": C1, "projectId": 999999, "template": "crewCancelledWithPay",
+                              "projectName": "Called Off Gala",
+                              "shifts": [{"roleLabel": "A1 — Audio", "date": "2026-07-01", "shiftTitle": "Load-in",
+                                          "startTime": "08:00", "endTime": "12:00", "cancellationPay": 75},
+                                         {"roleLabel": "A1 — Audio", "date": "2026-07-01", "shiftTitle": "Show",
+                                          "startTime": "13:00", "endTime": "17:00", "cancellationPay": "100.5"},
+                                         {"roleLabel": "A1 — Audio", "date": "2026-07-02", "shiftTitle": "Strike",
+                                          "cancellationPay": "<b>9</b>"}]},
+                        cookies={"ltp_session": tok})
+    finally:
+        gmailmod.send = orig
+    assert r.status_code == 200, r.text
+    assert r.json()["emailStatus"]["emailed"] is True
+    html = captured["html_body"]
+    assert "$175.50" in html                              # 75 + 100.50; the markup counts as 0
+    assert "{{cancellationPay}}" not in html and "<b>9</b>" not in html
+    assert "Called Off Gala" in captured["subject"] and "cancelled" in captured["subject"]
+
+
+def test_notify_fallbacks_match_the_frontend_defaults():
+    """Every notify template's server fallback is byte-identical to the
+    data/settings.js default, so a fresh deploy sends what the Settings editor
+    shows — and each is a template the notify route accepts."""
+    import json as _json
+    import re as _re
+    from backend.routes.crew import _NOTIFY_FALLBACKS, _CREW_NOTIFY_TEMPLATES
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src = open(os.path.join(root, "data", "settings.js"), encoding="utf-8").read()
+    assert "crewCancelledWithPay" in _NOTIFY_FALLBACKS
+    for key, fb in _NOTIFY_FALLBACKS.items():
+        assert key in _CREW_NOTIFY_TEMPLATES, key
+        block = src.split("    " + key + ": {")[1].split("\n    },")[0]
+        subject = _re.search(r'subject: "([^"]*)"', block).group(1)
+        body = _json.loads('"' + _re.search(r'body: "((?:[^"\\]|\\.)*)"', block).group(1) + '"')
+        assert subject == fb["subject"], key
+        assert body == fb["body"], key
+    tv = src.split("window.LTP_TEMPLATE_VARIABLES")[1]
+    assert _re.search(r'crewCancelledWithPay:\s*\[[^\]]*"cancellationPay"', tv)
+
+
 def test_notify_missing_project_without_snapshot_is_404():
     """The live path (positionIds, no snapshot) still needs the project to resolve
     its shifts, so a gone project is a 404."""

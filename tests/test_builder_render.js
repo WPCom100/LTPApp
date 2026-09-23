@@ -461,6 +461,75 @@ out.push(render(window.QuotesBuilder, Object.assign({
   getNextInvoiceId: function () { return 1; },
 }, COMMON), "\n== QuotesBuilder (project dates moved) =="));
 
+// ── Labor out of sync with its schedule (components/labor-sync.js) ─────────
+// A second job whose labor was billed from an older schedule: since then one
+// day's call got shorter (its OT line drops out), a shift was cancelled at 50%
+// (a cancellation line comes in), a day moved (the A1 line's days change, its
+// quantity doesn't) and a PM was added (a new line). The fixture's lines are
+// built by the REAL generator from the old schedule, so the markers are
+// exactly what a send writes. Appended last, like the scenario above, so the
+// id counters earlier scenarios print do not shift; ids for the fixture itself
+// come from a local counter for the same reason.
+(function () {
+  let k = 0;
+  const fxId = function (p) { return p + "-fx" + (++k); };
+  const SVC2 = [Object.assign({}, SERVICES[0], { description: "Audio Lead" }),
+                { id: "s2", role: "PM", description: "Production Manager", department: "Production", dayRate: 800 }];
+  const MEAL = [{ startTime: "12:00", endTime: "12:30", type: "unpaid" }];
+  const pos = function (id, svc) { return { id: id, serviceId: svc, role: "R", status: "confirmed", crewId: "c9" }; };
+  const OLD_SCHED = [
+    { id: "d1", date: "2026-09-10", time: "08:00", endTime: "20:00", breaks: MEAL, positions: [pos("p1", "s1"), pos("p2", "s1")] },
+    { id: "d2", date: "2026-09-11", time: "08:00", endTime: "16:00", breaks: MEAL, positions: [pos("p3", "s1")] },
+  ];
+  let NEW_SCHED = [
+    { id: "d1", date: "2026-09-10", time: "08:00", endTime: "16:00", breaks: MEAL, positions: [pos("p1", "s1"), pos("p2", "s1")] },
+    { id: "d2", date: "2026-09-11", time: "08:00", endTime: "16:00", breaks: MEAL, positions: [pos("p3", "s1")] },
+    { id: "d3", date: "2026-09-12", time: "08:00", endTime: "16:00", breaks: MEAL, positions: [pos("p4", "s1"), pos("p5", "s2")] },
+  ];
+  NEW_SCHED = window.LTP_cancelPosition(NEW_SCHED, "d2", "p3", { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } },
+    SVC2, {}, { at: "2026-08-25T12:00:00.000Z", by: "Test User" });
+  const TOUR = { id: "pr2", name: "Summer Tour", companyId: "co1", startDate: "2026-09-10", endDate: "2026-09-12", schedule: NEW_SCHED, fixedPositions: [] };
+  const labor = window.LTP_scheduleLaborSections(OLD_SCHED, SVC2, {}, "one", window.LTP_formatDate, fxId, [], "pr2", "2026-08-20T12:00:00.000Z")
+    .map(function (sec) { return Object.assign({}, sec, { projectId: "pr2" }); });
+  // The producer priced the A1 day line down by hand after sending it.
+  labor[0].items = labor[0].items.map(function (it) { return it.rateType === "day" ? Object.assign({}, it, { adjustedPrice: 900 }) : it; });
+  const LQ = Object.assign({}, QUOTE, { projectId: "pr2", projectIds: ["pr2"], sections: labor });
+  const LPROPS = Object.assign({}, COMMON, { projects: PROJECTS.concat([TOUR]), services: SVC2 });
+  const quoteProps = Object.assign({
+    quoteId: 1, isNew: false, quotes: [LQ], setQuotes: function () {},
+    getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+    getNextInvoiceId: function () { return 1; },
+  }, LPROPS);
+  out.push(render(window.QuotesBuilder, quoteProps, "\n== QuotesBuilder (labor out of sync) =="));
+  // The same, arriving from the schedule's Send with the review open.
+  window.__LTP_OPEN_LABOR_REVIEW = { kind: "quote", id: 1, projectId: "pr2" };
+  out.push(render(window.QuotesBuilder, quoteProps, "\n== QuotesBuilder (labor review open) =="));
+  window.__LTP_OPEN_LABOR_REVIEW = null;
+
+  // A SENT invoice billed from the old schedule: it can't change, so the
+  // banner offers recall, a new invoice for what was added, or keep as is —
+  // and the review shows which rows can go on a new invoice. An earlier
+  // cancellation line sits on it too, locked, so its rate label shows.
+  const oldCancel = { id: "i-canc", type: "service", serviceId: "s1", name: "A1 — Audio Lead", rateType: "cancel", qty: 1, unitPrice: 500,
+    adjustedPrice: null, cost: 0, notes: "Cancelled Sep 9 · 50% charged", deliveredQty: 0, invoicedQty: 0 };
+  const LI = Object.assign({}, INVOICE, { projectId: "pr2", projectIds: ["pr2"], status: "sent", sentDate: "2026-08-22",
+    sections: [Object.assign({}, labor[0], { items: labor[0].items.concat([oldCancel]) })] });
+  const invProps = Object.assign({}, INV_PROPS, { projects: PROJECTS.concat([TOUR]), services: SVC2, invoices: [LI] });
+  out.push(render(window.InvoicesView, Object.assign({ route: { id: 7, action: null } }, invProps),
+    "\n== InvoiceBuilder (sent, labor changed) =="));
+  window.__LTP_OPEN_LABOR_REVIEW = { kind: "invoice", id: 7, projectId: "pr2" };
+  (function () {
+    const ctx = mkCtx(function () {});
+    CTX = ctx; ctx.idx = 0;
+    const el = window.InvoicesView(Object.assign({ route: { id: 7, action: null } }, invProps));
+    CTX = null;
+    out.push(el && typeof el.type === "function"
+      ? render(el.type, el.props, "\n== InvoiceBuilder (sent, labor review open) ==")
+      : "\n== InvoiceBuilder (sent, labor review open) ==\n  COULD NOT REACH the builder through InvoicesView");
+  })();
+  window.__LTP_OPEN_LABOR_REVIEW = null;
+})();
+
 // Three clock reads reach the tree and differ between two runs of the SAME
 // code, so they are normalized rather than compared: an id minted from
 // Date.now() inside a nested module, the "HH:MM" stamped onto activity
@@ -496,8 +565,9 @@ ok("the payment form is one of them (it is exercised by the overlay sweep)",
    loadedComponents.join(", "));
 ok("every scenario rendered without throwing", threw === 0,
    (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
-// 14 data scenarios + 2 overlay sweeps (one per builder).
-ok("all " + out.length + " scenarios produced output", out.length === 17, "got " + out.length);
+// 18 data scenarios + 2 overlay sweeps (one per builder) + the labor review
+// open in each builder.
+ok("all " + out.length + " scenarios produced output", out.length === 21, "got " + out.length);
 ok("the overlay sweeps actually opened modals",
    (text.match(/opens an overlay/g) || []).length >= 24,
    "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "

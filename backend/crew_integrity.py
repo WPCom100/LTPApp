@@ -65,6 +65,8 @@ genuine change — a removed shift OR a position reassigned to a different crew
 member (the request belongs to the person who was asked; reassigning the shift
 away releases it). Normal editing can't false-positive.
 """
+import math
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -89,9 +91,85 @@ _STATUS_FLOOR = {
 
 # Rank for the stale-write guard (enforce_status_floor). ``declined`` ranks
 # with ``accepted``: both are settled crew answers that a stale open/requested
-# echo must not erase. Unknown statuses never trigger the guard (incoming
-# unknown ranks high, stored unknown ranks low).
-_STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confirmed": 3}
+# echo must not erase. ``cancelled`` ranks WITH ``confirmed``: a cancellation
+# keeps its crew member (the booking is a record, and the person may be owed a
+# share — see the cancellation section of components/domain-crew.js), so the
+# deliberate move back from cancelled to confirmed ("Restore") keeps the same
+# assignee and must pass; the stale-echo case in the other direction is
+# caught by the If-Match check on the write itself (routes/api.py). Unknown
+# statuses never trigger the guard (incoming unknown ranks high, stored
+# unknown ranks low).
+_STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confirmed": 3, "cancelled": 3}
+
+# Money tolerance for the cancellation allowance below — half a cent, the
+# rounding the frontend's cent arithmetic can leave behind.
+_CANCEL_TOL = 0.005
+
+
+def _num(x) -> float:
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _cancel_write_allowed(pos: dict, prev_crew, prev_cancel) -> bool:
+    """The one ``work`` a non-admin may write: a CANCELLATION's frozen pay
+    (docs/LABOR_SYNC_PLAN.md, decision 11 — cancelling is not admin-gated).
+    Everything about it has to line up: the position is ``cancelled``, the
+    ``cancel`` record is present, the frozen total equals the record's pay
+    share, the share does not exceed the shift's reference cost, and that
+    reference — fixed at cancel time — has not moved from what is stored, so
+    a later edit only ever moves within the original ceiling. The crew member
+    paid must be the one the position already held. The reference itself is
+    client-computed (the labor engine has no Python port); the vendor-bill
+    export and its preview stay admin-only, so an admin still sees every
+    cancelled day before a bill is pushed."""
+    work = pos.get("work")
+    if not isinstance(work, dict) or work.get("state") != "cancelled":
+        return False
+    if pos.get("status") != "cancelled":
+        return False
+    cancel = pos.get("cancel")
+    if not isinstance(cancel, dict):
+        return False
+    ref, pay, wp = cancel.get("ref"), cancel.get("pay"), work.get("pay")
+    if not (isinstance(ref, dict) and isinstance(pay, dict) and isinstance(wp, dict)):
+        return False
+    if isinstance(prev_cancel, dict) and isinstance(prev_cancel.get("ref"), dict):
+        prev_ref = prev_cancel["ref"]
+        if abs(_num(ref.get("pay")) - _num(prev_ref.get("pay"))) > _CANCEL_TOL:
+            return False
+        if abs(_num(ref.get("bill")) - _num(prev_ref.get("bill"))) > _CANCEL_TOL:
+            return False
+    total = _num(wp.get("total"))
+    # NaN compares False against every bound below, so it has to be refused
+    # outright: a stored NaN would crash the payout derivation for the period.
+    for v in (total, _num(pay.get("total")), _num(ref.get("pay")), _num(ref.get("bill"))):
+        if not math.isfinite(v):
+            return False
+    if total < 0 or abs(total - _num(pay.get("total"))) > _CANCEL_TOL:
+        return False
+    if total > _num(ref.get("pay")) + _CANCEL_TOL:
+        return False
+    if prev_crew is not None and pos.get("crewId") != prev_crew:
+        return False
+    return True
+
+
+def _snapshot_drop_allowed(pos: dict, prev_crew, prev_status) -> bool:
+    """When a stored ``work``/``adj``/``cancel`` may simply go: the position
+    changed hands or was unassigned, it was reopened, or a cancellation is
+    being restored to confirmed. The previous holder's snapshots must not
+    follow the slot to the next person (they used to)."""
+    if pos.get("crewId") != prev_crew:
+        return True
+    if pos.get("status") == "open":
+        return True
+    if prev_status == "cancelled" and pos.get("status") in ("confirmed", "open") \
+            and pos.get("work") is None and pos.get("cancel") is None:
+        return True
+    return False
 
 
 def _fixed_positions(project) -> list:
@@ -343,14 +421,20 @@ def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
 
     Mutates ``incoming_schedule`` in place; returns the number of positions whose
     ``work`` or ``adj`` was restored/stripped (for audit logging). Pure function of
-    the two JSON blobs — no DB access."""
+    the two JSON blobs — no DB access.
+
+    Two allowances (docs/LABOR_SYNC_PLAN.md, decision 11): a non-admin MAY
+    write the frozen pay of a cancellation that lines up with its record
+    (``_cancel_write_allowed``), and MAY drop ``work``/``adj`` when the position
+    changes hands, reopens or is restored from a cancellation
+    (``_snapshot_drop_allowed``). Every other change is reverted as before."""
     stored = {}
     for shift in (stored_schedule or []):
         if not isinstance(shift, dict):
             continue
         for pos in (shift.get("positions") or []):
             if isinstance(pos, dict) and pos.get("id") is not None:
-                stored[pos["id"]] = (pos.get("work"), pos.get("adj"))
+                stored[pos["id"]] = (pos.get("work"), pos.get("adj"), pos.get("crewId"), pos.get("status"), pos.get("cancel"))
     fixed = 0
     for shift in (incoming_schedule or []):
         if not isinstance(shift, dict):
@@ -358,19 +442,45 @@ def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
         for pos in (shift.get("positions") or []):
             if not isinstance(pos, dict):
                 continue
-            prev_work, prev_adj = stored.get(pos.get("id"), (None, None))
+            prev = stored.get(pos.get("id"))
+            prev_work, prev_adj, prev_crew, prev_status, prev_cancel = prev if prev else (None, None, None, None, None)
+            # The slot changed hands: nothing frozen follows the previous holder
+            # to the next person. The app strips these itself (LTP_reassignPatch);
+            # this is the server saying so to a client that did not.
+            if prev is not None and prev_crew is not None and pos.get("crewId") != prev_crew:
+                dropped = [k for k in ("work", "adj", "cancel") if pos.pop(k, None) is not None]
+                if dropped:
+                    fixed += 1
+                continue
+            # A cancellation's reference is fixed once written: a later write
+            # keeps the stored one, so the ceiling _cancel_write_allowed holds a
+            # share to cannot be moved in one write and reached in the next.
+            # Not counted: a pin alone moves no money; a raise on top of it is
+            # caught, and counted, by the work check below.
+            cancel_now = pos.get("cancel")
+            if (isinstance(cancel_now, dict) and isinstance(prev_cancel, dict)
+                    and isinstance(prev_cancel.get("ref"), dict) and cancel_now.get("ref") != prev_cancel["ref"]):
+                cancel_now["ref"] = prev_cancel["ref"]
             if pos.get("work") != prev_work:
-                if prev_work is None:
-                    pos.pop("work", None)
-                else:
-                    pos["work"] = prev_work
-                fixed += 1
+                dropping = pos.get("work") is None
+                allowed = prev is not None and (
+                    _snapshot_drop_allowed(pos, prev_crew, prev_status) if dropping
+                    else _cancel_write_allowed(pos, prev_crew, prev_cancel))
+                if not allowed:
+                    if prev_work is None:
+                        pos.pop("work", None)
+                    else:
+                        pos["work"] = prev_work
+                    fixed += 1
             if pos.get("adj") != prev_adj:
-                if prev_adj is None:
-                    pos.pop("adj", None)
-                else:
-                    pos["adj"] = prev_adj
-                fixed += 1
+                allowed = prev is not None and pos.get("adj") is None \
+                    and _snapshot_drop_allowed(pos, prev_crew, prev_status)
+                if not allowed:
+                    if prev_adj is None:
+                        pos.pop("adj", None)
+                    else:
+                        pos["adj"] = prev_adj
+                    fixed += 1
     return fixed
 
 

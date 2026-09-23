@@ -404,6 +404,147 @@ def test_pay_snapshot_strips_introduced_snapshot():
            ci.enforce_pay_snapshot(None, None) == 0)
 
 
+# ── enforce_pay_snapshot: the cancellation allowances ────────────────────────
+# Cancelling is not admin-gated (docs/LABOR_SYNC_PLAN.md, decision 11), so a
+# non-admin's save may carry the ONE `work` a cancellation freezes — and only
+# when everything about it lines up. Each case below is one thing that must.
+
+def _sched(positions):
+    """A one-day schedule from position dicts (id, crewId, status, work, adj, cancel)."""
+    return [{"id": "day-0", "date": "2026-07-01", "title": "Day 0", "positions": [dict(p) for p in positions]}]
+
+
+def _cancelled(pid, *, pay_total, ref_pay=300.0, ref_bill=600.0, crew=5, status="cancelled",
+               work_total=None, state="cancelled"):
+    work_total = pay_total if work_total is None else work_total
+    return {"id": pid, "crewId": crew, "status": status,
+            "cancel": {"at": "t", "by": "Sam", "ref": {"bill": ref_bill, "pay": ref_pay},
+                       "bill": {"mode": "percent", "value": 50, "total": ref_bill / 2},
+                       "pay": {"mode": "amount", "value": pay_total, "total": pay_total}},
+            "work": {"state": state, "signedAt": "t", "signedBy": "Sam",
+                     "pay": {"total": work_total, "tier": "cancel",
+                             "units": [{"serviceId": 1, "tier": "cancel", "total": work_total}]}}}
+
+
+def test_cancel_allowance_accepts_matching_cancellation():
+    print("test_cancel_allowance_accepts_matching_cancellation")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed", "pay": {"total": 300.0}}])
+    incoming = _sched([_cancelled("p1", pay_total=150.0)])
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("a cancellation within the reference is kept", fixed == 0, f"fixed={fixed}")
+    _check("frozen pay kept", incoming[0]["positions"][0]["work"]["pay"]["total"] == 150.0)
+
+
+def test_cancel_allowance_caps_at_the_reference():
+    print("test_cancel_allowance_caps_at_the_reference")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    incoming = _sched([_cancelled("p1", pay_total=450.0, ref_pay=300.0)])
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("a share above the shift's cost is stripped",
+           fixed == 1 and "work" not in incoming[0]["positions"][0], str(incoming[0]["positions"][0]))
+    incoming = _sched([_cancelled("p1", pay_total=300.004, ref_pay=300.0)])
+    _check("the reference itself passes (half a cent of rounding too)", ci.enforce_pay_snapshot(stored, incoming) == 0)
+
+
+def test_cancel_allowance_needs_a_consistent_record():
+    print("test_cancel_allowance_needs_a_consistent_record")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, work_total=200.0)])
+    _check("frozen total ≠ the record's share → stripped",
+           ci.enforce_pay_snapshot(stored, incoming) == 1 and "work" not in incoming[0]["positions"][0])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, status="confirmed")])
+    _check("status not cancelled → stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    incoming = _sched([_cancelled("p1", pay_total=150.0, state="worked")])
+    _check("a sign-off dressed as a cancellation → stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    pos = _cancelled("p1", pay_total=150.0)
+    del pos["cancel"]
+    incoming = _sched([pos])
+    _check("no record → stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    incoming = _sched([_cancelled("p1", pay_total=150.0, crew=9)])
+    _check("paying someone other than the holder → stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    incoming = _sched([_cancelled("p1", pay_total=-5.0)])
+    _check("negative pay → stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+
+
+def test_cancel_allowance_reference_is_fixed():
+    print("test_cancel_allowance_reference_is_fixed")
+    stored = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    incoming = _sched([_cancelled("p1", pay_total=450.0, ref_pay=900.0)])
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("raising the reference to lift the ceiling → reverted to the stored freeze",
+           fixed == 1 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 150.0, str(incoming[0]["positions"][0]["work"]))
+    incoming = _sched([_cancelled("p1", pay_total=300.0, ref_pay=300.0)])
+    _check("an edit within the original ceiling → kept", ci.enforce_pay_snapshot(stored, incoming) == 0)
+
+
+def test_cancel_allowance_refuses_nan():
+    print("test_cancel_allowance_refuses_nan")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    incoming = _sched([_cancelled("p1", pay_total=float("nan"))])
+    _check("a NaN share is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1 and "work" not in incoming[0]["positions"][0])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=float("nan"))])
+    _check("a NaN reference is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    incoming = _sched([_cancelled("p1", pay_total=float("inf"))])
+    _check("an infinite share is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+
+
+def test_cancel_reference_pinned_in_a_work_unchanged_write():
+    print("test_cancel_reference_pinned_in_a_work_unchanged_write")
+    stored = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=900.0)])   # frozen pay echoed, reference raised
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("the reference is pinned to the stored one (no money moved, nothing counted)",
+           fixed == 0 and incoming[0]["positions"][0]["cancel"]["ref"]["pay"] == 300.0, str(incoming[0]["positions"][0]["cancel"]))
+    incoming = _sched([_cancelled("p1", pay_total=450.0, ref_pay=900.0)])   # the raise the moved reference was for
+    _check("the raise on top of it is reverted to the stored freeze",
+           ci.enforce_pay_snapshot(stored, incoming) == 1 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 150.0
+           and incoming[0]["positions"][0]["cancel"]["ref"]["pay"] == 300.0)
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    _check("an unchanged write is a no-op", ci.enforce_pay_snapshot(stored, incoming) == 0)
+
+
+def test_frozen_snapshots_never_follow_a_crew_change():
+    print("test_frozen_snapshots_never_follow_a_crew_change")
+    stored = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0, crew=6)])   # same frozen work, new person
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    pos = incoming[0]["positions"][0]
+    _check("work and cancel are dropped when the slot changes hands",
+           fixed >= 1 and "work" not in pos and "cancel" not in pos and pos["crewId"] == 6, str(pos))
+
+
+def test_snapshot_drops_on_reassign_reopen_restore():
+    print("test_snapshot_drops_on_reassign_reopen_restore")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed",
+                      "work": {"state": "worked", "pay": {"total": 600.0}}, "adj": [{"label": "gear", "amount": 20.0}]}])
+    incoming = _sched([{"id": "p1", "crewId": 6, "status": "open"}])
+    _check("reassigning drops the previous holder's work and adj",
+           ci.enforce_pay_snapshot(stored, incoming) == 0
+           and "work" not in incoming[0]["positions"][0] and "adj" not in incoming[0]["positions"][0])
+    incoming = _sched([{"id": "p1", "crewId": None, "status": "open"}])
+    _check("unassigning drops them", ci.enforce_pay_snapshot(stored, incoming) == 0)
+    incoming = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("un-signing while still holding the slot is reverted",
+           fixed == 2 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 600.0, f"fixed={fixed}")
+    stored = _sched([_cancelled("p1", pay_total=150.0)])
+    incoming = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    _check("restoring a cancellation drops its frozen pay",
+           ci.enforce_pay_snapshot(stored, incoming) == 0 and "work" not in incoming[0]["positions"][0])
+    incoming = _sched([{"id": "p1", "crewId": 5, "status": "confirmed", "cancel": {"at": "t"}}])
+    _check("a lingering record is not a restore → freeze kept", ci.enforce_pay_snapshot(stored, incoming) == 1)
+
+
+def test_cancel_allowance_fixed_positions():
+    print("test_cancel_allowance_fixed_positions")
+    stored = [{"id": "f1", "crewId": 5, "status": "confirmed", "fee": 1000, "bill": 2000}]
+    incoming = [_cancelled("f1", pay_total=500.0, ref_pay=1000.0, ref_bill=2000.0)]
+    _check("a flat-rate cancellation within the fee is kept", ci.enforce_pay_snapshot_fixed(stored, incoming) == 0)
+    incoming = [_cancelled("f1", pay_total=1500.0, ref_pay=1000.0, ref_bill=2000.0)]
+    _check("a flat-rate share above the fee is stripped",
+           ci.enforce_pay_snapshot_fixed(stored, incoming) == 1 and "work" not in incoming[0])
+
+
 # ── Real-DB integration ──────────────────────────────────────────────────────
 
 async def _reset_schema():
@@ -546,6 +687,9 @@ def main():
         test_heal_never_downgrades_or_overrides, test_heal_skips_undated_shift_positions,
         test_floor_blocks_same_crew_downgrades, test_floor_allows_deliberate_changes,
         test_floor_ignores_new_unknown_and_unassigned,
+        test_cancel_allowance_accepts_matching_cancellation, test_cancel_allowance_caps_at_the_reference,
+        test_cancel_allowance_needs_a_consistent_record, test_cancel_allowance_reference_is_fixed,
+        test_snapshot_drops_on_reassign_reopen_restore, test_cancel_allowance_fixed_positions,
     ]
     async_tests = [
         test_reconcile_project_trims_and_withdraws, test_reconcile_project_deleted_withdraws,

@@ -69,6 +69,7 @@ P_PAY = 7102    # A's signed-off day in the past
 P_RESP = 7103   # respond-from-dashboard
 P_FLAT = 7104   # a flat-rate position for A
 P_LINK = 7105   # crew-domain links: a request for B
+P_CANCEL = 7106 # cancelled calls: A's paid one, A's unpaid flat one, B's
 
 _ADMIN_TOK = "crew-portal-admin"
 _MEMBER_TOK = "crew-portal-member"
@@ -506,7 +507,7 @@ def test_dashboard_is_scoped_to_the_signed_in_crew_member():
     assert per["days"] == [{
         "date": "2026-09-01", "projectId": P_PAY, "projectName": "Portal Past", "tier": "day", "state": "worked",
         "payable": 432.5, "adjTotal": 12.5, "adjustments": [{"label": "Parking", "amount": 12.5}],
-        "paidHours": 10, "otHours": 0, "flat": False,
+        "paidHours": 10, "otHours": 0, "flat": False, "cancelTotal": 0,
     }]
     assert per["signedTotal"] == 432.5 and per["bill"] is None
     assert per["current"] is True and per["payDay"] == "2026-09-18"
@@ -525,6 +526,54 @@ def test_dashboard_is_scoped_to_the_signed_in_crew_member():
 
     # Settings are the public subset only.
     assert "emailTemplates" not in d["settings"] and "companyName" in d["settings"]
+
+
+def test_dashboard_lists_cancelled_calls_with_their_pay():
+    """A call that was called off is not dropped from the crew member's
+    schedule: it is listed under `cancelled`, with the share they are still
+    paid (the frozen cancellation pay), never as upcoming or signed off — and
+    the pay tab reads the day as a cancellation (docs/LABOR_SYNC_PLAN.md, B5)."""
+    client, _tok = _setup()
+    from backend.database import async_session
+
+    def cancelled(pid, crew, pay_total, paid=True):
+        pos = {"id": pid, "role": "L1", "serviceId": S1, "crewId": crew, "status": "cancelled",
+               "cancel": {"at": "2027-03-01T10:00:00Z", "by": "Portal Admin", "reason": "",
+                          "ref": {"bill": 600, "pay": 300},
+                          "bill": {"mode": "percent", "value": 50, "total": 300},
+                          "pay": {"mode": "percent" if paid else "none", "value": 50 if paid else 0, "total": pay_total}}}
+        if paid:
+            pos["work"] = {"state": "cancelled", "signedAt": "2027-03-01T10:00:00Z", "signedBy": "Portal Admin",
+                           "pay": {"total": pay_total, "tier": "cancel", "paidHours": 0, "otHours": 0,
+                                   "units": [{"serviceId": S1, "tier": "cancel", "total": pay_total}]}}
+        return pos
+
+    async def seed():
+        async with async_session() as db:
+            if await db.get(models.Project, P_CANCEL) is None:
+                db.add(models.Project(id=P_CANCEL, name="Portal Called Off", start_date="2027-03-05", end_date="2027-03-06",
+                    schedule=[{"id": "cpc1", "title": "Show", "date": "2027-03-05", "time": "08:00", "endTime": "18:00",
+                               "positions": [cancelled("cpc_a", C_A, 150), cancelled("cpc_b", C_B, 999)]}],
+                    fixed_positions=[dict(cancelled("cpc_fa", C_A, 0, paid=False), fee=500, bill=800)]))
+                await db.commit()
+    asyncio.run(seed())
+
+    cookie = _a_cookie(client)
+    d = _dash(client, cookie, today="2027-03-01")
+    got = [(c["positionId"], c["status"], c["cancellationPay"], c["signedOff"], c["flat"]) for c in d["cancelled"]]
+    # Date order, as upcoming: a flat-rate position (no call time) leads its day.
+    assert got == [("cpc_fa", "cancelled", 0.0, False, True), ("cpc_a", "cancelled", 150.0, False, False)], got
+    listed = {u["positionId"] for u in d["upcoming"] + d["past"]}
+    assert not ({"cpc_a", "cpc_fa"} & listed)
+    assert "cpc_b" not in json.dumps(d)            # never another person's call
+    for c in d["cancelled"]:
+        assert "cancel" not in c and "work" not in c and "crewId" not in c
+
+    # Pay: the day is the cancellation share, labelled as one.
+    pay = _dash(client, cookie, today="2027-03-05")["payouts"]
+    per = next(p for p in pay["periods"] if p["start"] <= "2027-03-05" <= p["end"])
+    day = next(x for x in per["days"] if x["projectId"] == P_CANCEL)
+    assert (day["tier"], day["state"], day["payable"], day["cancelTotal"]) == ("cancel", "cancelled", 150.0, 150.0), day
 
 
 def test_respond_from_dashboard_only_for_own_request():

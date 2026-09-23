@@ -726,6 +726,17 @@
             onChange: function(v) { set("payPeriodPayDayOffsetDays", Math.max(0, Number(v) || 0)); } })),
         h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 8, lineHeight: 1.5 } },
           "Any known cycle start works — periods repeat every N days from it. Example: 2026-07-06, 14, 5 → the Jul 6–19 period is paid Fri Jul 24."),
+        // What the cancel dialog pre-fills (components/cancel-labor.js).
+        h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 8 } }, "Cancellation Defaults"),
+          h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
+            h(window.LTPInput, { label: "Charge client (%)", type: "number",
+              value: draft.cancellationDefaultBillPct == null ? 50 : draft.cancellationDefaultBillPct,
+              onChange: function(v) { set("cancellationDefaultBillPct", Math.max(0, Number(v) || 0)); } }),
+            // A cancellation never pays more than the shift was worth.
+            h(window.LTPInput, { label: "Pay crew (%)", type: "number",
+              value: draft.cancellationDefaultPayPct == null ? 50 : draft.cancellationDefaultPayPct,
+              onChange: function(v) { set("cancellationDefaultPayPct", Math.max(0, Math.min(100, Number(v) || 0))); } }))),
         qbo && qbo.connected
           ? h("div", { style: { marginTop: 14, paddingTop: 12, borderTop: "1px solid " + B.border } },
               h("div", { style: { fontSize: "11px", fontWeight: 700, color: B.text, marginBottom: 4 } }, "Vendor Bill Accounts"),
@@ -917,7 +928,7 @@
             var groups = [
               { label: "Quotes", keys: ["quoteSent", "quoteFollowUp"] },
               { label: "Invoices", keys: ["invoiceSent", "invoiceReminder", "paymentReceipt"] },
-              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"] },
+              { label: "Crew", keys: ["crewRequest", "crewConfirmed", "crewCancelled", "crewCancelledWithPay", "crewNotSelected", "crewWithdrawn", "crewScheduleChanged", "crewShiftNote"] },
               { label: "Crew Portal", keys: ["crewInvite", "crewPasswordReset", "crewEmailChange"] },
             ];
             var elements = [];

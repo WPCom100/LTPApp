@@ -323,6 +323,27 @@ window.LTP_effectiveSlots = function(positions) {
   return out;
 };
 
+// A day's schedule rows with the CANCELLED positions taken out. A cancelled
+// position bills and pays through its own cancellation record
+// (components/domain-crew.js, "Cancellation"), never through the day pools, so
+// every consumer of LTP_calcDayLabor that means "what does this day cost" —
+// the schedule → document generator, the schedule builder's and editor's
+// totals — runs it on this. The survivors keep the person-slot they had while
+// the cancelled ones were present: an implicit slot is positional (the lowest
+// unused number per role per shift), so dropping one person's shift would
+// otherwise re-pair the rest of the crew across that day's shifts and move
+// their OT. Rows without a cancellation come back untouched (same object).
+window.LTP_withoutCancelled = function(items) {
+  return (items || []).map(function(s) {
+    var ps = (s && s.positions) || [];
+    if (!ps.some(function(p) { return p && p.status === "cancelled"; })) return s;
+    var slots = window.LTP_effectiveSlots(ps);
+    return Object.assign({}, s, { positions: ps.filter(function(p) { return p && p.status !== "cancelled"; }).map(function(p) {
+      return (p.slot > 0 || !p.serviceId) ? p : Object.assign({}, p, { slot: slots[p.id] });
+    }) });
+  });
+};
+
 // Per-day, per-PERSON labor aggregation — the canonical billing model shared by
 // the quote builder, the schedule summary, and the editor day totals so all
 // three agree on what a day costs.
