@@ -398,7 +398,11 @@
 // v111: a cancelled position bills its share on a "cancellation" line of its own
 // and leaves the day pools; the builders learn the rate type (and a locked
 // flat line stops reading "OT"); the online view prints a cancellation's note.
-var CACHE_VERSION = 'ltp-shell-v111';
+// v112: index.html gained components/labor-sync.js (the quote and invoice
+// builders' "Labor out of sync" banner and review); invoices.js's QuickBooks
+// fingerprint now counts line notes. The component itself is picked up by the
+// runtime /components/ rule.
+var CACHE_VERSION = 'ltp-shell-v112';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

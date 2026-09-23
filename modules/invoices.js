@@ -40,12 +40,20 @@
   // MUST stay aligned with backend/qbo_sync.build_invoice_payload — if a new
   // field starts affecting the QB invoice, add it here so edits surface the
   // "Update QuickBooks" button.
+  //
+  // A line's `notes` joined the fingerprint with the labor sync (docs/
+  // LABOR_SYNC_PLAN.md, decision 16): the push sends "name — notes" as the QB
+  // line description, and a schedule change that only moves a day rewrites
+  // just the note. `withNotes` false is the fingerprint exactly as it was
+  // before — every invoice pushed until then stored that one — so the builder
+  // treats a stored value matching EITHER as in sync, and the next push stores
+  // the new form. Pinned by tests/test_invoice_qb_signature.js.
   function qbHash(s) {
     var h1 = 5381, h2 = 52711, i = s.length;
     while (i--) { var c = s.charCodeAt(i); h1 = (h1 * 33) ^ c; h2 = (h2 * 33) ^ c; }
     return (h1 >>> 0).toString(16) + (h2 >>> 0).toString(16) + "-" + s.length;
   }
-  function qbSignature(inv, customer, project, customerTaxable) {
+  function qbSignature(inv, customer, project, customerTaxable, withNotes) {
     if (!inv) return "";
     var gd = inv.globalDiscount || {};
     var parts = [
@@ -63,7 +71,8 @@
         if (it.type === "note") { parts.push("n:" + (it.text || "")); return; }
         var price = it.adjustedPrice != null ? it.adjustedPrice : (it.unitPrice || 0);
         parts.push([it.type, it.name || "", it.qty || 0, price,
-                    (typeof it.taxable === "boolean" ? it.taxable : "")].join("|"));
+                    (typeof it.taxable === "boolean" ? it.taxable : "")].join("|")
+                   + (withNotes ? "|n=" + (it.notes || "") : ""));
       });
     });
     if (customer) {
@@ -1435,7 +1444,7 @@
         : (invoiceObj.companyId ? companies.find(function(c) { return c.id === invoiceObj.companyId; }) : null);
       var proj = invoiceObj.projectId ? projects.find(function(p) { return p.id === invoiceObj.projectId; }) : null;
       var taxable = invoiceObj.clientType === "contact" ? !!party : !!(party && party.taxable);
-      var sig = qbSignature(invoiceObj, party, proj, taxable);
+      var sig = qbSignature(invoiceObj, party, proj, taxable, true);
       return fetch("/api/invoices/" + invoiceObj.id, { method: "PUT", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(invoiceObj) })
         .then(function(r) {
           if (!r.ok) throw new Error("save failed (" + r.status + ")");
@@ -1520,7 +1529,7 @@
       }
     }
 
-    useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); pendingRollbacks.current = []; }, [invoiceId, isNew]);
+    useEffect(function() { setDraftRaw(initial); cleanRef.current = initial; setIsDirty(false); pendingRollbacks.current = []; if (laborSync) laborSync.resetLog(); }, [invoiceId, isNew]);
 
     // Someone else saved this invoice while we have it open. Adopt it if we
     // have nothing unsaved, otherwise keep our edits and say so once — see
@@ -1533,8 +1542,10 @@
         setDraftRaw(fresh);
         cleanRef.current = fresh;
         // Rollbacks track lines deleted from THIS draft; the adopted row is a
-        // different starting point, so the pending list no longer applies.
+        // different starting point, so the pending list no longer applies —
+        // nor does the labor review's log.
         pendingRollbacks.current = [];
+        if (laborSync) laborSync.resetLog();
       },
       { title: "This invoice changed elsewhere",
         message: "Another window updated it while you were editing. Your unsaved changes are kept \u2014 saving will replace the newer version." },
@@ -1559,6 +1570,66 @@
     }, [services, clientRates, draft.clientType, draft.companyId, draft.clientContactId]);
     var displayName = selectedProject ? selectedProject.name : (draft.customName || "New Invoice");
     var linkedQuote = draft.quoteId ? quotes.find(function(q) { return q.id === draft.quoteId; }) : null;
+
+    // The schedule-built labor on this invoice against the schedule as it is
+    // now (components/labor-sync.js over components/domain-labor-sync.js). A
+    // draft syncs in place: Apply and Keep are edits, saved with the invoice; a
+    // line from a quote keeps the linkedQty rule and a removed one is queued
+    // for the same quote rollback a delete gets. A sent, partial or paid
+    // invoice can't change (decision 15): its banner offers Recall to sync, a
+    // new invoice for what the schedule added, or Keep as is.
+    var laborSync = window.LTP_useLaborSync({
+      kind: "invoice", draft: draft, projects: projects, svcs: svcs, contacts: contacts,
+      mode: isDraft ? "edit" : (draft.id != null ? "difference" : "off"),
+      setDraft: setDraft, genId: genId, fallbackQuoteId: draft.quoteId,
+      onRemovedLinked: function(list) { pendingRollbacks.current = pendingRollbacks.current.concat(list); },
+      writeLocked: writeLockedInvoice,
+    });
+
+    // A write to a LOCKED invoice that only the labor sync makes: its markers
+    // and an activity entry, never money (so the QuickBooks fingerprint, the
+    // stored tax and the client's view stay as they are — see
+    // backend/routes/api.py::_without_labor_sync). The stored row, the draft
+    // and the clean baseline move together, as autoSavePayment does: a list
+    // write from this window is not a "remote" edit, so the open builder would
+    // otherwise keep a stale draft and put the old markers back on its next
+    // write.
+    function writeLockedInvoice(patch) {
+      if (draft.id == null) return;
+      var updated = Object.assign({}, draft, patch);
+      setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? Object.assign({}, i, patch) : i; }); });
+      setDraftRaw(updated);
+      cleanRef.current = updated;
+    }
+
+    // "New invoice with changes" (docs/LABOR_SYNC_PLAN.md, A9): what the
+    // schedule ADDED since this invoice was sent, on a new draft for the same
+    // client and project; this invoice records it on its markers (never its
+    // money) so the same day is never offered twice. Reductions are a recall or
+    // a credit memo — the review says so and never ticks them.
+    function createDifferenceInvoice(pid, keys) {
+      var drift = laborSync.driftFor(pid);
+      if (!drift || draft.id == null) return;
+      var newId = getNextInvoiceId();
+      var today = todayISO(), now = new Date();
+      var res = window.LTP_laborDifferenceInvoice(draft, drift, keys, genId, now.toISOString(), {
+        id: newId, shareToken: window.LTP_genShareToken(), today: today, time: now.toTimeString().substring(0, 5),
+        user: window.LTP_CURRENT_USER || "User", dueDate: net30(today),
+        projectName: laborSync.nameOf(pid), sentRef: window.LTP_INVOICE_REF(draft),
+        newRef: window.LTP_INVOICE_REF({ id: newId, invoiceDate: today }),
+        notes: window.LTP_DEFAULT_INVOICE_NOTES || "", terms: draft.terms, fmtDate: fmt });
+      if (!res) { showAlert("Nothing to add", "None of the selected changes add to what was invoiced.", "info"); return; }
+      var patch = { sections: res.sentSections, activity: (draft.activity || []).concat([res.sentActivity]) };
+      var updated = Object.assign({}, draft, patch);
+      setInvoices(function(prev) {
+        return prev.map(function(i) { return i.id === updated.id ? Object.assign({}, i, patch) : i; }).concat([res.invoice]);
+      });
+      setDraftRaw(updated);
+      cleanRef.current = updated;
+      laborSync.closeReview();
+      if (res.unrecorded.length) showAlert("Check " + window.LTP_INVOICE_REF(draft), "Some of the billed changes could not be recorded on it and may be offered again.", "warn");
+      nav("invoices/" + newId);
+    }
     // Every project this invoice bills work for, primary first. More than one
     // when a schedule (or a quote) from another job was added to it.
     var docProjects = window.LTP_docProjectIds(draft).map(function(id) {
@@ -1575,8 +1646,13 @@
     // "Out of sync" = not pushed yet, OR the live change-signature differs from
     // the one stored at the last push (captures invoice + customer + project
     // changes). qbSig is hoisted, so sendToQuickBooks reads the current value.
-    qbSig = qbConnected ? qbSignature(draft, custParty, selectedProject, customerTaxable) : "";
-    var qbOutOfSync = !draft.qbInvoiceId || qbSig !== (draft.qbSyncedSignature || "");
+    qbSig = qbConnected ? qbSignature(draft, custParty, selectedProject, customerTaxable, true) : "";
+    // The pre-notes form of the same fingerprint (see qbSignature): an invoice
+    // last pushed before line notes counted stored that one, and must not read
+    // "update needed" until something actually changed.
+    var qbSigLegacy = qbConnected ? qbSignature(draft, custParty, selectedProject, customerTaxable, false) : "";
+    var storedSig = draft.qbSyncedSignature || "";
+    var qbOutOfSync = !draft.qbInvoiceId || (qbSig !== storedSig && qbSigLegacy !== storedSig);
     // QB status/controls only apply once the invoice has been sent (export is
     // gated to sent — see item 5; auto-export happens on send).
     var qbEligible = !!(draft.sentDate || draft.qbInvoiceId);
@@ -1774,6 +1850,9 @@
       var changeCount = changes ? changes.length : 0;
       var saveMsg = "Invoice saved" + (changeCount > 0 ? " (" + changeCount + " change" + (changeCount > 1 ? "s" : "") + ")" : "");
       var saveEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0,5), type: "saved", message: saveMsg, user: (window.LTP_CURRENT_USER || "User"), changes: changes };
+      // What the labor review applied and kept this session, one entry per
+      // project (components/labor-sync.js).
+      var laborEntries = laborSync.takeActivity({ date: saveEntry.date, time: saveEntry.time, user: saveEntry.user });
 
       // Process rollbacks — reduce invoicedQty on source quote items.
       // Two sources contribute: explicit deletes (pendingRollbacks, pushed by
@@ -1856,13 +1935,13 @@
         // Client-mint shareToken so the Preview button appears immediately;
         // backend respects a client-supplied token. See theme.js LTP_genShareToken.
         var newToken = draft.shareToken || window.LTP_genShareToken();
-        var toSave = Object.assign({}, draft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat([saveEntry]) });
+        var toSave = Object.assign({}, draft, { id: newId, shareToken: newToken, activity: (draft.activity || []).concat(laborEntries, [saveEntry]) });
         setInvoices(function(prev) { return prev.concat([toSave]); });
         setDraftRaw(toSave); cleanRef.current = toSave; setIsDirty(false);
         window.LTPRouter.replace("invoices/" + newId);   // /new → /:id by replace: Back must not reopen a blank form
       } else {
         // Backfill shareToken on older invoices that pre-date the column.
-        var existingPatch = { activity: (draft.activity || []).concat([saveEntry]) };
+        var existingPatch = { activity: (draft.activity || []).concat(laborEntries, [saveEntry]) };
         if (!draft.shareToken) existingPatch.shareToken = window.LTP_genShareToken();
         var updated = Object.assign({}, draft, existingPatch);
         setInvoices(function(prev) { return prev.map(function(i) { return i.id === updated.id ? updated : i; }); });
@@ -1873,7 +1952,7 @@
 
     function discard() {
       setDlg({ title: "Discard Changes", message: "Reset all unsaved changes?", variant: "danger", confirmLabel: "Discard",
-        onConfirm: function() { setDraftRaw(cleanRef.current); setIsDirty(false); pendingRollbacks.current = []; setDlg(null); } });
+        onConfirm: function() { setDraftRaw(cleanRef.current); setIsDirty(false); pendingRollbacks.current = []; laborSync.resetLog(); setDlg(null); } });
     }
 
     function deleteInvoice() {
@@ -2236,6 +2315,19 @@
               "Linked to: ", h("span", { style: { color: B.accent, cursor: "pointer", fontWeight: 600 }, onClick: function() { nav("quotes/" + linkedQuote.id); } }, window.LTP_QUOTE_REF(linkedQuote))),
           ),
 
+          // The schedule moved after this invoice's labor was billed — one line
+          // per project (labor-sync.js). A draft reviews in place; a sent one
+          // offers recall, a new invoice for the additions, or keep as is.
+          laborSync.banners.length > 0 && h("div", { style: { display: "flex", flexDirection: "column", gap: 6 } },
+            laborSync.banners.map(function(b) {
+              return h(window.LTPLaborSyncBanner, { key: "ls-" + b.projectId, projectName: laborSync.nameOf(b.projectId), drift: b.drift,
+                mode: isDraft ? "edit" : "difference",
+                onReview: function() { laborSync.openReview(b.projectId); },
+                onKeepAll: function() { laborSync.keepAll(b.projectId); },
+                onRecall: recallToDraft, recallBlocked: (draft.payments || []).length > 0,
+                onNewInvoice: function() { laborSync.openReview(b.projectId); } });
+            })),
+
           // Sections
           draft.sections.map(function(sec, secIdx) {
             var st = sectionTotals(sec);
@@ -2479,6 +2571,13 @@
       }),
 
       // Confirm dialog
+      laborSync.review && h(window.LTPLaborSyncReview, { key: "ls-review-" + laborSync.review.projectId, drift: laborSync.review.drift,
+        projectName: laborSync.nameOf(laborSync.review.projectId), mode: isDraft ? "edit" : "difference", linking: laborSync.review.linking,
+        onApply: function(keys) { laborSync.apply(laborSync.review.projectId, keys); },
+        onKeep: function(keys) { laborSync.keep(laborSync.review.projectId, keys); },
+        onNewInvoice: function(keys) { createDifferenceInvoice(laborSync.review.projectId, keys); },
+        onClose: laborSync.closeReview,
+        invoiceRef: function(id) { var inv = (invoices || []).find(function(x) { return x.id === id; }); return inv ? window.LTP_INVOICE_REF(inv) : "INV-" + id; } }),
       dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Record Payment modal

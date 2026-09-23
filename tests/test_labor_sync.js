@@ -454,7 +454,7 @@ const PLUS_DAY = project(S0.concat([day("d3", "2026-08-12", [pos("p4", 1)])])); 
   eq("CX0 two rows: the day comes out, a cancellation goes in", d.changes.map((c) => [c.kind, c.key, c.delta]),
      [["changed", "svc:1|day", -600], ["added", "cancel:p3", 300]]);
   eq("CX1 the added row carries the charge and the note", [d.changes[1].expected.unitPrice, d.changes[1].expected.cost, d.changes[1].expected.notes, d.changes[1].rateType],
-     [300, 150, "Cancelled 2026-08-11 · 50% charged", "cancel"]);
+     [300, 150, "Cancelled Aug 11 · 50% charged", "cancel"]);
   const a = APPLY(doc, d, ["svc:1|day", "cancel:p3"], gen, LATER);
   eq("CX2 taking both leaves what a fresh send would bill",
      a.sections[0].items.map((i) => [i.laborSync.key, i.rateType, i.qty, i.unitPrice, i.cost, i.notes]),
@@ -469,9 +469,9 @@ const PLUS_DAY = project(S0.concat([day("d3", "2026-08-12", [pos("p4", 1)])])); 
     { bill: { mode: "percent", value: 100 }, pay: { mode: "percent", value: 50 } }, { at: LATER, by: "t" }));
   const d2 = DRIFT({ sections: a.sections }, CP2, SVCS, {}, fmt);
   eq("CX6 a new share reprices the cancellation line", d2.changes.map((c) => [c.key, c.fields, c.expected.unitPrice, c.expected.notes]),
-     [["cancel:p3", ["unitPrice"], 600, "Cancelled 2026-08-11 · 100% charged"]]);
+     [["cancel:p3", ["unitPrice"], 600, "Cancelled Aug 11 · 100% charged"]]);
   eq("CX7 applying it rewrites the note the client reads", line({ sections: APPLY({ sections: a.sections }, d2, ["cancel:p3"], gen, LATER).sections }, "cancel:p3").notes,
-     "Cancelled 2026-08-11 · 100% charged");
+     "Cancelled Aug 11 · 100% charged");
 }
 
 console.log("labor-sync suite — PASS: " + pass + "   FAIL: " + fail);

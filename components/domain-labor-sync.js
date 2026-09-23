@@ -550,7 +550,8 @@ window.LTP_laborDifferenceQty = function(c) {
 };
 // Build the new draft and the sent invoice's updated sections. opts carries
 // what only the builder knows: { id, shareToken, today, time, user, dueDate,
-// projectName, sentRef, notes, terms, fmtDate }. Returns null when nothing
+// projectName, sentRef, newRef, notes, terms, fmtDate } (newRef: how the new
+// invoice is named in the sent one's activity, e.g. "INV-2026-009"). Returns null when nothing
 // ticked qualifies, else { invoice, sentSections, sentActivity, lines,
 // unrecorded } — `unrecorded` lists keys whose billing could not be written
 // back on the sent invoice (no section to hold the record).
@@ -623,7 +624,7 @@ window.LTP_laborDifferenceInvoice = function(sent, drift, selectedKeys, genId, n
     hs.laborSync = Object.assign({}, marker, { ignored: ig });
   });
   var sentActivity = { id: gen("act"), date: opts.today || "", time: opts.time || "", type: "updated", user: opts.user || "User",
-                       message: "Schedule changes billed on " + (newId != null ? "INV-" + newId : "a new invoice"), changes: changeRows };
+                       message: "Schedule changes billed on " + (opts.newRef || (newId != null ? "INV-" + newId : "a new invoice")), changes: changeRows };
   return { invoice: invoice, sentSections: w.changed() ? w.out : (sent.sections || []), sentActivity: sentActivity,
            lines: lines, unrecorded: unrecorded };
 };

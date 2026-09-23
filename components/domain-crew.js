@@ -287,7 +287,7 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
       rateType: "cancel",
       qty: 1, unitPrice: bill, adjustedPrice: null,
       cost: p.fullMargin ? 0 : pay,
-      notes: window.LTP_cancellationNote(c, isoDate ? fmt(isoDate) : ""),
+      notes: window.LTP_cancellationNote(c, isoDate),
       deliveredQty: 0, invoicedQty: 0
     } });
   }
@@ -719,11 +719,22 @@ window.LTP_cancelSharePct = function(side, ref) {
 // the client reads beside it on the PDF and the online view
 // (backend/doc_units.py::line_detail): "Cancelled Jun 5 · 50% charged". The
 // owner chose to show the percentage (docs/LABOR_SYNC_PLAN.md, decision 9).
-// dayLabel is the formatted shift date; "" for a flat-rate position or an
-// undated shift.
-window.LTP_cancellationNote = function(cancel, dayLabel) {
+// isoDate is the cancelled shift's date ("" for a flat-rate position or an
+// undated shift). The day is written short and without the year on purpose:
+// the note prints after the line's name in the PDF's item column, and a long
+// date ("August 11th, 2026") pushed the percentage off the end. Built from the
+// ISO parts, not the locale, so it reads the same everywhere.
+var _CANCEL_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function _cancelDay(isoDate) {
+  var p = String(isoDate || "").split("-");
+  if (p.length !== 3) return isoDate || "";
+  var m = parseInt(p[1], 10), d = parseInt(p[2], 10);
+  return (m >= 1 && m <= 12 && d > 0) ? _CANCEL_MONTHS[m - 1] + " " + d : isoDate;
+}
+window.LTP_cancellationNote = function(cancel, isoDate) {
   var pct = window.LTP_cancelSharePct(cancel && cancel.bill, cancel && cancel.ref && cancel.ref.bill);
-  return "Cancelled" + (dayLabel ? " " + dayLabel : "") + (pct !== "" ? " · " + pct + "% charged" : "");
+  var day = _cancelDay(isoDate);
+  return "Cancelled" + (day ? " " + day : "") + (pct !== "" ? " · " + pct + "% charged" : "");
 };
 
 // The frozen pay for a cancelled position, in the shape a sign-off writes.

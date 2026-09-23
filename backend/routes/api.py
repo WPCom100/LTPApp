@@ -116,10 +116,35 @@ def _merge_activity(stored: list | None, incoming: list | None) -> list:
     return incoming_list + recovered if recovered else incoming_list
 
 
+def _without_labor_sync(sections):
+    """`sections` with every schedule-sync marker (`laborSync`, on a section or
+    a line) left out. The marker is the memory the labor sync diffs against
+    (components/domain-labor-sync.js) and never feeds a price, so it must not
+    count as a tax input: acknowledging a schedule change on a SENT invoice
+    writes only markers, and that must not throw away the tax QuickBooks
+    computed for lines that did not change. Non-list input comes back as is."""
+    if not isinstance(sections, list):
+        return sections
+    out = []
+    for sec in sections:
+        if not isinstance(sec, dict):
+            out.append(sec)
+            continue
+        s = {k: v for k, v in sec.items() if k != "laborSync"}
+        if isinstance(sec.get("items"), list):
+            s["items"] = [{k: v for k, v in it.items() if k != "laborSync"} if isinstance(it, dict) else it
+                          for it in sec["items"]]
+        out.append(s)
+    return out
+
+
 def _tax_inputs_fingerprint(row) -> str:
     """Stable serialization of everything a stored sales tax depends on."""
-    return json.dumps([getattr(row, c, None) for c in _TAX_INPUT_COLS],
-                      sort_keys=True, default=str)
+    vals = []
+    for c in _TAX_INPUT_COLS:
+        v = getattr(row, c, None)
+        vals.append(_without_labor_sync(v) if c == "sections" else v)
+    return json.dumps(vals, sort_keys=True, default=str)
 
 
 def _row_rev(d: dict) -> str:

@@ -426,13 +426,13 @@ const day = (id, date, time, endTime, positions, breaks) =>
   const cl = byKey["cancel:p3"];
   eq("CN1 the cancellation line", [cl.type, cl.serviceId, cl.name, cl.rateType, cl.qty, cl.unitPrice, cl.cost, cl.adjustedPrice, cl.deliveredQty, cl.invoicedQty],
      ["service", 1, "A1 — Audio Lead", "cancel", 1, 300, 150, null, 0, 0]);
-  eq("CN2 its note names the day and the percentage charged", cl.notes, "Cancelled 2026-08-11 · 50% charged");
+  eq("CN2 its note names the day and the percentage charged", cl.notes, "Cancelled Aug 11 · 50% charged");
   eq("CN3 its marker", [cl.laborSync.projectId, cl.laborSync.snap], [42, { qty: 1, unitPrice: 300, cost: 150, notes: cl.notes, dates: ["2026-08-11"] }]);
   eq("CN4 read order: a role's cancellation after its day line", out.map((i) => i.laborSync.key), ["svc:2|day", "svc:1|day", "cancel:p3"]);
   // An amount share prints what it works out to against the reference.
   const amt = window.LTP_cancelPosition(base, "d2", "p3", { bill: { mode: "amount", value: 250 }, pay: { mode: "none", value: 0 } }, SVCS, {}, META);
   const al = SECTIONS(amt, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items.find((i) => i.rateType === "cancel");
-  eq("CN5 an amount share: its own figure, the percentage it comes to, $0 cost", [al.unitPrice, al.cost, al.notes], [250, 0, "Cancelled 2026-08-11 · 41.7% charged"]);
+  eq("CN5 an amount share: its own figure, the percentage it comes to, $0 cost", [al.unitPrice, al.cost, al.notes], [250, 0, "Cancelled Aug 11 · 41.7% charged"]);
   // Cancelled at no charge: gone from the pool, nothing billed in its place.
   const free = window.LTP_cancelPosition(base, "d2", "p3", { bill: { mode: "none", value: 0 }, pay: { mode: "percent", value: 50 } }, SVCS, {}, META);
   const fo = SECTIONS(free, SVCS, {}, "one", fmtDate, window.LTP_genId, null, 42, NOW)[0].items;
@@ -463,11 +463,13 @@ const day = (id, date, time, endTime, positions, breaks) =>
   // Pure note helper: percent, amount, none, no reference.
   const NOTE = window.LTP_cancellationNote;
   eq("CN12 note text", [
-    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 100, total: 600 } }, "Jun 5"),
-    NOTE({ ref: { bill: 600 }, bill: { mode: "amount", value: 200, total: 200 } }, "Jun 5"),
-    NOTE({ ref: { bill: 0 }, bill: { mode: "amount", value: 200, total: 200 } }, "Jun 5"),
+    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 100, total: 600 } }, "2026-06-05"),
+    NOTE({ ref: { bill: 600 }, bill: { mode: "amount", value: 200, total: 200 } }, "2026-06-05"),
+    NOTE({ ref: { bill: 0 }, bill: { mode: "amount", value: 200, total: 200 } }, "2026-12-31"),
     NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 12.345, total: 74.07 } }, ""),
-  ], ["Cancelled Jun 5 · 100% charged", "Cancelled Jun 5 · 33.3% charged", "Cancelled Jun 5", "Cancelled · 12.3% charged"]);
+    NOTE({ ref: { bill: 600 }, bill: { mode: "percent", value: 50, total: 300 } }, "not-a-date"),
+  ], ["Cancelled Jun 5 · 100% charged", "Cancelled Jun 5 · 33.3% charged", "Cancelled Dec 31", "Cancelled · 12.3% charged",
+      "Cancelled not-a-date · 50% charged"]);
 }
 {
   // ── LTP_withoutCancelled: the day pools, and nobody re-paired ─────────────

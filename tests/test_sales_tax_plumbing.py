@@ -225,6 +225,34 @@ def test_editing_the_document_invalidates_the_stored_tax():
         _check(f"{label} invalidates the tax", _tax_inputs_fingerprint(changed) != before)
 
 
+def test_schedule_sync_markers_are_not_tax_inputs():
+    """Acknowledging a schedule change on a SENT invoice writes only the
+    labor-sync markers (components/domain-labor-sync.js). They never feed a
+    price, so the tax QuickBooks computed must survive them — while a real
+    change beside a marker still invalidates it."""
+    from backend.routes.api import _tax_inputs_fingerprint
+
+    def marked(unit_price=1000, snap_qty=10, ignored=None):
+        secs = _sections(unit_price=unit_price)
+        secs[0]["laborSync"] = {"projectId": 4, "grouping": "one", "ignored": ignored or {}}
+        secs[0]["items"][0]["laborSync"] = {"projectId": 4, "key": "svc:1|day", "at": "t",
+                                            "snap": {"qty": snap_qty, "unitPrice": unit_price}}
+        return secs
+
+    plain = _tax_inputs_fingerprint(_invoice(qb_tax_total=82.5))
+    _check("a marker on an unchanged line is not a tax input",
+           _tax_inputs_fingerprint(_invoice(sections=marked())) == plain)
+    _check("moving the marker's snapshot is not a tax input",
+           _tax_inputs_fingerprint(_invoice(sections=marked(snap_qty=11, ignored={"svc:2|ot": {"qty": 3}})))
+           == _tax_inputs_fingerprint(_invoice(sections=marked())))
+    _check("a real re-price beside a marker still invalidates the tax",
+           _tax_inputs_fingerprint(_invoice(sections=marked(unit_price=900))) != plain)
+    row = _invoice(sections=marked())
+    _tax_inputs_fingerprint(row)
+    _check("the row's own sections are not stripped",
+           "laborSync" in row.sections[0] and "laborSync" in row.sections[0]["items"][0])
+
+
 # ── End to end: what the rendered PDF actually draws ─────────────────────────
 
 def _render_and_capture(kind, entity):
@@ -337,6 +365,7 @@ def main() -> int:
         test_a_customer_exemption_outranks_a_per_line_flag,
         test_a_push_without_tax_clears_the_previous_tax,
         test_editing_the_document_invalidates_the_stored_tax,
+        test_schedule_sync_markers_are_not_tax_inputs,
         test_the_rendered_pdf_draws_the_tax_row_for_both_kinds,
         test_the_rendered_pdf_omits_the_tax_row_when_there_is_no_tax,
         test_the_rendered_pdf_shows_adjustments_only_once_one_exists,
