@@ -600,6 +600,202 @@ window.LTP_unsignDay = function(schedule, crewId, date) {
   });
 };
 
+// ── Cancellation ─────────────────────────────────────────────────────────────
+//
+// A shift that will not happen after someone was booked for it. The position
+// stays on the schedule as `cancelled` — with its crew member, its locked
+// `pay`, and a `cancel` record of what was decided — instead of being reset to
+// open, which erased the booking and left the old snapshots behind for the
+// next person. Two shares are chosen independently, each a percentage of a
+// REFERENCE or a typed amount: what the client is charged, and what the crew
+// member is paid. The reference is the shift's own full rate and cost from
+// LTP_calcDayLabor at the moment of cancelling (docs/LABOR_SYNC_PLAN.md,
+// decision 7) — client rate card, contract minimums, crew floors and
+// full-margin all already honoured — and it is fixed once written, so a later
+// edit of the shares only moves within it (the server holds a non-admin to
+// that ceiling: backend/crew_integrity.py::enforce_pay_snapshot).
+//
+//   cancel  { at, by, byId, reason, ref: { bill, pay },
+//             bill: { mode: "percent"|"amount"|"none", value, total },
+//             pay:  { mode, value, total },
+//             updatedAt?, updatedBy? }            (set when the shares are edited)
+//
+// The pay side is frozen the way a sign-off is — `work` = { state:
+// "cancelled", pay: { total, tier: "cancel", units: [one unit for the role] },
+// signedAt, signedBy } — so payouts, vendor bills, the paid-day guard and the
+// crew portal read it through the paths they already have (domain-payouts.js,
+// backend/payouts.py). The bill side is read by the schedule → document
+// generator, which bills a cancelled position as its own "cancellation" line
+// and leaves it out of the day pools. A position with no crew member has no
+// pay side at all; a full-margin one is paid $0, as it would be for work.
+
+// This shift's own full bill rate and pay cost — the reference the shares are
+// taken from. { bill: 0, pay: 0 } when the shift can't be priced (no times,
+// no role on the card).
+window.LTP_cancelReference = function(shift, position, services, crewMins) {
+  if (!shift || !position || !position.serviceId) return { bill: 0, pay: 0 };
+  var day = window.LTP_calcDayLabor(
+    [{ time: shift.time, endTime: shift.endTime, breaks: shift.breaks || [], positions: [position] }], services, crewMins);
+  var u = day && day.units && day.units[0];
+  if (!u) return { bill: 0, pay: 0 };
+  return { bill: Math.round((u.rateTotal || 0) * 100) / 100,
+           pay: position.fullMargin ? 0 : Math.round((u.costTotal || 0) * 100) / 100 };
+};
+
+// One share: a percentage of the reference, a typed amount, or nothing.
+window.LTP_cancelShare = function(ref, mode, value) {
+  var r = Math.max(0, Number(ref) || 0), v = Number(value) || 0;
+  if (mode === "none") return 0;
+  if (mode === "amount") return Math.max(0, Math.round(v * 100) / 100);
+  return Math.max(0, Math.round(r * v) / 100);
+};
+
+// The frozen pay for a cancelled position, in the shape a sign-off writes.
+window.LTP_cancelWork = function(position, payTotal, signedAt, signedBy) {
+  var total = Math.round((Number(payTotal) || 0) * 100) / 100;
+  return { state: "cancelled", signedAt: signedAt || "", signedBy: signedBy || "",
+    pay: { total: total, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "cancel",
+           units: [{ serviceId: position ? position.serviceId : null, tier: "cancel", paidHours: 0, otHours: 0,
+                     dayCost: total, otCost: 0, minApplied: false, minHoursApplied: false,
+                     fullMargin: !!(position && position.fullMargin), total: total }] } };
+};
+
+// The dialog's pre-fill (decision 8): Settings → cancellationDefaultBillPct /
+// cancellationDefaultPayPct, 50 / 50 when unset.
+window.LTP_cancelDefaults = function(settings) {
+  var s = settings || {};
+  function pct(v, d) { var n = Number(v); return (v == null || v === "" || isNaN(n)) ? d : Math.max(0, n); }
+  return { bill: { mode: "percent", value: pct(s.cancellationDefaultBillPct, 50) },
+           pay:  { mode: "percent", value: pct(s.cancellationDefaultPayPct, 50) } };
+};
+
+// Build the cancelled position from the shares chosen. `ref` is the fixed
+// reference; a position already cancelled keeps its original at/by/byId and
+// records the edit alongside.
+function _cancelledPosition(position, ref, shares, meta) {
+  shares = shares || {}; meta = meta || {};
+  var hasCrew = position.crewId != null;
+  var bill = shares.bill || { mode: "percent", value: 0 };
+  var pay = (hasCrew && !position.fullMargin) ? (shares.pay || { mode: "percent", value: 0 }) : { mode: "none", value: 0 };
+  var billTotal = window.LTP_cancelShare(ref.bill, bill.mode, bill.value);
+  var payTotal = hasCrew ? window.LTP_cancelShare(ref.pay, pay.mode, pay.value) : 0;
+  var prior = position.cancel;
+  var cancel = prior
+    ? Object.assign({}, prior, { updatedAt: meta.at || "", updatedBy: meta.by || "",
+                                 reason: meta.reason != null ? meta.reason : (prior.reason || "") })
+    : { at: meta.at || "", by: meta.by || "", byId: meta.byId != null ? meta.byId : null, reason: meta.reason || "" };
+  cancel.ref = { bill: ref.bill, pay: ref.pay };
+  cancel.bill = { mode: bill.mode || "percent", value: Number(bill.value) || 0, total: billTotal };
+  cancel.pay = { mode: pay.mode || "percent", value: Number(pay.value) || 0, total: payTotal };
+  var out = Object.assign({}, position, { status: "cancelled", cancel: cancel });
+  if (hasCrew) out.work = window.LTP_cancelWork(position, payTotal, meta.at || "", meta.by || "");
+  else delete out.work;
+  return out;
+}
+
+// Cancel ONE shift position. shares = { bill: {mode, value}, pay: {mode,
+// value} }; meta = { at, by, byId, reason }. Works from any status; a position
+// already cancelled is re-shared against its fixed reference. Returns a new
+// schedule (the input when the position is not found).
+window.LTP_cancelPosition = function(schedule, shiftId, posId, shares, services, crewMins, meta) {
+  var hit = false;
+  var out = (schedule || []).map(function(s) {
+    if (!s || s.id !== shiftId) return s;
+    var positions = (s.positions || []).map(function(p) {
+      if (!p || p.id !== posId) return p;
+      hit = true;
+      var ref = (p.cancel && p.cancel.ref) ? p.cancel.ref : window.LTP_cancelReference(s, p, services, crewMins);
+      return _cancelledPosition(p, ref, shares, meta);
+    });
+    return Object.assign({}, s, { positions: positions });
+  });
+  return hit ? out : schedule;
+};
+
+// Edit the shares of a position already cancelled. Its reference never moves.
+window.LTP_setCancellationShares = function(schedule, shiftId, posId, shares, meta) {
+  var hit = false;
+  var out = (schedule || []).map(function(s) {
+    if (!s || s.id !== shiftId) return s;
+    var positions = (s.positions || []).map(function(p) {
+      if (!p || p.id !== posId || p.status !== "cancelled" || !p.cancel || !p.cancel.ref) return p;
+      hit = true;
+      return _cancelledPosition(p, p.cancel.ref, shares, meta);
+    });
+    return Object.assign({}, s, { positions: positions });
+  });
+  return hit ? out : schedule;
+};
+
+// Undo a cancellation: back to confirmed (or open when nobody holds it), the
+// record and the frozen pay gone, and the person's pay for that day re-locked
+// at today's rates. Returns a new schedule (the input when nothing changed).
+window.LTP_restorePosition = function(schedule, shiftId, posId, services, crewMins, lockedAt) {
+  var crewId = null, date = "", hit = false;
+  var out = (schedule || []).map(function(s) {
+    if (!s || s.id !== shiftId) return s;
+    var positions = (s.positions || []).map(function(p) {
+      if (!p || p.id !== posId || p.status !== "cancelled") return p;
+      hit = true; crewId = p.crewId != null ? p.crewId : null; date = s.date || "";
+      var copy = Object.assign({}, p, { status: crewId != null ? "confirmed" : "open" });
+      delete copy.cancel; delete copy.work;
+      return copy;
+    });
+    return Object.assign({}, s, { positions: positions });
+  });
+  if (!hit) return schedule;
+  return (crewId != null && date) ? window.LTP_stampPay(out, crewId, services, crewMins, lockedAt, [date]) : out;
+};
+
+// The flat-rate mirrors. The reference is the typed amounts: `bill` and `fee`
+// ($0 pay for a full-margin position).
+window.LTP_cancelFixedPosition = function(fixedPositions, posId, shares, meta) {
+  var hit = false;
+  var out = (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId) return p;
+    hit = true;
+    var ref = (p.cancel && p.cancel.ref) ? p.cancel.ref
+      : { bill: Math.round((Number(p.bill) || 0) * 100) / 100, pay: p.fullMargin ? 0 : Math.round((Number(p.fee) || 0) * 100) / 100 };
+    return _cancelledPosition(p, ref, shares, meta);
+  });
+  return hit ? out : fixedPositions;
+};
+window.LTP_setFixedCancellationShares = function(fixedPositions, posId, shares, meta) {
+  var hit = false;
+  var out = (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId || p.status !== "cancelled" || !p.cancel || !p.cancel.ref) return p;
+    hit = true;
+    return _cancelledPosition(p, p.cancel.ref, shares, meta);
+  });
+  return hit ? out : fixedPositions;
+};
+window.LTP_restoreFixedPosition = function(fixedPositions, posId, lockedAt) {
+  var crewId = null, hit = false;
+  var out = (fixedPositions || []).map(function(p) {
+    if (!p || p.id !== posId || p.status !== "cancelled") return p;
+    hit = true; crewId = p.crewId != null ? p.crewId : null;
+    var copy = Object.assign({}, p, { status: crewId != null ? "confirmed" : "open" });
+    delete copy.cancel; delete copy.work;
+    return copy;
+  });
+  if (!hit) return fixedPositions;
+  return crewId != null ? window.LTP_stampFixedPay(out, crewId, lockedAt, [posId]) : out;
+};
+
+// What a reassignment or a reopen must take with it: the previous holder's
+// locked pay, sign-off, adjustments and cancellation. The Labor tab and the
+// schedule editor merge this into the position patch (Object.assign copies the
+// undefined values; JSON drops them on save; the server lets a non-admin drop
+// them exactly here — backend/crew_integrity.py::enforce_pay_snapshot). Before
+// this, the next person confirmed into a slot inherited the last one's
+// sign-off and adjustments.
+window.LTP_SNAPSHOT_CLEAR = { pay: undefined, work: undefined, adj: undefined, cancel: undefined };
+window.LTP_reassignPatch = function(pos, crewId) {
+  var same = crewId != null && pos && crewId === pos.crewId;
+  var patch = { crewId: crewId, status: same ? pos.status : "open" };
+  return same ? patch : Object.assign(patch, window.LTP_SNAPSHOT_CLEAR);
+};
+
 // Resolve email template variables: {{varName}} → value
 window.LTP_resolveTemplate = function(template, vars) {
   if (!template) return "";

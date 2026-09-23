@@ -1550,6 +1550,10 @@
               changeCount++;
               var patch = { status: newStatus };
               if (clearCrew) patch.crewId = null;
+              // The previous holder's locked pay, sign-off, adjustments and
+              // cancellation go with them — the next person confirmed into
+              // this slot must not inherit them (LTP_SNAPSHOT_CLEAR).
+              if (clearCrew || newStatus === "open") Object.assign(patch, window.LTP_SNAPSHOT_CLEAR);
               return Object.assign({}, ps, patch);
             }
             return ps;
@@ -2005,11 +2009,11 @@
                   var cm = contacts.find(function(c) { return c.id === cid; });
                   var crewName = cm ? cm.firstName + " " + cm.lastName : "This crew member";
                   setConflictWarn({ title: anyOverlap ? "Scheduling Conflict" : "Already Booked That Day", message: crewName + " is already booked on " + fmt(pos.date) + " for:\n\n" + otherBookings.join("\n") + "\n\nAssign anyway?",
-                    onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); }); setConflictWarn(null); } });
+                    onConfirm: function() { booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, window.LTP_reassignPatch(bp, cid)); }); setConflictWarn(null); } });
                   return;
                 }
               }
-              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, { crewId: cid, status: (cid && cid === bp.crewId) ? bp.status : "open" }); });
+              booking.allPosIds.forEach(function(bp) { updatePosition(setProjects, bp.projectId, bp.schedItemId, bp.posId, window.LTP_reassignPatch(bp, cid)); });
             }
             // Swapping an active booking (requested/accepted/confirmed) to a
             // DIFFERENT person releases the current one — confirm it like

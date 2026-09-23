@@ -177,10 +177,9 @@
     // assignee). Without this, swapping a confirmed slot to a new person would
     // leave them "confirmed", which the suppress-confirmed conflict rule would
     // then hide — a double-booking for someone who never accepted. Re-picking
-    // the same person keeps the status.
-    function reassignStatus(pos, crewId) {
-      return (crewId && crewId === pos.crewId) ? pos.status : "open";
-    }
+    // the same person keeps the status. The rule now lives in
+    // LTP_reassignPatch (components/domain-crew.js), which also takes the
+    // previous holder's locked pay / sign-off / adjustments off the slot.
     // Put the picked person on the ONE position that was clicked. This used to
     // also pencil them into every open, unfilled slot of the same role on every
     // other row that day ("assign to the day"), which read as the app assigning
@@ -188,7 +187,7 @@
     // role both filled from one pick — so that spread is gone. Each shift is
     // filled by its own pick, the same as the Labor tab's assignment path.
     function doAssignCrew(schedId, pos, crewId) {
-      updatePosition(schedId, pos.id, { crewId: crewId, status: reassignStatus(pos, crewId) });
+      updatePosition(schedId, pos.id, window.LTP_reassignPatch(pos, crewId));
     }
 
     // The other shift's times, and whether they overlap the one being filled,
