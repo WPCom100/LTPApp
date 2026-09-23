@@ -110,6 +110,39 @@ qCent.sections[0].items[0].unitPrice = 1000.01;
 has("Q7b a one-cent difference IS reported",
     QC(quote(), qCent, PROJECTS, COMPANIES), "Quote Total");
 
+// ── Schedule labor sync: markers are not changes, lines are ─────────────────
+// Keep (and "Keep as is" on a sent invoice) rewrites only the line's laborSync
+// marker. That must not read as an edit on the save dialog — a locked invoice
+// would otherwise show a change it does not carry. Apply moves qty/price, and
+// a cancelled position arrives as a new "cancel" line: both are real changes.
+const MARK = (snap) => ({ projectId: 42, key: "svc:1|day", at: "t0", snap: snap });
+const laborItem = { id: "L1", type: "service", rateType: "day", name: "A1 \u2014 Audio Lead", qty: 2, unitPrice: 600, cost: 300,
+                    laborSync: MARK({ qty: 2, unitPrice: 600, cost: 300, dates: ["2026-08-10", "2026-08-11"] }) };
+const laborQuote = () => quote({ sections: [{ id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "one", ignored: {} }, items: [clone(laborItem)] }] });
+const laborInvoice = () => invoice({ sections: [{ id: "s1", label: "Labor", laborSync: { projectId: 42, grouping: "one", ignored: {} }, items: [clone(laborItem)] }] });
+const qKept = laborQuote();
+qKept.sections[0].items[0].laborSync = MARK({ qty: 3, unitPrice: 600, cost: 300, dates: ["2026-08-10", "2026-08-11", "2026-08-12"] });
+qKept.sections[0].laborSync.ignored = { "svc:1|day": "t1" };
+const keptRows = QC(laborQuote(), qKept, PROJECTS, COMPANIES);
+ok("LS0 a marker-only write (Keep) is no change on a quote", keptRows === null, "got " + JSON.stringify(keptRows));
+const iKept = laborInvoice();
+iKept.sections[0].items[0].laborSync = MARK({ qty: 3, unitPrice: 600, cost: 300 });
+const keptInvRows = IC(laborInvoice(), iKept, PROJECTS, COMPANIES);
+ok("LS1 nor on an invoice (Keep as is on a sent one)", keptInvRows === null, "got " + JSON.stringify(keptInvRows));
+const qApplied = laborQuote();
+qApplied.sections[0].items[0].qty = 3;
+qApplied.sections[0].items[0].laborSync = MARK({ qty: 3, unitPrice: 600, cost: 300 });
+has("LS2 Apply moving a day count is a qty row", QC(laborQuote(), qApplied, PROJECTS, COMPANIES), "Labor \u2014 Qty", "2 \u2192 3");
+has("LS3 and a total row", QC(laborQuote(), qApplied, PROJECTS, COMPANIES), "Quote Total", "1,800.00");
+const iCancel = laborInvoice();
+iCancel.sections[0].items[0].qty = 1;
+iCancel.sections[0].items.push({ id: "L2", type: "service", rateType: "cancel", name: "A1 \u2014 Audio Lead", qty: 1, unitPrice: 300, cost: 150,
+  notes: "Cancelled Aug 11 \u00b7 50% charged", laborSync: { projectId: 42, key: "cancel:pos-2", at: "t1", snap: { qty: 1, unitPrice: 300, cost: 150 } } });
+const cancelRows = IC(laborInvoice(), iCancel, PROJECTS, COMPANIES);
+has("LS4 a cancelled shift's line arrives as an added line", cancelRows, "Labor \u2014 Added", "A1 \u2014 Audio Lead \u00d71");
+has("LS5 the day it left is a qty row", cancelRows, "Labor \u2014 Qty", "2 \u2192 1");
+has("LS6 the invoice total moves by the share net of the day", cancelRows, "Invoice Total", "900.00");
+
 // ── Status and dates ────────────────────────────────────────────────────────
 has("Q8 status change", QC(quote(), clone(quote({ status: "sent" })), PROJECTS, COMPANIES),
     "Status", "draft");

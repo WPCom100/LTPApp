@@ -221,6 +221,26 @@ eq("ST10 note rows never contribute", ST({ items: [{ type: "note", text: "x", qt
 eq("ST11 missing items array is safe", ST({}).subtotal, 0);
 eq("ST12 null section is safe", ST(null).subtotal, 0);
 
+// ── A cancellation line totals like any service line ────────────────────────
+// The schedule generator bills a cancelled position as its own service line
+// (rateType "cancel", qty 1, unitPrice = the bill share, cost = the pay share,
+// plus a laborSync marker and a client-facing note). None of the extra fields
+// may change how the line is summed — it is money like any other line.
+const cancelLine = { id: "c1", type: "service", rateType: "cancel", name: "A1 \u2014 Audio Lead", qty: 1, unitPrice: 300, cost: 150,
+                     notes: "Cancelled Aug 11 \u00b7 50% charged", laborSync: { projectId: 42, key: "cancel:pos-1", at: "t0", snap: { qty: 1, unitPrice: 300, cost: 150 } } };
+const dayLine = line({ rateType: "day", name: "LX \u2014 Lighting Tech", qty: 1, unitPrice: 500, cost: 250 });
+const cancelDoc = { sections: items([dayLine, cancelLine]) };
+near("CX0 invoice subtotal counts the cancel line", IT(cancelDoc).subtotal, 800);
+near("CX1 invoice total counts the cancel line", IT(cancelDoc).total, 800);
+near("CX2 quote total counts the cancel line", QT(cancelDoc).total, 800);
+near("CX3 the pay share is cost", QT(cancelDoc).cost, 400);
+const cst = ST({ items: [cancelLine] });
+near("CX4 section subtotal is the bill share", cst.subtotal, 300);
+near("CX5 section margin is bill minus pay", cst.margin, 150);
+near("CX6 a full-margin cancellation costs nothing", ST({ items: [Object.assign({}, cancelLine, { cost: 0 })] }).margin, 300);
+near("CX7 an unpaid cancellation (nobody booked) still bills", QT({ sections: items([Object.assign({}, cancelLine, { cost: 0, unitPrice: 250 })]) }).total, 250);
+near("CX8 a $0 share contributes nothing and breaks nothing", IT({ sections: items([Object.assign({}, cancelLine, { unitPrice: 0, cost: 0 }), dayLine]) }).total, 500);
+
 console.log("money-totals suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
