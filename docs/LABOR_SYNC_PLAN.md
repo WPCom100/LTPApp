@@ -1,8 +1,8 @@
 # Schedule ↔ Quote/Invoice Labor Sync & Cancelled Labor — Design & Build Plan
 
 **Branch:** `claude/cool-cori-92cdjb` (off `master`)
-**Status:** proposal — nothing below is built yet. Decisions marked *(recommend)*
-need the owner's yes/no before Phase 1 starts; everything else follows from them.
+**Status:** decisions confirmed with the owner on 2026-09-23 except the two in
+*Open questions* below. Nothing is built yet.
 **Goal:** Let a producer **bring a quote's or invoice's labor lines back in step
 with the project schedule on demand** — never automatically — reviewing each
 difference and applying only the ones they want, without touching hand-added
@@ -15,19 +15,18 @@ existing sync, payout and QuickBooks paths instead of around them.
 
 ---
 
-## Decisions to confirm (recommendations in bold)
+## Decisions (confirmed with owner, 2026-09-23)
 
-1. **Sync is explicit, per line, and reversible.** *(recommend)* A "Labor out
-   of sync" notice appears on the document; a review modal lists every
-   difference with a checkbox; **Apply** changes only the ticked lines, **Keep**
-   acknowledges the rest so the notice goes quiet until the schedule moves
-   again. Nothing changes on save without a click. This mirrors the existing
-   rental-period "Update / Keep" pattern exactly.
-2. **Which documents can be synced.** *(recommend)* **Draft and sent quotes**
-   (a sent quote shows the existing "Editing Sent Quote" warning) and **draft
-   invoices**. Accepted/converted quotes stay locked (they are the contract the
-   client accepted). A **sent invoice** must be recalled first — the existing
-   recall → edit → resend flow already re-pushes QuickBooks. *Owner question 1.*
+1. **Sync is explicit, per line, and reversible.** A "Labor out of sync"
+   notice appears on the document; a review modal lists every difference with
+   a checkbox; **Apply** changes only the ticked lines, **Keep** acknowledges
+   the rest so the notice goes quiet until the schedule moves again. Nothing
+   changes on save without a click. This mirrors the existing rental-period
+   "Update / Keep" pattern exactly.
+2. **Which documents can be synced: draft and sent quotes** (a sent quote
+   shows the existing "Editing Sent Quote" warning) **and draft invoices.**
+   Accepted/converted quotes stay locked (they are the contract the client
+   accepted). Sent invoices: see *Open question A*.
 3. **Lines stay pooled per role and rate type** (qty = person-days, hours, or
    1 per flat/cancelled position), exactly as today. Sync does not switch the
    document to one line per person. The pooled key `(project, service, rate
@@ -37,74 +36,124 @@ existing sync, payout and QuickBooks paths instead of around them.
    `adjustedPrice`, never `taxable`, never the discount, never a line without
    a schedule marker.** A hand-edited quantity or price on a schedule line is
    detected (billed value ≠ last-synced value) and that row defaults to
-   *unticked* with a "edited by hand" flag, so a deliberate under-charge is not
-   silently overwritten.
+   *unticked* with an "edited by hand" flag, so a deliberate under-charge is
+   not silently overwritten.
 5. **"Send to Quote/Invoice" onto a document that already carries this
    project's labor opens the sync review instead of appending a duplicate
-   section.** *(recommend)* An "Append anyway" escape stays for the odd case.
-   *Owner question 2.*
+   section.** An "Append as a new section anyway" escape stays for the odd
+   case. (Owner: yes.)
 6. **Cancelled is a real position status** (`cancelled`), kept on the schedule
    with its crew member, its locked pay, and a `cancel` record holding the
    chosen bill share and pay share. It is *not* modelled as a deleted position
    plus a fee line plus a no-show adjustment (which is the only workaround
    today, and it shows the crew member "no show").
-7. **Cancellation money comes from one engine.** *(recommend)* The reference
-   amounts are that shift's own full bill rate and pay cost from
-   `LTP_calcDayLabor` at the moment of cancelling (client-negotiated rate,
-   crew minimums, full-margin all honoured). The producer picks a percentage
-   or types an amount for each side independently; both are editable later
-   until billed/paid. Defaults come from a workspace setting. *Owner
-   questions 3–4.*
-8. **A cancelled position bills as its own "Cancellation" line** on the
+7. **Cancellation money comes from one engine, at the moment of cancelling.**
+   The reference amounts are that shift's own full bill rate and pay cost from
+   `LTP_calcDayLabor` when the cancel dialog opens (client-negotiated rate,
+   crew minimums, full-margin all honoured) — not the `pay` snapshot locked at
+   confirm. The producer picks a percentage or types an amount for each side
+   independently; both stay editable until billed/paid. (Owner: rate at
+   cancel.)
+8. **Defaults are 50% billed / 50% paid**, held in Settings as
+   `cancellationDefaultBillPct` / `cancellationDefaultPayPct` and overridable
+   per cancellation. (Owner: 50/50.)
+9. **A cancelled position bills as its own "Cancellation" line** on the
    document (`rateType: "cancel"`, qty 1, unit price = the chosen bill amount),
    surfaced through the same sync review as any other schedule change. The
-   day/half/OT pools exclude cancelled positions. *Owner question 5.*
-9. **Cancellation pay is frozen the way a sign-off is.** Cancelling writes the
-   position's `work` snapshot with `state: "cancelled"` and the chosen total,
-   so payouts, vendor bills, the paid-day guard and the crew portal pick it up
-   through the paths they already have. `adj` still works on top.
-10. **Cancel-with-money is an admin action**, like every other pay action
-    (`guardPaid`). *(recommend)* A plain cancel (no bill, no pay) stays open to
-    any producer. *Owner question 6.*
+   day/half/OT pools exclude cancelled positions. **The client-visible note
+   carries the date and the percentage charged**, e.g. "Cancelled Jun 5 · 50%
+   of day rate". (Owner: note with percentage.)
+10. **Cancellation pay is frozen the way a sign-off is.** Cancelling writes the
+    position's `work` snapshot with `state: "cancelled"` and the chosen total,
+    so payouts, vendor bills, the paid-day guard and the crew portal pick it up
+    through the paths they already have. `adj` still works on top.
+11. **Cancellation is not admin-gated.** Any producer can cancel with bill and
+    pay shares, edit the shares later, or restore. The paid-day check (a day
+    whose vendor bill is already paid) still applies to everyone. Because the
+    server today reverts any non-admin change to `work`, this needs a narrow
+    server-side allowance — see B2 and *Risks*. (Owner: do not gate.)
+12. **Crew email: a new template for cancellation with pay; the existing
+    "Request Withdrawn" template when there is no pay.** The new template
+    `crewCancelledWithPay` carries `{{shifts}}` and `{{cancellationPay}}`.
+    (Owner's choice. Note: an existing `crewCancelled` template — "your
+    confirmed position on … has been cancelled" — also exists and is the one
+    the tray uses today for a confirmed booking; the plan follows the owner's
+    instruction and uses `crewWithdrawn` for the no-pay case. Say so if
+    `crewCancelled` was meant.)
+13. **Legacy documents get a one-click "Link labor lines to the schedule"
+    step; it never appears on documents created after this ships.** No data
+    migration. The step is offered only when a document has *no* marked lines
+    for the project and *does* have unmarked service lines in a section tagged
+    with that project. A hand-added service line on a new-style document is a
+    manual line and is never offered for linking. (Owner: yes, legacy only.)
+14. **Bulk cancellation stops at the shift.** "Cancel this shift…" applies one
+    share pair to every position on a day; there is no project-wide action.
+    (Owner: no extra needed.)
 
-## Questions for the owner
+## Open questions (two, with the detail the owner asked for)
 
-1. **Sent invoices.** Is "recall, sync, resend" acceptable, or do you want the
-   sync review available on a sent-but-unpaid invoice directly (it would
-   re-push QuickBooks on apply)? Recall is simpler and already audited.
-2. **Re-send behaviour.** Confirm that sending a schedule into a document that
-   already has that project's labor should open the sync review rather than
-   append a second "Labor" section (today's behaviour, which the tests pin).
-3. **Default shares.** What should the cancel dialog pre-fill? Proposal: a
-   Settings pair `cancellationDefaultBillPct` / `cancellationDefaultPayPct`,
-   shipped at 50 / 50, overridable per cancellation. Or should the defaults be
-   100 / 100 ("charge and pay in full unless told otherwise")?
-4. **Reference rate for the share.** The shift's own full rate at cancel time
-   (recommended — one engine, works for never-confirmed positions too) versus
-   the `pay` snapshot locked at confirm. They only differ if the shift's times
-   or the rate card changed after confirm.
-5. **Client-facing wording.** A cancelled shift appears on the quote/invoice
-   as e.g. `L1 — Lighting Tech · 1 cancellation · $300` with a note
-   "Cancelled Jun 5 · 50% of day rate". Do you want the percentage in the
-   client-visible note, or only the date?
-6. **Permissions.** Admin-only for cancel-with-money? Non-admins cannot write
-   `work`/`adj` today (`crew_integrity.enforce_pay_snapshot`), so this falls
-   out naturally unless you want it opened up.
-7. **Crew message.** Reuse the existing `crewCancelled` tray notice, adding an
-   optional `{{cancellationPay}}` token so the email can say "you will be paid
-   $175 for the cancelled call"? Or keep money out of the email?
-8. **Existing documents.** Quotes/invoices created before this ships have
-   labor lines with no schedule marker. Proposal: no data migration; the
-   review modal offers a one-click **"Link labor lines to the schedule"** that
-   matches existing service lines by role + rate type and then shows the real
-   differences. Acceptable?
-9. **Whole-day / whole-project cancellation.** Phase 2 adds "Cancel this
-   shift…" (every position on the day, one shared share pair) — is that enough,
-   or do you also want "Cancel remaining project labor" as one action?
-10. **Line notes in the QuickBooks signature.** Today a change to a line's
-    date note alone does not flip "Update QuickBooks", although the note is
-    pushed as the QB line description. Sync will change notes often. Fix that
-    in this work (small) or leave it?
+### A. Sent invoices — recall first, or sync in place?
+
+**How it works today.** The invoice builder locks every edit once an invoice
+leaves draft: each mutator returns early unless `status === "draft"`
+(`modules/invoices.js:1540-1541`). The way back is **Recall to Draft**
+(`invoices.js:1333-1375`): it refuses if any payment is recorded, warns that the
+client may already have viewed or printed the sent copy, flips the status to
+draft with an activity entry, and — if the invoice was already pushed to
+QuickBooks — immediately re-pushes so QuickBooks sees the recalled state. After
+editing, **Resend** re-pushes QuickBooks and re-emails the client. The client's
+public link always shows the live document.
+
+**Option 1 — recall, sync, resend (recommended).** On a sent invoice the labor
+banner reads "Labor changed on the schedule — recall this invoice to sync", with
+the Recall button right there. Sync then behaves exactly as on any draft. Pros:
+zero new gating logic; the client never sees a sent document change under them
+without a fresh send and a fresh activity trail; QuickBooks is updated by the
+existing resend path. Cons: two extra clicks; **an invoice with a recorded
+payment cannot be recalled**, so it cannot be synced either — the fix for a
+partially paid invoice is a separate invoice for the difference (today that is
+a manual "Send to Invoice" of the remaining lines, or a hand-built invoice).
+
+**Option 2 — sync directly on a sent invoice.** The review modal is allowed on
+sent/partial invoices and Apply edits the document in place, then pushes
+QuickBooks on save. Pros: one click. Cons: it breaks the app's standing rule
+that a document the client has received never changes underneath them (the
+public link would show new totals with no new send); it needs a new exception
+inside every invoice mutator; a partially paid invoice would change its balance
+silently; and the activity trail would not show a resend.
+
+**Recommendation:** Option 1 now. If partially paid invoices turn out to need
+syncing often, a Phase 3 "Invoice the difference" action (a new draft invoice
+holding only the delta lines from the review) is the clean answer, and it
+builds on the same drift engine.
+
+### B. Line notes in the QuickBooks "in sync" check
+
+**How it works today.** The green "synced" / "Update QuickBooks" state on an
+invoice is a comparison of two fingerprints: one computed live from the invoice
+(`qbSignature`, `invoices.js:43-75`) and one stored at the last successful push.
+The live fingerprint covers dates, notes, discount, project name, the customer's
+address, and per line: type, name, qty, effective price and taxable. **It does
+not include a line's `notes`** (the "Jun 4, Jun 5, Jun 6" day list on labor
+lines). But the push itself sends `name — notes` as the QuickBooks line
+description (`backend/qbo_sync.py:1140-1142`).
+
+**Why sync makes it matter.** A schedule change that moves a day without
+changing the count — Jun 5 becomes Jun 6, qty stays 1 — changes only the note.
+After Apply, the invoice would still read "synced with QuickBooks" while the
+QuickBooks line still says Jun 5. Today this can only happen by hand-editing a
+note, which is rare; with sync it will be routine.
+
+**The fix and its one side effect.** Adding `notes` to the fingerprint is a
+one-line change plus a test. The side effect: every invoice already synced was
+fingerprinted *without* notes, so after deploy each would show "Update
+QuickBooks" once until re-pushed, even though nothing changed. The plan avoids
+that with a small compatibility shim: compute both the new and the old
+fingerprint, treat the invoice as in sync if the stored value matches *either*,
+and store the new one on the next push. Cost: about ten lines and two test
+cases.
+
+**Recommendation:** do it, with the shim, in step A4.
 
 ---
 
@@ -298,12 +347,18 @@ by both builders, the list chips, the toast and the send dialog.
   draft/sent quotes and draft invoices with `count > 0`. Like
   `LTP_rentalDriftNotice`.
 - `LTP_adoptLaborLines(doc, project, svcs, crewMins, fmt)` → `sections` — for
-  legacy documents: in sections whose `projectId` is the project's, match
+  legacy documents only: in sections whose `projectId` is the project's, match
   unmarked `service` lines to expected keys by `(serviceId, rateType)`; stamp
   `laborSync` with `snap = the line's current values`, so the very next drift
   pass shows the genuine differences for review. Flat lines match by
   `(serviceId, "flat", unitPrice)`; anything ambiguous stays unmarked and is
   listed as "could not link".
+- `LTP_laborLinkable(doc, projectId)` → bool — the visibility rule for the
+  Link step (decision 13): true only when the document has **no** line marked
+  for the project **and** at least one unmarked `service` line in a section
+  tagged with that project. A document created after this ships always has
+  marked lines, so it never qualifies; a hand-added service line on such a
+  document stays manual.
 
 ### A3. Apply / Keep semantics in one table
 
@@ -340,8 +395,10 @@ builders' `isLocked` / `isDraft`, same as every other edit.
    schedule`) · effect on total · flags (*edited by hand*, *adjusted price
    kept*, *linked to Q-12*). Footer: `Apply 2 selected` / `Keep the rest` /
    `Cancel`. Apply and Keep both go through `setDraft` (a user edit; nothing
-   persists until Save, exactly like rental Update/Keep). A legacy document
-   shows the **Link labor lines to the schedule** step first.
+   persists until Save, exactly like rental Update/Keep). When
+   `LTP_laborLinkable` is true (legacy document, decision 13) the modal opens
+   on a **Link labor lines to the schedule** step showing the proposed matches
+   and any "could not link" lines; new-style documents never see it.
 3. **List chip** `LTPLaborDriftChip` ("Labor changed") on quote and invoice
    rows and the project's document list, like `LTPRentalDriftChip`. Drift for
    a list is computed once per project and memoised (schedules are small; the
@@ -367,9 +424,10 @@ builders' `isLocked` / `isDraft`, same as every other edit.
   clamp and removals queue the rollback (A2). The activity entry on save
   already reports the credited quote (`invoices.js:1770-1844`).
 - Changing `qty`/`unitPrice` flips the QuickBooks signature, so "↻ Update
-  QuickBooks" appears by itself. A notes-only change does not — owner
-  question 10 proposes adding `notes` to `qbSignature`
-  (`invoices.js:43-75`); it is a two-line change plus a test.
+  QuickBooks" appears by itself. A notes-only change does not — *Open
+  question B* covers adding `notes` to `qbSignature` (`invoices.js:43-75`)
+  with the compatibility shim so already-synced invoices do not all flip to
+  "Update QuickBooks" on deploy.
 - A section edit clears `qb_tax_total` on PUT (`api.py:588-596`); the invoice
   shows tax pending until the next push, as with any line edit.
 
@@ -426,10 +484,11 @@ work: { state: "cancelled", signedAt, signedBy,
 - Positions cancel from any status; `pay`/`work` are only written when a crew
   member is attached. `cancelled` is reachable only through the cancel dialog,
   never through the status dropdown.
-- **Restore** (admin, only while neither billed nor paid): back to `confirmed`,
-  `cancel` and `work` removed, `pay` re-stamped. **Refill role**: adds a new
-  `open` position with the same role/service on the shift (a new slot, so OT
-  tracking stays per person).
+- **Restore** (any producer, only while the day is neither on a pushed vendor
+  bill nor on a sent document): back to `confirmed`, `cancel` and `work`
+  removed, `pay` re-stamped. **Refill role**: adds a new `open` position with
+  the same role/service on the shift (a new slot, so OT tracking stays per
+  person).
 
 ### B2. Payout side
 
@@ -438,9 +497,9 @@ work: { state: "cancelled", signedAt, signedBy,
 | `backend/payouts.py::derive_payout_drafts` (298, 368) and `LTP_payoutRows` (`domain-payouts.js:63, 102`) | include `status == "cancelled"` positions with a crew member; they always carry `work`, so they are "signed" with `payable = work.pay.total + adj`. `_rollup_state` / the JS mirror learn `"cancelled"`. Fixture regenerated (`tests/_gen_payout_fixture.js`) and both parity suites extended. |
 | `backend/qbo_payouts.py::build_bill_lines` (302-361) | tier label `cancel → "Cancellation"`; a $0 cancellation goes through the existing zero-settled path. |
 | `backend/payouts.py::paid_day_signature` | already covers `status`, `work`, `adj`; cancelling a paid day trips the 409 and the existing override dialog. No change beyond a test. |
-| `backend/crew_integrity.py` | `_STATUS_RANK["cancelled"] = 3`; a cancelled position still counts in `_assigned_position_ids` so the crew request keeps its history instead of reading "withdrawn"; `enforce_pay_snapshot` additionally lets `work`/`adj`/`cancel` be dropped when a position's `crewId` changes or its status returns to `open` (the stale-snapshot fix, B5). |
+| `backend/crew_integrity.py` | `_STATUS_RANK["cancelled"] = 3`; a cancelled position still counts in `_assigned_position_ids` so the crew request keeps its history instead of reading "withdrawn"; `enforce_pay_snapshot` gains two narrow allowances for non-admin writes (decision 11): **(a)** a `work` write is accepted when `work.state === "cancelled"`, the position's incoming status is `cancelled`, a `cancel` record is present, and `work.pay.total` equals `cancel.pay.total` and does not exceed `cancel.ref.pay`; **(b)** `work`/`adj`/`cancel` may be dropped when the position's `crewId` changes, its status returns to `open`, or a cancellation is restored (the stale-snapshot fix, B5). Every other non-admin `work`/`adj` change is still reverted, so sign-off, lock and adjust remain admin-only. The same two allowances apply to `enforce_pay_snapshot_fixed`. |
 | `backend/routes/crew_portal.py` | `_UPCOMING_STATUSES` unchanged (a cancelled call is not upcoming); a new "Cancelled" group on the schedule page shows date, role and "Cancellation pay $175" when > 0; earnings already read `work.pay.total`. `modules/crew-portal.js:1073` gains the `"cancelled"` label. |
-| Payouts tab (`modules/labor.js:3028-3145`) | row state pill "Cancelled · 50% · $175", an **Edit share…** action (admin, `guardPaid`) opening the same dialog, Restore. |
+| Payouts tab (`modules/labor.js:3028-3145`) | row state pill "Cancelled · 50% · $175", an **Edit share…** action opening the same dialog, Restore. These go through a `guardPaidDay` variant of `guardPaid` that keeps the paid-day and "QuickBooks unverified" checks but skips the admin check (decision 11). |
 
 ### B3. Bill side
 
@@ -482,9 +541,11 @@ work: { state: "cancelled", signedAt, signedBy,
   `ref` on both sides; two share controls (percent slider/field with an
   amount override, plus "none"); live totals ("Client is charged $300 · Crew
   is paid $175 · Margin $125"); optional reason; the existing "notify crew"
-  tray choice. Confirm writes the record and the schedule-activity entry
-  `{cat: "<Day> — L1 Cancelled", detail: "Jane Doe · bill 50% $300 · pay 50%
-  $175"}`.
+  tray choice, which parks a `crewCancelledWithPay` notice when the pay total
+  is above zero and a `crewWithdrawn` notice otherwise (decision 12). Confirm
+  writes the record and the schedule-activity entry `{cat: "<Day> — L1
+  Cancelled", detail: "Jane Doe · bill 50% $300 · pay 50% $175"}`. Open to
+  every producer (decision 11).
 - **Schedule builder / calendar / weekly schedule**: cancelled positions render
   struck-through with a "Cancelled" badge, collapsed by default per day; the
   position-count badges exclude them; `LTP_detectCrewConflicts` ignores them
@@ -519,7 +580,7 @@ open ──send──▶ requested ──accept──▶ accepted ──confirm�
                                         **cancel… (dialog)**  ◀──┘  from any status;
                                                  │                  keeps crewId + pay,
                                                  ▼                  writes cancel + work
-                                            **cancelled** ── **restore** (admin, unbilled & unpaid) ──▶ confirmed
+                                            **cancelled** ── **restore** (any producer, unbilled & unpaid) ──▶ confirmed
                                                  └── **refill role** ──▶ new open position on the same shift
 ```
 
@@ -535,19 +596,19 @@ Opus PR against this document before merge.
 
 | # | Step | Who | Size | Depends on |
 |---|---|---|---|---|
-| 0 | Owner answers questions 1–10; this doc is updated to "Decisions (confirmed)". | owner | — | — |
+| 0 | Owner confirms decisions 1–14 (done 2026-09-23) and answers open questions A and B. | owner | — | — |
 | A1 | `laborSync` markers: generator gains `projectId`, writes item + section markers; section whitelists ×3; model comments; `tests/test_doc_projects.js` extended (existing scenarios must still pass byte-for-byte on the item fields they assert). | **Fable** | S | 0 |
 | A2 | `components/domain-labor-sync.js`: `LTP_laborExpected`, `LTP_laborDrift(All)`, `LTP_applyLaborSync`, `LTP_keepLaborSync`, `LTP_laborSyncChanges`, `LTP_laborDriftNotice`, `LTP_adoptLaborLines`; wired into `index.html`, `sw.js` precache, `CACHE_VERSION` bump; **`tests/test_labor_sync.js`** (no-mutation, same-reference-when-idle, hand-edit detection, adjustedPrice preserved, linked-line clamp, removed-linked rollback list, ignored keys, multi-project, adopt matching, cent/1e-5 rounding). | **Fable** | L | A1 |
 | A3 | Quote builder: drift memo, banner, review modal, Apply/Keep through `setDraft`, activity entry on save, legacy "Link" step; golden snapshot scenarios added (`tests/test_builder_render.js --update`). Copy from the rental notice at `quotes-builder.js:966-982, 2487-2500` and `PayoutExportModal`. | **Opus 5** | M | A2 |
-| A4 | Invoice builder: same surfaces; removals feed `pendingRollbacks`; `qbSignature` gains `notes` if question 10 is yes (+ test). | **Opus 5** | M | A2, A3 (reuse the modal component) |
+| A4 | Invoice builder: same surfaces; removals feed `pendingRollbacks`; sent-invoice banner offers Recall (open question A, option 1); `qbSignature` gains `notes` with the either-fingerprint compatibility shim (open question B) + tests. | **Opus 5** | M | A2, A3 (reuse the modal component) |
 | A5 | List chip on quote/invoice rows and the project card; schedule-save toast; send-dialog "already linked → sync review" + "Append anyway". Copy `LTPRentalDriftChip`, `LTP_toastRentalDrift`, `sendDlg`. | **Opus 5** | S | A2 |
 | A6 | Invoice-generation heads-up in the quote's send picker. | **Opus 5** | XS | A4 |
-| B1 | Cancellation record + engine: `LTP_cancelReference`, `LTP_cancelPosition`, `LTP_setCancellationPay`, `LTP_restorePosition`, flat-rate variants; strip-on-reassign fix (client + `enforce_pay_snapshot`); `crew_integrity` rank/assigned rules; **`tests/test_cancelled_labor.js`** + `tests/test_crew_integrity.py` cases. | **Fable** | M | 0 |
+| B1 | Cancellation record + engine: `LTP_cancelReference`, `LTP_cancelPosition`, `LTP_setCancellationPay`, `LTP_restorePosition`, flat-rate variants; strip-on-reassign fix; the two non-admin allowances in `enforce_pay_snapshot` / `_fixed` (decision 11) with tests that a non-admin cannot inflate `work.pay.total` past `cancel.ref.pay` or write any other `work`; `crew_integrity` rank/assigned rules; **`tests/test_cancelled_labor.js`** + `tests/test_crew_integrity.py` cases. | **Fable** | M | 0 |
 | B2 | Payout integration: `derive_payout_drafts`, `LTP_payoutRows`, `_rollup_state`, `qbo_payouts` tier label, fixture regeneration, parity suites, paid-day-guard test for a cancelled paid day, `crew_portal.py` earnings. | **Fable** | M | B1 |
 | B3 | Generator: exclude cancelled from pools, emit `cancel:` lines, `_RATE_TYPE_ORDER`; the `"cancel"` rate-type trail (`doc_units.py`, both builders' `RATE_TYPES`/option/`clientRateNote`, PDF, public view, `qbo_sync`); `test_doc_projects.js`, `test_pdf_qty_label.py`, `test_public_qty_label.py`. Copy the `"flat"` trail from migration `a6b7c8d9e0f1`'s commit. | **Opus 5** | M | B1, A1 |
-| B4 | Cancel dialog + Assignments "Cancelled" group + Payouts row actions + schedule-builder/calendar rendering and totals + crew landing badge + `LTP_detectCrewConflicts`. Copy the sign-off/adjust dialogs at `labor.js:3365-3424`. | **Opus 5** | L | B1 |
-| B5 | Crew portal "Cancelled" group + label; `crewCancelled` template `{{cancellationPay}}` token (question 7); Settings defaults (question 3) in `data/settings.js` + `modules/settings.js`. | **Opus 5** | S | B1 |
-| B6 | Phase 2: "Cancel this shift…" bulk action; optional "Cancel remaining project labor" (question 9). | **Opus 5** | S | B4 |
+| B4 | Cancel dialog (open to every producer; `guardPaidDay` keeps the paid-day check) + Assignments "Cancelled" group + Payouts row actions + schedule-builder/calendar rendering and totals + crew landing badge + `LTP_detectCrewConflicts`. Copy the sign-off/adjust dialogs at `labor.js:3365-3424`. | **Opus 5** | L | B1 |
+| B5 | Crew portal "Cancelled" group + label; new `crewCancelledWithPay` template in `data/settings.js` with `{{shifts}}` + `{{cancellationPay}}` and its byte-identical `_NOTIFY_FALLBACKS` entry in `backend/routes/crew.py`; tray routing (pay > 0 → new template, else `crewWithdrawn`); Settings `cancellationDefaultBillPct` / `cancellationDefaultPayPct` = 50 in `data/settings.js` + `modules/settings.js`; `tests/test_crew_portal.py` + template round-trip test. | **Opus 5** | S | B1 |
+| B6 | "Cancel this shift…" on a schedule day: one share pair applied to every non-cancelled position, each still individually editable. No project-wide action (decision 14). | **Opus 5** | S | B4 |
 | C | End-to-end pass with the `verify` skill (Playwright): schedule → quote → change schedule → review → apply/keep → accept → invoice → cancel a shift → sync invoice → payout preview shows the cancellation; docs updated; `docs/LABOR_SYNC_PLAN.md` build-order ticks. | **Fable** | M | all |
 
 Suggested sequencing: A1 → A2 and B1 in parallel (Fable), then A3/A4/A5 and
@@ -593,6 +654,18 @@ B3/B4/B5 in parallel (Opus, two branches), B2 (Fable) alongside, then C.
 - **Performance of list chips.** One generator run per project per render,
   memoised on `(project.updatedAt, services, clientRates)`; schedules are tens
   of rows.
+- **Un-gated cancellation pay (decision 11).** Today the server reverts any
+  non-admin change to a position's frozen `work`, because that number is
+  billed verbatim on a vendor bill. Opening cancellation to every producer
+  means a non-admin can put a payable amount on a day without an admin's
+  hand. Three things keep that bounded: the server accepts a non-admin `work`
+  only for a cancellation and only up to the shift's full cost (`cancel.ref.
+  pay`), never for a sign-off, lock or adjustment; the vendor-bill export and
+  its per-person preview remain admin-only, so an admin sees every cancelled
+  day and its amount before any bill is pushed; and the schedule activity
+  entry names who cancelled and the shares chosen. The reference itself is
+  client-computed (the labor engine has no Python port), so the cap is a
+  ceiling on the share, not a server recomputation of the rate.
 
 ## Assumptions (flag if wrong)
 
@@ -605,4 +678,8 @@ B3/B4/B5 in parallel (Opus, two branches), B2 (Fable) alongside, then C.
   pair to each position and each stays individually editable.
 - `deliveredQty` on a quote line is left alone by sync; the producer marks
   delivery as today.
-- Non-admins may cancel without money; only admins set bill/pay shares.
+- Every producer may cancel with bill/pay shares (decision 11); the vendor-bill
+  export itself stays admin-only, as today.
+- The no-pay cancellation email really is meant to be the existing "Request
+  Withdrawn" template rather than the existing "Position Cancellation" one
+  (decision 12 note).
