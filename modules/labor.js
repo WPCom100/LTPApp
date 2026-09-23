@@ -2041,7 +2041,7 @@
                   (pr.schedule || []).forEach(function(sc) {
                     if (sc.date !== pos.date) return;
                     (sc.positions || []).forEach(function(ps) {
-                      if (ps.crewId === cid && ps.id !== pos.posId) {
+                      if (ps.crewId === cid && ps.id !== pos.posId && ps.status !== "cancelled") {
                         var svc = ps.serviceId ? (services || []).find(function(sv) { return sv.id === ps.serviceId; }) : null;
                         otherBookings.push("Already assigned as " + (svc ? svc.role + " — " + svc.description : ps.role || "?") + " on " + sc.title + conflictTimes(sc));
                       }
@@ -2054,7 +2054,7 @@
                   (pr.schedule || []).forEach(function(sc) {
                     if (sc.date !== pos.date) return;
                     (sc.positions || []).forEach(function(ps) {
-                      if (ps.crewId === cid && ps.status !== "declined") {
+                      if (ps.crewId === cid && ps.status !== "declined" && ps.status !== "cancelled") {
                         otherBookings.push(pr.name + " (" + (sc.title || "Untitled") + ")" + conflictTimes(sc));
                       }
                     });

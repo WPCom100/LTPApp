@@ -472,6 +472,11 @@ const PLUS_DAY = project(S0.concat([day("d3", "2026-08-12", [pos("p4", 1)])])); 
      [["cancel:p3", ["unitPrice"], 600, "Cancelled Aug 11 · 100% charged"]]);
   eq("CX7 applying it rewrites the note the client reads", line({ sections: APPLY({ sections: a.sections }, d2, ["cancel:p3"], gen, LATER).sections }, "cancel:p3").notes,
      "Cancelled Aug 11 · 100% charged");
+  // On a sent invoice the cancellation rides to the new draft as its own
+  // line, note and all — not renamed after the day it names.
+  const di = DIFF(Object.assign({}, doc, { id: 9, status: "sent" }), d, ["cancel:p3"], gen, LATER, { id: 10, fmtDate: fmt, sentRef: "INV-9" });
+  eq("CX8 a difference invoice keeps the cancellation note", di.invoice.sections[0].items.map((i) => [i.rateType, i.qty, i.unitPrice, i.notes]),
+     [["cancel", 1, 300, "Cancelled Aug 11 · 50% charged"]]);
 }
 
 console.log("labor-sync suite — PASS: " + pass + "   FAIL: " + fail);

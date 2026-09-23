@@ -477,6 +477,42 @@ def test_cancel_allowance_reference_is_fixed():
     _check("an edit within the original ceiling → kept", ci.enforce_pay_snapshot(stored, incoming) == 0)
 
 
+def test_cancel_allowance_refuses_nan():
+    print("test_cancel_allowance_refuses_nan")
+    stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    incoming = _sched([_cancelled("p1", pay_total=float("nan"))])
+    _check("a NaN share is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1 and "work" not in incoming[0]["positions"][0])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=float("nan"))])
+    _check("a NaN reference is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+    incoming = _sched([_cancelled("p1", pay_total=float("inf"))])
+    _check("an infinite share is stripped", ci.enforce_pay_snapshot(stored, incoming) == 1)
+
+
+def test_cancel_reference_pinned_in_a_work_unchanged_write():
+    print("test_cancel_reference_pinned_in_a_work_unchanged_write")
+    stored = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=900.0)])   # frozen pay echoed, reference raised
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    _check("the reference is pinned to the stored one (no money moved, nothing counted)",
+           fixed == 0 and incoming[0]["positions"][0]["cancel"]["ref"]["pay"] == 300.0, str(incoming[0]["positions"][0]["cancel"]))
+    incoming = _sched([_cancelled("p1", pay_total=450.0, ref_pay=900.0)])   # the raise the moved reference was for
+    _check("the raise on top of it is reverted to the stored freeze",
+           ci.enforce_pay_snapshot(stored, incoming) == 1 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 150.0
+           and incoming[0]["positions"][0]["cancel"]["ref"]["pay"] == 300.0)
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    _check("an unchanged write is a no-op", ci.enforce_pay_snapshot(stored, incoming) == 0)
+
+
+def test_frozen_snapshots_never_follow_a_crew_change():
+    print("test_frozen_snapshots_never_follow_a_crew_change")
+    stored = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0)])
+    incoming = _sched([_cancelled("p1", pay_total=150.0, ref_pay=300.0, crew=6)])   # same frozen work, new person
+    fixed = ci.enforce_pay_snapshot(stored, incoming)
+    pos = incoming[0]["positions"][0]
+    _check("work and cancel are dropped when the slot changes hands",
+           fixed >= 1 and "work" not in pos and "cancel" not in pos and pos["crewId"] == 6, str(pos))
+
+
 def test_snapshot_drops_on_reassign_reopen_restore():
     print("test_snapshot_drops_on_reassign_reopen_restore")
     stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed",

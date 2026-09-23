@@ -322,7 +322,11 @@
     }
     function openCancel(ids, scope, label) {
       var bk = window.LTP_projectBooking({ schedule: schedule }, ids, svcs, crewMins);
-      if (bk) setCancelDlg({ booking: bk, scope: scope, label: label });
+      if (!bk) return;
+      // A signed-off day (LTP_projectBooking.signedDay): nothing moves until
+      // the sign-off is undone in Payouts.
+      if (bk.signedDay && !bk.cancelled) { setCancelDlg({ blocked: true, label: label }); return; }
+      setCancelDlg({ booking: bk, scope: scope, label: label });
     }
     function applyCancel(action, shares, reason) {
       var d = cancelDlg;
@@ -980,7 +984,10 @@
           );
         });
       }(),
-      cancelDlg && h(window.LTPCancelDialog, { key: cancelDlg.booking.ids.join(","),
+      cancelDlg && cancelDlg.blocked && h(window.LTPModal, { title: "Day signed off", onClose: function() { setCancelDlg(null); } },
+        h("p", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6, marginBottom: 16 } }, cancelDlg.label + " \u2014 undo the sign-off in Payouts first."),
+        h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h(window.Btn, { variant: "ghost", onClick: function() { setCancelDlg(null); } }, "Back"))),
+      cancelDlg && !cancelDlg.blocked && h(window.LTPCancelDialog, { key: cancelDlg.booking.ids.join(","),
         title: cancelDlg.booking.cancelled ? "Cancellation" : cancelDlg.scope === "day" ? "Cancel day" : "Cancel shift",
         subtitle: cancelDlg.label,
         refBill: cancelDlg.booking.ref.bill, refPay: cancelDlg.booking.ref.pay,
@@ -989,7 +996,7 @@
         reason: cancelDlg.booking.reason, edit: cancelDlg.booking.cancelled, notify: null,
         confirmLabel: cancelDlg.scope === "day" ? "Cancel day" : "Cancel shift",
         onClose: function() { setCancelDlg(null); },
-        onRestore: cancelDlg.booking.cancelled ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
+        onRestore: cancelDlg.booking.cancelled && !cancelDlg.booking.signedDay ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
         onConfirm: function(shares, reason) { applyCancel(cancelDlg.booking.cancelled ? "edit" : "cancel", shares, reason); } }),
 
       // Assign crew to all days modal

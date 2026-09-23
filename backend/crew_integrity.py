@@ -65,6 +65,8 @@ genuine change — a removed shift OR a position reassigned to a different crew
 member (the request belongs to the person who was asked; reassigning the shift
 away releases it). Normal editing can't false-positive.
 """
+import math
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -141,6 +143,11 @@ def _cancel_write_allowed(pos: dict, prev_crew, prev_cancel) -> bool:
         if abs(_num(ref.get("bill")) - _num(prev_ref.get("bill"))) > _CANCEL_TOL:
             return False
     total = _num(wp.get("total"))
+    # NaN compares False against every bound below, so it has to be refused
+    # outright: a stored NaN would crash the payout derivation for the period.
+    for v in (total, _num(pay.get("total")), _num(ref.get("pay")), _num(ref.get("bill"))):
+        if not math.isfinite(v):
+            return False
     if total < 0 or abs(total - _num(pay.get("total"))) > _CANCEL_TOL:
         return False
     if total > _num(ref.get("pay")) + _CANCEL_TOL:
@@ -437,6 +444,23 @@ def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
                 continue
             prev = stored.get(pos.get("id"))
             prev_work, prev_adj, prev_crew, prev_status, prev_cancel = prev if prev else (None, None, None, None, None)
+            # The slot changed hands: nothing frozen follows the previous holder
+            # to the next person. The app strips these itself (LTP_reassignPatch);
+            # this is the server saying so to a client that did not.
+            if prev is not None and prev_crew is not None and pos.get("crewId") != prev_crew:
+                dropped = [k for k in ("work", "adj", "cancel") if pos.pop(k, None) is not None]
+                if dropped:
+                    fixed += 1
+                continue
+            # A cancellation's reference is fixed once written: a later write
+            # keeps the stored one, so the ceiling _cancel_write_allowed holds a
+            # share to cannot be moved in one write and reached in the next.
+            # Not counted: a pin alone moves no money; a raise on top of it is
+            # caught, and counted, by the work check below.
+            cancel_now = pos.get("cancel")
+            if (isinstance(cancel_now, dict) and isinstance(prev_cancel, dict)
+                    and isinstance(prev_cancel.get("ref"), dict) and cancel_now.get("ref") != prev_cancel["ref"]):
+                cancel_now["ref"] = prev_cancel["ref"]
             if pos.get("work") != prev_work:
                 dropping = pos.get("work") is None
                 allowed = prev is not None and (

@@ -378,6 +378,15 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   const snaps = window.LTP_cancelSnapshots(w.project, ["l1", "s1"], SVCS);
   eq("PB11 the notice carries each shift's share", snaps.map((sn) => [sn.positionId, sn.cancellationPay]), [["l1", 75], ["s1", 75]]);
   eq("PB12 a flat notice too", window.LTP_cancelSnapshots(fw.project, ["f1"], SVCS).map((sn) => [sn.flat, sn.cancellationPay]), [[true, 200]]);
+  // A signed-off day: cancelling or restoring one of the person's shifts
+  // would leave the day's frozen pay wrong, so the booking says so.
+  const signed = Object.assign({}, proj, { schedule: window.LTP_signOffDay(proj.schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
+  eq("PB13 one shift of a signed day is blocked", window.LTP_projectBooking(signed, ["s1"], SVCS, {}).signedDay, true);
+  eq("PB14 the whole booking is not (every frozen figure is replaced)", window.LTP_projectBooking(signed, ["l1", "s1"], SVCS, {}).signedDay, false);
+  eq("PB15 an unsigned day is not", window.LTP_projectBooking(proj, ["s1"], SVCS, {}).signedDay, false);
+  eq("PB16 nor a flat-rate position", window.LTP_projectBooking(proj, ["f1"], SVCS, {}).signedDay, false);
+  const cxSigned = Object.assign({}, w.project, { schedule: window.LTP_signOffDay(w.project.schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
+  eq("PB17 restoring under a signed sibling is blocked too", [window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).cancelled, window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).signedDay], [true, false]);
 }
 
 console.log("cancelled-labor suite — PASS: " + pass + "   FAIL: " + fail);

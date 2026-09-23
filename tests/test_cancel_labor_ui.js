@@ -182,6 +182,26 @@ const posOf = (proj, id) => { let hit = null; proj.schedule.forEach((s) => s.pos
   eq("RF1 logged", pr.scheduleActivity[pr.scheduleActivity.length - 1].changes[0], { cat: "August 10th, 2026 — A1 Refilled", detail: "1 open position added" });
 }
 
+// ── A signed-off day blocks cancel and restore ──────────────────────────────
+{
+  const signed = Object.assign({}, PROJ, { schedule: window.LTP_signOffDay(PROJ.schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
+  const st = store([signed]);
+  const tree = mount(window.LTPCancelFlow)({ project: signed, positionIds: ["s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: st.setProjects, onClose: function () {} });
+  eq("G0 one shift of a signed day gets the block, not the dialog", [tree.type === window.LTPModal, tree.props.title, st.writes], [true, "Day signed off", 0]);
+  const whole = mount(window.LTPCancelFlow)({ project: signed, positionIds: ["l1", "s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: st.setProjects, onClose: function () {} });
+  eq("G1 the whole booking still cancels", whole.type === window.LTPCancelDialog, true);
+  whole.props.onConfirm({ bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, "", false);
+  const pr = st.projects[0];
+  eq("G2 both frozen figures replaced by the shares", [posOf(pr, "l1").work.state, posOf(pr, "s1").work.state], ["cancelled", "cancelled"]);
+  // A cancellation riding on a signed day can be re-shared, not restored.
+  const one = store([PROJ]);
+  mount(window.LTPCancelFlow)({ project: PROJ, positionIds: ["s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: one.setProjects, onClose: function () {} })
+    .props.onConfirm({ bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, "", false);
+  const later = Object.assign({}, one.projects[0], { schedule: window.LTP_signOffDay(one.projects[0].schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
+  const edit = mount(window.LTPCancelFlow)({ project: later, positionIds: ["s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: one.setProjects, onClose: function () {} });
+  eq("G3 edit stays, Restore goes", [edit.type === window.LTPCancelDialog, edit.props.edit, edit.props.onRestore], [true, true, null]);
+}
+
 console.log("cancel-labor UI suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");

@@ -571,7 +571,9 @@ window.LTP_laborDifferenceInvoice = function(sent, drift, selectedKeys, genId, n
     var added = (c.expected.dates || []).filter(function(d) { return known.indexOf(d) === -1; });
     return { id: gen("item"), type: "service", serviceId: c.serviceId, name: c.name, rateType: c.rateType,
              qty: dq, unitPrice: c.expected.unitPrice, adjustedPrice: null, cost: c.expected.cost,
-             notes: added.length ? added.map(fmt).join(", ") : c.expected.notes,
+             // A cancellation line keeps the note the client reads ("Cancelled
+             // Oct 5 · 50% charged"); every other line names the days added.
+             notes: (c.rateType === "cancel" || !added.length) ? c.expected.notes : added.map(fmt).join(", "),
              deliveredQty: 0, invoicedQty: 0,
              laborSync: { projectId: pid, key: c.key, at: now, snap: null, basis: { invoiceId: sent.id } } };
   });

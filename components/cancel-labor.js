@@ -158,6 +158,13 @@
     if (!project || !booking) return null;
     var nm = names(project, booking, p.services, p.contacts);
     var fmtDay = booking.date ? window.LTP_formatDate(booking.date) : "";
+    // The day is signed off (LTP_projectBooking.signedDay): its frozen pay
+    // covers the shifts here, so nothing moves until the sign-off is undone.
+    if (booking.signedDay && !booking.cancelled) {
+      return h(window.LTPModal, { title: "Day signed off", onClose: p.onClose,
+        footer: h("div", { style: { display: "flex", justifyContent: "flex-end" } }, h(window.Btn, { variant: "ghost", onClick: p.onClose }, "Back")) },
+        h("div", { style: { fontSize: "12px", color: B.textSec, lineHeight: 1.6 } }, "Undo the sign-off in Payouts first."));
+    }
 
     function commit(action, shares, reason, notify) {
       var now = new Date();
@@ -217,7 +224,7 @@
       confirmLabel: booking.flat ? "Cancel position" : "Cancel shift",
       onClose: p.onClose,
       onReopen: !booking.cancelled && p.onReopen ? function() { p.onClose(); p.onReopen(); } : null,
-      onRestore: booking.cancelled ? function() { commit("restore", null, booking.reason, false); } : null,
+      onRestore: booking.cancelled && !booking.signedDay ? function() { commit("restore", null, booking.reason, false); } : null,
       onConfirm: function(shares, reason, notify) { commit(booking.cancelled ? "edit" : "cancel", shares, reason, notify); },
     });
   };

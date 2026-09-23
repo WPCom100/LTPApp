@@ -1156,7 +1156,7 @@ window.LTP_projectBooking = function(project, positionIds, services, crewMins) {
     var fref = fc ? fc.ref : { bill: fp.bill, pay: fp.fullMargin ? 0 : fp.fee };
     var fpaid = _cancelPaysCrew(fp);
     if (!fc && !fpaid) fref = { bill: fref.bill, pay: 0 };
-    return { flat: true, ids: [fp.id], crewId: fp.crewId != null ? fp.crewId : null, status: fp.status, paysCrew: fpaid,
+    return { flat: true, ids: [fp.id], crewId: fp.crewId != null ? fp.crewId : null, status: fp.status, paysCrew: fpaid, signedDay: false,
              fullMargin: !!fp.fullMargin, cancelled: !!fc, ref: { bill: _cancelR2(fref.bill), pay: _cancelR2(fref.pay) },
              shares: fc ? { bill: _shareOf(fc.bill), pay: _shareOf(fc.pay) } : null,
              billTotal: fc ? _cancelR2(fc.bill && fc.bill.total) : 0, payTotal: fc ? _cancelR2(fc.pay && fc.pay.total) : 0,
@@ -1169,6 +1169,17 @@ window.LTP_projectBooking = function(project, positionIds, services, crewMins) {
   var out = { flat: false, crewId: lead.crewId != null ? lead.crewId : null, status: lead.status,
               date: (live[0] || picks[0]).shift.date || "",
               paysCrew: (live.length ? live : picks).some(function(pk) { return _cancelPaysCrew(pk.pos); }) };
+  // A day already signed off: the person's OTHER confirmed positions on it
+  // carry the day's frozen pay, which covers the shifts named here too.
+  // Cancelling or restoring one of them would leave that figure describing a
+  // day that no longer exists (paid twice, or not at all), so the callers
+  // refuse until the sign-off is undone. Cancelling the whole booking replaces
+  // every frozen figure, which is why only positions OUTSIDE the ids count.
+  out.signedDay = out.crewId != null && !!out.date && (project.schedule || []).some(function(s) {
+    return s && s.date === out.date && (s.positions || []).some(function(p) {
+      return p && !want[p.id] && p.crewId === out.crewId && p.status === "confirmed" && !!p.work;
+    });
+  });
   function margin(pks) { return pks.every(function(pk) { return !!pk.pos.fullMargin; }); }
   if (!live.length) {
     var bc = window.LTP_bookingCancellation(project.schedule, positionIds);
