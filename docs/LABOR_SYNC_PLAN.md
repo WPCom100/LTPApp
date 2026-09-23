@@ -654,7 +654,7 @@ Opus PR against this document before merge.
 | B4 | ✅ `0d68837` — **`components/cancel-labor.js`**: `LTPCancelDialog` (per side % / $ / none, pay held to its reference, totals line, reason, "Add to notify tray", Restore when editing, "Reopen slot instead" from Assignments), `LTPCancelFlow` (the Labor tab's write + activity + notice), `LTP_refillBooking`, `LTP_usePaidDayConflict`. Booking engine in `domain-crew.js`: `LTP_bookingCancelReference`, `LTP_cancelBooking`, `LTP_setBookingCancellationShares`, `LTP_restoreBooking`, `LTP_refillPosition` / `LTP_refillFixedPosition`, `LTP_projectBooking` / `LTP_projectBookingWrite`, `LTP_cancelSnapshots`, `LTP_cancelActivityDetail`, `LTP_cancelChange`. Surfaces: Assignments "Cancelled" group (Edit… / Refill); Payouts ("Cancel…" on unsigned rows, "Cancellation…" on rows carrying one, `guardPaidDay`, the cancel-only-day crash fixed); schedule editor (per position, cancelled rows folded per shift); flat-rate panel; weekly schedule struck through; calendar counts; crew landing badge; conflicts ignore cancelled. **`tests/test_cancelled_labor.js`** 77 → 143, **`tests/test_cancel_labor_ui.js`** 28; Playwright over Assignments, Payouts and the builder, desktop and 390px. | **Opus 5** | L | B1 |
 | B5 | ✅ `ed5eb94` — `crewCancelledWithPay` ("Position Cancellation with Pay") in `data/settings.js` with its byte-identical `_NOTIFY_FALLBACKS` entry; each notice shift carries `cancellationPay`, which the route sums into `{{cancellationPay}}`; the tray label; Settings "Cancellation Defaults" (50 / 50); crew portal: a `cancelled` list (Schedule → "Cancelled (n)"), and on the Pay tab a "Cancellation" day or "+$X cancellation". `test_crew_portal.py` +1 (the exact pay-day dict gains `cancelTotal`), `test_crew_requests.py` +2 (the pay notice sums; every notify fallback matches `settings.js`). | **Opus 5** | S | B1 |
 | B6 | ✅ `0d68837` — "Cancel day…" on each dated day of the schedule editor, and "Cancel…" on a shift when its day has more than one: one share pair over every position still on it, priced per person, each still editable on its own. No project-wide action (decision 14). | **Opus 5** | S | B4 |
-| C | End-to-end pass with the `verify` skill (Playwright): schedule → quote → change schedule → review → apply/keep → accept → invoice → cancel a shift → sync invoice → payout preview shows the cancellation; docs updated; `docs/LABOR_SYNC_PLAN.md` build-order ticks. | **Fable** | M | all |
+| C | ✅ `e17ab82`, `b654740` — End-to-end pass in a real browser (Playwright; the script is the session's scratch `e2e_chain.js`, re-runnable from a fresh DB): schedule → Send to Quote → schedule change → banner → Review → Apply and Keep → Mark Accepted → Send to Invoice → cancel a shift (Assignments, 50/50) → invoice banner → Apply → cancellation line on the PDF and public view → invoice sent → a second cancellation → difference banner → New invoice with changes → Payouts rows + `derive_payout_drafts` / `build_bill_lines` → crew portal. 50 assertions, 0 page errors. Two "sent" transitions went through the API (Send needs Gmail); the QuickBooks preview needs a pay-period anchor and a connection, so the server side was checked through `derive_payout_drafts` directly. The Fable review of the Opus steps (three lenses, two adversarial verifiers per finding) found what the next section records; `test_money_totals.js` and `test_doc_changes.js` gained the cancel-line cases this Verification section names. | **Fable** | M | all |
 
 Suggested sequencing: A1 → A2 and B1 in parallel (Fable), then A3/A4/A5 and
 B3/B4/B5 in parallel (Opus, two branches), B2 (Fable) alongside, then C.
@@ -858,4 +858,34 @@ differently from it.
   off". Pay-day payloads carry `cancelTotal`.
 - **Found in passing.** The Payouts tab crashed on any cancel-only day
   (`stateChips` had no `cancelled` entry since B2). Fixed in B4.
-- **Left for C:** the end-to-end pass.
+- **Left for C:** nothing; see the next section.
+
+## What step C found (fixed in `b654740`)
+
+- **Cancelling one shift of a signed-off day paid it twice.** A sign-off
+  writes the whole day's frozen pay on every one of the person's confirmed
+  positions; cancelling just one left the others' figure in place, so the
+  payout carried the cancelled shift inside that figure and again as the
+  share (and a Restore under a signed sibling left the restored shift
+  unpaid). `LTP_projectBooking.signedDay` now says so, and the cancel flow
+  and the schedule editor refuse to cancel one shift of such a day, or to
+  restore under one, until the sign-off is undone in Payouts — the rule the
+  Payouts tab already applied to its own rows. Cancelling the whole booking
+  still goes through, since every frozen figure is replaced.
+- **NaN shares** passed every bound in `_cancel_write_allowed` and would
+  have crashed the payout derivation for the period. Refused now.
+- **A crafted client** could move frozen pay to another person (crewId
+  changed, `work` echoed) or move `cancel.ref` in one write and raise the
+  share in the next. The server now drops work/adj/cancel when a slot
+  changes hands and pins the reference once written. Both were unreachable
+  through the app's own flows; decision 11's stated risk (a client-computed
+  first reference) stands as written.
+- **The Assignments crew picker** still counted a cancelled position as a
+  booking in its "already booked" confirm; it ignores them now, as
+  `LTP_detectCrewConflicts` and the builder did.
+- **A difference invoice's cancellation line** was renamed after the day
+  it names; it keeps its "Cancelled Oct 5 · 50% charged" note.
+- **Considered and left as is:** cancelling does not re-lock the survivors'
+  `pay` for that day (the drift chip and Re-lock are the model; no money
+  moves until a sign-off), and a first cancellation's reference stays
+  client-computed (decision 11).
