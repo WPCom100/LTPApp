@@ -419,6 +419,7 @@ var SAME_ORIGIN_PRECACHE = [
   '/components/domain-email.js',
   '/components/domain-docs.js',
   '/components/domain-qbo.js',
+  '/components/domain-labor-sync.js',
   '/app.js',
   '/mount.js',
   // The brand masthead — the sidebar header and the sign-in screen both wear
