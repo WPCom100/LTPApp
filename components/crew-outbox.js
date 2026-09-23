@@ -8,6 +8,8 @@
 //   crewWithdrawn   — a pending request was withdrawn
 //   crewNotSelected — an accepted crew member was released
 //   crewCancelled   — a confirmed booking was cancelled
+//   crewCancelledWithPay — cancelled, with a share still paid: each shift
+//                     carries its `cancellationPay`, which the email sums
 // Shifts are snapshotted at removal time, so a notice still renders after its
 // day/project is deleted. The producer sends them on demand — one combined
 // email per group — or declines. The tray persists across reload (localStorage)
@@ -21,7 +23,7 @@
   var LS_KEY = "ltp_crew_outbox";
 
   // template → short human label for the tray row + summary toast.
-  var TYPE_LABEL = { crewWithdrawn: "withdrawn", crewNotSelected: "released", crewCancelled: "cancelled", crewScheduleChanged: "schedule change" };
+  var TYPE_LABEL = { crewWithdrawn: "withdrawn", crewNotSelected: "released", crewCancelled: "cancelled", crewCancelledWithPay: "cancelled, paid", crewScheduleChanged: "schedule change" };
 
   function loadEntries() {
     try {

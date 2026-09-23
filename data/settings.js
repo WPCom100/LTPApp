@@ -91,6 +91,13 @@ window.LTP_DATA_SETTINGS = {
   payPeriodLengthDays: 14,
   payPeriodPayDayOffsetDays: 5,
 
+  // Cancelled labor — what the cancel dialog pre-fills, as percentages of the
+  // shift's full rate and cost (components/domain-crew.js LTP_cancelDefaults;
+  // docs/LABOR_SYNC_PLAN.md, decision 8). Each cancellation can still be set
+  // to any share, an amount or none.
+  cancellationDefaultBillPct: 50,
+  cancellationDefaultPayPct: 50,
+
   // Email — company-level outbound config (admin-edited).
   emailFrom: "",
   emailReplyTo: "",
@@ -200,6 +207,17 @@ window.LTP_DATA_SETTINGS = {
       subject: "Schedule Update: {{projectName}} — position cancelled",
       body: "Hi {{crewName}},\n\nWe're writing to let you know that your confirmed position on {{projectName}} has been cancelled. The following shifts are affected:\n\n{{shifts}}\n\nWe apologize for any inconvenience and hope to work with you on future projects.\n\n{{signature}}"
     },
+    crewCancelledWithPay: {
+      label: "Position Cancellation with Pay",
+      cc: "",
+      // Sent in place of crewCancelled when a cancelled booking still pays the
+      // crew member a share (docs/LABOR_SYNC_PLAN.md, decision 12). The notify
+      // tray picks it when the share is above zero. {{cancellationPay}} is the
+      // share, summed over the shifts listed. The backend fallback in
+      // routes/crew.py::_NOTIFY_FALLBACKS must match this body byte-for-byte.
+      subject: "Schedule Update: {{projectName}} — position cancelled",
+      body: "Hi {{crewName}},\n\nWe're writing to let you know that your confirmed position on {{projectName}} has been cancelled. The following shifts are affected:\n\n{{shifts}}\n\nYou'll still be paid {{cancellationPay}} for the cancelled shifts.\n\nWe apologize for any inconvenience and hope to work with you on future projects.\n\n{{signature}}"
+    },
     crewNotSelected: {
       label: "Not Selected for Position",
       cc: "",
@@ -303,6 +321,7 @@ window.LTP_TEMPLATE_VARIABLES = {
   crewRequest:     ["companyName", "crewName", "projectName", "location", "header", "shifts", "signature"],
   crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "addToCalendar", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
+  crewCancelledWithPay: ["companyName", "crewName", "projectName", "shifts", "cancellationPay", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewWithdrawn:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewScheduleChanged: ["companyName", "crewName", "projectName", "shifts", "signature"],
