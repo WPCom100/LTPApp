@@ -83,6 +83,8 @@ P_FLOOR     = 7026  # stale PUT downgrade blocked; deliberate release passes
 P_SILENT    = 7027  # direct book (silent) → confirmed, no email
 P_SILENT2   = 7028  # direct book for a crew member with NO email on file
 P_SILENT3   = 7029  # a direct book can't be resent or withdrawn
+P_PAIDOUT   = 7030  # list carries paidDates: this crew member's paid days here
+P_PAIDOUT2  = 7031  # …kept apart from the same person's paid days elsewhere
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -248,6 +250,17 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_SILENT3, name="Gala Silent Locked", schedule=[
                     _shift("ssl", "Show", "2026-08-27", [_pos("psl_a", C1, service=S1)]),
+                ]))
+                # Paid-out reading (Labor → Crew Requests): C1 on two days and
+                # a colleague on a third, plus a second project C1 was also
+                # paid on, so the ledger's days can't bleed across the two.
+                db.add(models.Project(id=P_PAIDOUT, name="Gala Paid", schedule=[
+                    _shift("spo1", "Day 1", "2026-09-02", [_pos("ppo_a", C1, service=S1)]),
+                    _shift("spo2", "Day 2", "2026-09-03", [_pos("ppo_b", C1, service=S1)]),
+                    _shift("spo3", "Day 3", "2026-09-04", [_pos("ppo_x", C2, service=S1)]),
+                ]))
+                db.add(models.Project(id=P_PAIDOUT2, name="Gala Paid Too", schedule=[
+                    _shift("spp", "Show", "2026-09-05", [_pos("ppp_a", C1, service=S1)]),
                 ]))
                 await db.commit()
 
@@ -624,12 +637,61 @@ def test_list_crew_requests_shape_and_filter():
     assert isinstance(allreqs, list)
     mine = [r for r in allreqs if r["id"] == created["id"]]
     assert len(mine) == 1
-    for k in ("id", "token", "projectId", "contactId", "positionIds", "status", "silent", "sentAt"):
+    for k in ("id", "token", "projectId", "contactId", "positionIds", "status", "silent", "sentAt", "paidDates"):
         assert k in mine[0], k
     assert mine[0]["silent"] is False        # a real send is never a direct book
+    assert mine[0]["paidDates"] == []        # nothing on this project has been paid
     # ?projectId= narrows to that project only.
     filtered = client.get("/api/crew-requests?projectId=" + str(P_LIST), cookies={"ltp_session": tok}).json()
     assert filtered and all(r["projectId"] == P_LIST for r in filtered)
+
+
+def _plant_bill(contact_id, period, lines, paid=True, zero=False):
+    """Write a payout bill and its ledger lines straight into the DB, the way
+    the QuickBooks export leaves them. `lines` is [(project_id, date)]. A paid
+    bill has qb_paid_at; `zero` is the $0 settlement (paid, no QuickBooks
+    bill id — backend/qbo_payouts.py::is_zero_settled)."""
+    from backend.database import async_session
+
+    async def run():
+        async with async_session() as db:
+            pb = models.PayoutBill(contact_id=contact_id, period_start=period[0], period_end=period[1],
+                                   doc_number=None if zero else "PAY-T-" + period[0][5:],
+                                   qb_bill_id=None if zero else "qb-" + str(contact_id) + "-" + period[0],
+                                   qb_paid_at=datetime.now(timezone.utc) if paid else None,
+                                   amount=0.0 if zero else 400.0)
+            db.add(pb)
+            await db.flush()
+            for project_id, date in lines:
+                db.add(models.PayoutBillLine(payout_bill_id=pb.id, contact_id=contact_id, project_id=project_id,
+                                             date=date, amount=0.0 if zero else 400.0))
+            await db.commit()
+
+    asyncio.run(run())
+
+
+def test_list_carries_each_crew_members_paid_days():
+    """paidDates on the list = the days the payout ledger shows PAID for the
+    request's crew member on its project. Labor → Crew Requests reads it to
+    drop a request once every shift in it has been paid out. A bill that was
+    exported but not yet paid doesn't count; a $0 settlement does; another
+    person's days and the same person's days on another project stay out."""
+    client, tok = _setup()
+    mine = _send(client, tok, P_PAIDOUT, C1, silent=True).json()
+    theirs = _send(client, tok, P_PAIDOUT, C2, silent=True).json()
+    elsewhere = _send(client, tok, P_PAIDOUT2, C1, silent=True).json()
+    _plant_bill(C1, ("2026-08-31", "2026-09-13"), [(P_PAIDOUT, "2026-09-02")])
+    _plant_bill(C1, ("2026-09-14", "2026-09-27"), [(P_PAIDOUT, "2026-09-03")], paid=False)
+    _plant_bill(C2, ("2026-08-31", "2026-09-13"), [(P_PAIDOUT, "2026-09-04")])
+    _plant_bill(C1, ("2026-09-28", "2026-10-11"), [(P_PAIDOUT2, "2026-09-05")], zero=True)
+
+    listed = {r["id"]: r for r in client.get("/api/crew-requests", cookies={"ltp_session": tok}).json()}
+    assert listed[mine["id"]]["paidDates"] == ["2026-09-02"]      # day 2 billed, not paid
+    assert listed[theirs["id"]]["paidDates"] == ["2026-09-04"]
+    assert listed[elsewhere["id"]]["paidDates"] == ["2026-09-05"]  # settled at $0
+    # The project filter carries the same field.
+    filtered = client.get(f"/api/crew-requests?projectId={P_PAIDOUT}", cookies={"ltp_session": tok}).json()
+    assert {r["contactId"]: r["paidDates"] for r in filtered} == {C1: ["2026-09-02"], C2: ["2026-09-04"]}
 
 
 # ── resend + notify (best-effort, mocked Gmail) ─────────────────────────────
@@ -1175,6 +1237,7 @@ def main() -> int:
         test_send_emails_crew_member_when_gmail_connected,
         test_send_without_gmail_still_creates_request_and_reports_reconnect,
         test_list_crew_requests_shape_and_filter,
+        test_list_carries_each_crew_members_paid_days,
         test_resend_pending_reemails_same_token,
         test_resend_non_pending_is_409,
         test_notify_sends_named_template_email,
