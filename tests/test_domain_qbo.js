@@ -191,6 +191,55 @@ const asyncChecks = Promise.resolve()
   ok("S5 without the state layer it still returns the copy", ADOPT("quotes", { id: 1, _rev: "x" }).id === 1);
 }
 
+// ── Income accounts: the pickers and a custom fee's own account ─────────────
+{
+  const ACCTS = [{ id: "79", name: "Travel Income" }, { id: "11", name: "Fee Income" }, { id: "5", name: "" }];
+  ["LTP_qboAccountName", "LTP_qboIncomeAccountOptions", "LTP_qboFeeDefaultLabel",
+   "LTP_qboFeeAccountPicker", "LTP_customFeeAccount"].forEach(function (k) {
+    ok("I0 " + k + " is exported", typeof window[k] === "function");
+  });
+  const NAME = window.LTP_qboAccountName, OPTS = window.LTP_qboIncomeAccountOptions;
+  eq("I1 a cached account reads as its name", NAME(ACCTS, "79"), "Travel Income");
+  eq("I2 a numeric id matches the cached string id", NAME(ACCTS, 79), "Travel Income");
+  eq("I3 an unknown id reads as itself, never as the default", NAME(ACCTS, "404"), "Account #404");
+  eq("I4 a nameless account reads as its id", NAME(ACCTS, "5"), "Account #5");
+  eq("I5 no cache at all still names the id", NAME(null, "79"), "Account #79");
+
+  eq("I6 options: the default first, then every account",
+     OPTS(ACCTS, "", "Default — Fee Income").map((o) => o.value), ["", "79", "11", "5"]);
+  eq("I7 the default's label is the caller's", OPTS(ACCTS, "", "Default — Fee Income")[0].label, "Default — Fee Income");
+  eq("I8 a saved id missing from the list stays selectable as itself",
+     OPTS(ACCTS, "404", "D").slice(-1)[0], { value: "404", label: "Account #404" });
+  eq("I9 a listed id is not repeated", OPTS(ACCTS, "79", "D").length, 4);
+  eq("I10 no label → the generic default", OPTS([], null)[0].label, "Default income account");
+
+  const DEF = window.LTP_qboFeeDefaultLabel;
+  eq("I11 the Fees mapping names the default", DEF({ qboFeeIncomeAccountId: "11", qboIncomeAccountId: "79" }, ACCTS), "Default — Fee Income");
+  eq("I12 …falling back to the workspace default", DEF({ qboIncomeAccountId: "79" }, ACCTS), "Default — Travel Income");
+  eq("I13 …and to a plain label with neither", DEF({}, ACCTS), "Default income account");
+
+  const PICK = window.LTP_qboFeeAccountPicker;
+  eq("I14 no picker while QuickBooks is disconnected", PICK({}, { connected: false, incomeAccounts: ACCTS }), null);
+  eq("I15 no picker before the accounts are loaded", PICK({}, { connected: true, incomeAccounts: [] }), null);
+  eq("I16 no picker without a status at all", PICK({}, null), null);
+  const p = PICK({ qboFeeIncomeAccountId: "11" }, { connected: true, incomeAccounts: ACCTS });
+  ok("I17 connected with accounts → the list and the default's label",
+     p && p.accounts === ACCTS && p.defaultLabel === "Default — Fee Income", JSON.stringify(p));
+
+  // Mirrors backend/qbo_sync.py::_custom_fee_account_id — what the builder
+  // shows has to be what the push does.
+  const CFA = window.LTP_customFeeAccount;
+  eq("I18 a custom fee's account", CFA({ type: "fee", feeId: null, qbIncomeAccountId: "79" }), "79");
+  eq("I19 trimmed", CFA({ type: "fee", qbIncomeAccountId: " 79 " }), "79");
+  eq("I20 a whole-number id reads as the same id", CFA({ type: "fee", qbIncomeAccountId: 79 }), "79");
+  eq("I21 none set", CFA({ type: "fee", feeId: null }), "");
+  eq("I22 a catalog fee's account belongs to its catalog row", CFA({ type: "fee", feeId: 5, qbIncomeAccountId: "79" }), "");
+  eq("I23 only fees carry one", CFA({ type: "service", qbIncomeAccountId: "79" }), "");
+  eq("I24 junk is ignored, as the push ignores it",
+     [true, 7.9, { id: "79" }, ["79"], null].map((v) => CFA({ type: "fee", qbIncomeAccountId: v })), ["", "", "", "", ""]);
+  eq("I25 no line → none", CFA(null), "");
+}
+
 asyncChecks.then(() => {
   console.log("domain-qbo suite — PASS: " + pass + "   FAIL: " + fail);
   if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }

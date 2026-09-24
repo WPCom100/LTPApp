@@ -6141,3 +6141,782 @@
                 <anon>
                   <button className="ltp-btn-primary" disabled=false onClick=fn style=11props>
                     New invoice (2)
+
+== QuotesBuilder (custom fee with its own QuickBooks account) ==
+<div style=4props>
+  <div style=10props>
+    <div style=5props>
+      <button onClick=fn style=9props>
+        ← Back
+      <div style=1props>
+        <div style=8props>
+          Q-2026-001
+        <div style=5props>
+          <span style=7props>
+            Spring Shoot
+          <div style=1props>
+            <anon>
+              <span style=10props>
+                draft
+    <div style=4props>
+      <button disabled=false onClick=fn style=12props>
+        Generate PDF
+      <button onClick=fn style=9props>
+        Send Quote
+      <anon>
+        <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+          Delete
+  <div style=7props>
+    <div style=6props>
+      <div style=3props>
+        <div style=5props>
+          <h4 style=6props>
+            Quote Details
+        <div>
+          <div style=3props>
+            <div style=7props>
+              Quote To:
+            <button key="company" onClick=fn style=9props>
+              Company
+            <button key="contact" onClick=fn style=9props>
+              Individual Contact
+          <div style=4props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Company *
+                <div style=1props>
+                  <div style=9props>
+                    <span style=10props>
+                      Acme Co
+                      <button onClick=fn style=8props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                        ✎
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Primary Contact
+                <div style=1props>
+                  <div style=9props>
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                        +
+          <div style=5props>
+            <anon>
+              <div style=3props>
+                <anon>
+                  <div style=5props>
+                    <label style=9props>
+                      Linked Projects
+                <div style=1props>
+                  <div style=10props>
+                    <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                      <span style=3props>
+                        Spring Shoot
+                      <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                        ×
+                    <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                    <anon>
+                      <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                        ✎
+          <div style=5props>
+            <div style=1props>
+              <anon>
+                <div style=4props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Quote Expires
+                  <LTPDateField>
+                    <DesktopDateField>
+                      <Fragment>
+                        <input aria-expanded="false" aria-haspopup="dialog" aria-label="Quote Expires" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/28/2026">
+              <div style=5props>
+                <button key=7 onClick=fn style=8props>
+                  7 days
+                <button key=14 onClick=fn style=8props>
+                  14 days
+                <button key=30 onClick=fn style=8props>
+                  30 days
+                <button key=60 onClick=fn style=8props>
+                  60 days
+          <div style=6props>
+            Project dates: September 1st, 2026 → September 3rd, 2026 · rental pricing will use this period.
+      <div>
+        <SectionBlock>
+          <div data-ltp-id="sec-fee" data-ltp-sort="section" data-ltp-sort-inst="sort53" style=4props>
+            <div style=5props>
+              <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                ☰
+              <input onChange=fn style=10props type="text" value="Travel">
+              <div style=4props>
+                <div>
+                  $560.00
+                <div style=5props>
+                  <span>
+                    margin: $560.00
+                  <UncostedChip>
+              <button onClick=fn style=8props>
+                Delete Section
+            <div style=6props>
+              <label style=6props>
+                <input checked=false onChange=fn style=1props type="checkbox">
+                Custom rental period
+              <span style=3props>
+                Using quote dates: September 1st, 2026 → September 3rd, 2026
+            <div style=4props>
+              <LineItemRow>
+                <div data-ltp-id="f-custom" data-ltp-sort="item" data-ltp-sort-inst="sort53" data-ltp-zone="sec-fee" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    FEE
+                  <div style=2props>
+                    <div style=6props>
+                      Lodging — 2 nights
+                    
+                    <LTPFeeAccountSelect>
+                      <label style=5props title="The QuickBooks income account this fee posts to">
+                        <span style=7props>
+                          QB account
+                        <select aria-label="QuickBooks income account" onChange=fn style=13props value="79">
+                          <option key="" value="">
+                            Default — Fee Income
+                          <option key="79" value="79">
+                            Travel Income
+                          <option key="11" value="11">
+                            Fee Income
+                  <div style=1props>
+                    <div style=3props>
+                      qty
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                  <div style=1props>
+                    <div style=3props>
+                      price
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=180>
+                  <div style=1props>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $360.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+              <LineItemRow>
+                <div data-ltp-id="f-catalog" data-ltp-sort="item" data-ltp-sort-inst="sort53" data-ltp-zone="sec-fee" style=7props>
+                  <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                    ☰
+                  <span style=9props>
+                    FEE
+                  <div style=2props>
+                    <div style=6props>
+                      Lodging
+                    
+                  <div style=1props>
+                    <div style=3props>
+                      nights
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                  <div style=1props>
+                    <div style=3props>
+                      price
+                    <input min=0 onChange=fn step="any" style=10props type="number" value=200>
+                  <div style=1props>
+                  <div style=2props>
+                    <div style=2props>
+                      total
+                    <div style=3props>
+                      $200.00
+                  <label style=6props title="Taxable in QuickBooks">
+                    <input checked=true onChange=fn type="checkbox">
+                    <span>
+                      tax
+                  <button onClick=fn style=6props>
+                    ×
+            <button onClick=fn style=9props>
+              + Add Item to Travel
+        <button onClick=fn style=8props>
+          + Add Section
+      <TotalsPanel>
+        <div style=4props>
+          <h4 style=6props>
+            Totals
+          <div style=9props>
+            <span>
+              Subtotal
+            <span>
+              $560.00
+          <div style=3props>
+            <div style=4props>
+              <span style=3props>
+                Global Discount
+              <select onChange=fn style=7props value="percent">
+                <option value="none">
+                  None
+                <option value="percent">
+                  Percent (%)
+                <option value="amount">
+                  Amount ($)
+                <option value="target">
+                  Target ($)
+              <input onChange=fn style=10props type="number" value=10>
+            <div style=4props>
+              <span>
+                (−10%)
+              <span>
+                −$56.00
+          <div style=3props>
+            <button disabled=false onClick=fn style=11props>
+              Calculate Sales Tax
+          <div style=3props>
+          <div style=9props>
+            <span>
+              TOTAL
+            <span>
+              $504.00
+          <div style=3props>
+            <div style=5props>
+              <span>
+                Total Cost
+              <span>
+                $0.00
+            <div style=7props>
+              <div style=3props>
+                <span>
+                  Margin
+                <UncostedChip>
+              <span style=2props>
+                $504.00 (100%)
+      <anon>
+        <div style=3props>
+          <button aria-expanded="false" onClick=fn style=11props type="button">
+            <span style=5props>
+              Terms & Conditions
+            <span style=3props>
+              5 lines · built-in default
+            <span style=1props>
+            <span style=2props>
+              ▾
+    <div style=6props>
+      <div style=3props>
+        <h4 style=6props>
+          Quote Summary
+        <div key="sec-fee" style=5props>
+          <div>
+            <div style=3props>
+              Travel
+            <div style=2props>
+              2 items
+          <div style=4props>
+            $560.00
+        <div style=1props>
+          <div style=5props>
+            <span>
+              Discount
+            <span>
+              -$56.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $504.00
+          <div style=9props>
+            <div style=3props>
+              <span>
+                Margin
+              <UncostedChip>
+            <span style=2props>
+              $504.00 (100%)
+      <div style=3props>
+        <h4 style=6props>
+          Internal Notes
+        <textarea onChange=fn placeholder="Add internal notes about this quote..." style=11props value="">
+      <div style=7props>
+        <h4 style=6props>
+          Activity
+        <div style=5props>
+          <div style=5props>
+            No activity yet.
+
+== InvoiceBuilder (draft, custom fee account) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  draft
+      <div style=4props>
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn style=9props>
+          Send Invoice
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div>
+            <div style=3props>
+              <div style=7props>
+                Invoice To:
+              <button key="company" onClick=fn style=8props>
+                Company
+              <button key="contact" onClick=fn style=8props>
+                Individual Contact
+            <div style=4props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Company *
+                  <div style=1props>
+                    <div style=9props>
+                      <span style=10props>
+                        Acme Co
+                        <button onClick=fn style=8props>
+                          ×
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Edit this company" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this company" type="button">
+                          ✎
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Primary Contact
+                  <div style=1props>
+                    <div style=9props>
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Search contacts…" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Add a new contact" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Add a new contact" type="button">
+                          +
+            <div style=5props>
+              <anon>
+                <div style=3props>
+                  <anon>
+                    <div style=5props>
+                      <label style=9props>
+                        Linked Projects
+                  <div style=1props>
+                    <div style=10props>
+                      <span key="pr1" style=14props title="Spring Shoot — primary: titles the document and drives its dates">
+                        <span style=3props>
+                          Spring Shoot
+                        <button aria-label="Remove Spring Shoot" onClick=fn style=9props>
+                          ×
+                      <input onBlur=fn onChange=fn onClick=fn onFocus=fn placeholder="Add another…" style=10props type="text" value="">
+                      <anon>
+                        <button aria-label="Edit this project" className="ltp-tap" onClick=fn onMouseDown=fn style=15props title="Edit this project" type="button">
+                          ✎
+            <div style=5props>
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Invoice Date
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Invoice Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="08/05/2026">
+              <div style=1props>
+                <anon>
+                  <div style=4props>
+                    <anon>
+                      <div style=5props>
+                        <label style=9props>
+                          Due Date
+                    <LTPDateField>
+                      <DesktopDateField>
+                        <Fragment>
+                          <input aria-expanded="false" aria-haspopup="dialog" aria-label="Due Date" autoComplete="off" disabled=undefined inputMode="numeric" onBlur=fn onChange=fn onClick=fn onFocus=fn onKeyDown=fn placeholder="mm/dd/yyyy" ref={"current":null} spellCheck=false style=12props title=undefined type="text" value="09/04/2026">
+                <div style=4props>
+                  <button key="Today" onClick=fn style=8props>
+                    Today
+                  <button key="Net 15" onClick=fn style=8props>
+                    Net 15
+                  <button key="Net 20" onClick=fn style=8props>
+                    Net 20
+                  <button key="Net 30" onClick=fn style=8props>
+                    Net 30
+                  <button key="Net 60" onClick=fn style=8props>
+                    Net 60
+        <div data-ltp-id="sec-fee" data-ltp-sort="section" data-ltp-sort-inst="sort54" key="sec-fee" style=3props>
+          <div style=4props>
+            <button aria-label="Reorder section" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+              ☰
+            <input onChange=fn style=9props type="text" value="Travel">
+            <div style=2props>
+              $560.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="f-custom" data-ltp-sort="item" data-ltp-sort-inst="sort54" data-ltp-zone="sec-fee" style=7props>
+                <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                  ☰
+                <span style=7props>
+                  FEE
+                <div style=2props>
+                  <div style=6props>
+                    Lodging — 2 nights
+                  
+                  <LTPFeeAccountSelect>
+                    <label style=5props title="The QuickBooks income account this fee posts to">
+                      <span style=7props>
+                        QB account
+                      <select aria-label="QuickBooks income account" onChange=fn style=13props value="79">
+                        <option key="" value="">
+                          Default — Fee Income
+                        <option key="79" value="79">
+                          Travel Income
+                        <option key="11" value="11">
+                          Fee Income
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=2>
+                <div style=1props>
+                  <div style=3props>
+                    price
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=180>
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $360.00
+                <label style=7props title="Taxable in QuickBooks">
+                  <input checked=true onChange=fn type="checkbox">
+                  <span>
+                    tax
+                <button onClick=fn style=6props>
+                  ×
+            <InvLineItem>
+              <div data-ltp-id="f-catalog" data-ltp-sort="item" data-ltp-sort-inst="sort54" data-ltp-zone="sec-fee" style=7props>
+                <button aria-label="Reorder line item" className="ltp-drag-handle" onClick=fn onKeyDown=fn onPointerDown=fn style=2props title="Drag to reorder (or focus and press ↑ / ↓)" type="button">
+                  ☰
+                <span style=7props>
+                  FEE
+                <div style=2props>
+                  <div style=6props>
+                    Lodging
+                  
+                <div style=1props>
+                  <div style=3props>
+                    nights
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=1>
+                <div style=1props>
+                  <div style=3props>
+                    price
+                  <input min=0 onChange=fn step="any" style=10props type="number" value=200>
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $200.00
+                <label style=7props title="Taxable in QuickBooks">
+                  <input checked=true onChange=fn type="checkbox">
+                  <span>
+                    tax
+                <button onClick=fn style=6props>
+                  ×
+          <button onClick=fn style=9props>
+            + Add Item
+        <button onClick=fn style=8props>
+          + Add Section
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $560.00
+          <div style=6props>
+            <span style=2props>
+              Discount:
+            <select onChange=fn style=7props value="percent">
+              <option value="none">
+                None
+              <option value="percent">
+                %
+              <option value="amount">
+                $
+              <option value="target">
+                Target
+            <input onChange=fn style=10props type="number" value=10>
+          <div style=6props>
+            <label style=4props>
+              <input checked=true onChange=fn type="checkbox">
+              <span>
+                Customer is taxable
+            <span style=3props>
+              tax pending QuickBooks
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $504.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $504.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec-fee" style=4props>
+            <div>
+              <div style=3props>
+                Travel
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $560.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $504.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $504.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>
+
+== InvoiceBuilder (sent, custom fee account) ==
+<InvoiceBuilder>
+  <div style=4props>
+    <div style=10props>
+      <div style=5props>
+        <button onClick=fn style=9props>
+          ← Back
+        <div style=1props>
+          <div style=8props>
+            INV-2026-007
+          <div style=5props>
+            <span style=7props>
+              Spring Shoot
+            <div style=1props>
+              <anon>
+                <span style=10props>
+                  sent
+      <div style=4props>
+        <div style=5props>
+          Locked
+        <button disabled=false onClick=fn style=12props>
+          Generate PDF
+        <button onClick=fn onMouseOut=fn onMouseOver=fn style=8props>
+          Recall to Draft
+        <button onClick=fn style=8props>
+          Resend
+        <anon>
+          <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
+            Delete
+    <div style=7props>
+      <div style=6props>
+        <div style=3props>
+          <div style=5props>
+            <h4 style=6props>
+              Invoice Details
+          <div style=3props>
+            <div>
+              <div style=3props>
+                Client
+              <div style=3props>
+                Acme Co
+            <div>
+              <div style=3props>
+                Project
+              <div style=3props>
+                Spring Shoot
+            <div>
+              <div style=3props>
+                Invoice Date
+              <div style=2props>
+                August 5th, 2026
+            <div>
+              <div style=3props>
+                Due Date
+              <div style=2props>
+                September 4th, 2026
+        <div data-ltp-id="sec-fee" data-ltp-sort="section" data-ltp-sort-inst="sort55" key="sec-fee" style=3props>
+          <div style=4props>
+            <div style=4props>
+              Travel
+            <div style=2props>
+              $560.00
+          <div style=4props>
+            <InvLineItem>
+              <div data-ltp-id="f-custom" data-ltp-sort="item" data-ltp-sort-inst="sort55" data-ltp-zone="sec-fee" style=7props>
+                <span style=7props>
+                  FEE
+                <div style=2props>
+                  <div style=6props>
+                    Lodging — 2 nights
+                  
+                  <LTPFeeAccountSelect>
+                    <div style=2props>
+                      QuickBooks: Travel Income
+                <div style=1props>
+                  <div style=3props>
+                    qty
+                  <div style=4props>
+                    2
+                <div style=1props>
+                  <div style=3props>
+                    price
+                  <div style=4props>
+                    $180
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $360.00
+                <div style=1props>
+            <InvLineItem>
+              <div data-ltp-id="f-catalog" data-ltp-sort="item" data-ltp-sort-inst="sort55" data-ltp-zone="sec-fee" style=7props>
+                <span style=7props>
+                  FEE
+                <div style=2props>
+                  <div style=6props>
+                    Lodging
+                  
+                <div style=1props>
+                  <div style=3props>
+                    nights
+                  <div style=4props>
+                    1
+                <div style=1props>
+                  <div style=3props>
+                    price
+                  <div style=4props>
+                    $200
+                <div style=1props>
+                <div style=2props>
+                  <div style=2props>
+                    total
+                  <div style=3props>
+                    $200.00
+                <div style=1props>
+        <div style=4props>
+          <div style=5props>
+            <span>
+              Subtotal
+            <span>
+              $560.00
+          <div style=3props>
+          <div style=5props>
+            <span style=1props>
+              Total
+            <span style=1props>
+              $504.00
+          <div style=6props>
+            <span>
+              Balance Due
+            <span>
+              $504.00
+        <anon>
+          <div style=3props>
+            <button aria-expanded="false" onClick=fn style=11props type="button">
+              <span style=5props>
+                Terms & Conditions
+              <span style=3props>
+                3 lines · built-in default
+              <span style=1props>
+              <span style=2props>
+                ▾
+      <div style=6props>
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              QuickBooks
+            <span style=8props>
+              Not in QuickBooks
+          <div style=3props>
+            <button disabled=false onClick=fn style=11props>
+              → Export to QuickBooks
+        <div style=3props>
+          <h4 style=6props>
+            Invoice Summary
+          <div key="sec-fee" style=4props>
+            <div>
+              <div style=3props>
+                Travel
+              <div style=2props>
+                2 items
+            <div style=3props>
+              $560.00
+          <div style=5props>
+            <span style=3props>
+              Total
+            <span style=3props>
+              $504.00
+          <div style=3props>
+            <span style=3props>
+              Balance
+            <span style=3props>
+              $504.00
+        <div style=3props>
+          <h4 style=6props>
+            Notes
+          <textarea onChange=fn placeholder="Invoice notes…" style=11props value="">
+        <div style=3props>
+          <div style=4props>
+            <h4 style=6props>
+              Payments
+            <button onClick=fn style=8props>
+              + Record Payment
+          <div style=5props>
+            No payments recorded.
+        <div style=7props>
+          <h4 style=6props>
+            Activity
+          <div style=2props>

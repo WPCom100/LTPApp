@@ -405,7 +405,12 @@
 // v113: quote and invoice lists (and a project's document lists) show "Labor
 // changed"; a schedule save that changes what it bills says which documents
 // now differ; the schedule's Send routes an already-linked draft to its review.
-var CACHE_VERSION = 'ltp-shell-v116';
+// v117: a custom fee can carry its own QuickBooks income account, preset by
+// the quick-add name it starts from. components/domain-qbo.js and
+// domain-docs.js (both precached) gained the account and quick-pick helpers,
+// components/ui.js the field, app.js dropped the LTP_FEE_QUICKNAMES global the
+// builders no longer read, and data/settings.js the feeQuickNameAccounts default.
+var CACHE_VERSION = 'ltp-shell-v117';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

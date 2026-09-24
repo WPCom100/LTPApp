@@ -48,6 +48,13 @@
   // before — every invoice pushed until then stored that one — so the builder
   // treats a stored value matching EITHER as in sync, and the next push stores
   // the new form. Pinned by tests/test_invoice_qb_signature.js.
+  //
+  // A custom fee's own income account (qbIncomeAccountId) decides which QB
+  // item its line posts through, so it counts too — in BOTH forms, and only
+  // when set: an invoice with none fingerprints exactly as before, and one
+  // that gains or changes an account reads "update needed" whichever form it
+  // stored. Inlined rather than calling window.LTP_customFeeAccount so the
+  // suite can run this function on its own.
   function qbHash(s) {
     var h1 = 5381, h2 = 52711, i = s.length;
     while (i--) { var c = s.charCodeAt(i); h1 = (h1 * 33) ^ c; h2 = (h2 * 33) ^ c; }
@@ -70,9 +77,12 @@
       (sec.items || []).forEach(function(it) {
         if (it.type === "note") { parts.push("n:" + (it.text || "")); return; }
         var price = it.adjustedPrice != null ? it.adjustedPrice : (it.unitPrice || 0);
+        var acct = it.type === "fee" && !it.feeId && (typeof it.qbIncomeAccountId === "string" || Number.isInteger(it.qbIncomeAccountId))
+          ? String(it.qbIncomeAccountId).trim() : "";
         parts.push([it.type, it.name || "", it.qty || 0, price,
                     (typeof it.taxable === "boolean" ? it.taxable : "")].join("|")
-                   + (withNotes ? "|n=" + (it.notes || "") : ""));
+                   + (withNotes ? "|n=" + (it.notes || "") : "")
+                   + (acct ? "|a=" + acct : ""));
       });
     });
     if (customer) {
@@ -305,7 +315,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   ADD ITEM PICKER (simplified from quotes)
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvAddItemPicker({ onAdd, onClose, equipment, products, services, fees }) {
+  function InvAddItemPicker({ onAdd, onClose, equipment, products, services, fees, feeAcct, feePicks }) {
     var isMobile = window.LTP_useIsMobile();
     var [tab, setTab] = useState("equipment");
     var [search, setSearch] = useState("");
@@ -313,6 +323,14 @@
     // Custom (ad-hoc) fee entry — a fee with no catalog row (feeId null).
     var [feeName, setFeeName] = useState("");
     var [feeAmount, setFeeAmount] = useState("");
+    // Its QuickBooks income account: null follows the name (the account the
+    // quick-add name it starts with presets); a picked account, or "" for an
+    // explicit default, sticks while the description is edited. Same as the
+    // quote builder's picker.
+    var [feeAccount, setFeeAccount] = useState(null);
+    var picks = feePicks || window.LTP_feeQuickPicks(null);
+    var namedPick = window.LTP_feeQuickPickFor(picks, feeName);
+    var feeAcctValue = feeAccount != null ? feeAccount : ((namedPick && namedPick.qbIncomeAccountId) || "");
     // Product id whose pricing-variant chooser popup is open (null = none).
     var [variantFor, setVariantFor] = useState(null);
     var q = search.trim().toLowerCase();
@@ -335,8 +353,9 @@
       var nm = feeName.trim();
       if (!nm) return;
       onAdd({ id: genId("item"), type: "fee", feeId: null, name: nm, category: "", unit: "flat", qty: 1,
-              unitPrice: Number(feeAmount) || 0, adjustedPrice: null, cost: 0, notes: "", deliveredQty: 0, invoicedQty: 0 });
-      setFeeName(""); setFeeAmount("");
+              unitPrice: Number(feeAmount) || 0, adjustedPrice: null, cost: 0, notes: "", deliveredQty: 0, invoicedQty: 0,
+              qbIncomeAccountId: feeAcctValue || null });
+      setFeeName(""); setFeeAmount(""); setFeeAccount(null);
     }
 
     var tabs = [
@@ -473,11 +492,20 @@
               style: { width: isMobile ? "100%" : 110, background: B.raised, border: "1px solid " + B.border, borderRadius: "6px", padding: "7px 10px", color: B.text, fontSize: "12px", fontFamily: "inherit", outline: "none", textAlign: "right" } }),
             h("button", { onClick: addCustomFee, disabled: !feeName.trim(),
               style: { background: feeName.trim() ? B.accent : B.raised, border: "none", borderRadius: "6px", color: feeName.trim() ? B.btnInk : B.textMut, cursor: feeName.trim() ? "pointer" : "default", fontSize: "12px", fontWeight: 700, padding: "8px 14px", whiteSpace: "nowrap", flexShrink: 0 } }, "Add")),
-          (window.LTP_FEE_QUICKNAMES || window.LTP_FEE_QUICKNAMES_DEFAULT).length > 0 &&
+          // Where it posts in QuickBooks: preset by the quick-add name the
+          // description starts with, changeable here and on the line after.
+          feeAcct && h("div", { style: { marginTop: 8 } },
+            h(window.LTPFeeAccountSelect, { value: feeAcctValue, picker: feeAcct, editable: true, roomy: true, label: "QuickBooks account",
+              onChange: function(v) { setFeeAccount(v || ""); } })),
+          // A name with an account presets it; one without hands the account
+          // back to the description.
+          picks.length > 0 &&
           h("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } },
-            (window.LTP_FEE_QUICKNAMES || window.LTP_FEE_QUICKNAMES_DEFAULT).map(function(sug) {
-              return h("button", { key: sug, onClick: function() { setFeeName(sug); },
-                style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "12px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "3px 10px" } }, "+ " + sug);
+            picks.map(function(p) {
+              var acctName = p.qbIncomeAccountId && feeAcct ? window.LTP_qboAccountName(feeAcct.accounts, p.qbIncomeAccountId) : "";
+              return h("button", { key: p.name, title: acctName ? "Posts to " + acctName + " in QuickBooks" : undefined,
+                onClick: function() { setFeeName(p.name); setFeeAccount(p.qbIncomeAccountId || null); },
+                style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "12px", color: B.textSec, cursor: "pointer", fontSize: "10px", fontWeight: 600, padding: "3px 10px" } }, "+ " + p.name);
             }))),
         // Catalog fees
         h("input", { type: "text", value: search, onChange: function(e) { setSearch(e.target.value); }, placeholder: "Search saved fees\u2026",
@@ -515,7 +543,7 @@
   // ═══════════════════════════════════════════════════════════════════════════
   //   INVOICE LINE ITEM ROW
   // ═══════════════════════════════════════════════════════════════════════════
-  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, onMove, sortable, itemIndex, itemCount, services, products, equipment, fees, customerTaxable }) {
+  function InvLineItem({ item, sectionId, isDraft, onUpdate, onDelete, onMove, sortable, itemIndex, itemCount, services, products, equipment, fees, customerTaxable, feeAcct }) {
     var isMobile = window.LTP_useIsMobile();
 
     // Reorder affordance, matching the quote builder: a grab handle on desktop
@@ -593,6 +621,11 @@
     var adjusted = item.adjustedPrice != null && item.adjustedPrice !== item.unitPrice;
     var eff = item.adjustedPrice != null ? (Number(item.adjustedPrice) || 0) : unitP;
     var lt = eff * (Number(item.qty) || 0);
+    // A custom fee's own QuickBooks income account — it has no catalog row to
+    // post by. Set while the invoice is a draft, like the per-line tax flag.
+    var feeAcctField = isFee && !item.feeId && feeAcct && h(window.LTPFeeAccountSelect, {
+      value: window.LTP_customFeeAccount(item), picker: feeAcct, editable: !!isDraft,
+      onChange: function(v) { onUpdate(sectionId, item.id, { qbIncomeAccountId: v }); } });
 
     // ── Phone: a compact card in the schedule builder's density (the phone
     // kit in ui.js) — the same card the quote builder renders. Header: badge ·
@@ -644,6 +677,8 @@
           isDraft && reorderControl(),
           isDraft && h("button", { onClick: function() { onDelete(sectionId, item.id); }, "aria-label": "Remove line", className: "ltp-tap",
             style: { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" } }, "×")),
+        // A row of its own: beside the name it was squeezed to a few letters.
+        feeAcctField && h("div", { style: { marginTop: 6 } }, feeAcctField),
         isDraft && h("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } },
           rateSel, variantSel, qtyField, priceField),
         // Unit · tax · total footer.
@@ -664,6 +699,7 @@
       h("div", { style: { flex: 1, minWidth: 0 } },
         h("div", { style: { fontSize: "12px", fontWeight: 600, color: B.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, item.name),
         item.notes && h("div", { style: { fontSize: "10px", color: B.textMut, fontStyle: "italic" } }, item.notes),
+        feeAcctField,
         clientRateNote(true),
         sourceMissing && h("div", { style: { fontSize: "10px", color: B.warn, fontWeight: 600 } }, "⚠ " + missingLabel + " deleted from catalog — price locked to invoice")
       ),
@@ -1646,6 +1682,11 @@
     var custParty = billingParty();
     var customerTaxable = draft.clientType === "contact" ? !!custParty : !!(custParty && custParty.taxable);
     var qbConnected = !!(qbo && qbo.connected);
+    // A custom fee's own QuickBooks income account (null = nothing to pick
+    // from), and the quick-add names that fill a custom fee in — each with the
+    // account it presets. Both edited in Quotes → Fees / Settings.
+    var feeAcct = window.LTP_qboFeeAccountPicker(settings, qbo);
+    var feePicks = window.LTP_feeQuickPicks(settings);
     // "Out of sync" = not pushed yet, OR the live change-signature differs from
     // the one stored at the last push (captures invoice + customer + project
     // changes). qbSig is hoisted, so sendToQuickBooks reads the current value.
@@ -2361,7 +2402,7 @@
                   return h(InvLineItem, { key: it.id, item: it, sectionId: sec.id, isDraft: isDraft,
                     onUpdate: updateItem, onDelete: deleteItem, onMove: moveItemAnimated,
                     sortable: sortable, itemIndex: itIdx, itemCount: sec.items.length,
-                    services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable });
+                    services: svcs, products: products, equipment: equipment, fees: fees, customerTaxable: customerTaxable, feeAcct: feeAcct });
                 })
               ),
               isDraft && h("button", { onClick: function() { setPickerForSection(sec.id); },
@@ -2562,7 +2603,7 @@
 
       // Item picker
       pickerForSection && h(InvAddItemPicker, {
-        equipment: equipment, products: products, services: svcs, fees: fees,
+        equipment: equipment, products: products, services: svcs, fees: fees, feeAcct: feeAcct, feePicks: feePicks,
         onAdd: function(item) { addItemToSection(pickerForSection, item); },
         onClose: function() { setPickerForSection(null); }
       }),

@@ -56,6 +56,10 @@ window.LTP_DATA_SETTINGS = {
   // Fee quick-picks — one-tap names that pre-fill a CUSTOM fee's description in
   // the quote/invoice Add-Item → Fees tab. Editable from Quotes → Fees.
   feeQuickNames: ["Lodging", "Meal Expenses", "Travel", "Consultation", "Project Prep"],
+  // The QuickBooks income account a quick-pick presets on the fee, keyed by the
+  // lowercased name ({ "lodging": "79" }). A name absent here leaves the fee on
+  // the Fees mapping. Read through window.LTP_feeQuickPicks.
+  feeQuickNameAccounts: {},
 
   // Business Defaults
   defaultPaymentTerms: 30,        // Net 30

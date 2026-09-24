@@ -257,9 +257,6 @@ function LTPSignedInApp(props) {
   window.LTP_DEFAULT_QUOTE_VALIDITY = settings.defaultQuoteValidity || 30;
   window.LTP_DEFAULT_QUOTE_NOTES = settings.defaultQuoteNotes || "";
   window.LTP_DEFAULT_INVOICE_NOTES = settings.defaultInvoiceNotes || "";
-  // Resolved fee quick-pick names for the Add-Item → Fees tab (edited in
-  // Quotes → Fees). Recomputed each render so edits flow to the pickers.
-  window.LTP_FEE_QUICKNAMES = window.LTP_feeQuickNames(settings);
 
   // Rebuild tag/badge colors from settings
   window.LTP_TAG_COLORS = settings.tagColors || {};

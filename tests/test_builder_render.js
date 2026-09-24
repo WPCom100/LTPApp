@@ -530,6 +530,35 @@ out.push(render(window.QuotesBuilder, Object.assign({
   window.__LTP_OPEN_LABOR_REVIEW = null;
 })();
 
+// ── A custom fee with its own QuickBooks income account ────────────────────
+// QuickBooks connected with its accounts loaded, so each builder shows the
+// account on the custom fee (a select while editable, a caption once locked)
+// and nothing on the catalog fee beside it, whose account is its catalog
+// row's. Appended last so the id counters earlier scenarios print don't shift.
+(function () {
+  const QBO = { connected: true, realmId: "r1", incomeAccounts: [{ id: "79", name: "Travel Income" }, { id: "11", name: "Fee Income" }] };
+  const FEE_SETTINGS = Object.assign({}, SETTINGS, { qboFeeIncomeAccountId: "11",
+    feeQuickNames: ["Lodging", "Travel"], feeQuickNameAccounts: { lodging: "79" } });
+  const feeSection = { id: "sec-fee", label: "Travel", customDates: false, startDate: "", endDate: "", items: [
+    { id: "f-custom", type: "fee", feeId: null, name: "Lodging — 2 nights", category: "", unit: "flat", qty: 2, unitPrice: 180, adjustedPrice: null, cost: 0, notes: "", taxable: true, qbIncomeAccountId: "79" },
+    { id: "f-catalog", type: "fee", feeId: "f1", name: "Lodging", category: "Lodging", unit: "night", qty: 1, unitPrice: 200, adjustedPrice: null, cost: 0, notes: "", taxable: true },
+  ] };
+  const FQ = Object.assign({}, QUOTE, { sections: [feeSection] });
+  const FEE_PROPS = Object.assign({}, COMMON, { settings: FEE_SETTINGS, qbo: QBO });
+  out.push(render(window.QuotesBuilder, Object.assign({
+    quoteId: 1, isNew: false, quotes: [FQ], setQuotes: function () {},
+    getNextQuoteId: function () { return 2; }, invoices: [], setInvoices: function () {},
+    getNextInvoiceId: function () { return 1; },
+  }, FEE_PROPS), "\n== QuotesBuilder (custom fee with its own QuickBooks account) =="));
+  const FI = Object.assign({}, INVOICE, { sections: [feeSection] });
+  const feeInvProps = Object.assign({}, INV_PROPS, FEE_PROPS);
+  out.push(render(window.InvoicesView, Object.assign({ route: { id: 7, action: null } }, feeInvProps, { invoices: [FI] }),
+    "\n== InvoiceBuilder (draft, custom fee account) =="));
+  out.push(render(window.InvoicesView, Object.assign({ route: { id: 7, action: null } }, feeInvProps,
+    { invoices: [Object.assign({}, FI, { status: "sent", sentDate: "2026-08-10" })] }),
+    "\n== InvoiceBuilder (sent, custom fee account) =="));
+})();
+
 // Three clock reads reach the tree and differ between two runs of the SAME
 // code, so they are normalized rather than compared: an id minted from
 // Date.now() inside a nested module, the "HH:MM" stamped onto activity
@@ -565,9 +594,9 @@ ok("the payment form is one of them (it is exercised by the overlay sweep)",
    loadedComponents.join(", "));
 ok("every scenario rendered without throwing", threw === 0,
    (text.match(/^.*THREW.*$/gm) || []).slice(0, 3).join(" | "));
-// 18 data scenarios + 2 overlay sweeps (one per builder) + the labor review
+// 21 data scenarios + 2 overlay sweeps (one per builder) + the labor review
 // open in each builder.
-ok("all " + out.length + " scenarios produced output", out.length === 21, "got " + out.length);
+ok("all " + out.length + " scenarios produced output", out.length === 24, "got " + out.length);
 ok("the overlay sweeps actually opened modals",
    (text.match(/opens an overlay/g) || []).length >= 24,
    "only " + (text.match(/opens an overlay/g) || []).length + " overlays rendered — "

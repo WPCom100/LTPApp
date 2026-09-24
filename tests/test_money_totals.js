@@ -151,6 +151,51 @@ eq("F4 trims + drops blanks", JSON.stringify(FQN({ feeQuickNames: ["  Lodging  "
 eq("F5 de-dupes case-insensitively, keeps first form/order", JSON.stringify(FQN({ feeQuickNames: ["Travel", "travel", "Lodging"] })), JSON.stringify(["Travel", "Lodging"]));
 eq("F6 explicit empty list stays empty (no fallback)", JSON.stringify(FQN({ feeQuickNames: [] })), JSON.stringify([]));
 eq("F7 non-array falls back to default", JSON.stringify(FQN({ feeQuickNames: "Lodging" })), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT));
+eq("F8 a name shadowing an Object.prototype key is kept", JSON.stringify(FQN({ feeQuickNames: ["Constructor", "toString", "Lodging"] })), JSON.stringify(["Constructor", "toString", "Lodging"]));
+
+// ── Quick-picks: each name with the QuickBooks account it presets ────────────
+const FQP = window.LTP_feeQuickPicks;
+eq("P1 defaults carry no account", JSON.stringify(FQP({})), JSON.stringify(window.LTP_FEE_QUICKNAMES_DEFAULT.map((n) => ({ name: n, qbIncomeAccountId: null }))));
+eq("P2 accounts matched by lowercased name, in name order",
+   JSON.stringify(FQP({ feeQuickNames: ["Lodging", "Travel"], feeQuickNameAccounts: { travel: "79", lodging: " 11 " } })),
+   JSON.stringify([{ name: "Lodging", qbIncomeAccountId: "11" }, { name: "Travel", qbIncomeAccountId: "79" }]));
+eq("P3 an account for a name no longer on the list is not surfaced",
+   JSON.stringify(FQP({ feeQuickNames: ["Lodging"], feeQuickNameAccounts: { travel: "79" } })),
+   JSON.stringify([{ name: "Lodging", qbIncomeAccountId: null }]));
+eq("P4 a blank or junk map is no accounts",
+   JSON.stringify([FQP({ feeQuickNames: ["A"], feeQuickNameAccounts: { a: "" } }), FQP({ feeQuickNames: ["A"], feeQuickNameAccounts: ["79"] }), FQP({ feeQuickNames: ["A"], feeQuickNameAccounts: "79" })]),
+   JSON.stringify([[{ name: "A", qbIncomeAccountId: null }], [{ name: "A", qbIncomeAccountId: null }], [{ name: "A", qbIncomeAccountId: null }]]));
+eq("P5 a name never reads an inherited key as its account",
+   JSON.stringify(FQP({ feeQuickNames: ["Constructor"], feeQuickNameAccounts: {} })), JSON.stringify([{ name: "Constructor", qbIncomeAccountId: null }]));
+
+const FOR = window.LTP_feeQuickPickFor;
+const PICKS = [{ name: "Travel", qbIncomeAccountId: "79" }, { name: "Travel Air", qbIncomeAccountId: "80" }, { name: "Lodging", qbIncomeAccountId: null }];
+const pickName = (t) => { const p = FOR(PICKS, t); return p ? p.name : null; };
+eq("P6 the name itself", pickName("Lodging"), "Lodging");
+eq("P7 case-insensitive, trimmed", pickName("  lodging "), "Lodging");
+eq("P8 the name followed by detail", pickName("Lodging — 2 nights"), "Lodging");
+eq("P9 detail joined by a bare dash", pickName("Lodging—2 nights"), "Lodging");
+eq("P10 only at a word boundary", pickName("Traveling expenses"), null);
+eq("P11 the longest name wins", pickName("Travel Air — LAX"), "Travel Air");
+eq("P12 …and a shorter one still matches its own text", pickName("Travel — mileage"), "Travel");
+eq("P13 a name that only appears later doesn't count", pickName("Crew lodging"), null);
+eq("P14 empty text, no match", pickName("   "), null);
+eq("P15 no picks, no match", FOR(null, "Lodging"), null);
+eq("P16 a letter outside a–z still continues the word", FOR([{ name: "Caf" }], "Café"), null);
+
+const PATCH = window.LTP_feeQuickPicksPatch;
+eq("P17 the editor's rows become names + accounts",
+   JSON.stringify(PATCH([{ name: " Lodging ", qbIncomeAccountId: "11" }, { name: "Travel", qbIncomeAccountId: null }])),
+   JSON.stringify({ feeQuickNames: ["Lodging", "Travel"], feeQuickNameAccounts: { lodging: "11" } }));
+eq("P18 a blank row (still being typed) is dropped with its account",
+   JSON.stringify(PATCH([{ name: "  ", qbIncomeAccountId: "79" }, { name: "Meals", qbIncomeAccountId: "" }])),
+   JSON.stringify({ feeQuickNames: ["Meals"], feeQuickNameAccounts: {} }));
+eq("P19 the first of a case-insensitive duplicate wins, account and all",
+   JSON.stringify(PATCH([{ name: "Travel", qbIncomeAccountId: "79" }, { name: "travel", qbIncomeAccountId: "11" }])),
+   JSON.stringify({ feeQuickNames: ["Travel"], feeQuickNameAccounts: { travel: "79" } }));
+eq("P20 nothing left → an empty list, never the defaults", JSON.stringify(PATCH([])), JSON.stringify({ feeQuickNames: [], feeQuickNameAccounts: {} }));
+const ROUND = [{ name: "Lodging", qbIncomeAccountId: "11" }, { name: "Consultation", qbIncomeAccountId: null }];
+eq("P21 what the editor writes reads back as what it held", JSON.stringify(FQP(PATCH(ROUND))), JSON.stringify(ROUND));
 
 // ── Shared section totals (was duplicated in both builders) ─────────────────
 // modules/quotes-builder.js and modules/invoices.js each carried their own

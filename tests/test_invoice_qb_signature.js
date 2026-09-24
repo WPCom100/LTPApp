@@ -71,6 +71,27 @@ ok("N4 an empty note and a missing one agree",
    SIG(withNote(""), CUST, PROJ, true, true) === SIG(Object.assign({}, INV, { sections: [{ items: [Object.assign({}, INV.sections[0].items[0], { notes: undefined })].concat(INV.sections[0].items.slice(1)) }] }), CUST, PROJ, true, true));
 eq("N5 no invoice → empty", SIG(null, CUST, PROJ, true, true), "");
 
+// ── A custom fee's own income account ───────────────────────────────────────
+// It picks the QuickBooks item the fee posts through (backend/qbo_sync.py::
+// _custom_fee_item_id), so changing it has to read "update needed" — in both
+// forms, since an invoice may have stored either. With none set, nothing moves.
+function withFee(fee) {
+  return Object.assign({}, INV, { sections: [{ items: INV.sections[0].items.concat([
+    Object.assign({ type: "fee", feeId: null, name: "Lodging", qty: 2, unitPrice: 180, adjustedPrice: null, notes: "" }, fee)]) }] });
+}
+const NO_ACCT = [true, false].map((f) => SIG(withFee({}), CUST, PROJ, true, f));
+ok("A1 a null, blank or missing account fingerprints the same, in both forms",
+   [true, false].every((f, i) => [null, "", "  "].every((a) => SIG(withFee({ qbIncomeAccountId: a }), CUST, PROJ, true, f) === NO_ACCT[i])));
+ok("A2 setting an account moves both forms",
+   [true, false].every((f, i) => SIG(withFee({ qbIncomeAccountId: "79" }), CUST, PROJ, true, f) !== NO_ACCT[i]));
+ok("A3 changing it moves them again",
+   [true, false].every((f) => SIG(withFee({ qbIncomeAccountId: "79" }), CUST, PROJ, true, f) !== SIG(withFee({ qbIncomeAccountId: "11" }), CUST, PROJ, true, f)));
+ok("A4 a catalog fee's stray account is not the line's, so nothing moves",
+   SIG(withFee({ feeId: 5, qbIncomeAccountId: "79" }), CUST, PROJ, true, true) === SIG(withFee({ feeId: 5 }), CUST, PROJ, true, true));
+ok("A5 nor on a line that isn't a fee",
+   SIG(Object.assign({}, INV, { sections: [{ items: [Object.assign({}, INV.sections[0].items[0], { qbIncomeAccountId: "79" })].concat(INV.sections[0].items.slice(1)) }] }), CUST, PROJ, true, true) === NEW);
+eq("A6 and the legacy fingerprint of an invoice with no custom fee is still the pinned one", SIG(INV, CUST, PROJ, true, false), PINNED);
+
 // ── The builder reads "in sync" when the stored value matches either form ───
 // A source guard, like tests/test_quote_availability.py's: the rule is inline in
 // the render, so pin its shape rather than restate it.

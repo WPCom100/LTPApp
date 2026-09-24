@@ -830,6 +830,40 @@
     );
   };
 
+  // The QuickBooks income account of a CUSTOM fee, on its quote/invoice line
+  // and in the Add Item → Fees entry that creates it. A custom fee has no
+  // catalog row to take an account from, so it carries its own — and that
+  // decides which QuickBooks item the line posts through
+  // (backend/qbo_sync.py::_custom_fee_item_id).
+  //
+  // `picker` is window.LTP_qboFeeAccountPicker's answer; with none (QuickBooks
+  // not connected, or no accounts loaded) this renders nothing. Read-only — a
+  // locked quote, an issued invoice — it is a caption naming the account, and
+  // nothing at all on the default. `roomy` sizes it for the Add Item form
+  // rather than a line row. onChange gets the account id, or null for default.
+  window.LTPFeeAccountSelect = function LTPFeeAccountSelect({ value, picker, onChange, editable, roomy, label }) {
+    var isMobile = window.LTP_useIsMobile();
+    if (!picker) return null;
+    var cur = value == null ? "" : String(value);
+    if (!editable) {
+      return cur ? h("div", { style: { fontSize: isMobile ? "11px" : "10px", color: B.textMut } },
+        "QuickBooks: " + window.LTP_qboAccountName(picker.accounts, cur)) : null;
+    }
+    var big = isMobile || roomy;
+    return h("label", { title: "The QuickBooks income account this fee posts to",
+      style: { display: "flex", alignItems: "center", gap: 6, minWidth: 0, marginTop: roomy ? 0 : 3 } },
+      h("span", { style: { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em", whiteSpace: "nowrap", flexShrink: 0 } },
+        label || "QB account"),
+      h("select", { value: cur, "aria-label": "QuickBooks income account",
+        onChange: function(e) { onChange(e.target.value || null); },
+        style: { flex: isMobile ? 1 : "0 1 auto", minWidth: 0, maxWidth: isMobile ? "none" : (roomy ? 320 : 240), height: isMobile ? 32 : undefined,
+                 background: B.bg, border: "1px solid " + B.border, borderRadius: big ? "6px" : "3px", padding: isMobile ? "0 8px" : (roomy ? "5px 8px" : "2px 4px"),
+                 color: B.text, fontSize: isMobile ? "16px" : (roomy ? "12px" : "10px"), fontFamily: "inherit", outline: "none", appearance: "auto" } },
+        window.LTP_qboIncomeAccountOptions(picker.accounts, cur, picker.defaultLabel).map(function(o) {
+          return h("option", { key: o.value, value: o.value }, o.label);
+        })));
+  };
+
   // labelAction renders a small control (typically the ＋ / ✎ affordance from
   // components/entity-quick-form.js) at the right end of the label row. A
   // native <select> can't host a "create new" row that opens a form, so the

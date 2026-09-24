@@ -1279,7 +1279,8 @@ window.LTP_FEE_QUICKNAMES_DEFAULT = ["Lodging", "Meal Expenses", "Travel", "Cons
 window.LTP_feeQuickNames = function(settings) {
   var raw = settings && settings.feeQuickNames;
   if (!Array.isArray(raw)) raw = window.LTP_FEE_QUICKNAMES_DEFAULT;
-  var seen = {}, out = [];
+  // No prototype, so a name like "Constructor" isn't mistaken for a duplicate.
+  var seen = Object.create(null), out = [];
   raw.forEach(function(n) {
     var s = (n == null ? "" : String(n)).trim();
     if (!s) return;
@@ -1289,6 +1290,61 @@ window.LTP_feeQuickNames = function(settings) {
     out.push(s);
   });
   return out;
+};
+
+// The quick-picks with the QuickBooks income account each presets on the
+// custom fee it fills in: [{ name, qbIncomeAccountId }] in LTP_feeQuickNames'
+// order, qbIncomeAccountId null for a name that follows the Fees mapping. The
+// accounts sit beside the names in settings.feeQuickNameAccounts, keyed by the
+// lowercased name, so feeQuickNames stays the plain list of strings every
+// older reader expects.
+window.LTP_feeQuickPicks = function(settings) {
+  var map = settings && settings.feeQuickNameAccounts;
+  if (!map || typeof map !== "object" || Array.isArray(map)) map = {};
+  return window.LTP_feeQuickNames(settings).map(function(name) {
+    var k = name.toLowerCase();
+    var acct = Object.prototype.hasOwnProperty.call(map, k) && map[k] != null ? String(map[k]).trim() : "";
+    return { name: name, qbIncomeAccountId: acct || null };
+  });
+};
+
+// Which quick-pick a typed custom-fee description starts from, or null: the
+// name alone ("Lodging") or followed by detail ("Lodging — 2 nights"),
+// case-insensitively. Only at a word boundary — "Traveling expenses" is not
+// "Travel" — and the longest name wins, so "Travel Air" beats "Travel". It is
+// how a fee typed out by hand still picks up the account its name presets.
+window.LTP_feeQuickPickFor = function(picks, text) {
+  var t = (text == null ? "" : String(text)).trim().toLowerCase();
+  if (!t) return null;
+  var best = null, bestLen = 0;
+  (picks || []).forEach(function(p) {
+    var n = ((p && p.name) || "").trim().toLowerCase();
+    if (!n || n.length <= bestLen || t.indexOf(n) !== 0) return;
+    if (t.length > n.length && /[\p{L}\p{N}]/u.test(t.charAt(n.length))) return;
+    best = p; bestLen = n.length;
+  });
+  return best;
+};
+
+// The settings patch for an edited quick-pick list — the [{ name,
+// qbIncomeAccountId }] rows the Quotes → Fees editor holds — normalized the
+// way LTP_feeQuickNames reads it back (trimmed, blanks dropped, the first of a
+// case-insensitive duplicate kept). Only a kept name's account is written, so
+// removing a name removes its account with it rather than leaving it to
+// resurface on the next name spelled the same way.
+window.LTP_feeQuickPicksPatch = function(rows) {
+  var names = [], accounts = {}, seen = Object.create(null);
+  (rows || []).forEach(function(r) {
+    var n = (r && r.name != null ? String(r.name) : "").trim();
+    if (!n) return;
+    var k = n.toLowerCase();
+    if (seen[k]) return;
+    seen[k] = true;
+    names.push(n);
+    var a = r.qbIncomeAccountId != null ? String(r.qbIncomeAccountId).trim() : "";
+    if (a) accounts[k] = a;
+  });
+  return { feeQuickNames: names, feeQuickNameAccounts: accounts };
 };
 
 // Gather activity entries of a given fault type across invoices and quotes for

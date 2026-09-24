@@ -26,9 +26,13 @@ Decisions baked in (confirmed with the owner):
     equipment item) makes the check free until a mapping actually changes.
     Re-points only move FUTURE postings — but re-pushing an old invoice
     re-posts its lines at the item's current account, which is why re-points
-    are stamped into the invoice activity. Item lookups are scoped to ACTIVE
-    items — a QB Item query happily returns deleted ones, and a deleted item on
-    a line fails the whole push. Before any item write the cached id is checked
+    are stamped into the invoice activity. A CUSTOM fee (no catalog row) can
+    name its own account per line; since a line posts to its item's account,
+    that picks the item instead — the fee's namesake when it already posts
+    there, else "<fee> (<account>)" — and never re-points the namesake (see
+    _custom_fee_item_id). Item lookups are scoped to ACTIVE items — a QB Item
+    query happily returns deleted ones, and a deleted item on a line fails the
+    whole push. Before any item write the cached id is checked
     against the name it was cached for, so a stale id can't rewrite an unrelated
     item. A name held only by a deleted SERVICE item (one of ours) is recovered
     by reviving it; a deleted Inventory/NonInventory namesake belongs to the
@@ -697,6 +701,17 @@ async def _find_or_create_named_item(conn, db, name, unit_price, *, income_accou
     )
     if found:
         return str(_prefer_top_level(found, safe).get("Id"))
+    return await _create_named_item(
+        conn, db, safe, unit_price, income_account_id=income_account_id,
+        client_id=client_id, client_secret=client_secret,
+    )
+
+
+async def _create_named_item(conn, db, safe, unit_price, *, income_account_id=None, client_id, client_secret) -> str:
+    """Create the QB Service item `safe` (an already-_safe_name'd name that no
+    ACTIVE item holds), backed by `income_account_id` or the legacy default.
+    A name QB still reports taken is recovered as in _find_or_create_named_item:
+    a racing push's item is reused, a deleted one of ours revived."""
     if income_account_id:
         income_account_id = str(income_account_id)
     else:
@@ -921,11 +936,156 @@ async def _generic_equipment_item_id(conn, db, *, client_id, client_secret, repo
     return item_id
 
 
+# ── Custom fees that carry their own income account ─────────────────────────
+
+def _custom_fee_account_id(line: dict) -> str | None:
+    """The income account a CUSTOM fee line (type "fee" with no catalog
+    `feeId`) was given in the builder — its `qbIncomeAccountId` — or None when
+    it follows the Fees mapping like any other line. A catalog fee's account is
+    its catalog row's to set (Fee.qb_income_account_id), so a stray value on one
+    is ignored rather than allowed to fork the fee's item."""
+    if line.get("type") != "fee" or line.get("feeId"):
+        return None
+    raw = line.get("qbIncomeAccountId")
+    if isinstance(raw, bool) or not isinstance(raw, (str, int)):
+        return None
+    return str(raw).strip() or None
+
+
+def _require_known_income_account(conn, account_id: str, fee_name: str) -> None:
+    """Refuse a custom fee whose account QuickBooks no longer offers. The
+    builder only offers accounts from the connection's cached Income list, so an
+    id missing from a non-empty list was deactivated (or belongs to a company
+    since swapped out) after the fee was set — and posting there would either be
+    rejected or land somewhere nobody chose. An empty cache can't judge, so it
+    passes and QuickBooks has the final word."""
+    accounts = getattr(conn, "income_accounts", None) or []
+    if accounts and not any(str(a.get("id")) == account_id for a in accounts):
+        raise InvoiceNotSyncable(
+            f'The custom fee "{fee_name}" is set to a QuickBooks income account '
+            f"that is no longer in the account list. Pick its account again on the "
+            f"line (or, if it was just reactivated in QuickBooks, click Update "
+            f"Account List in Settings → QuickBooks) — then push again."
+        )
+
+
+def _item_income_account(row: dict) -> str:
+    return str(((row.get("IncomeAccountRef") or {}).get("value")) or "")
+
+
+def _on_account(rows: list[dict], name: str, account_id: str) -> dict | None:
+    """The same-named item already posting to `account_id` — top-level first,
+    as _prefer_top_level — or None when none of them does."""
+    matching = [r for r in rows if _item_income_account(r) == account_id]
+    return _prefer_top_level(matching, name) if matching else None
+
+
+async def _income_account_label(conn, db, account_id, fee_name, *, client_id, client_secret) -> str:
+    """The name to give an account-named item: the cached list's, else
+    QuickBooks' own. The cache is empty until an admin loads it (right after a
+    reconnect, say), and the bare id would name an item nobody can read — then
+    fork it again, under the real name, the day the list is loaded."""
+    for account in (getattr(conn, "income_accounts", None) or []):
+        if str(account.get("id")) == account_id and account.get("name"):
+            return account["name"]
+    rows = await quickbooks.query(
+        conn, db,
+        f"SELECT Id, Name FROM Account WHERE Id = '{escape_query_value(account_id)}'",
+        client_id=client_id, client_secret=client_secret,
+    )
+    if rows and rows[0].get("Name"):
+        return rows[0]["Name"]
+    raise InvoiceNotSyncable(
+        f'The custom fee "{fee_name}" is set to a QuickBooks income account that '
+        f"QuickBooks no longer has. Pick its account again on the line — then push again."
+    )
+
+
+def _account_item_name(name: str, account_name: str) -> str:
+    """ "<fee> (<account>)": the item a custom fee posts through when the item
+    named after it already posts somewhere else. Held inside QB's 100-character
+    Name limit by trimming the fee name, never the account — the account is
+    what tells the two items apart."""
+    suffix = f" ({_safe_name(account_name, 60)})"
+    return _safe_name(name, 100 - len(suffix)) + suffix
+
+
+async def _custom_fee_item_id(conn, db, name, unit_price, account_id, *, client_id, client_secret, repoints=None) -> str:
+    """The QB item a custom fee with its own income account posts through.
+
+    QuickBooks posts a sales line to its ITEM's income account — the line can't
+    name one of its own (ItemAccountRef is read-only) — so the account chosen
+    for the fee has to be the account of the item it references:
+
+      - the item named after the fee, when it already posts to that account,
+        or doesn't exist yet (it is then created there);
+      - otherwise "<fee> (<account>)", found or created on that account — and,
+        being named for it, moved back onto it if someone re-pointed it by hand.
+
+    The item named after the fee is never re-pointed. It may be the
+    bookkeeper's own, and it is what this fee's older lines and every
+    default-account line of the same name post through — moving it would move
+    them. Keying the item on name AND account also means two custom fees with
+    one name and different accounts, on one invoice or across several, each
+    land where they were sent instead of flipping a shared item back and forth.
+    """
+    safe = _safe_name(name, 100)
+    rows = await quickbooks.query(
+        conn, db,
+        f"SELECT * FROM Item WHERE Name = '{escape_query_value(safe)}' AND Active = true",
+        client_id=client_id, client_secret=client_secret,
+    )
+    if not rows:
+        return await _create_named_item(
+            conn, db, safe, unit_price, income_account_id=account_id,
+            client_id=client_id, client_secret=client_secret,
+        )
+    hit = _on_account(rows, safe, account_id)
+    if hit:
+        return str(hit.get("Id"))
+
+    account_name = await _income_account_label(
+        conn, db, account_id, name, client_id=client_id, client_secret=client_secret,
+    )
+    sibling = _account_item_name(safe, account_name)
+    rows = await quickbooks.query(
+        conn, db,
+        f"SELECT * FROM Item WHERE Name = '{escape_query_value(sibling)}' AND Active = true",
+        client_id=client_id, client_secret=client_secret,
+    )
+    if not rows:
+        return await _create_named_item(
+            conn, db, sibling, unit_price, income_account_id=account_id,
+            client_id=client_id, client_secret=client_secret,
+        )
+    hit = _on_account(rows, sibling, account_id)
+    if hit:
+        return str(hit.get("Id"))
+    item_id = str(_prefer_top_level(rows, sibling).get("Id"))
+    ok, changed, _stale = await _repoint_item_income_account(
+        conn, db, item_id, account_id, expected_name=sibling,
+        client_id=client_id, client_secret=client_secret,
+    )
+    if not ok:
+        # Posting through it anyway would put the fee on whatever account the
+        # item was moved to — exactly what choosing one was meant to prevent.
+        raise InvoiceNotSyncable(
+            f'The QuickBooks item "{sibling}" posts to a different income account '
+            f'than its name says, and it could not be moved back onto "{account_name}". '
+            f"Set its income account in QuickBooks → Sales → Products & Services — "
+            f"then push again."
+        )
+    if changed and repoints is not None:
+        repoints.append({"name": sibling, "account": account_name})
+    return item_id
+
+
 async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, repoints=None) -> str:
     """QB Item id for a sales line. Equipment → the generic rental item.
     Product/Service/Fee → their own item (matched on the catalog row's
     qb_item_id cache, else by name). Free-typed lines — including custom fees
-    with no `feeId` — fall back to the line name.
+    with no `feeId` — fall back to the line name; a custom fee given its own
+    income account resolves through _custom_fee_item_id instead.
 
     Also keeps the item's income account aligned with the app's mapping: when
     the resolved desired account differs from the row's qb_income_account_synced
@@ -945,6 +1105,15 @@ async def _resolve_line_item_id(conn, db, line, *, client_id, client_secret, rep
     if ltype == "equipment" or line.get("equipmentId"):
         return await _generic_equipment_item_id(
             conn, db, client_id=client_id, client_secret=client_secret, repoints=repoints
+        )
+
+    fee_account = _custom_fee_account_id(line)
+    if fee_account:
+        fee_name = line.get("name") or "Line item"
+        _require_known_income_account(conn, fee_account, fee_name)
+        return await _custom_fee_item_id(
+            conn, db, fee_name, eff_price, fee_account,
+            client_id=client_id, client_secret=client_secret, repoints=repoints,
         )
 
     catalog_row = None

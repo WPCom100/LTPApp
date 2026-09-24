@@ -145,6 +145,66 @@ window.LTP_qboPushOutcome = function(resp, money) {
            message: b.error || ("HTTP " + status + ".") };
 };
 
+// ── Income accounts ─────────────────────────────────────────────────────────
+// The lists come from the connection's cache (qbo.incomeAccounts, [{ id, name }],
+// loaded by an admin in Settings → QuickBooks → Update Account List).
+
+// An account's name. An id the cache doesn't know reads as "Account #<id>" —
+// never as the default, which would hide that one is set.
+window.LTP_qboAccountName = function(accounts, id) {
+  var want = String(id == null ? "" : id);
+  var list = accounts || [];
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].id) === want) return list[i].name || ("Account #" + want);
+  }
+  return "Account #" + want;
+};
+
+// <select> options for an income account: the default first (value ""), then
+// every cached account. A saved id missing from the list stays selectable as
+// itself rather than silently reading as the default.
+window.LTP_qboIncomeAccountOptions = function(accounts, currentVal, defaultLabel) {
+  var cur = currentVal == null ? "" : String(currentVal);
+  var opts = [{ value: "", label: defaultLabel || "Default income account" }];
+  var seen = false;
+  (accounts || []).forEach(function(a) {
+    var id = String(a.id);
+    if (id === cur) seen = true;
+    opts.push({ value: id, label: a.name || ("Account #" + id) });
+  });
+  if (cur && !seen) opts.push({ value: cur, label: "Account #" + cur });
+  return opts;
+};
+
+// What "default" means for a fee with no account of its own: the Fees mapping,
+// else the workspace default — the resolution the push makes
+// (backend/qbo_sync.py::_desired_income_account_id).
+window.LTP_qboFeeDefaultLabel = function(settings, accounts) {
+  var s = settings || {};
+  var mapped = s.qboFeeIncomeAccountId || s.qboIncomeAccountId || null;
+  return mapped ? "Default — " + window.LTP_qboAccountName(accounts, mapped) : "Default income account";
+};
+
+// What a custom fee's account picker needs — { accounts, defaultLabel } — or
+// null when there is nothing to pick from: QuickBooks isn't connected, or its
+// income accounts were never loaded.
+window.LTP_qboFeeAccountPicker = function(settings, qbo) {
+  var accounts = (qbo && qbo.connected && qbo.incomeAccounts) || [];
+  if (!accounts.length) return null;
+  return { accounts: accounts, defaultLabel: window.LTP_qboFeeDefaultLabel(settings, accounts) };
+};
+
+// The income account a line was given for itself: only a CUSTOM fee (a fee
+// with no catalog row) carries one, the rest post by their catalog row and the
+// Settings mapping. "" when it has none. Mirrors
+// backend/qbo_sync.py::_custom_fee_account_id, so what the builder shows is
+// what the push will do.
+window.LTP_customFeeAccount = function(item) {
+  if (!item || item.type !== "fee" || item.feeId) return "";
+  var a = item.qbIncomeAccountId;
+  return (typeof a === "string" || Number.isInteger(a)) ? String(a).trim() : "";
+};
+
 // ── Tax exemption reasons ───────────────────────────────────────────────────
 // Intuit's fixed Customer.TaxExemptionReasonId enum, in id order. Mirrors
 // backend/qbo_sync.py::_TAX_EXEMPTION_REASONS — the two are checked against each

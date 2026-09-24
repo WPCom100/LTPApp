@@ -26,19 +26,7 @@
   // cached list still shows as its raw id instead of silently reading as default.
   function qbAccountOptions(currentVal, settings, qbo) {
     var accounts = (qbo && qbo.incomeAccounts) || [];
-    function nameOf(id) {
-      for (var i = 0; i < accounts.length; i++) if (String(accounts[i].id) === String(id)) return accounts[i].name || ("Account #" + id);
-      return "Account #" + id;
-    }
-    var mapped = (settings && (settings.qboFeeIncomeAccountId || settings.qboIncomeAccountId)) || null;
-    var opts = [{ value: "", label: mapped ? "Default — " + nameOf(mapped) : "Default income account" }];
-    var seen = false;
-    accounts.forEach(function(a) {
-      if (String(a.id) === String(currentVal || "")) seen = true;
-      opts.push({ value: String(a.id), label: a.name || ("Account #" + a.id) });
-    });
-    if (currentVal && !seen) opts.push({ value: String(currentVal), label: "Account #" + currentVal });
-    return opts;
+    return window.LTP_qboIncomeAccountOptions(accounts, currentVal, window.LTP_qboFeeDefaultLabel(settings, accounts));
   }
 
   function FeeForm({ initial, onSave, onCancel, onDelete, settings, qbo }) {
@@ -108,49 +96,87 @@
   }
 
   // Editor for the "quick-add" fee names — the one-tap chips that pre-fill a
-  // CUSTOM fee's description in the quote/invoice Add-Item → Fees tab. Persists
-  // to settings.feeQuickNames (admin-only write), which the pickers read via
-  // window.LTP_FEE_QUICKNAMES. Local state is the editing surface; text edits
-  // commit on blur, add/remove commit immediately, so typing stays smooth and
-  // the whole app doesn't re-render on every keystroke.
-  function FeeQuickNamesEditor({ settings, setSettings }) {
-    var [names, setNames] = useState(function() { return window.LTP_feeQuickNames(settings); });
+  // CUSTOM fee in the quote/invoice Add-Item → Fees tab — and, once QuickBooks
+  // is connected with its income accounts loaded, the account each name
+  // presets on the fee. Persists to settings.feeQuickNames and
+  // settings.feeQuickNameAccounts (admin-only write), which the pickers read
+  // through window.LTP_feeQuickPicks. Local state is the editing surface; text
+  // edits commit on blur, add/remove and account picks commit immediately, so
+  // typing stays smooth and the whole app doesn't re-render on every keystroke.
+  function FeeQuickNamesEditor({ settings, setSettings, qbo }) {
+    var isMobile = window.LTP_useIsMobile();
+    var [rows, setRows] = useState(function() { return window.LTP_feeQuickPicks(settings); });
     // Seeded once at mount and written back whole, so another admin's additions
     // were dropped without a word. Watch just this slice of the settings blob —
     // an unrelated settings change is not this editor's business.
     window.LTP_useRecordWatch("settings", null,
       { title: "Quick-add names changed elsewhere",
         message: "Another window updated them while this list was open. Saving will replace the newer version." },
-      function(s) { return window.LTP_feeQuickNames(s); });
-    var namesRef = useRef(names);
-    namesRef.current = names;
+      function(s) { return window.LTP_feeQuickPicks(s); });
+    var rowsRef = useRef(rows);
+    rowsRef.current = rows;
+    // Without QuickBooks accounts to pick from this is the list of name chips
+    // it always was — and each name's saved account rides through every edit.
+    var picker = window.LTP_qboFeeAccountPicker(settings, qbo);
 
     function persist(list) {
-      var normalized = window.LTP_feeQuickNames({ feeQuickNames: list });
-      setSettings(function(prev) { return Object.assign({}, prev || {}, { feeQuickNames: normalized }); });
+      var patch = window.LTP_feeQuickPicksPatch(list);
+      setSettings(function(prev) { return Object.assign({}, prev || {}, patch); });
     }
-    function patch(i, val) { var n = namesRef.current.slice(); n[i] = val; setNames(n); }
-    function addName() { setNames(namesRef.current.concat([""])); }   // blank row — commits on blur once typed
-    function removeName(i) { var n = namesRef.current.slice(); n.splice(i, 1); setNames(n); persist(n); }
-    function commitBlur() { persist(namesRef.current); }
+    function edit(i, fields) { var n = rowsRef.current.slice(); n[i] = Object.assign({}, n[i], fields); setRows(n); return n; }
+    function addName() { setRows(rowsRef.current.concat([{ name: "", qbIncomeAccountId: null }])); }   // blank row — commits on blur once typed
+    function removeName(i) { var n = rowsRef.current.slice(); n.splice(i, 1); setRows(n); persist(n); }
+    function commitBlur() { persist(rowsRef.current); }
+
+    function nameInput(r, i, style) {
+      return h("input", { value: r.name, size: Math.max((r.name || "").length, 6), placeholder: "name", "aria-label": "Quick-add fee name",
+        onChange: function(e) { edit(i, { name: e.target.value }); },
+        onBlur: commitBlur,
+        onKeyDown: function(e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } },
+        style: Object.assign({ color: B.text, fontWeight: 600, fontFamily: "inherit", outline: "none" }, style) });
+    }
+    function removeBtn(r, i) {
+      return h("button", { onClick: function() { removeName(i); }, "aria-label": "Remove " + (r.name || "name"), title: "Remove",
+        style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "15px", lineHeight: 1, padding: "0 4px" } }, "×");
+    }
+    var addBtn = h("button", { onClick: addName,
+      style: { alignSelf: picker ? "flex-start" : undefined, background: "transparent", border: "1px dashed " + B.border, borderRadius: "14px", color: B.textSec, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: "5px 12px" } }, "+ Add name");
+    var field = { background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: isMobile ? "7px 10px" : "5px 10px",
+                  fontSize: isMobile ? "16px" : "12px", minWidth: 0, width: "100%", boxSizing: "border-box" };
+    var colHead = { fontSize: "9px", fontWeight: 700, color: B.textMut, textTransform: "uppercase", letterSpacing: "0.06em" };
 
     return h("div", { style: { background: B.raised, border: "1px solid " + FEE + "44", borderRadius: "8px", padding: "12px 14px", marginBottom: 16 } },
       h("div", { style: { fontSize: "10px", fontWeight: 700, color: FEE, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 } }, "Quick-Add Fee Names"),
       h("div", { style: { fontSize: "11px", color: B.textMut, lineHeight: 1.5, marginBottom: 10 } },
-        "One-tap names shown when adding a custom fee to a quote or invoice. These pre-fill the description only — they carry no price."),
-      h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
-        names.map(function(nm, i) {
-          return h("div", { key: i, style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.bg, border: "1px solid " + B.border, borderRadius: "14px", padding: "3px 4px 3px 10px" } },
-            h("input", { value: nm, size: Math.max((nm || "").length, 6), placeholder: "name",
-              onChange: function(e) { patch(i, e.target.value); },
-              onBlur: commitBlur,
-              onKeyDown: function(e) { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } },
-              style: { background: "transparent", border: "none", color: B.text, fontSize: "12px", fontWeight: 600, fontFamily: "inherit", outline: "none", minWidth: 40 } }),
-            h("button", { onClick: function() { removeName(i); }, "aria-label": "Remove " + (nm || "name"), title: "Remove",
-              style: { background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "15px", lineHeight: 1, padding: "0 4px" } }, "×"));
-        }),
-        h("button", { onClick: addName,
-          style: { background: "transparent", border: "1px dashed " + B.border, borderRadius: "14px", color: B.textSec, cursor: "pointer", fontSize: "11px", fontWeight: 600, padding: "5px 12px" } }, "+ Add name"))
+        picker
+          ? "One-tap names shown when adding a custom fee to a quote or invoice. Each fills in the description and presets the QuickBooks income account beside it — never a price. The account can still be changed on the fee."
+          : "One-tap names shown when adding a custom fee to a quote or invoice. These pre-fill the description only — they carry no price."),
+      picker
+        // Name → account rows. A phone stacks each pair: name and × on top,
+        // the account under it at full width.
+        ? h("div", { style: { display: "flex", flexDirection: "column", gap: isMobile ? 10 : 6, maxWidth: isMobile ? undefined : 760 } },
+            !isMobile && rows.length > 0 && h("div", { style: { display: "grid", gridTemplateColumns: "minmax(140px, 1fr) minmax(180px, 1.3fr) 24px", gap: 8 } },
+              h("div", { style: colHead }, "Name"), h("div", { style: colHead }, "QuickBooks income account")),
+            rows.map(function(r, i) {
+              var sel = h("select", { value: r.qbIncomeAccountId || "", "aria-label": "QuickBooks income account for " + (r.name || "this name"),
+                  onChange: function(e) { persist(edit(i, { qbIncomeAccountId: e.target.value || null })); },
+                  style: Object.assign({ color: B.text, fontFamily: "inherit", outline: "none", appearance: "auto" }, field, isMobile ? { gridColumn: "1 / -1" } : null) },
+                window.LTP_qboIncomeAccountOptions(picker.accounts, r.qbIncomeAccountId, picker.defaultLabel).map(function(o) {
+                  return h("option", { key: o.value, value: o.value }, o.label);
+                }));
+              return h("div", { key: i, style: { display: "grid", gridTemplateColumns: isMobile ? "1fr auto" : "minmax(140px, 1fr) minmax(180px, 1.3fr) 24px", gap: isMobile ? 6 : 8, alignItems: "center" } },
+                nameInput(r, i, field),
+                isMobile ? removeBtn(r, i) : sel,
+                isMobile ? sel : removeBtn(r, i));
+            }),
+            addBtn)
+        : h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" } },
+            rows.map(function(r, i) {
+              return h("div", { key: i, style: { display: "inline-flex", alignItems: "center", gap: 4, background: B.bg, border: "1px solid " + B.border, borderRadius: "14px", padding: "3px 4px 3px 10px" } },
+                nameInput(r, i, { background: "transparent", border: "none", fontSize: "12px", minWidth: 40 }),
+                removeBtn(r, i));
+            }),
+            addBtn)
     );
   }
 
@@ -222,7 +248,7 @@
     return h("div", null,
       // Quick-add fee-name editor (admin-only — it writes app settings). The
       // catalog list below is unaffected by whether this renders.
-      isAdmin && setSettings && h(FeeQuickNamesEditor, { settings: settings, setSettings: setSettings }),
+      isAdmin && setSettings && h(FeeQuickNamesEditor, { settings: settings, setSettings: setSettings, qbo: qbo }),
 
       // Toolbar — category chips scroll horizontally on mobile; "+ Add" → FAB.
       h("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 } },

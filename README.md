@@ -1000,9 +1000,10 @@ on the Playground — always use the app's button.)
 
 Which QuickBooks **income account** each item posts to is mapped in
 **Settings → QuickBooks Online → Income Accounts**: one account each for
-**Services (labor)**, **Products**, and **Equipment Rentals**, plus a
-**default** for anything unmapped. Individual services and products can
-override the mapping in their edit forms (Quotes → Services / Products).
+**Services (labor)**, **Products**, **Equipment Rentals** and **Fees**, plus a
+**default** for anything unmapped. Individual services, products and saved
+fees can override the mapping in their edit forms (Quotes → Services /
+Products / Fees), and a **custom fee** can carry its own account (below).
 The dropdowns are fed by a cached account list — click **Update Account
 List** after adding accounts in QuickBooks; nothing refreshes in the
 background.
@@ -1013,6 +1014,45 @@ change. Re-pointing only affects **future** postings — QuickBooks does not
 reclassify existing transactions — but note that re-pushing an *old* invoice
 re-posts its lines at the item's *current* account, which shifts that
 invoice's P&L to the new account as of its transaction date.
+
+#### Custom fees: an account of their own
+
+A custom fee — one typed into **Add Item → Fees → Custom Fee** rather than
+picked from the saved-fee catalog — has no catalog row to take an account
+from, so it can name its own:
+
+- **When adding it**, the Custom Fee box has a **QuickBooks account** picker
+  under the description. It starts on **Default** (the Fees mapping, named in
+  the option) and is changeable on the line afterwards (**QB account**, under
+  the fee's name) while the quote is editable or the invoice is a draft; a
+  locked line shows the account as a caption.
+- **Quick-add names carry a preset.** In **Quotes → Fees → Quick-Add Fee
+  Names** (admin), each name gets a QuickBooks income account beside it once
+  QuickBooks is connected with its accounts loaded. Tapping **+ Lodging** fills
+  in the description *and* that account. A description typed by hand picks up
+  the preset of the quick-add name it starts with — "Lodging — 2 nights" is
+  Lodging's, "Traveling expenses" is not Travel's — and an account you pick
+  yourself sticks while you finish the description.
+- **Where it lands in QuickBooks.** QuickBooks posts a line to its *item's*
+  income account; an invoice line can't name one of its own. So the account
+  chooses the item: the one named after the fee when it already posts there
+  (or doesn't exist yet — it is then created there), otherwise one named
+  `<fee> (<account>)`, e.g. *Lodging (Travel Income)*. The item named
+  after the fee is **never re-pointed** — it may be the bookkeeper's own, and
+  it is what that fee's older lines and every default-account line of the same
+  name post through. Two same-named custom fees sent to different accounts, on
+  one invoice or across several, each land where they were sent.
+- A custom fee left on **Default** behaves exactly as before, as do catalog
+  fees — their account is set on the fee in Quotes → Fees, and a line can't
+  override it.
+- Changing a custom fee's account on a pushed invoice surfaces **Update
+  QuickBooks**. An account that has since dropped off the cached list (deactivated
+  in QuickBooks, or a different company connected) stops the push with a message
+  naming the fee, rather than posting it somewhere nobody chose.
+
+Stored as `qbIncomeAccountId` on the fee line (carried from quote to invoice) and
+`settings.feeQuickNameAccounts` (`{ "<lowercased name>": "<account id>" }`)
+beside `settings.feeQuickNames`. Routing: `backend/qbo_sync.py::_custom_fee_item_id`.
 
 ### Error Log (Settings)
 

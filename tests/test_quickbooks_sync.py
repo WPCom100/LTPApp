@@ -1230,6 +1230,255 @@ async def test_equipment_item_uses_rentals_mapping():
            and qbo_sync._repoint_item_income_account.await_count == 0)
 
 
+# ── Custom fees with an income account of their own ─────────────────────────
+
+def test_custom_fee_account_id():
+    print("test_custom_fee_account_id")
+    acct = qbo_sync._custom_fee_account_id
+    _check("custom fee carries its account", acct({"type": "fee", "feeId": None, "qbIncomeAccountId": "79"}) == "79")
+    _check("a numeric id is read as the same id", acct({"type": "fee", "qbIncomeAccountId": 79}) == "79")
+    _check("whitespace trimmed", acct({"type": "fee", "qbIncomeAccountId": " 79 "}) == "79")
+    for blank in (None, "", "   "):
+        _check(f"blank account {blank!r} → follows the Fees mapping",
+               acct({"type": "fee", "qbIncomeAccountId": blank}) is None)
+    _check("no account key → follows the Fees mapping", acct({"type": "fee", "name": "Travel"}) is None)
+    _check("a catalog fee's account is its catalog row's, never the line's",
+           acct({"type": "fee", "feeId": 5, "qbIncomeAccountId": "79"}) is None)
+    _check("only fees carry one", acct({"type": "service", "qbIncomeAccountId": "79"}) is None)
+    for junk in (True, {"id": "79"}, ["79"], 7.9):
+        _check(f"junk account {junk!r} ignored", acct({"type": "fee", "qbIncomeAccountId": junk}) is None)
+
+
+def test_account_item_name():
+    print("test_account_item_name")
+    _check("fee name then account in parentheses",
+           qbo_sync._account_item_name("Lodging", "Travel Income") == "Lodging (Travel Income)")
+    long = qbo_sync._account_item_name("L" * 120, "Reimbursed Travel Income")
+    _check("held within QB's 100-character limit", len(long) <= 100, str(len(long)))
+    _check("the fee name gives way, the account survives", long.endswith(" (Reimbursed Travel Income)"))
+    _check("a colon (QB's sub-item separator) never reaches the name",
+           ":" not in qbo_sync._account_item_name("Travel: air", "Income: other"))
+
+
+def _item_query(rows_by_name):
+    """A quickbooks.query stand-in answering `... WHERE Name = '<name>' AND
+    Active = true` from a {name: [rows]} map, recording every query."""
+    seen: list[str] = []
+
+    async def _query(conn, _db, sql, **kw):
+        seen.append(sql)
+        for name, rows in rows_by_name.items():
+            if f"Name = '{escape_query_value(name)}'" in sql and "Active = true" in sql:
+                return rows
+        return []
+    return _query, seen
+
+
+async def test_custom_fee_posts_through_an_item_on_its_account():
+    print("test_custom_fee_posts_through_an_item_on_its_account")
+    qbo_sync._repoint_item_income_account = _real_repoint_item_income_account
+    conn = types.SimpleNamespace(income_accounts=[{"id": "79", "name": "Travel Income"},
+                                                  {"id": "11", "name": "Fee Income"}])
+    db = MagicMock(); db.flush = AsyncMock()
+
+    async def resolve(rows_by_name, repoints=None):
+        qbo_sync.quickbooks.query, seen = _item_query(rows_by_name)
+        out = await qbo_sync._custom_fee_item_id(
+            conn, db, "Lodging", 180, "79", client_id="c", client_secret="s", repoints=repoints)
+        return out, seen
+
+    # Nothing is called "Lodging" yet → it is created on the chosen account.
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "NEW"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+    out, seen = await resolve({})
+    payload = qbo_sync.quickbooks.create_item.await_args.args[2]
+    _check("a new fee gets an item named after it", out == "NEW" and payload["Name"] == "Lodging")
+    _check("…posting to the chosen account", payload["IncomeAccountRef"]["value"] == "79")
+    _check("lookups are scoped to ACTIVE items", all("Active = true" in q for q in seen))
+
+    # "Lodging" already posts there → reused as-is.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    out, _ = await resolve({"Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "79"}}]})
+    _check("a namesake already on the account is reused", out == "40")
+    _check("…with nothing created or rewritten",
+           qbo_sync.quickbooks.create_item.await_count == 0 and qbo_sync.quickbooks.update_item.await_count == 0)
+
+    # "Lodging" posts elsewhere → the fee goes through "Lodging (Travel Income)"
+    # and the namesake is left exactly where it was.
+    out, seen = await resolve({"Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}]})
+    payload = qbo_sync.quickbooks.create_item.await_args.args[2]
+    _check("a namesake on another account is passed over for an account-named item",
+           out == "NEW" and payload["Name"] == "Lodging (Travel Income)")
+    _check("…created on the chosen account", payload["IncomeAccountRef"]["value"] == "79")
+    _check("…and the namesake is never re-pointed", qbo_sync.quickbooks.update_item.await_count == 0)
+    _check("the account-named item was looked up before being created",
+           any("Lodging (Travel Income)" in q for q in seen))
+
+    # Among several namesakes, one already on the account is used even when it
+    # isn't the top-level one.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    out, _ = await resolve({"Lodging": [
+        {"Id": "40", "Name": "Lodging", "FullyQualifiedName": "Lodging", "IncomeAccountRef": {"value": "11"}},
+        {"Id": "41", "Name": "Lodging", "FullyQualifiedName": "Travel:Lodging", "IncomeAccountRef": {"value": "79"}}]})
+    _check("a namesake on the account wins over one that isn't", out == "41"
+           and qbo_sync.quickbooks.create_item.await_count == 0)
+
+    # The account-named item already exists → reused.
+    out, _ = await resolve({
+        "Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}],
+        "Lodging (Travel Income)": [{"Id": "55", "Name": "Lodging (Travel Income)", "IncomeAccountRef": {"value": "79"}}]})
+    _check("an existing account-named item is reused", out == "55"
+           and qbo_sync.quickbooks.create_item.await_count == 0)
+
+    # …but someone moved it in QuickBooks → it goes back onto the account its
+    # name says, and the move is recorded for the invoice activity.
+    qbo_sync.quickbooks.get_item = AsyncMock(return_value={
+        "Id": "55", "Name": "Lodging (Travel Income)", "SyncToken": "2", "IncomeAccountRef": {"value": "11"}})
+    repoints = []
+    out, _ = await resolve({
+        "Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}],
+        "Lodging (Travel Income)": [{"Id": "55", "Name": "Lodging (Travel Income)", "IncomeAccountRef": {"value": "11"}}]},
+        repoints=repoints)
+    update = qbo_sync.quickbooks.update_item.await_args.args[2]
+    _check("a moved account-named item is put back", out == "55"
+           and update["Id"] == "55" and update["IncomeAccountRef"]["value"] == "79")
+    _check("the move is stamped for the activity log",
+           repoints == [{"name": "Lodging (Travel Income)", "account": "Travel Income"}])
+
+    # …and when it can't be moved, the push stops rather than post the fee to
+    # an account nobody chose.
+    qbo_sync.quickbooks.get_item = AsyncMock(side_effect=QboApiError(500, "boom"))
+    err = None
+    try:
+        await resolve({
+            "Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}],
+            "Lodging (Travel Income)": [{"Id": "55", "Name": "Lodging (Travel Income)", "IncomeAccountRef": {"value": "11"}}]})
+    except qbo_sync.InvoiceNotSyncable as e:
+        err = str(e)
+    _check("an item that can't be moved back stops the push with a way out",
+           err is not None and "Lodging (Travel Income)" in err and "Travel Income" in err)
+
+
+async def test_custom_fee_account_named_without_a_cache():
+    print("test_custom_fee_account_named_without_a_cache")
+    # Right after a reconnect the cached account list is empty until an admin
+    # loads it. The account-named item still gets the account's real name —
+    # asked of QuickBooks — never "Lodging (79)".
+    qbo_sync._repoint_item_income_account = _real_repoint_item_income_account
+    conn = types.SimpleNamespace(income_accounts=[])
+    db = MagicMock(); db.flush = AsyncMock()
+    item_query, _ = _item_query({"Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}]})
+    accounts = {"79": [{"Id": "79", "Name": "Travel Income"}]}
+    seen: list[str] = []
+
+    async def _query(c, d, sql, **kw):
+        seen.append(sql)
+        if "FROM Account" in sql:
+            return next((rows for aid, rows in accounts.items() if f"Id = '{aid}'" in sql), [])
+        return await item_query(c, d, sql, **kw)
+
+    qbo_sync.quickbooks.query = _query
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "NEW"}})
+    out = await qbo_sync._custom_fee_item_id(conn, db, "Lodging", 180, "79", client_id="c", client_secret="s")
+    _check("the account's name comes from QuickBooks when the cache is empty",
+           out == "NEW" and qbo_sync.quickbooks.create_item.await_args.args[2]["Name"] == "Lodging (Travel Income)")
+    _check("…with one account lookup", sum("FROM Account" in q for q in seen) == 1)
+
+    # An account QuickBooks doesn't have at all stops the push, naming the fee.
+    accounts.clear()
+    err = None
+    try:
+        await qbo_sync._custom_fee_item_id(conn, db, "Lodging", 180, "79", client_id="c", client_secret="s")
+    except qbo_sync.InvoiceNotSyncable as e:
+        err = str(e)
+    _check("an account QuickBooks no longer has is refused", err is not None and '"Lodging"' in err)
+
+    # A cached name is used as-is — no lookup.
+    seen.clear()
+    conn.income_accounts = [{"id": "79", "name": "Travel Income"}]
+    await qbo_sync._custom_fee_item_id(conn, db, "Lodging", 180, "79", client_id="c", client_secret="s")
+    _check("a cached account name needs no lookup", not any("FROM Account" in q for q in seen))
+
+
+async def test_custom_fee_account_routing():
+    print("test_custom_fee_account_routing")
+    settings = {"qboFeeIncomeAccountId": "11"}
+    qbo_sync._settings_get = AsyncMock(side_effect=lambda db, key: settings.get(key))
+    qbo_sync._repoint_item_income_account = _real_repoint_item_income_account
+    qbo_sync._find_or_create_named_item = _real_find_or_create_named_item
+    conn = types.SimpleNamespace(income_accounts=[{"id": "79", "name": "Travel Income"},
+                                                  {"id": "11", "name": "Fee Income"}])
+    db = MagicMock(); db.flush = AsyncMock()
+    namesake = {"Lodging": [{"Id": "40", "Name": "Lodging", "IncomeAccountRef": {"value": "11"}}]}
+    qbo_sync.quickbooks.create_item = AsyncMock(return_value={"Item": {"Id": "NEW"}})
+    qbo_sync.quickbooks.update_item = AsyncMock()
+
+    # A custom fee WITHOUT an account behaves exactly as before: the namesake,
+    # whatever it posts to.
+    qbo_sync.quickbooks.query, _ = _item_query(namesake)
+    out = await _real_resolve_line_item_id(
+        conn, db, {"type": "fee", "feeId": None, "name": "Lodging", "unitPrice": 180},
+        client_id="c", client_secret="s")
+    _check("a default-account custom fee still uses its namesake", out == "40")
+
+    # WITH one, it is routed onto that account.
+    qbo_sync.quickbooks.query, _ = _item_query(namesake)
+    out = await _real_resolve_line_item_id(
+        conn, db, {"type": "fee", "feeId": None, "name": "Lodging", "unitPrice": 180, "qbIncomeAccountId": "79"},
+        client_id="c", client_secret="s")
+    _check("a custom fee with an account posts through an item on it",
+           out == "NEW" and qbo_sync.quickbooks.create_item.await_args.args[2]["IncomeAccountRef"]["value"] == "79")
+
+    # An account QuickBooks no longer offers stops the push — naming the fee —
+    # before anything is created.
+    qbo_sync.quickbooks.create_item.reset_mock()
+    err = None
+    try:
+        await _real_resolve_line_item_id(
+            conn, db, {"type": "fee", "name": "Lodging — 2 nights", "unitPrice": 180, "qbIncomeAccountId": "404"},
+            client_id="c", client_secret="s")
+    except qbo_sync.InvoiceNotSyncable as e:
+        err = str(e)
+    _check("a retired account is refused with the fee named",
+           err is not None and "Lodging — 2 nights" in err)
+    _check("…before anything is created", qbo_sync.quickbooks.create_item.await_count == 0)
+
+    # With no cached account list there is nothing to judge by, so QuickBooks decides.
+    qbo_sync.quickbooks.query, _ = _item_query({})
+    out = await _real_resolve_line_item_id(
+        types.SimpleNamespace(income_accounts=[]), db,
+        {"type": "fee", "name": "Lodging", "unitPrice": 180, "qbIncomeAccountId": "404"},
+        client_id="c", client_secret="s")
+    _check("an empty account cache passes the account through",
+           out == "NEW" and qbo_sync.quickbooks.create_item.await_args.args[2]["IncomeAccountRef"]["value"] == "404")
+
+    # A catalog fee ignores a stray per-line account: its item is its row's.
+    row = types.SimpleNamespace(id=5, name="Lodging", qb_item_id="40", qb_income_account_id=None,
+                                qb_income_account_synced="11")
+    qbo_sync.quickbooks.create_item.reset_mock()
+    out = await _real_resolve_line_item_id(
+        conn, _db_returning_row(row), {"type": "fee", "feeId": 5, "name": "Lodging", "unitPrice": 180,
+                                       "qbIncomeAccountId": "79"},
+        client_id="c", client_secret="s")
+    _check("a catalog fee keeps its own item", out == "40" and qbo_sync.quickbooks.create_item.await_count == 0)
+
+    # Two same-named custom fees on one invoice, sent to different accounts,
+    # each land on their own — one shared item could only hold one account.
+    qbo_sync._resolve_line_item_id = _real_resolve_line_item_id
+    created = iter(["TRAVEL-ITEM"])
+    qbo_sync.quickbooks.create_item = AsyncMock(side_effect=lambda *a, **k: {"Item": {"Id": next(created)}})
+    qbo_sync.quickbooks.query, _ = _item_query(namesake)
+    entity = types.SimpleNamespace(project_id=None, global_discount={"type": "none"}, sections=[{"id": "s1", "items": [
+        {"type": "fee", "feeId": None, "name": "Lodging", "qty": 1, "unitPrice": 180, "qbIncomeAccountId": "79"},
+        {"type": "fee", "feeId": None, "name": "Lodging", "qty": 1, "unitPrice": 90, "qbIncomeAccountId": "11"},
+    ]}])
+    lines, _sub = await qbo_sync._build_sales_lines(
+        conn, db, entity, False, "TAX", "NON", client_id="c", client_secret="s")
+    refs = [l["SalesItemLineDetail"]["ItemRef"]["value"] for l in lines]
+    _check("same name, two accounts → two items", refs == ["TRAVEL-ITEM", "40"], str(refs))
+    _check("the line still reads as the fee", [l["Description"] for l in lines] == ["Lodging", "Lodging"])
+
+
 def test_income_account_readonly_columns():
     print("test_income_account_readonly_columns")
     for model_cls in (models.Service, models.Product):
@@ -1803,7 +2052,7 @@ async def test_exemption_reason_is_client_writable():
 
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
-                  test_period_label,
+                  test_period_label, test_custom_fee_account_id, test_account_item_name,
                   test_customer_billaddr_and_fields, test_income_account_readonly_columns,
                   test_exempt_customer_carries_a_reason, test_reconciling_quickbooks_tax_state,
                   test_tax_baseline_is_not_client_writable]
@@ -1821,7 +2070,10 @@ def main():
         test_repoint_refuses_foreign_item, test_resolve_line_reresolves_stale_item_id,
         test_find_or_create_revives_deleted_name, test_deleted_item_never_lands_on_a_line,
         test_resolve_line_repoints_on_mapping_change,
-        test_equipment_item_uses_rentals_mapping, test_accounts_refresh_route,
+        test_equipment_item_uses_rentals_mapping,
+        test_custom_fee_posts_through_an_item_on_its_account, test_custom_fee_account_named_without_a_cache,
+        test_custom_fee_account_routing,
+        test_accounts_refresh_route,
         test_inactive_customer_is_reactivated, test_failed_reactivation_says_which_customer,
         test_unreadable_cached_customer_is_re_resolved, test_names_the_unusable_reference,
         test_exemption_reason_resolution_order, test_new_exempt_customer_is_created_with_a_reason,
