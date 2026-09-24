@@ -1000,7 +1000,43 @@ async def list_crew_requests(projectId: int | None = None, db: AsyncSession = De
     if projectId is not None:
         q = q.where(models.CrewRequest.project_id == projectId)
     rows = (await db.execute(q)).scalars().all()
-    return [_request_dict(r) for r in rows]
+    paid = await _paid_dates(db, rows)
+    out = []
+    for r in rows:
+        d = _request_dict(r)
+        d["paidDates"] = paid.get((r.contact_id, r.project_id), [])
+        out.append(d)
+    return out
+
+
+async def _paid_dates(db: AsyncSession, rows) -> dict:
+    """{(contact_id, project_id): sorted dates} — the days each request's crew
+    member has been PAID for on its project, read from the payout ledger: a
+    PayoutBillLine whose bill has qb_paid_at set (paid in QuickBooks, or
+    settled at $0 on export — the same test as the Payouts tab's day status).
+
+    Keyed by person and project, not by request, because that is how the
+    ledger is keyed; Labor → Crew Requests matches each of a request's
+    positions against its own date (a flat-rate position against the project's
+    end date) to decide whether the request has been paid out, and drops it
+    from the queue once it has."""
+    pairs = {(r.contact_id, r.project_id) for r in rows
+             if r.contact_id is not None and r.project_id is not None}
+    if not pairs:
+        return {}
+    lines = (await db.execute(
+        select(models.PayoutBillLine.contact_id, models.PayoutBillLine.project_id,
+               models.PayoutBillLine.date)
+        .join(models.PayoutBill, models.PayoutBillLine.payout_bill_id == models.PayoutBill.id)
+        .where(models.PayoutBill.qb_paid_at.isnot(None),
+               models.PayoutBillLine.contact_id.in_(sorted({c for c, _ in pairs})),
+               models.PayoutBillLine.project_id.in_(sorted({p for _, p in pairs})))
+    )).all()
+    out = {}
+    for contact_id, project_id, date in lines:
+        if (contact_id, project_id) in pairs:
+            out.setdefault((contact_id, project_id), set()).add(date)
+    return {k: sorted(v) for k, v in out.items()}
 
 
 # ── PRODUCER: POST /api/crew-requests/send ──────────────────────────────────

@@ -1696,6 +1696,73 @@ window.LTP_declinedCrewIndex = function(crewRequests, projects) {
   };
 };
 
+// Where a crew request's pay stands — so Labor → Crew Requests can drop a
+// request once the work it asked for has been paid out, and a whole project
+// once everything on it has.
+//
+// "Paid" is the payout ledger's word: GET /api/crew-requests carries each
+// request's `paidDates`, the days its crew member has been paid for on its
+// project — a bill line whose QuickBooks bill is paid, or a period settled at
+// $0 (backend/routes/crew.py::_paid_dates, the same test as the Payouts
+// tab's day status). A shift is paid when its date is; a flat-rate position
+// when the project's end date is, the date its fee is billed on
+// (LTP_fixedPayDate).
+//
+// A request is PAID OUT once it was answered yes (accepted — a direct book
+// included) and every position it covers that is still its crew member's is
+// settled: payout work — confirmed, or a cancellation that froze a share,
+// the two LTP_payoutRows pays — on a paid day, or a cancellation that pays
+// nothing. At least one must actually have been paid. Anything still waiting
+// (an answer, a confirm, a sign-off, an export, the payment itself) keeps it
+// open. A position since handed to someone else is theirs, not this
+// request's, and counts neither way.
+//
+//   LTP_crewRequestPay(req, project) → { paidOut, paid: { positionId: true } }
+//   `project` is the live row; without it nothing reads paid (we can't tell).
+window.LTP_crewRequestPay = function(req, project) {
+  var out = { paidOut: false, paid: {} };
+  if (!req || !project) return out;
+  var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+  var paidOn = {}; (req.paidDates || []).forEach(function(d) { paidOn[d] = true; });
+  var anyPaid = false, settled = req.status === "accepted";
+  function take(p, date) {
+    if (!p || !ids[p.id]) return;
+    if (p.crewId == null || req.contactId == null || String(p.crewId) !== String(req.contactId)) return;
+    var pays = p.status === "confirmed"
+      || (p.status === "cancelled" && !!(p.work && p.work.state === "cancelled" && p.work.pay));
+    if (pays && date && paidOn[date]) { out.paid[p.id] = true; anyPaid = true; }
+    else if (pays || p.status !== "cancelled") settled = false;
+  }
+  (project.schedule || []).forEach(function(s) {
+    (s && s.positions || []).forEach(function(p) { take(p, s.date); });
+  });
+  var flatDate = window.LTP_fixedPayDate(project);
+  (project.fixedPositions || []).forEach(function(p) { take(p, flatDate); });
+  out.paidOut = settled && anyPaid;
+  return out;
+};
+
+// The projects whose crew requests are all done with: every ask on the
+// project paid out (LTP_crewRequestPay) or declined — which nothing ever
+// pays — and at least one paid out. The declines go with the project then;
+// one ask still waiting on anything keeps it open. Withdrawn requests count
+// neither way.
+//
+//   LTP_paidOutProjects(crewRequests, projects) → { projectId: true }
+window.LTP_paidOutProjects = function(crewRequests, projects) {
+  var byId = {};
+  (projects || []).forEach(function(p) { if (p) byId[p.id] = p; });
+  var anyPaid = {}, waiting = {};
+  (crewRequests || []).forEach(function(r) {
+    if (!r || r.status === "withdrawn" || r.projectId == null) return;
+    if (window.LTP_crewRequestPay(r, byId[r.projectId]).paidOut) anyPaid[r.projectId] = true;
+    else if (r.status !== "declined") waiting[r.projectId] = true;
+  });
+  var out = {};
+  Object.keys(anyPaid).forEach(function(pid) { if (!waiting[pid]) out[pid] = true; });
+  return out;
+};
+
 // ── Flat-rate ("fixed cost") positions ───────────────────────────────────────
 //
 // A lighting designer or stage manager hired for the WHOLE project at a flat

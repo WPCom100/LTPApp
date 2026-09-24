@@ -3624,8 +3624,11 @@
     var [confirmDlg, setConfirmDlg] = useState(null);    // accepted request awaiting a confirm decision
     // Default to OPEN requests only — the ones still needing action (waiting on
     // the crew member, or accepted and awaiting confirm). Fully-confirmed and
-    // declined requests are done; the pills opt them back in.
+    // declined requests are done; the tiles opt them back in.
     var [filter, setFilter] = useState("open");
+    // "all" = the queue; a project id (as a string) = that project's requests,
+    // paid-out ones included — a lookup, like the Assignments tab's picker.
+    var [projFilter, setProjFilter] = useState("all");
     var collapsed = useCollapsedSet("ltp.labor.requests.collapsed");
     var [detailOpen, setDetailOpen] = useState({});   // request id → per-shift list expanded (desktop ledger)
 
@@ -3723,6 +3726,9 @@
     function reqInfo(req) {
       var proj = (projects || []).find(function(p) { return p.id === req.projectId; });
       var ids = {}; (req.positionIds || []).forEach(function(id) { ids[id] = true; });
+      // Which of its shifts the payout ledger shows paid, and whether that is
+      // all of them (paidOut) — components/domain-crew.js.
+      var pay = window.LTP_crewRequestPay(req, proj);
       // `known` distinguishes "this project has no matching positions" from
       // "we do not have this project yet". They used to be indistinguishable —
       // both produced all-zero counts — which is what silently hid the Confirm
@@ -3730,15 +3736,15 @@
       var positions = [];
       if (proj) (proj.schedule || []).forEach(function(s) {
         (s.positions || []).forEach(function(p) {
-          if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date, title: s.title || "", time: s.time || "", endTime: s.endTime || "" });
+          if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: s.date, title: s.title || "", time: s.time || "", endTime: s.endTime || "", paid: !!pay.paid[p.id] });
         });
       });
       if (proj) (proj.fixedPositions || []).forEach(function(p) {
-        if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: "", flat: true, fee: Number(p.fee) || 0 });
+        if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: "", flat: true, fee: Number(p.fee) || 0, paid: !!pay.paid[p.id] });
       });
       var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
-      return { proj: proj, known: !!proj, positions: positions, counts: counts };
+      return { proj: proj, known: !!proj, positions: positions, counts: counts, paidOut: pay.paidOut };
     }
 
     // Badge label/color + which actions show, from the request + its live
@@ -3753,6 +3759,10 @@
       if (!info.known) return { label: "Syncing\u2026", color: B.textMut, pending: true };
       if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
       if (req.status === "declined") return { label: "Declined", color: B.danger };
+      // Every shift paid (reqInfo). Only reachable from the project picker —
+      // the queue drops these — so the badge says why it is no longer there.
+      // A direct book still says so on the row itself.
+      if (info.paidOut) return { label: "Paid", color: B.success };
       // A direct book was never sent, never answered — say so, permanently, so
       // it can't be read as a booking this person accepted. Nothing to resend
       // or withdraw (there's no ask outstanding); unbooking is a cancel on the
@@ -3792,31 +3802,71 @@
 
     var active = (crewRequests || []).filter(function(r) { return r.status !== "withdrawn"; });
 
-    // Bucket each request: open (pending, or accepted with positions still
-    // awaiting confirm), confirmed (all its work confirmed), declined.
-    function categoryOf(req) {
+    // Bucket each request by where it stands: requested (waiting on the crew
+    // member), accepted (answered, positions still to confirm), confirmed
+    // (all its work confirmed — a paid-out one too, when the picker shows
+    // it), declined. "Open" is the first two: the ones needing action.
+    function categoryOf(req, info) {
       if (req.status === "declined") return "declined";
-      if (req.status === "accepted") {
-        var counts = reqInfo(req).counts;
-        if (counts.accepted === 0 && counts.confirmed > 0) return "confirmed";
-      }
-      return "open";
+      if (req.status === "pending") return "requested";
+      if (info.paidOut) return "confirmed";
+      if (req.status === "accepted" && info.counts.accepted === 0 && info.counts.confirmed > 0) return "confirmed";
+      return "accepted";
     }
-    var catCounts = { open: 0, confirmed: 0, declined: 0 };
-    var withCat = active.map(function(r) { var c = categoryOf(r); catCounts[c]++; return { r: r, cat: c }; });
-    var shown = withCat.filter(function(x) { return filter === "all" || x.cat === filter; }).map(function(x) { return x.r; });
+    function isOpenCat(cat) { return cat === "requested" || cat === "accepted"; }
+    var allRows = active.map(function(r) {
+      var info = reqInfo(r);
+      return { r: r, info: info, ds: displayState(r, info), cat: categoryOf(r, info) };
+    });
+
+    // A whole project is paid out once every ask on it has been — or was
+    // declined, which nothing ever pays. Its declines go with it then; one
+    // ask still waiting on anything (an answer, a confirm, a payment) keeps
+    // the project here.
+    var projPaid = window.LTP_paidOutProjects(active, projects);
+
+    // Project picker: the queue's projects in the queue's order, then the
+    // paid-out ones under their own heading, newest first. A project we do
+    // not hold yet has no name to list; its section below says "Syncing…".
+    var queueOpts = [], paidOpts = [], optSeen = {};
+    allRows.forEach(function(x) {
+      var pid = x.r.projectId, proj = x.info.proj;
+      if (!proj || optSeen[pid]) return;
+      optSeen[pid] = true;
+      var opt = { value: String(pid), label: proj.name || "Untitled project", sublabel: projectMeta(proj, companies) };
+      if (projPaid[pid]) paidOpts.push({ opt: opt, date: proj.startDate || proj.endDate || "" });
+      else queueOpts.push(opt);
+    });
+    paidOpts.sort(function(a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+    // A pick that has since left the list (its requests withdrawn, say) falls
+    // back to the queue rather than holding an empty screen.
+    var picked = projFilter !== "all" && !!optSeen[projFilter];
+    function pickProject(v) {
+      setProjFilter(v);
+      // A pick is a lookup of that project: show everything on it. Back on
+      // All Projects, the queue opens on what still needs action.
+      setFilter(v === "all" ? "open" : "all");
+    }
+
+    // The screen: the queue — every request not yet paid out, on a project
+    // not yet paid out — or, with a project picked, everything on it (the
+    // only way back to a paid-out request). As on the Assignments tab, the
+    // tiles count THESE rows and narrow within them, never widen, so a
+    // tile's number is exactly what it shows.
+    var screenRows = allRows.filter(function(x) {
+      if (picked) return String(x.r.projectId) === projFilter;
+      return !x.info.paidOut && !projPaid[x.r.projectId];
+    });
+    var stats = { all: screenRows.length, open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
+    screenRows.forEach(function(x) { stats[x.cat]++; if (isOpenCat(x.cat)) stats.open++; });
+    var shown = screenRows.filter(function(x) {
+      return filter === "all" || (filter === "open" ? isOpenCat(x.cat) : x.cat === filter);
+    });
 
     // Group by project so a project's crew read as one linked block, mirroring
     // the Assignments tab.
     var byProject = {}; var order = [];
-    shown.forEach(function(r) { if (!byProject[r.projectId]) { byProject[r.projectId] = []; order.push(r.projectId); } byProject[r.projectId].push(r); });
-
-    var filterPill = function(key, label, count) {
-      var isActive = filter === key;
-      return h("button", { key: key, onClick: function() { setFilter(key); },
-        style: { background: isActive ? B.accent : B.raised, color: isActive ? B.btnInk : B.textMut, border: "1px solid " + (isActive ? B.accent : B.border), borderRadius: "4px", padding: "4px 12px", fontSize: "11px", fontWeight: 600, cursor: "pointer", fontFamily: "inherit" } },
-        label + (count != null ? " (" + count + ")" : ""));
-    };
+    shown.forEach(function(x) { var pid = x.r.projectId; if (!byProject[pid]) { byProject[pid] = []; order.push(pid); } byProject[pid].push(x); });
 
     // "A1 — Audio Engineer · 3 shifts · Sep 12 – Sep 13" — the one-line read
     // of what a request asks for. The per-shift list sits behind a toggle.
@@ -3844,6 +3894,9 @@
         var text = p.flat
           ? p.roleLabel + "  ·  flat rate $" + window.LTP_money(p.fee) + "  ·  whole project"
           : [p.date ? fmtShort(p.date) : "", p.title || "", p.time ? ftc(p.time) + (p.endTime ? "–" + ftc(p.endTime) : "") : "", p.roleLabel].filter(Boolean).join("  ·  ");
+        // Which of a request's shifts have been paid — so a request still
+        // here with some of its days paid says which ones are left.
+        if (p.paid) text += "  ·  paid";
         return h("div", { key: pi, style: Object.assign({ fontSize: "10px", color: done ? B.info : B.textSec, lineHeight: 1.6 }, oneLine) }, (done ? "✓ " : "• ") + text);
       });
     }
@@ -3936,22 +3989,84 @@
         }));
     }
 
+    // The status tiles — the same row as the Assignments tab: each tile is a
+    // count of the rows on this screen and the filter for them.
+    var tileColor = { all: B.accent, open: B.warn, requested: B.warn, accepted: B.success, confirmed: B.info, declined: B.danger };
+    var tileTitle = {
+      all: "Every request on this screen",
+      open: "Still needs something — the crew member's answer, or your confirm",
+      requested: "Sent, and waiting on the crew member's answer",
+      accepted: "Accepted by the crew member, with positions still to confirm",
+      confirmed: "Every position confirmed" + (picked ? " — paid-out requests included" : ", not yet paid out"),
+      declined: "Declined by the crew member",
+    };
+    var tileItems = [
+      { key: "all",       label: "All",       value: stats.all },
+      { key: "open",      label: "Open",      value: stats.open },
+      { key: "requested", label: "Requested", value: stats.requested },
+      { key: "accepted",  label: "Accepted",  value: stats.accepted },
+      { key: "confirmed", label: "Confirmed", value: stats.confirmed },
+      { key: "declined",  label: "Declined",  value: stats.declined },
+    ].map(function(t) {
+      return Object.assign(t, { color: tileColor[t.key], dim: t.key !== "all" && !t.value, active: filter === t.key,
+        onClick: function() { setFilter(t.key); }, title: tileTitle[t.key] });
+    });
+    var emptyText = active.length === 0
+      ? "No crew requests yet. Select positions in the Assignments tab and send requests to crew."
+      : screenRows.length === 0
+        ? "Nothing left in the queue — every request has been paid out. Pick a project above to look back at one."
+        : filter === "open"
+          ? (picked ? "No open requests on this project. Use the filters above to see the rest."
+                    : "No open requests — everything is confirmed or answered. Use the filters above to see the rest.")
+          : "No " + filter + " requests " + (picked ? "on this project." : "in this view.");
+
     return h("div", null,
-      h("div", { style: { display: "flex", gap: 8, marginBottom: 14, alignItems: "center", flexWrap: "wrap" } },
-        filterPill("open", "Open", catCounts.open),
-        filterPill("confirmed", "Confirmed", catCounts.confirmed),
-        filterPill("declined", "Declined", catCounts.declined),
-        filterPill("all", "All", active.length),
-        h("div", { style: { flex: 1 } }),
-        h(FoldAllButton, { ids: order, collapsed: collapsed })),
+      // Stats — phone: one compact strip; desktop: the tiles double as the
+      // status filter. Both as on the Assignments tab.
+      isMobile
+        ? h(window.LTPStatStrip, { style: { marginBottom: 10 }, items: [
+            { label: "Total", value: stats.all },
+            { label: "Open", value: stats.open, color: stats.open > 0 ? B.warn : B.textMut },
+            { label: "Requested", value: stats.requested, color: stats.requested > 0 ? B.warn : B.textMut },
+            { label: "Accepted", value: stats.accepted, color: stats.accepted > 0 ? B.success : B.textMut },
+            { label: "Confirmed", value: stats.confirmed, color: B.info },
+            stats.declined > 0 && { label: "Declined", value: stats.declined, color: B.danger } ] })
+        : h(FilterTiles, { items: tileItems }),
+      // Toolbar. Phone: the status chips scroll in one strip, then the
+      // project picker and fold share a 36px row. Desktop: the tiles above
+      // carry the status filter, so this row is project · fold.
+      (function() {
+        var chipMobile = { borderRadius: "16px", padding: "0 14px", height: 32, fontSize: "12px", flexShrink: 0, whiteSpace: "nowrap", fontFamily: "inherit" };
+        var chips = ["all", "open", "requested", "accepted", "confirmed", "declined"].map(function(f) {
+          return h("button", { key: f, onClick: function() { setFilter(f); },
+            style: Object.assign({ background: filter === f ? B.accent : B.raised, color: filter === f ? B.btnInk : B.textMut, border: "1px solid " + (filter === f ? B.accent : B.border), borderRadius: "4px", padding: "4px 10px", fontSize: "10px", fontWeight: 600, cursor: "pointer", textTransform: "capitalize" }, chipMobile) },
+            f);
+        });
+        // Values stay STRINGS: projFilter is compared as a string against
+        // String(projectId), and against the literal "all".
+        var projSelect = h(window.LTPSearchSelect, { value: picked ? projFilter : "all", onChange: pickProject,
+          // sentinel:true — "All Projects" is a real value but not a record, so
+          // it shouldn't be held in the list while you search for a project.
+          options: [{ value: "all", label: "All Projects", sentinel: true }].concat(queueOpts),
+          sections: paidOpts.length ? [{ label: "Paid out", options: paidOpts.map(function(o) { return o.opt; }) }] : [],
+          searchPlaceholder: "Search projects…",
+          style: isMobile ? { flex: "1 1 160px", minWidth: 0 } : { width: 200, flexShrink: 0 },
+          triggerStyle: isMobile ? { background: B.raised, borderRadius: "8px", padding: "0 10px", fontSize: "13px", minHeight: 36 }
+                                 : { background: B.raised, borderRadius: "4px", padding: "4px 8px", fontSize: "10px", minHeight: 0 },
+          panelMinWidth: 240,
+        });
+        var foldBtn = h(FoldAllButton, { ids: order, collapsed: collapsed, style: isMobile ? { height: 36, borderRadius: "8px", fontSize: "12px", padding: "0 12px" } : null });
+        if (isMobile) return [
+          h(window.LTPScrollStrip, { key: "chips", isMobile: true, wrapStyle: { marginBottom: 8 },
+            mobileStyle: { display: "flex", gap: 6, overflowX: "auto", flexWrap: "nowrap", WebkitOverflowScrolling: "touch", scrollbarWidth: "none", paddingBottom: 4 } }, chips),
+          h("div", { key: "row", style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, foldBtn)
+        ];
+        return h("div", { style: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center", flexWrap: "wrap" } }, projSelect, foldBtn);
+      })(),
       shown.length === 0
-        ? h(window.EmptyState, { text: active.length === 0
-            ? "No crew requests yet. Select positions in the Assignments tab and send requests to crew."
-            : filter === "open"
-              ? "No open requests — everything is confirmed or answered. Use the filters above to see the rest."
-              : "No " + filter + " requests in this view." })
+        ? h(window.EmptyState, { text: emptyText })
         : order.map(function(pid) {
-            var rows = byProject[pid].map(function(r) { var info = reqInfo(r); return { r: r, info: info, ds: displayState(r, info) }; });
+            var rows = byProject[pid];
             var proj = (projects || []).find(function(p) { return p.id === pid; });
             // Header chips: how this project's asks stand, by badge.
             var labelCounts = {}, labelColor = {}, labelOrder = [];
