@@ -69,5 +69,48 @@
     };
   };
 
+  // Saved-venue suggestions for the project form's venue field (README.md
+  // "Saved venues"). `venues` is the read-only /api/venues collection; `query`
+  // is whatever is typed in the Venue Name box. Matches on the name or the
+  // address, so "Austin" finds every venue there. Names that START with the
+  // query sort first, then the rest alphabetically; an empty query browses the
+  // whole list. Capped like the other pickers so a long memory never renders in
+  // full on focus.
+  H.venueSuggestions = function (venues, query, cap) {
+    var q = (query || "").trim().toLowerCase();
+    var limit = cap == null ? 50 : cap;
+    var rows = (venues || []).filter(function (v) {
+      if (!v || !(v.name || "").trim()) return false;
+      if (!q) return true;
+      return (v.name || "").toLowerCase().indexOf(q) !== -1
+          || (v.address || "").toLowerCase().indexOf(q) !== -1;
+    });
+    rows.sort(function (a, b) {
+      var an = (a.name || "").toLowerCase(), bn = (b.name || "").toLowerCase();
+      if (q) {
+        var ap = an.indexOf(q) === 0 ? 0 : 1, bp = bn.indexOf(q) === 0 ? 0 : 1;
+        if (ap !== bp) return ap - bp;
+      }
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+    return rows.length > limit ? rows.slice(0, limit) : rows;
+  };
+
+  // What picking a saved venue fills into a project form: the venue's name
+  // always; its address and instructions only when the venue has them, so a
+  // venue remembered by name alone never blanks what was already typed. The
+  // address, when taken, is a TYPED address — the "use the client company's
+  // address" switch is turned off so the venue's own address shows.
+  H.venueFill = function (venue, current) {
+    var cur = current || {};
+    var out = { venue: (venue && venue.name) || "" };
+    var addr = ((venue && venue.address) || "").trim();
+    var instr = ((venue && venue.instructions) || "").trim();
+    out.siteAddress = addr || cur.siteAddress || "";
+    out.siteUseCompanyAddress = addr ? false : !!cur.siteUseCompanyAddress;
+    out.siteInstructions = instr || cur.siteInstructions || "";
+    return out;
+  };
+
   window.LTP_HELPERS = H;
 })();

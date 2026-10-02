@@ -130,11 +130,15 @@
           if (!project.venue && !siteAddr) {
             return h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 16, fontStyle: "italic" } }, "No location set — add a venue or site address via Edit.");
           }
+          var instr = (project.siteInstructions || "").trim();
           return h("div", { style: { display: "flex", gap: 12, alignItems: "center", padding: "10px 14px", background: B.raised, borderRadius: "6px", borderLeft: "3px solid " + B.accent, marginBottom: 16 } },
-            h("div", null,
+            h("div", { style: { minWidth: 0 } },
               project.venue && h("div", { style: { fontSize: "13px", fontWeight: 600, color: B.text } }, project.venue),
               siteAddr && h("div", { style: { fontSize: "12px", color: B.textMut, marginTop: project.venue ? 2 : 0 } },
-                siteAddr + (project.siteUseCompanyAddress ? "  ·  client company address" : ""))));
+                siteAddr + (project.siteUseCompanyAddress ? "  ·  client company address" : "")),
+              // Parking / access notes — the same text crew see under the address.
+              instr && h("div", { style: { fontSize: "11px", color: B.textSec, marginTop: 6, whiteSpace: "pre-wrap", lineHeight: 1.45 } },
+                h("span", { style: { fontWeight: 600, color: B.textMut } }, "Parking & access: "), instr)));
         })(),
         h("h4", { style: { fontSize: "12px", fontWeight: 700, color: B.textSec, margin: "0 0 8px", textTransform: "uppercase" } }, "Contacts"),
         projContacts.length > 0 ? projContacts.map(function(c) { return h("div", { key: c.id, style: { fontSize: "13px", color: B.textSec, marginBottom: 4, cursor: "pointer" }, onClick: function() { ctx.setEditContactId(c.id); } }, h("span", { style: { color: B.accent, textDecoration: "underline" } }, c.firstName + " " + c.lastName), " \u2014 " + c.role + " \u00b7 " + c.email); }) : h("div", { style: { fontSize: "12px", color: B.textMut, marginBottom: 8, fontStyle: "italic" } }, "No contacts assigned."),
@@ -310,6 +314,7 @@
     var [venue, setVenue] = useState(seed.venue || "");
     var [siteAddr, setSiteAddr] = useState(seed.siteAddress || "");
     var [siteUseComp, setSiteUseComp] = useState(!!seed.siteUseCompanyAddress);
+    var [siteInstr, setSiteInstr] = useState(seed.siteInstructions || "");
     var [cIds, setCIds] = useState(seed.contactIds || []);
     var [budL, setBudL] = useState(seedBudget.lighting || 0);
     var [budLb, setBudLb] = useState(seedBudget.labor || 0);
@@ -349,7 +354,7 @@
     // Schedule Builder's save.
     function doSubmit() {
       onSave({ name: name, companyId: compId, category: cat, status: projStatus, startDate: start, endDate: end,
-        venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp,
+        venue: venue, siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp, siteInstructions: siteInstr,
         contactIds: cIds, budget: { lighting: budL, labor: budLb, rentals: budR, misc: budM } });
     }
 
@@ -376,12 +381,23 @@
         // public call sheet. The checkbox derives the address from the client
         // company's billing address LIVE (resolved at send time), so a company
         // address update flows to future sends without re-saving the project.
+        //
+        // The venue box offers the SAVED venues (README.md "Saved venues"):
+        // picking one fills the address and the parking / access instructions
+        // from the last project there. Saving this project is what teaches the
+        // list — the server refreshes the saved venue from these three fields
+        // (backend/routes/api.py::_remember_venue). This form is the only
+        // place that memory is edited; there is no venue screen.
         (function() {
           var comp = siteUseComp && compId ? (ctx.companies || []).find(function(c) { return c.id === compId; }) : null;
           var compAddr = comp ? [comp.address, [comp.city, [comp.state, comp.zip].filter(Boolean).join(" ")].filter(Boolean).join(", ")].filter(Boolean).join(", ").replace(/\n/g, ", ") : "";
+          function pickVenue(v) {
+            var fill = window.LTP_HELPERS.venueFill(v, { siteAddress: siteAddr, siteUseCompanyAddress: siteUseComp, siteInstructions: siteInstr });
+            setVenue(fill.venue); setSiteAddr(fill.siteAddress); setSiteUseComp(fill.siteUseCompanyAddress); setSiteInstr(fill.siteInstructions);
+          }
           return h("div", null,
             h("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 } },
-              h(window.LTPInput, { label: "Venue Name", value: venue, onChange: setVenue, placeholder: "e.g. Moody Center" }),
+              h(window.VenueField, { label: "Venue Name", value: venue, onChange: setVenue, venues: ctx.venues || [], onPick: pickVenue, placeholder: "e.g. Moody Center" }),
               siteUseComp
                 ? h("div", null,
                     h("div", { style: { fontSize: "10px", color: B.textMut, marginBottom: 2, fontWeight: 600 } }, "Site Address"),
@@ -390,7 +406,12 @@
                 : h(window.LTPInput, { label: "Site Address", value: siteAddr, onChange: setSiteAddr, placeholder: "Street, city, state — sent to crew with requests" })),
             h("label", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 6, cursor: "pointer", fontSize: "11px", color: B.textSec, width: "fit-content" } },
               h("input", { type: "checkbox", checked: siteUseComp, onChange: function(e) { setSiteUseComp(e.target.checked); }, style: { cursor: "pointer" } }),
-              "Use the client company's address as the site address"));
+              "Use the client company's address as the site address"),
+            h("div", { style: { marginTop: 10 } },
+              h(window.LTPInput, { label: "Parking & Access Instructions", value: siteInstr, onChange: setSiteInstr, textarea: true,
+                placeholder: "Crew parking, loading dock, gate codes, check-in — sent to crew with the address" }),
+              venue.trim() && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 3, lineHeight: 1.4 } },
+                "Saved with \u201c" + venue.trim() + "\u201d for the next project there.")));
         })(),
         // A contact created here is linked to the project's company, so it also
         // shows up in the quote/invoice "Primary Contact" list for that client.

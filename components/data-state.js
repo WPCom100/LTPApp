@@ -49,7 +49,17 @@
     // Cross rentals: vendor price memory + orders of gear rented in
     // (README.md "Cross rentals & vendor pricing").
     "vendor-rates": 1, "cross-rentals": 1,
+    // Venue memory (README.md "Saved venues"). Fetched and live-synced like
+    // every other collection, but see READONLY_KEYS: nothing here ever writes it.
+    venues: 1,
   };
+
+  // Collections the server owns outright. They are read here and refreshed by
+  // live sync, but the API has no write path for them (backend/routes/api.py
+  // registers GET only) — `venues` is written as a side effect of saving a
+  // project. A setter on one of these is a no-op on the wire, so a module
+  // cannot accidentally POST a row to a route that would answer 405.
+  var READONLY_KEYS = { venues: 1 };
 
   function classify(key) {
     if (ENTITY_KEYS[key]) return "entity";
@@ -502,6 +512,7 @@
 
   function syncToServer(key, prev, next, revs) {
     var kind = classify(key);
+    if (READONLY_KEYS[key]) return Promise.resolve({ ok: true, conflicts: {}, revs: {} });
     if (kind === "entity") return syncEntity(key, prev, next, revs || {});
     if (kind === "settings") {
       // Settings is shallow-MERGED server-side, so two windows editing

@@ -321,6 +321,7 @@
         companies: p.companies || [],
         contacts: p.contacts || [],
         projects: p.projects || [],
+        venues: p.venues || [],          // the project form's venue picker
         setDeleteConfirm: refuseDelete,
       };
       var initial = entry.id == null ? null : lookup(entry.kind, entry.id);

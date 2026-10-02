@@ -233,3 +233,43 @@ eq("a duplicated candidate appears once", cf.primary.map((c) => c.id), [1]);
 console.log("pickers suite — PASS: " + pass + "   FAIL: " + fail);
 if (fails.length) { console.log("\nFAILURES:"); fails.forEach((f) => console.log("  x " + f)); process.exit(1); }
 console.log("All " + pass + " assertions passed.");
+
+// ── Saved venues (README.md "Saved venues") ────────────────────────────────
+// The project form's Venue Name box is free text with the saved venues offered
+// underneath. These are the two pure pieces behind components/search-select.js
+// ::VenueField — what the list offers for a query, and what picking one fills.
+(function () {
+  const V = [
+    { id: 1, name: "Moody Center", address: "2001 Robert Dedman Dr, Austin, TX", instructions: "Crew lot off Red River; dock 3." },
+    { id: 2, name: "Austin Convention Center", address: "500 E Cesar Chavez St, Austin, TX", instructions: "" },
+    { id: 3, name: "Dallas Market Hall", address: "2200 N Stemmons Fwy, Dallas, TX", instructions: "Gate code 4411" },
+    { id: 4, name: "", address: "orphan row", instructions: "" },
+    { id: 5, name: "The Rustic", address: "", instructions: "Park behind the stage." },
+  ];
+  const names = (rows) => rows.map((v) => v.name);
+
+  eq("V1 empty query browses every named venue, alphabetically",
+     names(H.venueSuggestions(V, "")), ["Austin Convention Center", "Dallas Market Hall", "Moody Center", "The Rustic"]);
+  eq("V2 a nameless row is never offered", H.venueSuggestions(V, "orphan").length, 0);
+  eq("V3 matches the name, case-insensitively", names(H.venueSuggestions(V, "moody")), ["Moody Center"]);
+  eq("V4 matches the address too, so a city finds its venues",
+     names(H.venueSuggestions(V, "austin")), ["Austin Convention Center", "Moody Center"]);
+  eq("V5 a name that STARTS with the query sorts ahead of an address hit",
+     names(H.venueSuggestions(V, "dal")), ["Dallas Market Hall"]);
+  eq("V6 whitespace around the query is ignored", names(H.venueSuggestions(V, "  rustic ")), ["The Rustic"]);
+  eq("V7 the list is capped", H.venueSuggestions(V, "", 2).length, 2);
+  eq("V8 a null list is an empty list", H.venueSuggestions(null, "x"), []);
+
+  // Filling the form from a pick.
+  const cur = { siteAddress: "typed before", siteUseCompanyAddress: true, siteInstructions: "old note" };
+  eq("V9 a venue with an address and notes fills all three and turns the company-address switch off",
+     H.venueFill(V[0], cur),
+     { venue: "Moody Center", siteAddress: "2001 Robert Dedman Dr, Austin, TX", siteUseCompanyAddress: false, siteInstructions: "Crew lot off Red River; dock 3." });
+  eq("V10 a venue remembered without notes keeps what was typed",
+     H.venueFill(V[1], cur).siteInstructions, "old note");
+  eq("V11 a venue remembered without an address keeps the typed address AND the company-address switch",
+     H.venueFill(V[4], cur),
+     { venue: "The Rustic", siteAddress: "typed before", siteUseCompanyAddress: true, siteInstructions: "Park behind the stage." });
+  eq("V12 no current form state is fine", H.venueFill(V[2], null),
+     { venue: "Dallas Market Hall", siteAddress: "2200 N Stemmons Fwy, Dallas, TX", siteUseCompanyAddress: false, siteInstructions: "Gate code 4411" });
+})();
