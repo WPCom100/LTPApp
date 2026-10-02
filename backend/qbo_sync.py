@@ -1065,18 +1065,21 @@ def _period_label(start: str, end: str) -> str:
 
 
 async def _entity_period(db, entity) -> tuple[str, str]:
-    """The default rental window for an entity's sections: a quote's custom
-    override if set, else the project's dates. Sections that tick their own
-    `customDates` override this per section (mirrors quotes-builder.js)."""
-    start = (getattr(entity, "custom_start_date", "") or "").strip()
-    end = (getattr(entity, "custom_end_date", "") or "").strip()
-    if start and end:
-        return start, end
+    """The default rental window for an entity's sections: the linked project's
+    dates, else a quote's custom dates when it has no project. Sections that
+    tick their own `customDates` override this per section (mirrors
+    quotes-builder.js — a linked quote ignores its custom dates, which new
+    quotes default to today)."""
     if getattr(entity, "project_id", None):
         r = await db.execute(select(models.Project).where(models.Project.id == entity.project_id))
         proj = r.scalar_one_or_none()
         if proj:
             return (proj.start_date or "").strip(), (proj.end_date or "").strip()
+        return "", ""
+    start = (getattr(entity, "custom_start_date", "") or "").strip()
+    end = (getattr(entity, "custom_end_date", "") or "").strip()
+    if start and end:
+        return start, end
     return "", ""
 
 

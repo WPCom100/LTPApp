@@ -838,10 +838,16 @@ class _DocPDF:
         period = ""
         has_equipment = any(it.get("type") == "equipment" for it in all_items)
         if has_equipment:
-            sec_start = (sec.get("startDate") if sec.get("customDates") else None) \
-                        or self.entity.get("customStartDate") or self.project.get("startDate", "")
-            sec_end = (sec.get("endDate") if sec.get("customDates") else None) \
-                      or self.entity.get("customEndDate") or self.project.get("endDate", "")
+            # A linked project owns the dates; the document's custom dates only
+            # apply when it has none (new quotes default them to today).
+            if self.project:
+                doc_start = self.project.get("startDate", "")
+                doc_end = self.project.get("endDate", "")
+            else:
+                doc_start = self.entity.get("customStartDate", "")
+                doc_end = self.entity.get("customEndDate", "")
+            sec_start = (sec.get("startDate") if sec.get("customDates") else None) or doc_start
+            sec_end = (sec.get("endDate") if sec.get("customDates") else None) or doc_end
             if sec_start and sec_end:
                 period = f"Rental Period: {_fmt_date(sec_start)} — {_fmt_date(sec_end)}"
 
