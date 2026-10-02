@@ -665,14 +665,14 @@
 
     // ── Recalled ─────────────────────────────────────────────────────────────
     //
-    // The sender pulled the quote back to edit it. The server sends only this
+    // The sender pulled the quote or invoice back to edit it. The server sends only this
     // flag — none of the document — so there is nothing to render but the note.
     // The freshness poll (above) brings the real page back once it is resent.
     if (data.recalled) {
       return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
         h("div", { style: { maxWidth: 460, textAlign: "center" } },
           h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE } }, "Recalled"),
-          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } }, "The quote has been recalled"),
+          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } }, "The " + (data.kind === "invoice" ? "invoice" : "quote") + " has been recalled"),
           h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
             "Please contact us with any questions."),
           h("div", { style: { marginTop: 36, display: "flex", justifyContent: "center", opacity: 0.9 } },

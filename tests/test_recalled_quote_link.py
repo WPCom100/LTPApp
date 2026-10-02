@@ -1,11 +1,12 @@
-"""A recalled quote's share link stops showing the quote.
+"""A recalled quote's or invoice's share link stops showing the document.
 
 Once a quote is sent the client holds a link. Recalling it to draft (to edit)
 must not leave that link rendering the document — the client would watch the
 edits land — nor let them accept/decline a draft, which would knock it out of
 the draft → sent → accepted/declined pipeline.
 
-A recalled quote is status "draft" with the sentDate the send stamped (the
+Invoices behave the same, minus accept/decline (they have none). A recalled
+document is status "draft" with the sentDate the send stamped (the
 recall leaves it alone). A never-sent draft has no sentDate. Signed-in staff
 are exempt from the stub because the builder's Preview opens this same link.
 """
@@ -38,9 +39,15 @@ CO = 6901
 Q_RECALLED = 6902
 Q_SENT = 6903
 Q_DRAFT = 6904
+I_RECALLED = 6905
+I_SENT = 6906
+I_DRAFT = 6907
 T_RECALLED = "recalled-quote-share-token"
 T_SENT = "recalled-sent-share-token"
 T_DRAFT = "recalled-draft-share-token"
+TI_RECALLED = "recalled-invoice-share-token"
+TI_SENT = "recalled-inv-sent-share-token"
+TI_DRAFT = "recalled-inv-draft-share-token"
 ACCEPT = {"clientName": "Pat", "signatureDataUrl": "data:image/png;base64,iVBORw0KGgo" + "A" * 300}
 
 _client = None
@@ -84,6 +91,14 @@ def _setup():
                         db.add(models.Quote(id=qid, company_id=CO, status=status, share_token=tok,
                                             sent_date=sent, sections=[], activity=[],
                                             custom_name="Half-edited price"))
+                for iid, status, tok, sent in (
+                    (I_RECALLED, "draft", TI_RECALLED, "2026-09-01"),
+                    (I_SENT, "sent", TI_SENT, "2026-09-01"),
+                    (I_DRAFT, "draft", TI_DRAFT, ""),
+                ):
+                    if await db.get(models.Invoice, iid) is None:
+                        db.add(models.Invoice(id=iid, company_id=CO, status=status, share_token=tok,
+                                              sent_date=sent, sections=[], activity=[]))
                 await db.commit()
 
         _run(seed())
@@ -167,3 +182,54 @@ def test_sent_quote_can_still_be_declined():
     r = c.post(f"/api/view/{T_SENT}/decline", json={"clientName": "Pat"})
     assert r.status_code == 200, r.text
     assert _status(Q_SENT) == "declined"
+
+
+# ── Invoices ────────────────────────────────────────────────────────────────
+
+def test_recalled_invoice_link_serves_only_the_recalled_stub():
+    c = _setup()
+    r = c.get(f"/api/view/{TI_RECALLED}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["recalled"] is True and body["kind"] == "invoice"
+    assert set(body) == {"kind", "recalled", "_v"}, f"stub leaked fields: {sorted(body)}"
+    assert "Secret Co" not in r.text
+
+
+def test_sent_and_unsent_invoices_are_unaffected():
+    c = _setup()
+    assert not c.get(f"/api/view/{TI_SENT}").json().get("recalled")
+    assert not c.get(f"/api/view/{TI_DRAFT}", cookies={"ltp_session": _TOK}).json().get("recalled")
+
+
+def test_staff_still_see_a_recalled_invoice():
+    c = _setup()
+    body = c.get(f"/api/view/{TI_RECALLED}?preview=1", cookies={"ltp_session": _TOK}).json()
+    assert not body.get("recalled") and body["entity"]["id"] == I_RECALLED
+
+
+def test_recalled_invoice_view_is_not_tracked():
+    c = _setup()
+    c.get(f"/api/view/{TI_RECALLED}")
+    from backend.database import async_session
+
+    async def go():
+        async with async_session() as db:
+            return (await db.get(models.Invoice, I_RECALLED)).activity
+    assert not _run(go())
+
+
+def test_recalled_invoice_version_matches_the_stub():
+    c = _setup()
+    stub = c.get(f"/api/view/{TI_RECALLED}").json()
+    assert c.get(f"/api/view/{TI_RECALLED}/version").json()["doc"] == stub["_v"]
+    assert stub["_v"] != c.get(f"/api/view/{T_RECALLED}").json()["_v"], \
+        "a recalled quote and a recalled invoice are different stubs"
+
+
+def test_recalled_invoice_pdf_is_refused_to_clients_but_not_staff():
+    c = _setup()
+    r = c.get(f"/api/view/{TI_RECALLED}/pdf")
+    assert r.status_code == 410 and "invoice has been recalled" in r.text
+    assert c.get(f"/api/view/{TI_RECALLED}/pdf?preview=1",
+                 cookies={"ltp_session": _TOK}).status_code == 200

@@ -20,11 +20,12 @@ The entity and line-item scrubs are ALLOW-lists. This docstring used to say
 existed, which is precisely how the real `notes` column shipped to every
 share-link holder unnoticed. Name a key here only when a reader needs it.
 
-A RECALLED quote (status back to "draft" after it was sent — it keeps its
-sentDate, exactly as a recalled invoice does) is withdrawn from the client: the
-link serves only a "recalled" stub, never the document, so a client cannot watch
-edits being made to it. Signed-in staff are exempt (the builder's Preview button
-opens this same link for drafts); accept/decline/PDF are refused for everyone.
+A RECALLED quote or invoice (status back to "draft" after it was sent — it
+keeps its sentDate) is withdrawn from the client: the link serves only a
+"recalled" stub, never the document, so a client cannot watch edits being made
+to it. Signed-in staff are exempt (the builders' Preview button opens this same
+link for drafts); accept/decline (quotes only) are refused for everyone, and the
+PDF for everyone but staff.
 
 The accept/decline endpoints bypass the existing `_stamp_activity` helper
 in api.py — those force the authenticated user as the activity actor, but
@@ -96,26 +97,28 @@ async def _find_entity_by_token(db: AsyncSession, token: str):
 
 
 def _is_recalled(kind: str, row) -> bool:
-    """A quote that was sent and has since been recalled to draft for editing.
+    """A quote or invoice that was sent and has since been recalled to draft for
+    editing.
 
-    Same signature the invoice side uses (status draft + a sentDate): the recall
-    flips the status back but leaves the send date, and a quote that was never
-    sent has no sentDate (it is stamped by the send — routes/email.py)."""
+    The signature is the same for both (status draft + a sentDate): the recall
+    flips the status back but leaves the send date, and a document that was
+    never sent has no sentDate (it is stamped by the send — routes/email.py)."""
     return (
-        kind == "quote"
+        kind in ("quote", "invoice")
         and (row.status or "draft") == "draft"
         and bool((row.sent_date or "").strip())
     )
 
 
-def _recalled_payload() -> dict:
-    """What a client holding a recalled quote's link is allowed to see: that it
-    was recalled, and nothing about its contents (no entity, company, contact or
-    settings — not even its reference number)."""
-    return {"kind": "quote", "recalled": True}
+def _recalled_payload(kind: str) -> dict:
+    """What a client holding a recalled document's link is allowed to see: that
+    it was recalled, and nothing about its contents (no entity, company, contact
+    or settings — not even its reference number)."""
+    return {"kind": kind, "recalled": True}
 
 
-_RECALLED_MESSAGE = "The quote has been recalled. Please contact us with any questions."
+def _recalled_message(kind: str) -> str:
+    return f"The {kind} has been recalled. Please contact us with any questions."
 
 
 def _refuse_if_recalled(kind: str, row) -> None:
@@ -125,7 +128,7 @@ def _refuse_if_recalled(kind: str, row) -> None:
     if _is_recalled(kind, row):
         raise HTTPException(
             status_code=409,
-            detail={"status": "recalled", "message": _RECALLED_MESSAGE},
+            detail={"status": "recalled", "message": _recalled_message(kind)},
         )
 
 
@@ -418,7 +421,7 @@ async def get_view(
     if _is_recalled(kind, row) and optional_user is None:
         # Not a view: nothing to track, notify, or reveal. `_v` still rides
         # along so the page's freshness poll notices the quote coming back.
-        stub = _recalled_payload()
+        stub = _recalled_payload(kind)
         stub["_v"] = _public_version(stub)
         return stub
     # Track the open BEFORE building the response so the new activity
@@ -471,7 +474,7 @@ async def get_view_version(
         raise HTTPException(status_code=404, detail="not found")
     if _is_recalled(kind, row) and optional_user is None:
         # Same stub GET /{token} serves, so its hash is what the page holds.
-        return {"doc": _public_version(_recalled_payload()), "app": livesync.app_version()}
+        return {"doc": _public_version(_recalled_payload(kind)), "app": livesync.app_version()}
     company, contact, project = await load_related(
         db, row.company_id, row.client_contact_id, row.project_id
     )
@@ -656,7 +659,7 @@ async def get_view_pdf(
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
     if _is_recalled(kind, row) and optional_user is None:
-        raise HTTPException(status_code=410, detail=_RECALLED_MESSAGE)
+        raise HTTPException(status_code=410, detail=_recalled_message(kind))
     await _record_open(
         db=db, entity=row, kind=kind, request=request,
         optional_user=optional_user, action="pdf",
