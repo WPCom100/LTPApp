@@ -251,6 +251,9 @@ def _build_rules():
             "startDate": _iso_date,
             "endDate":   _iso_date,
             "venue":     _str_max(255),
+            # Text column, so the cap is a sanity bound rather than a column
+            # size — it reaches crew emails and the call sheet verbatim.
+            "siteInstructions": _str_max(4000),
         },
         models.Quote: {
             "terms":           _str_max(4000),

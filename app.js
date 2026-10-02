@@ -198,6 +198,9 @@ function LTPSignedInApp(props) {
   // inventory in every availability surface (rentals-utils.js::totalQty).
   var [vendorRates,  setVendorRates,  vendorRatesReady]  = usePersistentState("vendor-rates",  window.LTP_DATA_VENDOR_RATES);
   var [crossRentals, setCrossRentals, crossRentalsReady] = usePersistentState("cross-rentals", window.LTP_DATA_CROSS_RENTALS);
+  // Saved venues (README.md "Saved venues") — read-only here. The server
+  // refreshes the list from every project save; the project form reads it.
+  var [venues, , venuesReady] = usePersistentState("venues", window.LTP_DATA_VENUES);
   // Quotes + catalogs
   var [quotes,   setQuotes,   quotesReady]   = usePersistentState("quotes",   window.LTP_DATA_QUOTES);
   var [products, setProducts, productsReady] = usePersistentState("products", window.LTP_DATA_PRODUCTS);
@@ -214,7 +217,7 @@ function LTPSignedInApp(props) {
 
   var allReady = companiesReady && contactsReady && projectsReady
               && equipmentReady && allocationsReady && containersReady && kitsReady
-              && vendorRatesReady && crossRentalsReady
+              && vendorRatesReady && crossRentalsReady && venuesReady
               && quotesReady && productsReady && servicesReady && feesReady && clientRatesReady
               && invoicesReady && settingsReady;
 
@@ -456,8 +459,8 @@ function LTPSignedInApp(props) {
   function renderModule() {
     switch (activeModule) {
       case "dashboard": return h(window.LTPErrorBoundary, { name: "Dashboard" }, h(window.DashboardView, { companies: companies, projects: projects, quotes: quotes, equipment: equipment, invoices: invoices, contacts: contacts, services: services, settings: settings }));
-      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services, clientRates: clientRates, setClientRates: setClientRates, equipment: equipment, vendorRates: vendorRates, setVendorRates: setVendorRates, crossRentals: crossRentals }));
-      case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, clientRates: clientRates, invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId, route: route, settings: settings }));
+      case "crm":       return h(window.LTPErrorBoundary, { name: "CRM" }, h(window.CRMView,       { companies: companies, setCompanies: setCompanies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, invoices: invoices, route: route, services: services, clientRates: clientRates, setClientRates: setClientRates, equipment: equipment, vendorRates: vendorRates, setVendorRates: setVendorRates, crossRentals: crossRentals, venues: venues }));
+      case "projects":  return h(window.LTPErrorBoundary, { name: "Projects" }, h(window.ProjectsView,  { companies: companies, contacts: contacts, setContacts: setContacts, projects: projects, setProjects: setProjects, quotes: quotes, setQuotes: setQuotes, getNextQuoteId: getNextQuoteId, services: services, clientRates: clientRates, invoices: invoices, setInvoices: setInvoices, getNextInvoiceId: getNextInvoiceId, route: route, settings: settings, venues: venues }));
       case "calendar":  return h(window.LTPErrorBoundary, { name: "Calendar" }, h(window.CalendarView,  { projects: projects }));
       case "rentals":   return h(window.LTPErrorBoundary, { name: "Rentals" }, h(window.RentalsView,   {
         companies: companies, projects: projects, route: route,
@@ -723,6 +726,8 @@ function LTPSignedInApp(props) {
      // Read-only: names the live quotes affected when a project's dates move
      // (window.LTP_toastRentalDrift).
      quotes:    quotes,
+     // Read-only: the project form's venue picker (README.md "Saved venues").
+     venues:    venues,
    })
   );
 }

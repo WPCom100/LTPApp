@@ -685,6 +685,8 @@
       h("div", { style: { marginTop: 12, borderTop: "1px solid " + HAIR, paddingTop: 8 } }, preview,
         shifts.length > 4 && h("div", { style: { fontSize: "12px", color: FAINT, paddingTop: 4 } }, "+ " + (shifts.length - 4) + " more on the call sheet")),
       r.siteAddress && h("a", { href: mapsHref(r.siteAddress), target: "_blank", rel: "noopener", style: { display: "inline-block", fontSize: "12px", color: MUTE, marginTop: 8, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px" } }, r.siteAddress),
+      r.siteInstructions && h("div", { style: { fontSize: "12px", lineHeight: 1.5, color: MUTE, marginTop: 6, whiteSpace: "pre-wrap", overflowWrap: "break-word" } },
+        h("span", { style: { fontWeight: 700, color: ORANGE_SOFT, fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase" } }, "Parking & access  "), r.siteInstructions),
       h("div", { style: { display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" } },
         PrimaryBtn({ onClick: function() { setMode("accept"); setErr(null); }, disabled: busy, style: { flex: "1 1 160px", minHeight: 46, opacity: mode === "decline" ? 0.45 : 1 } }, flatOnly ? "Accept This Position" : (hasFlat ? "Accept" : "Accept These Calls")),
         QuietBtn({ onClick: function() { setMode("decline"); setErr(null); }, disabled: busy, style: { flex: "1 1 120px", minHeight: 46, opacity: mode === "accept" ? 0.45 : 1 } }, "I Can't Make It"),

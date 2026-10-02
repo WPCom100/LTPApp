@@ -265,6 +265,49 @@ stored — the record is the crew request itself, read back per shift by
 `tests/test_declined_crew.js`). Labor → Assignments and both Schedule Builder
 pickers (day rows and flat-rate positions) read the same index.
 
+## Saved venues
+
+The project form's **Venue Name** box remembers every venue you have used.
+Type a few letters and the venues from past projects appear underneath,
+matched on the name or the address; pick one and the **Site Address** and
+**Parking & Access Instructions** fill in from the last project held there.
+Type a name nothing matches and it is simply a new venue, remembered the
+moment the project is saved.
+
+**The project form is the only place this list is edited.** There is no
+venue screen and no venue API write path. Saving a project is what teaches
+the memory:
+
+- A venue row exists for every distinct name (matched without regard to
+  case). Renaming a project's venue remembers a new one; the old row stays,
+  since other projects may still carry it.
+- An existing venue takes a field only when **that save changed the field
+  on the project**. A schedule save, a status change or a crew send that
+  writes the whole unchanged row leaves the memory alone, so a stale window
+  can never rewrite what a newer project taught.
+- The address remembered is the **typed** site address. A site address
+  derived from the client company's record is that company's, not the
+  venue's, and an emptied address never blanks the saved one. Instructions
+  are mirrored once edited, clearing included.
+- Deleting a project never touches the saved venue.
+
+Each project keeps its **own copy** of the address and instructions, so a
+one-off note for this job ("use the north dock this time") can be edited on
+the project without being the venue's permanent instructions until it is
+saved there again. The instructions travel with the address everywhere crew
+see it: the project's Location block, the public call sheet
+(`modules/crew-view.js`) and the crew portal.
+
+Where it lives: `backend/models.py::Venue`, written by
+`backend/routes/api.py::_remember_venue` on every project create/update and
+served read-only at `GET /api/venues` (POST/PUT/DELETE answer 405). The
+frontend reads it as the `venues` collection — `components/data-state.js`
+lists it under `READONLY_KEYS`, so a setter on it never writes — and the
+picker is `window.VenueField` (`components/search-select.js`) over
+`LTP_HELPERS.venueSuggestions` / `venueFill` (`components/helpers.js`).
+Covered by `tests/test_venues.py` and the venue cases in
+`tests/test_pickers.js`.
+
 ## Client service rates (contract rates + day minimums)
 
 A client can be on a negotiated rate for **specific roles**, with its own crew

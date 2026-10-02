@@ -109,6 +109,55 @@
     );
   };
 
+  // Venue Name on the project form (README.md "Saved venues"): a FREE-TEXT box
+  // — a venue is typed, not chosen from a closed list — with the saved venues
+  // offered underneath it as you type. Picking one hands the whole record to
+  // `onPick` so the form can fill the address and the parking / access
+  // instructions too; typing past the list just leaves a new name, which the
+  // server remembers when the project is saved. Deliberately no createKind /
+  // allowEdit: the project form IS the venue editor, there is nothing else to
+  // open.
+  window.VenueField = function({ label, value, onChange, venues, onPick, placeholder }) {
+    var [focused, setFocused] = useState(false);
+    var text = value || "";
+    var suggestions = focused ? window.LTP_HELPERS.venueSuggestions(venues || [], text) : [];
+    // Once the typed name IS a saved venue (just picked, or typed in full), the
+    // list would offer only that row back — drop it so the box reads as done.
+    var typedLower = text.trim().toLowerCase();
+    if (typedLower && suggestions.length === 1 && (suggestions[0].name || "").trim().toLowerCase() === typedLower) suggestions = [];
+    function pick(v) {
+      if (onPick) onPick(v); else onChange(v.name || "");
+      setFocused(false);
+    }
+    function detail(v) {
+      var bits = [];
+      if ((v.address || "").trim()) bits.push(v.address.trim().replace(/\s*\n\s*/g, ", "));
+      if ((v.instructions || "").trim()) bits.push("parking / access notes saved");
+      return bits.join("  ·  ");
+    }
+    return h("div", { style: { display: "flex", flexDirection: "column", gap: 4, minWidth: 0 } },
+      label != null && h(window.LTPFieldLabel, { label: label }),
+      h("div", { style: { position: "relative" } },
+        h("input", { type: "text", value: text, placeholder: placeholder || "e.g. Moody Center", autoComplete: "off",
+          "aria-label": label || "Venue name",
+          onChange: function(e) { onChange(e.target.value); },
+          onFocus: function() { setFocused(true); },
+          onBlur: function() { setTimeout(function() { setFocused(false); }, 200); },
+          style: { width: "100%", minWidth: 0, boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border, borderRadius: "8px", padding: "8px 12px", color: B.text, fontSize: "13px", fontFamily: "inherit", outline: "none" } }),
+        suggestions.length > 0 && dropdown(
+          [h("div", { key: "_hdr", style: { padding: "6px 12px", fontSize: "10px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: B.textMut, background: B.raised, borderBottom: "1px solid " + B.border } },
+             "Saved venues — pick one to fill the address and instructions")]
+          .concat(suggestions.map(function(v) {
+            var d = detail(v);
+            return h("div", { key: v.id, onMouseDown: function(e) { e.preventDefault(); }, onClick: function() { pick(v); },
+              style: { padding: "8px 12px", fontSize: "12px", cursor: "pointer", color: B.text, borderBottom: "1px solid " + B.border } },
+              h("div", { style: { fontWeight: 600 } }, v.name),
+              d && h("div", { style: { fontSize: "10px", color: B.textMut, marginTop: 1 } }, d));
+          })), 220)
+      )
+    );
+  };
+
   // Single-select inline chip search (for company field in project forms)
   window.CompanySearchField = function({ label, compId, setCompId, companies, onClear, createKind, createPrefill, allowEdit }) {
     var [query, setQuery] = useState("");

@@ -716,7 +716,12 @@
             // Job-site address — linked to a map so crew can navigate in one tap.
             project.siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(project.siteAddress), target: "_blank", rel: "noopener",
               style: { display: "inline-block", fontSize: "12px", fontWeight: 500, color: withdrawn ? NEUTRAL : MUTE, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 6 } },
-              project.siteAddress)),
+              project.siteAddress),
+            // Parking / access instructions saved on the project (and its venue)
+            // — where to park and how to get in, under the address they qualify.
+            project.siteInstructions && h("div", { style: { fontSize: "12px", lineHeight: 1.5, color: withdrawn ? NEUTRAL : MUTE, marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "break-word" } },
+              h("span", { style: { fontWeight: 700, color: withdrawn ? NEUTRAL : ORANGE_SOFT, letterSpacing: "0.04em", textTransform: "uppercase", fontSize: "11px" } }, "Parking & access  "),
+              project.siteInstructions)),
           // Small in-frame map with a pin at the job site. Keyless Google Maps
           // place embed (no API key) — the CSP allows www/maps.google.com in
           // frame-src (backend/main.py). Suppressed when withdrawn (no call to make).
