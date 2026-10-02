@@ -837,6 +837,8 @@ async def _crew_payload(db: AsyncSession, token: str) -> dict:
             "name": project.name if project else "",
             "venue": project.venue if project else "",
             "siteAddress": await _resolve_site_address(db, project),
+            # Parking / access notes, shown under the address on the call sheet.
+            "siteInstructions": ((project.site_instructions if project else "") or "").strip(),
             "startDate": project.start_date if project else "",
             "endDate": project.end_date if project else "",
         },

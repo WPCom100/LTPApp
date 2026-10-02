@@ -1,5 +1,5 @@
 // Projects Module — top-level view (formerly nested under CRM)
-window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route, settings }) {
+window.ProjectsView = function({ companies, contacts, setContacts, projects, setProjects, quotes, setQuotes, getNextQuoteId, services, clientRates, invoices, setInvoices, getNextInvoiceId, route, settings, venues }) {
   var B = window.LTP_THEME, CATS = window.LTP_PROJECT_CATS, CAT_KEYS = window.LTP_CAT_KEYS, CAT_COLORS = window.LTP_CAT_COLORS;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   // Date-column format for the desktop table: "Mar 4", with the year only when
@@ -126,6 +126,9 @@ window.ProjectsView = function({ companies, contacts, setContacts, projects, set
     // Each document's "Labor changed" chip prices on its client's card.
     clientRates: clientRates || [],
     invoices: invoices || [],
+    // Saved venues for the project form's venue picker (read-only here; the
+    // server refreshes the list from project saves — README.md "Saved venues").
+    venues: venues || [],
     selectedProject: selectedProject,
     setSelectedProjectId: setSelectedProjectId,
     setEditProjectId: function(id) {

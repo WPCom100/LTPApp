@@ -110,6 +110,9 @@ _COLLECTION_MODELS = {
     "cross-rentals": "CrossRental",
     "settings":      "Settings",
     "crew-requests": "CrewRequest",
+    # Venue memory. Read-only over the API; written as a side effect of a
+    # project save (routes/api.py::_remember_venue), which marks it dirty.
+    "venues":        "Venue",
 }
 
 COLLECTIONS = tuple(_COLLECTION_MODELS)

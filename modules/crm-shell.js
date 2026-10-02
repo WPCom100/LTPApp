@@ -1,5 +1,5 @@
 // CRM Shell — Companies + Contacts only (Projects → /projects, Calendar → /calendar)
-window.CRMView = function CRMView({ companies, setCompanies, contacts, setContacts, projects, setProjects, quotes, invoices, route, services, clientRates, setClientRates, equipment, vendorRates, setVendorRates, crossRentals }) {
+window.CRMView = function CRMView({ companies, setCompanies, contacts, setContacts, projects, setProjects, quotes, invoices, route, services, clientRates, setClientRates, equipment, vendorRates, setVendorRates, crossRentals, venues }) {
   var B = window.LTP_THEME;
   var h = React.createElement, useState = React.useState, fmt = window.LTP_formatDate;
   var nav = window.LTPRouter.navigate;
@@ -82,6 +82,9 @@ window.CRMView = function CRMView({ companies, setCompanies, contacts, setContac
     // Vendor side: what each vendor charges us per item + the orders of gear
     // rented in from them — edited/shown on a vendor company's detail.
     equipment: equipment || [], vendorRates: vendorRates || [], setVendorRates: setVendorRates, crossRentals: crossRentals || [],
+    // Saved venues for the project form's venue picker (read-only; the
+    // server refreshes the list from project saves — README.md "Saved venues").
+    venues: venues || [],
     selectedCompany: selectedCompany,
     setSelectedCompanyId: setSelectedCompanyId,
     setEditCompanyId: function(id) {

@@ -405,7 +405,14 @@
 // v113: quote and invoice lists (and a project's document lists) show "Labor
 // changed"; a schedule save that changes what it bills says which documents
 // now differ; the schedule's Send routes an already-linked draft to its review.
-var CACHE_VERSION = 'ltp-shell-v118';
+// v118 (dev): the client-view rental date fix (modules/client-view.js).
+// v119: index.html gained data/venues.js — the saved-venue list (README.md
+// "Saved venues"). The project form's Venue Name box offers venues from past
+// projects and fills the address and parking / access instructions; the crew
+// call sheet and portal show those instructions under the address. app.js,
+// crm-projects.js, search-select.js, helpers.js, data-state.js, crew-view.js,
+// crew-portal.js; the new data file rides the runtime /data/ rule.
+var CACHE_VERSION = 'ltp-shell-v119';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

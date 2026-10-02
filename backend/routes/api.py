@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import undefer
 from backend.database import async_session, get_db
 from backend import crew_integrity, livesync, models, payouts, rental_bookings
@@ -402,6 +402,81 @@ def _stamp_activity(data: dict, user: models.User) -> dict:
 
 # ── CRUD factory ──────────────────────────────────────────────────────────
 
+# ── Venue memory ──────────────────────────────────────────────────────────
+#
+# The project editor is the ONLY place a venue is named, so it is the only
+# place the saved-venue list is edited (README.md "Saved venues"). Rather than
+# give the client a write path to /api/venues — which would make the memory
+# editable from anywhere that could reach the API — the project write itself
+# refreshes it here, server-side, from the project's own venue fields.
+
+_VENUE_FIELDS = ("venue", "site_address", "site_use_company_address", "site_instructions")
+
+
+def _venue_snapshot(row) -> dict:
+    """The project fields the venue memory is derived from, as stored."""
+    return {f: getattr(row, f) for f in _VENUE_FIELDS}
+
+
+async def _remember_venue(db: AsyncSession, row, before: dict | None) -> bool:
+    """Refresh the saved venue named by a project that was just written.
+
+    `before` is _venue_snapshot(row) taken BEFORE the write was applied, or
+    None for a brand-new project. Returns True when the venues collection
+    moved (so the caller can mark it dirty for live sync).
+
+    Rules, chosen so a stale window can never rewrite the memory:
+      * A venue row exists for every non-empty name, matched without regard
+        to case. A new name (including a renamed one) gets a new row seeded
+        from the project's current typed address and instructions.
+      * An existing venue takes a field only when THIS write changed that
+        field on the project — a schedule save, a status change or a crew
+        send that PUTs the whole unchanged row leaves the memory alone, even
+        if some other project has since taught the venue newer details.
+      * The address copied is the typed site address. A site address derived
+        from the client company's record is that company's, not the venue's,
+        and an emptied address never blanks the saved one: a producer who
+        does not know the address yet is far more common than a venue that
+        has none. Instructions are mirrored exactly once edited — clearing
+        them on a project is an edit of the memory too.
+    """
+    name = (row.venue or "").strip()
+    if not name:
+        return False
+    after = _venue_snapshot(row)
+    if before is not None and all((before[f] or "") == (after[f] or "") for f in _VENUE_FIELDS):
+        return False
+    typed_address = "" if row.site_use_company_address else (row.site_address or "").strip()
+    instructions = (row.site_instructions or "").strip()
+
+    result = await db.execute(
+        select(models.Venue).where(func.lower(models.Venue.name) == name.lower())
+        .order_by(models.Venue.id))
+    venue = result.scalars().first()
+    if venue is None:
+        db.add(models.Venue(name=name, address=typed_address, instructions=instructions))
+        await db.flush()
+        return True
+
+    changed = False
+    renamed = before is None or (before["venue"] or "").strip().lower() != name.lower()
+    address_edited = renamed or (
+        (before["site_address"] or "") != (after["site_address"] or "")
+        or bool(before["site_use_company_address"]) != bool(after["site_use_company_address"]))
+    if typed_address and address_edited and (venue.address or "") != typed_address:
+        venue.address = typed_address
+        changed = True
+    instructions_edited = renamed or (before["site_instructions"] or "") != (after["site_instructions"] or "")
+    # A project newly pointed at this venue only ADDS what it knows; a project
+    # already at it that edits the field mirrors the edit, blank included.
+    if instructions_edited and (venue.instructions or "") != instructions and (instructions or not renamed):
+        venue.instructions = instructions
+        changed = True
+    if changed:
+        await db.flush()
+    return changed
+
+
 def _crud_routes(router, path, model_cls, has_activity: bool):
     """Generate GET all, GET by id, POST, PUT, DELETE for a model.
 
@@ -474,6 +549,9 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             row.share_token = secrets.token_urlsafe(32)
         db.add(row)
         await db.flush()
+        # A project that names a venue teaches the venue memory (above).
+        if model_cls is models.Project and await _remember_venue(db, row, None):
+            livesync.mark_dirty(db, "venues")
         # Bookings are derived from confirmed documents: an invoice books its
         # equipment lines from the moment it exists, an accepted quote from the
         # moment it is accepted (backend/rental_bookings.py). A new document is
@@ -607,6 +685,7 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             mapped["activity"] = _merge_activity(row.activity, mapped["activity"])
         tracks_tax = model_cls in (models.Quote, models.Invoice)
         tax_inputs_before = _tax_inputs_fingerprint(row) if tracks_tax else None
+        venue_before = _venue_snapshot(row) if model_cls is models.Project else None
         for key, val in mapped.items():
             if key != "id":
                 setattr(row, key, val)
@@ -620,6 +699,10 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             if hasattr(row, "qb_tax_signature"):
                 row.qb_tax_signature = None
         await db.flush()
+        # Venue memory (Project only): a write that changed the project's venue
+        # fields refreshes the saved venue it names — see _remember_venue.
+        if model_cls is models.Project and await _remember_venue(db, row, venue_before):
+            livesync.mark_dirty(db, "venues")
         # Crew-request integrity (Project only): a schedule edit may have removed
         # positions/days that crew requests still reference. Trim each affected
         # request to its surviving shifts; auto-withdraw any left with none, so a
@@ -737,6 +820,15 @@ _crud_routes(router, "kits",        models.Kit,       has_activity=False)
 # item, and the orders of gear rented in. Hyphenated like client-rates.
 _crud_routes(router, "vendor-rates",  models.VendorRate,  has_activity=False)
 _crud_routes(router, "cross-rentals", models.CrossRental, has_activity=False)
+
+
+# Venue memory is READ-ONLY over the API — deliberately not _crud_routes. It is
+# written only by a project save (_remember_venue), so the project editor stays
+# the one place it is edited; POST/PUT/DELETE here answer 405.
+@router.get("/venues")
+async def list_venues(db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(models.Venue).order_by(models.Venue.id))
+    return [_row_to_dict(r) for r in result.scalars().all()]
 
 
 @router.post("/quotes/{item_id}/gear")

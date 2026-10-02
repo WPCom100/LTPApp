@@ -157,6 +157,13 @@ class Project(Base):
     # project. See backend/routes/crew.py::_resolve_site_address.
     site_address = Column(Text, default="")
     site_use_company_address = Column(Boolean, default=False)
+    # Parking / load-in / access instructions for the job site — crew-facing
+    # like site_address (call sheet, crew portal, request email). The project
+    # carries its own copy so a one-off note on this job never rewrites the
+    # saved venue underneath every other project; the venue memory
+    # (Venue, below) is refreshed from these fields on save — see
+    # backend/routes/api.py::_remember_venue.
+    site_instructions = Column(Text, default="")
     # budget is a category breakdown, NOT a single number. The form in
     # modules/crm-projects.js (search for budL/budLb/budR/budM) saves the
     # object literal directly.
@@ -827,6 +834,30 @@ class CrossRental(Base):
     lines = Column(JSON, default=list)                   # see class docstring
     remember_rates = Column(Boolean, default=True)       # on save, upsert vendor_rates for every catalog-item line (frontend)
     notes = Column(Text, default="")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Venue(Base):
+    """Venue memory — a place we have worked before, remembered by name with
+    its address and parking / access instructions so the next project at the
+    same venue starts filled in (README.md "Saved venues").
+
+    Written ONLY as a side effect of saving a project (backend/routes/api.py::
+    _remember_venue): the project editor is the one place a venue is named, so
+    it is the one place the memory is edited. There is no venue screen and no
+    client write path — the collection is read-only over the API (GET
+    /api/venues) and published through live sync like every other collection.
+
+    One row per name, matched case-insensitively. A project that renames its
+    venue remembers a new one; the old row stays, because other projects may
+    still carry that name. Deleting a project never touches this table."""
+    __tablename__ = "venues"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, default="", index=True)
+    address = Column(Text, default="")                   # typed street address; a company-derived site address is never copied here
+    instructions = Column(Text, default="")              # parking / load-in / access notes, as last saved on a project
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

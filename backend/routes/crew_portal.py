@@ -1051,6 +1051,7 @@ async def _dashboard_payload(db, ident: CrewIdentity, today: str) -> dict:
             "projectName": (p.name if p else "") or "Project",
             "venue": (p.venue if p else "") or "",
             "siteAddress": await _resolve_site_address(db, p) if p else "",
+            "siteInstructions": ((p.site_instructions if p else "") or "").strip(),
             "startDate": (p.start_date if p else "") or "",
             "endDate": (p.end_date if p else "") or "",
         }
