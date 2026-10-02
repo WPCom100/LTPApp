@@ -1082,7 +1082,7 @@ class _DocPDF:
         # branches used to hardcode. Dates inside the text resolve here rather
         # than being frozen when it was written.
         lines = doc_terms(self.entity, self.kind, self.settings)
-        # Keep the rule + heading with at least its first three bullets; a
+        # Keep the rule + heading with at least its first three lines; a
         # longer list breaks per line below rather than running off the page.
         self._need(38 + 14 * min(len(lines), 3))
         self.y -= 16
@@ -1100,7 +1100,7 @@ class _DocPDF:
             self._need(14)
             c.setFont("Roboto-Light", 9)
             c.setFillColor(MUTED)
-            c.drawString(self.M + 8, self.y, f"•  {line}")
+            c.drawString(self.M, self.y, line)
             self.y -= 14
 
     # ── Generate ───────────────────────────────────────────────────────────

@@ -979,7 +979,7 @@
             // backend/pdf_generator.py, which is how the printed PDF and this
             // page could come to disagree). Shared resolver: theme.js.
             window.LTP_docTerms(entity, kind, settings).map(function(line, i) {
-              return h("div", { key: i, style: { fontSize: "12px", color: MUTE, lineHeight: 1.6, marginBottom: 4, paddingLeft: 12 } }, "•  " + line);
+              return h("div", { key: i, style: { fontSize: "12px", color: MUTE, lineHeight: 1.6, marginBottom: 4 } }, line);
             }))),
 
         // Client note (terminal) then action zone / banner

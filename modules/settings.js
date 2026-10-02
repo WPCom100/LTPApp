@@ -609,7 +609,7 @@
                 placeholder: window.LTP_BUILTIN_TERMS[t.kind],
                 style: { width: "100%", minHeight: 96, background: B.bg, border: "1px solid " + B.border, borderRadius: "6px", padding: "8px", color: B.text, fontSize: "11px", fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.6 } }),
               h("div", { style: { fontSize: "9px", color: B.textMut, marginTop: 4, lineHeight: 1.5 } },
-                "Printed on the client's copy \u2014 one line per bullet. Leave empty to keep the built-in wording shown above. Available: "
+                "Printed on the client's copy \u2014 one line per term. Leave empty to keep the built-in wording shown above. Available: "
                 + (t.kind === "quote" ? "{{expiryDate}} \u00b7 {{validityDays}}" : "{{dueDate}} \u00b7 {{paymentTerms}}")
                 + " \u00b7 {{companyName}}. A document that has had its own terms edited keeps those."));
           })
