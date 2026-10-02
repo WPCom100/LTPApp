@@ -54,7 +54,7 @@ def _render(entity, project=None, settings=None, kind="quote"):
     stroked rects, which in this renderer are only ever section frames."""
     _register_fonts()
     doc = _DocPDF(io.BytesIO(), kind, entity, {"name": "Avant Chamber Ballet"}, None,
-                  project or {"name": "Nutcracker"}, settings or {}, "Tester")
+                  {"name": "Nutcracker"} if project is None else project, settings or {}, "Tester")
     pages = [_page()]
     real_rect, real_show = doc.c.rect, doc.c.showPage
     real_str, real_rstr = doc.c.drawString, doc.c.drawRightString
@@ -407,3 +407,26 @@ def test_a_subtotal_stays_with_a_table_that_ends_on_a_note(pad):
     rows_on = {i for i, p in enumerate(pages) if _ys(p, "Crew ")}
     sub_on = {i for i, p in enumerate(pages) if _ys(p, "Labor Subtotal:")}
     assert sub_on <= rows_on, "subtotal left its table"
+
+
+# ── Rental period source ───────────────────────────────────────────────────
+# A new quote's custom dates default to today. They apply only to a quote with
+# no project; a linked one reads the project's dates.
+
+def _period_texts(entity, project):
+    items = [{"type": "equipment", "name": "LED Par Wash", "rentalLabel": "3-Day",
+              "qty": 1, "unitPrice": 45, "adjustedPrice": None}]
+    _, pages = _render(_doc([{"id": "s1", "label": "Equipment", "items": items}], **entity),
+                       project=project)
+    return [t for p in pages for t in _texts(p) if t.startswith("Rental Period:")]
+
+
+def test_rental_period_uses_project_dates_over_default_custom_dates():
+    got = _period_texts({"customStartDate": "2026-10-02", "customEndDate": "2026-10-02"},
+                        {"name": "Gala", "startDate": "2027-02-07", "endDate": "2027-02-09"})
+    assert got == ["Rental Period: February 7th, 2027 — February 9th, 2027"]
+
+
+def test_rental_period_uses_custom_dates_when_there_is_no_project():
+    got = _period_texts({"customStartDate": "2026-10-02", "customEndDate": "2026-10-04"}, {})
+    assert got == ["Rental Period: October 2nd, 2026 — October 4th, 2026"]

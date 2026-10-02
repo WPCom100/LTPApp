@@ -1801,6 +1801,21 @@ async def test_exemption_reason_is_client_writable():
            "tax_exemption_reason" in {c.name for c in models.Company.__table__.columns})
 
 
+async def test_entity_period_prefers_project_over_default_custom_dates():
+    print("test_entity_period_prefers_project_over_default_custom_dates")
+    # A new quote's custom dates default to today; a linked quote ignores them
+    # (mirrors quotes-builder.js), so the QB rental memo reads the project's.
+    proj = types.SimpleNamespace(start_date="2027-02-07", end_date="2027-02-09")
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=lambda: proj))
+    linked = types.SimpleNamespace(project_id=3, custom_start_date="2026-10-02", custom_end_date="2026-10-02")
+    _check("linked quote reads the project's dates",
+           await qbo_sync._entity_period(db, linked) == ("2027-02-07", "2027-02-09"))
+    unlinked = types.SimpleNamespace(project_id=None, custom_start_date="2026-10-02", custom_end_date="2026-10-04")
+    _check("unlinked quote reads its custom dates",
+           await qbo_sync._entity_period(db, unlinked) == ("2026-10-02", "2026-10-04"))
+
+
 def main():
     sync_tests = [test_fault_parsing, test_query_escaping, test_readonly_columns_stripped,
                   test_period_label,
@@ -1833,6 +1848,7 @@ def main():
         test_baseline_is_recorded_when_we_create_the_customer,
         test_a_failed_push_leaves_the_edit_pending,
         test_exemption_reason_is_client_writable,
+        test_entity_period_prefers_project_over_default_custom_dates,
     ]
     for t in sync_tests:
         t()

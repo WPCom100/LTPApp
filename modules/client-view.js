@@ -304,8 +304,13 @@
 
     // Rental period line (only on equipment-containing sections)
     var hasEquip = lineItems.some(function(it) { return it.type === "equipment"; });
-    var secStart = sec.customDates ? sec.startDate : (entity.customStartDate || (project && project.startDate));
-    var secEnd   = sec.customDates ? sec.endDate   : (entity.customEndDate   || (project && project.endDate));
+    // A linked project owns the dates; the quote's own custom dates only apply
+    // when it has none. New quotes default those to today, so letting them win
+    // over the project showed today's date instead of the project's.
+    var docStart = project ? project.startDate : entity.customStartDate;
+    var docEnd   = project ? project.endDate   : entity.customEndDate;
+    var secStart = sec.customDates ? sec.startDate : docStart;
+    var secEnd   = sec.customDates ? sec.endDate   : docEnd;
 
     // Phone: smaller type and tighter money columns so each item name gets one
     // line — "PM — Production Manager" used to wrap at 13px in a 120px column.
