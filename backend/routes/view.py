@@ -20,6 +20,13 @@ The entity and line-item scrubs are ALLOW-lists. This docstring used to say
 existed, which is precisely how the real `notes` column shipped to every
 share-link holder unnoticed. Name a key here only when a reader needs it.
 
+A RECALLED quote or invoice (status back to "draft" after it was sent — it
+keeps its sentDate) is withdrawn from the client: the link serves only a
+"recalled" stub, never the document, so a client cannot watch edits being made
+to it. Signed-in staff are exempt (the builders' Preview button opens this same
+link for drafts); accept/decline (quotes only) are refused for everyone, and the
+PDF for everyone but staff.
+
 The accept/decline endpoints bypass the existing `_stamp_activity` helper
 in api.py — those force the authenticated user as the activity actor, but
 here the actor IS the client (anonymous, supplies their own name). We
@@ -87,6 +94,42 @@ async def _find_entity_by_token(db: AsyncSession, token: str):
     if row is not None:
         return "invoice", row
     return None, None
+
+
+def _is_recalled(kind: str, row) -> bool:
+    """A quote or invoice that was sent and has since been recalled to draft for
+    editing.
+
+    The signature is the same for both (status draft + a sentDate): the recall
+    flips the status back but leaves the send date, and a document that was
+    never sent has no sentDate (it is stamped by the send — routes/email.py)."""
+    return (
+        kind in ("quote", "invoice")
+        and (row.status or "draft") == "draft"
+        and bool((row.sent_date or "").strip())
+    )
+
+
+def _recalled_payload(kind: str) -> dict:
+    """What a client holding a recalled document's link is allowed to see: that
+    it was recalled, and nothing about its contents (no entity, company, contact
+    or settings — not even its reference number)."""
+    return {"kind": kind, "recalled": True}
+
+
+def _recalled_message(kind: str) -> str:
+    return f"The {kind} has been recalled. Please contact us with any questions."
+
+
+def _refuse_if_recalled(kind: str, row) -> None:
+    """409 the client actions on a recalled quote. A page opened before the
+    recall still has its Accept button; without this, a click would flip the
+    draft being edited to accepted (and book its gear)."""
+    if _is_recalled(kind, row):
+        raise HTTPException(
+            status_code=409,
+            detail={"status": "recalled", "message": _recalled_message(kind)},
+        )
 
 
 # Magic-number prefixes for the raster formats a signature pad can emit. SVG
@@ -375,6 +418,12 @@ async def get_view(
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    if _is_recalled(kind, row) and optional_user is None:
+        # Not a view: nothing to track, notify, or reveal. `_v` still rides
+        # along so the page's freshness poll notices the quote coming back.
+        stub = _recalled_payload(kind)
+        stub["_v"] = _public_version(stub)
+        return stub
     # Track the open BEFORE building the response so the new activity
     # entry (if we stamp one) is visible in this same payload — the
     # client view's "Status" / "Activity" badges reflect immediately.
@@ -401,7 +450,11 @@ async def get_view(
 # ── GET /api/view/{token}/version ─────────────────────────────────────────
 
 @view_router.get("/{token}/version")
-async def get_view_version(token: str, db: AsyncSession = Depends(get_db)):
+async def get_view_version(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+    optional_user: models.User | None = Depends(get_optional_user),
+):
     """Has this document changed, and is a newer app shell deployed?
 
     A client can sit on a quote for an hour while it is re-priced underneath
@@ -419,6 +472,9 @@ async def get_view_version(token: str, db: AsyncSession = Depends(get_db)):
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    if _is_recalled(kind, row) and optional_user is None:
+        # Same stub GET /{token} serves, so its hash is what the page holds.
+        return {"doc": _public_version(_recalled_payload(kind)), "app": livesync.app_version()}
     company, contact, project = await load_related(
         db, row.company_id, row.client_contact_id, row.project_id
     )
@@ -475,6 +531,7 @@ async def post_accept(token: str, body: dict, request: Request, db: AsyncSession
             status_code=400,
             detail="accept is only valid for quotes; this token refers to an invoice",
         )
+    _refuse_if_recalled(kind, row)
     # Validate body
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be a JSON object")
@@ -546,6 +603,7 @@ async def post_decline(token: str, body: dict, request: Request, db: AsyncSessio
         raise HTTPException(status_code=404, detail="not found")
     if kind != "quote":
         raise HTTPException(status_code=400, detail="decline is only valid for quotes")
+    _refuse_if_recalled(kind, row)
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="body must be a JSON object")
     client_name = (body.get("clientName") or "").strip()
@@ -600,6 +658,8 @@ async def get_view_pdf(
     kind, row = await _find_entity_by_token(db, token)
     if row is None:
         raise HTTPException(status_code=404, detail="not found")
+    if _is_recalled(kind, row) and optional_user is None:
+        raise HTTPException(status_code=410, detail=_recalled_message(kind))
     await _record_open(
         db=db, entity=row, kind=kind, request=request,
         optional_user=optional_user, action="pdf",

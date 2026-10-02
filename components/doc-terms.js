@@ -68,7 +68,7 @@
       return h("div", { style: { background: B.surface, borderTop: "1px solid " + B.border, padding: "12px 18px" } },
         header(),
         open && h("div", { style: { marginTop: 10 } }, resolved.map(function(line, i) {
-          return h("div", { key: i, style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6, paddingLeft: 10 } }, "•  " + line);
+          return h("div", { key: i, style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6 } }, line);
         })));
     }
 
@@ -80,7 +80,7 @@
           onChange: function(e) { onChange(e.target.value); },
           rows: Math.max(4, resolved.length + 1),
           spellCheck: true,
-          "aria-label": "Terms and conditions, one line per bullet",
+          "aria-label": "Terms and conditions, one line per term",
           style: { width: "100%", boxSizing: "border-box", background: B.bg, border: "1px solid " + B.border,
                    borderRadius: "8px", padding: "8px 12px", color: B.text, fontSize: "12px",
                    fontFamily: "inherit", outline: "none", resize: "vertical", lineHeight: 1.6 },
@@ -89,7 +89,7 @@
         }),
         h("div", { style: { display: "flex", alignItems: "center", gap: 10, marginTop: 6, flexWrap: "wrap" } },
           h("span", { style: { fontSize: "9px", color: B.textMut, lineHeight: 1.5 } },
-            "One line per bullet. Available: " + TOKEN_HELP[k]),
+            "One term per line. Available: " + TOKEN_HELP[k]),
           h("span", { style: { flex: 1, minWidth: 8 } }),
           customized && h("button", {
             type: "button",
@@ -108,7 +108,7 @@
           resolved.length === 0
             ? h("div", { style: { fontSize: "11px", color: B.textMut, fontStyle: "italic" } }, "No terms will be printed.")
             : resolved.map(function(line, i) {
-                return h("div", { key: i, style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6, paddingLeft: 10 } }, "•  " + line);
+                return h("div", { key: i, style: { fontSize: "11px", color: B.textSec, lineHeight: 1.6 } }, line);
               }))));
   };
 })();

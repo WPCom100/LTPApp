@@ -663,6 +663,24 @@
               : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
     }
 
+    // ── Recalled ─────────────────────────────────────────────────────────────
+    //
+    // The sender pulled the quote or invoice back to edit it. The server sends only this
+    // flag — none of the document — so there is nothing to render but the note.
+    // The freshness poll (above) brings the real page back once it is resent.
+    if (data.recalled) {
+      return h("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: BG, padding: 30, fontFamily: FONT } },
+        h("div", { style: { maxWidth: 460, textAlign: "center" } },
+          h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.18em", textTransform: "uppercase", color: ORANGE } }, "Recalled"),
+          h("div", { style: { fontSize: "20px", fontWeight: 800, color: WHITE, marginTop: 10 } }, "The " + (data.kind === "invoice" ? "invoice" : "quote") + " has been recalled"),
+          h("div", { style: { fontSize: "13px", color: MUTE, marginTop: 10, lineHeight: 1.6 } },
+            "Please contact us with any questions."),
+          h("div", { style: { marginTop: 36, display: "flex", justifyContent: "center", opacity: 0.9 } },
+            mastheadFailed
+              ? h("span", { style: { fontSize: "18px", fontWeight: 800, color: ORANGE, letterSpacing: "0.04em" } }, "LUMINARY")
+              : h("img", { src: FULL_LOGO_SRC, alt: "Luminary Technology & Productions", onError: function() { setMastheadFailed(true); }, style: { display: "block", width: "100%", maxWidth: "180px", height: "auto" } }))));
+    }
+
     var entity = data.entity;
     var company = data.company;
     var contact = data.contact;
@@ -741,6 +759,12 @@
               // Pull out the field-specific reason when present
               try {
                 var parsed = JSON.parse(t);
+                // Recalled while this page was open: the document is gone from
+                // under them, so show that rather than a form error.
+                if (parsed && parsed.detail && parsed.detail.status === "recalled") {
+                  setRespondMode(null); setSubmitting(false); reload();
+                  throw new Error(parsed.detail.message);
+                }
                 if (parsed && parsed.detail) {
                   if (typeof parsed.detail === "string") throw new Error(parsed.detail);
                   if (parsed.detail.reason) throw new Error(parsed.detail.reason);
@@ -979,7 +1003,7 @@
             // backend/pdf_generator.py, which is how the printed PDF and this
             // page could come to disagree). Shared resolver: theme.js.
             window.LTP_docTerms(entity, kind, settings).map(function(line, i) {
-              return h("div", { key: i, style: { fontSize: "12px", color: MUTE, lineHeight: 1.6, marginBottom: 4, paddingLeft: 12 } }, "•  " + line);
+              return h("div", { key: i, style: { fontSize: "12px", color: MUTE, lineHeight: 1.6, marginBottom: 4 } }, line);
             }))),
 
         // Client note (terminal) then action zone / banner

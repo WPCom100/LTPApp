@@ -1082,7 +1082,7 @@ class _DocPDF:
         # branches used to hardcode. Dates inside the text resolve here rather
         # than being frozen when it was written.
         lines = doc_terms(self.entity, self.kind, self.settings)
-        # Keep the rule + heading with at least its first three bullets; a
+        # Keep the rule + heading with at least its first three lines; a
         # longer list breaks per line below rather than running off the page.
         self._need(38 + 14 * min(len(lines), 3))
         self.y -= 16
@@ -1096,12 +1096,16 @@ class _DocPDF:
         c.drawString(self.M, self.y - 8, "TERMS & CONDITIONS")
         self.y -= 22
 
+        # Each term wraps inside the content width instead of running off the
+        # page edge; a wrapped term's continuation lines sit tight under it.
         for line in lines:
-            self._need(14)
-            c.setFont("Roboto-Light", 9)
-            c.setFillColor(MUTED)
-            c.drawString(self.M + 8, self.y, f"•  {line}")
-            self.y -= 14
+            for part in _wrap_plain(line, "Roboto-Light", 9, self.content_w) or [""]:
+                self._need(14)
+                c.setFont("Roboto-Light", 9)
+                c.setFillColor(MUTED)
+                c.drawString(self.M, self.y, part)
+                self.y -= 11
+            self.y -= 3
 
     # ── Generate ───────────────────────────────────────────────────────────
     def render(self):
