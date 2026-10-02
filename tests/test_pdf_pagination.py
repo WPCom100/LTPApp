@@ -430,3 +430,16 @@ def test_rental_period_uses_project_dates_over_default_custom_dates():
 def test_rental_period_uses_custom_dates_when_there_is_no_project():
     got = _period_texts({"customStartDate": "2026-10-02", "customEndDate": "2026-10-04"}, {})
     assert got == ["Rental Period: October 2nd, 2026 — October 4th, 2026"]
+
+
+def test_long_terms_wrap_inside_the_page():
+    """A term longer than the content width wraps instead of running off the page."""
+    from backend.pdf_generator import _sw
+    long_term = ("Client is responsible for any damage to rented equipment while in their "
+                 "care, including loss, theft and water damage, and agrees to return it "
+                 "in the condition received. ") * 2
+    doc, pages = _render({"id": 1, "sections": [], "terms": long_term + "\nShort line."})
+    drawn = [(x, t) for p in pages for x, _, t in p["strings"] if "damage" in t or "Short line" in t]
+    assert len(drawn) >= 3, "long term should wrap onto several lines"
+    for x, t in drawn:
+        assert x + _sw(t, "Roboto-Light", 9) <= doc.W - doc.M + 0.01, t
