@@ -412,7 +412,10 @@
 // call sheet and portal show those instructions under the address. app.js,
 // crm-projects.js, search-select.js, helpers.js, data-state.js, crew-view.js,
 // crew-portal.js; the new data file rides the runtime /data/ rule.
-var CACHE_VERSION = 'ltp-shell-v119';
+// v120: a recalled quote or invoice's share link serves a "recalled" notice
+// instead of the document (modules/client-view.js; the server side is
+// backend/routes/view.py).
+var CACHE_VERSION = 'ltp-shell-v120';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
