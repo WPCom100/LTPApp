@@ -129,7 +129,13 @@ window.LTP_DATA_SETTINGS = {
   // Available: {{companyName}}, {{refNumber}}, {{projectName}}, {{clientName}},
   //            {{total}}, {{dueDate}}, {{lineItems}}, {{signature}}, {{header}},
   //            {{shifts}}, {{crewName}}, {{role}}, {{date}}, {{callTime}},
-  //            {{wrapTime}}, {{location}}, {{quoteValidity}}, {{viewUrl}}
+  //            {{wrapTime}}, {{location}}, {{siteInstructions}}, {{quoteValidity}},
+  //            {{viewUrl}}
+  //
+  // {{siteInstructions}} is the project's parking / access note (README.md
+  // "Saved venues"). A crew body that does NOT place it gets the note folded
+  // under {{location}} as a second line instead, so saved templates that
+  // predate the token still carry it (backend/routes/crew.py::_with_instructions).
   //
   // The branded MASTHEAD (linear logo + color-matched rule) and the surrounding
   // card container are NOT template tokens — every email is wrapped in the shared
@@ -195,7 +201,7 @@ window.LTP_DATA_SETTINGS = {
       // predates the token. The routes/crew.py::_NOTIFY_FALLBACKS entry must
       // match this body byte-for-byte.
       subject: "Confirmed: {{projectName}} — {{date}}",
-      body: "Hi {{crewName}},\n\nYou are confirmed for the following:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\nPlease reach out if you have any questions. We look forward to working with you.\n\n{{addToCalendar}}\n\n{{signature}}"
+      body: "Hi {{crewName}},\n\nYou are confirmed for the following:\n\nProject: {{projectName}}\nRole: {{role}}\nDate: {{date}}\nCall: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\nParking & access: {{siteInstructions}}\n\nPlease reach out if you have any questions. We look forward to working with you.\n\n{{addToCalendar}}\n\n{{signature}}"
     },
     crewCancelled: {
       label: "Position Cancellation",
@@ -318,8 +324,8 @@ window.LTP_TEMPLATE_VARIABLES = {
   invoiceSent:     ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   invoiceReminder: ["companyName", "refNumber", "projectName", "clientName", "total", "dueDate", "header", "signature", "viewUrl"],
   paymentReceipt:  ["companyName", "refNumber", "projectName", "clientName", "total", "lineItems", "header", "signature", "viewUrl"],
-  crewRequest:     ["companyName", "crewName", "projectName", "location", "header", "shifts", "signature"],
-  crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "addToCalendar", "signature"],
+  crewRequest:     ["companyName", "crewName", "projectName", "location", "siteInstructions", "header", "shifts", "signature"],
+  crewConfirmed:   ["companyName", "crewName", "projectName", "role", "date", "callTime", "wrapTime", "location", "siteInstructions", "addToCalendar", "signature"],
   crewCancelled:   ["companyName", "crewName", "projectName", "shifts", "signature"],
   crewCancelledWithPay: ["companyName", "crewName", "projectName", "shifts", "cancellationPay", "signature"],
   crewNotSelected: ["companyName", "crewName", "projectName", "shifts", "signature"],
