@@ -415,7 +415,12 @@
 // v120: a recalled quote or invoice's share link serves a "recalled" notice
 // instead of the document (modules/client-view.js; the server side is
 // backend/routes/view.py).
-var CACHE_VERSION = 'ltp-shell-v120';
+// v121: the parking / access instructions travel everywhere the address goes —
+// the request and confirmation emails (new {{siteInstructions}} token, folded
+// under {{location}} for templates without it), the call sheet's acceptance
+// box and calendar events, and the crew portal's shift rows and calendar
+// events. crew-view.js, crew-portal.js, data/settings.js.
+var CACHE_VERSION = 'ltp-shell-v121';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

@@ -247,7 +247,7 @@
       h("line", { x1: 11, y1: 1.6, x2: 11, y2: 4, stroke: color, strokeWidth: 1.4, strokeLinecap: "round" }));
   }
 
-  function calUrlFor(s, projectName, location) {
+  function calUrlFor(s, projectName, location, instructions) {
     if (!window.LTP_gcalUrl) return null;
     // Event title: "LTP - <position acronym> - <project>" (e.g. "LTP - A1 - Sunset Gala").
     var acronym = s.role || s.roleLabel || "Crew";
@@ -270,16 +270,20 @@
       s.endTime ? "Wrap " + fmtTime(s.endTime) : "",
       s.shiftTitle || "",
     ].filter(function(x) { return x; }).join("  ·  ");
-    // Shift note appended directly after the existing description.
+    // Shift note appended directly after the existing description, then the
+    // project's parking / access instructions — the event's location is the
+    // address, so the note on how to use it rides in the details.
     var note = (s.note && String(s.note).trim()) ? String(s.note).trim() : "";
     var details = note ? (base ? base + "\n\n" + note : note) : base;
+    var instr = (instructions && String(instructions).trim()) ? String(instructions).trim() : "";
+    if (instr) details = (details ? details + "\n\n" : "") + "Parking & access: " + instr;
     return window.LTP_gcalUrl({
       title: title, date: s.date, time: s.startTime || "",
       endTime: s.endTime || "", location: location || "", details: details,
     });
   }
 
-  function calButtons(shifts, projectName, location) {
+  function calButtons(shifts, projectName, location, instructions) {
     if (!window.LTP_gcalUrl) return null;
     var usable = (shifts || []).filter(function(s) { return s.status !== "cancelled" && (s.date || (s.flat && s.projectStart)); });
     if (!usable.length) return null;
@@ -289,7 +293,7 @@
     // call shares a day, the date alone would be ambiguous — so multi-call
     // labels carry the start time too ("Sat, Aug 1 · 8:00 AM").
     var btns = usable.map(function(s, i) {
-      var href = calUrlFor(s, projectName, location);
+      var href = calUrlFor(s, projectName, location, instructions);
       if (!href) return null;
       var label = s.flat ? (single ? "Add project dates to Calendar" : "Project dates")
         : single ? "Add to Calendar"
@@ -345,13 +349,17 @@
       ? h("div", { style: { fontSize: "12px", fontWeight: 500, color: FAINT, fontFamily: MONO, fontVariantNumeric: "tabular-nums", marginTop: 8 } }, "Responded " + fmtRespondedAt(respondedAt))
       : null;
     // Calendar buttons only once actually confirmed (task: add-to-calendar on confirm).
-    var cal = confirmed ? calButtons(opts.shifts, opts.projectName, siteAddress) : null;
+    var cal = confirmed ? calButtons(opts.shifts, opts.projectName, siteAddress, opts.siteInstructions) : null;
     // Where to show up — repeated inside the acceptance confirmation (the part
-    // crew screenshot / come back to), linked to a map for one-tap navigation.
-    var whereRow = (status === "accepted" && siteAddress)
-      ? h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(siteAddress), target: "_blank", rel: "noopener",
-          style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 12 } },
-          siteAddress)
+    // crew screenshot / come back to), linked to a map for one-tap navigation,
+    // with the parking / access instructions under it.
+    var whereRow = (status === "accepted" && (siteAddress || opts.siteInstructions))
+      ? h("div", null,
+          siteAddress && h("a", { href: "https://maps.google.com/?q=" + encodeURIComponent(siteAddress), target: "_blank", rel: "noopener",
+            style: { display: "inline-block", fontSize: "12px", fontWeight: 600, color: TEXT, textDecoration: "underline", textDecorationColor: HAIR, textUnderlineOffset: "3px", marginTop: 12 } },
+            siteAddress),
+          opts.siteInstructions && h("div", { style: { fontSize: "12px", lineHeight: 1.5, color: TEXT, marginTop: siteAddress ? 6 : 12, whiteSpace: "pre-wrap", overflowWrap: "break-word" } },
+            h("span", { style: { fontWeight: 700 } }, "Parking & access: "), opts.siteInstructions))
       : null;
 
     return h("div", { style: { background: cfg.bg, border: "1px solid " + cfg.bd, borderRadius: 14, padding: 20 } },
@@ -632,6 +640,7 @@
     // the sheet (replacing the greeting), so it must NOT also render down here.
     var bannerNode = renderBanner(status, {
       crewName: crewName, respondedAt: data.respondedAt, siteAddress: project.siteAddress,
+      siteInstructions: project.siteInstructions || "",
       isConfirmed: isConfirmed, shifts: shifts, projectName: project.name,
     });
 

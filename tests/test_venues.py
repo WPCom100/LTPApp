@@ -328,6 +328,63 @@ def test_crew_call_sheet_carries_the_instructions():
     _check("call sheet carries siteInstructions", page.json()["project"]["siteInstructions"] == "Crew lot off Red River. Load in at dock 3.")
 
 
+# ── Everywhere the address goes ──────────────────────────────────────────────
+
+def _brand():
+    return {"accent": "#EF5822", "company": "Luminary"}
+
+
+def test_request_email_header_carries_the_instructions():
+    from backend.routes.crew import _render_crew_request_body
+    html = _render_crew_request_body(None, crew_name="Casey", project_name="Gala", company="Luminary",
+                                     brand=_brand(), shifts=[], view_url="https://x.test/#/crew/t",
+                                     signature_html="", site_address="1 Main St, Austin, TX",
+                                     site_instructions="Crew lot off Red River. Dock 3.")
+    _check("header card shows the address", "1 Main St, Austin, TX" in html)
+    _check("header card shows the instructions under it", "Parking &amp; access:</strong> Crew lot off Red River. Dock 3." in html)
+    html2 = _render_crew_request_body(None, crew_name="Casey", project_name="Gala", company="Luminary",
+                                      brand=_brand(), shifts=[], view_url="https://x.test/#/crew/t",
+                                      signature_html="", site_address="1 Main St, Austin, TX", site_instructions="")
+    _check("no instructions → no label", "Parking" not in html2)
+
+
+def test_location_token_folds_the_instructions_when_the_template_has_no_token():
+    from backend.routes.crew import _render_crew_request_body, _with_instructions
+    legacy = "Hi {{crewName}},\n\nLocation: {{location}}\n\n{{header}}\n\n{{signature}}"
+    html = _render_crew_request_body(legacy, crew_name="Casey", project_name="Gala", company="Luminary",
+                                     brand=_brand(), shifts=[], view_url="https://x.test/#/crew/t",
+                                     signature_html="", site_address="1 Main St", site_instructions="Gate code 4411")
+    _check("a saved body without the token still carries the note under the address",
+           "Location: 1 Main St<br>Parking &amp; access: Gate code 4411" in html)
+    modern = "Location: {{location}}\nParking & access: {{siteInstructions}}\n\n{{header}}"
+    html = _render_crew_request_body(modern, crew_name="Casey", project_name="Gala", company="Luminary",
+                                     brand=_brand(), shifts=[], view_url="https://x.test/#/crew/t",
+                                     signature_html="", site_address="1 Main St", site_instructions="Gate code 4411")
+    _check("a body that places the token gets the bare address on its own line",
+           "Location: 1 Main St<br>Parking &amp; access: Gate code 4411" in html and html.count("Gate code 4411") == 2)
+    html = _render_crew_request_body(modern, crew_name="Casey", project_name="Gala", company="Luminary",
+                                     brand=_brand(), shifts=[], view_url="https://x.test/#/crew/t",
+                                     signature_html="", site_address="1 Main St", site_instructions="")
+    _check("an empty note drops its label line instead of mailing a bare label",
+           "Parking" not in html and "Location: 1 Main St" in html)
+    _check("_with_instructions with no address is just the note line",
+           _with_instructions("", "Dock 3", "") == "Parking & access: Dock 3")
+    _check("_with_instructions leaves the address alone when the template has the token",
+           _with_instructions("1 Main", "Dock 3", "x {{siteInstructions}} y") == "1 Main")
+
+
+def test_unresolved_label_lines_are_narrow():
+    from backend.routes.crew import _drop_unresolved_label_lines, _NOTIFY_FALLBACKS
+    t = ("Hi,\n\nThe following shifts are affected:\n\n{{shifts}}\n\n"
+         "Location: {{location}}\nParking & access: {{siteInstructions}}\n\nBye")
+    out = _drop_unresolved_label_lines(t, {"{{location}}": "1 Main", "{{siteInstructions}}": ""})
+    _check("an intro ending in a colon survives", "The following shifts are affected:" in out)
+    _check("a label whose token is empty goes", "Parking & access" not in out)
+    _check("a label whose token has a value stays", "Location: {{location}}" in out)
+    _check("the confirmation fallback places the token",
+           "Parking & access: {{siteInstructions}}" in _NOTIFY_FALLBACKS["crewConfirmed"]["body"])
+
+
 def test_deleting_a_project_keeps_the_venue():
     client, _ = _setup()
     _fixtures(client)

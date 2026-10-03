@@ -507,7 +507,26 @@ def _add_to_calendar_cta(view_url: str, accent: str) -> str:
     )
 
 
-def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, site_address: str = "") -> str:
+# Label the parking / access instructions wear wherever they ride along with
+# the address — the email cards, the folded {{location}} line, the call sheet.
+_INSTRUCTIONS_LABEL = "Parking & access"
+
+
+def _with_instructions(location: str, instructions: str, template: str) -> str:
+    """The value {{location}} resolves to. A template that places
+    {{siteInstructions}} itself gets the bare address; one that predates the
+    token (every workspace body saved before it shipped) gets the instructions
+    folded under the address as a second line, so they travel everywhere the
+    address goes without anyone re-saving a template. The newline becomes a
+    <br> in email_compose._paragraphs_to_html."""
+    instructions = (instructions or "").strip()
+    if not instructions or "{{siteInstructions}}" in (template or ""):
+        return location
+    line = _INSTRUCTIONS_LABEL + ": " + instructions
+    return (location + "\n" + line) if location else line
+
+
+def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, site_address: str = "", site_instructions: str = "") -> str:
     """Themed call-to-action card with a single accent button that opens the
     crew landing page (where Accept / Decline + the note actually happen).
     One button — both responses live on the same page, so two links here would
@@ -520,6 +539,11 @@ def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, sit
     else:
         n = escape(_ask_label(shifts))
     loc = ('<div style="font-size:12px;color:#8a949e;margin:0 0 2px">' + escape(site_address) + '</div>') if site_address else ""
+    # Where to park and how to get in, under the address they qualify.
+    instr = (site_instructions or "").strip()
+    if instr:
+        loc += ('<div style="font-size:12px;color:#5D6D77;margin:4px auto 6px;max-width:440px;line-height:1.5;white-space:pre-wrap">'
+                '<strong>' + escape(_INSTRUCTIONS_LABEL) + ':</strong> ' + escape(instr) + '</div>')
     return (
         '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" '
         'style="width:100%;margin:6px 0;background-color:#f7f9fa;border:1px solid #eceef0;border-radius:10px">'
@@ -539,18 +563,25 @@ def _crew_header_html(project_name: str, shifts, view_url: str, accent: str, sit
 
 
 
-def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html, site_address="") -> str:
+def _render_crew_request_body(body_tmpl, *, crew_name, project_name, company, brand, shifts, view_url, signature_html, site_address="", site_instructions="") -> str:
     """Compose the inner (card) HTML for a crew request: template body →
     paragraphs, with the themed {{header}} CTA, {{shifts}} list, and
     {{signature}} substituted in. {{location}} carries the job-site address for
-    templates that want it inline; the header card shows it regardless."""
-    body = ((body_tmpl or _FALLBACK_CREW_BODY)
+    templates that want it inline; the header card shows it regardless — and
+    the parking / access instructions under it (see _with_instructions for
+    how {{location}} carries them when the template has no token of its own)."""
+    tmpl = body_tmpl or _FALLBACK_CREW_BODY
+    instructions = (site_instructions or "").strip()
+    location = _with_instructions(site_address, instructions, tmpl)
+    tmpl = _drop_unresolved_label_lines(tmpl, {"{{location}}": location, "{{siteInstructions}}": instructions})
+    body = (tmpl
             .replace("{{crewName}}", crew_name)
             .replace("{{projectName}}", project_name)
             .replace("{{companyName}}", company)
-            .replace("{{location}}", site_address))
+            .replace("{{location}}", location)
+            .replace("{{siteInstructions}}", instructions))
     return _paragraphs_to_html(body, {
-        "{{header}}": _crew_header_html(project_name, shifts, view_url, brand["accent"], site_address),
+        "{{header}}": _crew_header_html(project_name, shifts, view_url, brand["accent"], site_address, instructions),
         "{{shifts}}": _crew_shifts_html(shifts, brand["accent"]),
         "{{signature}}": signature_html,
     })
@@ -582,6 +613,7 @@ async def _send_crew_email(db, user, contact, project, shifts, token, settings_d
             company=company, brand=brand, shifts=shifts, view_url=view_url,
             signature_html=_render_signature(user, settings_data),
             site_address=await _resolve_site_address(db, project),
+            site_instructions=(project.site_instructions if project else "") or "",
         )
         final_html = email_html(email_shell(inner, brand))
 
@@ -623,7 +655,8 @@ _NOTIFY_FALLBACKS = {
         "subject": "Confirmed: {{projectName}} — {{date}}",
         "body": ("Hi {{crewName}},\n\nYou are confirmed for the following:\n\n"
                  "Project: {{projectName}}\nRole: {{role}}\nDate: {{date}}\n"
-                 "Call: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n\n"
+                 "Call: {{callTime}}\nWrap: {{wrapTime}}\nLocation: {{location}}\n"
+                 "Parking & access: {{siteInstructions}}\n\n"
                  "Please reach out if you have any questions. We look forward to "
                  "working with you.\n\n{{addToCalendar}}\n\n{{signature}}"),
     },
@@ -687,6 +720,23 @@ def _drop_empty_label_lines(text: str) -> str:
     return _EMPTY_LABEL_LINE.sub("", text or "")
 
 
+# A template line that is exactly "Label: {{token}}" — the shape the shipped
+# bodies use for "Location: {{location}}" and "Parking & access: {{siteInstructions}}".
+_LABEL_TOKEN_LINE = re.compile(r"^[ \t]*[^\n:{}]{1,40}:[ \t]*(\{\{\w+\}\})[ \t]*\n?", re.MULTILINE)
+
+
+def _drop_unresolved_label_lines(template: str, repl: dict) -> str:
+    """Remove "Label: {{token}}" lines whose token resolves to nothing for THIS
+    send, BEFORE substitution — a project with no parking note must not mail a
+    bare "Parking & access:" line. Deliberately narrower than
+    _drop_empty_label_lines: it only touches a line that is a label plus one
+    token, so an intro that happens to end in a colon ("The following shifts
+    are affected:") is never mistaken for an empty label."""
+    def gone(m):
+        return "" if (repl.get(m.group(1), "") or "").strip() == "" else m.group(0)
+    return _LABEL_TOKEN_LINE.sub(gone, template or "")
+
+
 async def _send_crew_notify(db, user, contact, project, shifts, template_key, settings_data, project_name=None, token=None) -> dict:
     """Best-effort send of a crew notification email. NEVER raises (mirrors
     _send_crew_email): a delivery failure must not undo the producer's
@@ -711,6 +761,12 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
         # venue names the place, the address gets the crew there.
         site_address = await _resolve_site_address(db, project)
         location = " — ".join(x for x in [((project.venue if project else "") or "").strip(), site_address] if x)
+        # Parking / access instructions ride with the address: on their own
+        # token where the template places it, folded under {{location}} where
+        # it does not (_with_instructions).
+        instructions = ((project.site_instructions if project else "") or "").strip()
+        body_tmpl = tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or ""
+        location = _with_instructions(location, instructions, body_tmpl)
         # A flat-rate position has no call/wrap: {{date}} becomes the project's
         # date range and the two time vars resolve empty — and any template line
         # left as a bare "Call:" / "Wrap:" label is dropped below, so the shipped
@@ -730,6 +786,7 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
             "{{callTime}}": _fmt_hhmm(first.get("startTime")) if first.get("startTime") else "",
             "{{wrapTime}}": _fmt_hhmm(first.get("endTime")) if first.get("endTime") else "",
             "{{location}}": location,
+            "{{siteInstructions}}": instructions,
             # The crewCancelledWithPay share, summed over the notice's shifts.
             "{{cancellationPay}}": "${:,.2f}".format(sum(_cancellation_pay(s.get("cancellationPay")) for s in (shifts or []))),
         }
@@ -741,7 +798,10 @@ async def _send_crew_notify(db, user, contact, project, shifts, template_key, se
 
         # Subject is plain text — substitute the project name plainly there.
         subject = _sub(tmpl.get("subject") or _NOTIFY_FALLBACKS.get(template_key, {}).get("subject") or "{{projectName}}").replace("{{projectName}}", project_name)
-        body_text = _sub(tmpl.get("body") or _NOTIFY_FALLBACKS.get(template_key, {}).get("body") or "")
+        # A "Label: {{token}}" line whose token is empty for this send (no
+        # parking note, no address) goes before substitution; a flat hire's
+        # resolved-empty "Call:" / "Wrap:" labels go after, as before.
+        body_text = _sub(_drop_unresolved_label_lines(body_tmpl, repl))
         if is_flat:
             body_text = _drop_empty_label_lines(body_text)
         # {{shifts}} renders the themed shift list (same block the request email

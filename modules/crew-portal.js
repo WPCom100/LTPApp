@@ -309,6 +309,10 @@
     if (!window.LTP_gcalUrl) return null;
     var title = "LTP - " + (e.role || e.roleLabel || "Crew") + " - " + (e.projectName || "Project");
     var note = (e.note || "").trim();
+    // The event's location is the address; how to use it (parking, dock, gate
+    // code) rides in the details after the shift note.
+    var instr = (e.siteInstructions || "").trim();
+    if (instr) note = (note ? note + "\n\n" : "") + "Parking & access: " + instr;
     if (e.flat) {
       var lines = (e.projectDates || []).filter(function(d) { return d && d.date; }).map(function(d) {
         return fmtDateShort(d.date) + (d.endDate ? " – " + fmtDateShort(d.endDate) : "") + (d.title ? " · " + d.title : "");
@@ -724,6 +728,10 @@
         h("div", { style: { fontSize: "12px", color: MUTE, marginTop: 3, lineHeight: 1.4 } },
           e.projectName + (e.shiftTitle ? "  ·  " + e.shiftTitle : "") + (e.venue ? "  ·  " + e.venue : "")),
         !compact && e.note && h("div", { style: { marginTop: 8, padding: "7px 10px", background: PANEL, borderRadius: 6, borderLeft: "2px solid " + ORANGE, fontSize: "12px", color: TEXT, lineHeight: 1.5, whiteSpace: "pre-wrap" } }, e.note),
+        // Parking / access instructions, under the call the same way the
+        // address link below is: the project's note on how to use that address.
+        !compact && e.siteInstructions && h("div", { style: { fontSize: "12px", lineHeight: 1.5, color: MUTE, marginTop: 8, whiteSpace: "pre-wrap", overflowWrap: "break-word" } },
+          h("span", { style: { fontWeight: 700, color: ORANGE_SOFT, fontSize: "11px", letterSpacing: "0.04em", textTransform: "uppercase" } }, "Parking & access  "), e.siteInstructions),
         h("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 } },
           statusChip(e.status),
           e.cancellationPay > 0 && Chip("Cancellation pay " + fmtMoney(e.cancellationPay), "success"),
