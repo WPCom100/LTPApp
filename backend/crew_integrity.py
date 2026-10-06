@@ -66,6 +66,7 @@ member (the request belongs to the person who was asked; reassigning the shift
 away releases it). Normal editing can't false-positive.
 """
 import math
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,12 +94,10 @@ _STATUS_FLOOR = {
 # with ``accepted``: both are settled crew answers that a stale open/requested
 # echo must not erase. ``cancelled`` ranks WITH ``confirmed``: a cancellation
 # keeps its crew member (the booking is a record, and the person may be owed a
-# share — see the cancellation section of components/domain-crew.js), so the
-# deliberate move back from cancelled to confirmed ("Restore") keeps the same
-# assignee and must pass; the stale-echo case in the other direction is
-# caught by the If-Match check on the write itself (routes/api.py). Unknown
-# statuses never trigger the guard (incoming unknown ranks high, stored
-# unknown ranks low).
+# share — see the cancellation section of components/domain-crew.js). A
+# cancelled position never leaves that status at all — enforce_cancelled_lock
+# pins it, for every caller, on every write. Unknown statuses never trigger
+# the guard (incoming unknown ranks high, stored unknown ranks low).
 _STATUS_RANK = {"open": 0, "requested": 1, "accepted": 2, "declined": 2, "confirmed": 3, "cancelled": 3}
 
 # Money tolerance for the cancellation allowance below — half a cent, the
@@ -158,18 +157,177 @@ def _cancel_write_allowed(pos: dict, prev_crew, prev_cancel) -> bool:
 
 
 def _snapshot_drop_allowed(pos: dict, prev_crew, prev_status) -> bool:
-    """When a stored ``work``/``adj``/``cancel`` may simply go: the position
-    changed hands or was unassigned, it was reopened, or a cancellation is
-    being restored to confirmed. The previous holder's snapshots must not
-    follow the slot to the next person (they used to)."""
+    """When a stored ``work``/``adj`` may simply go: the position changed
+    hands or was unassigned, or it was reopened. The previous holder's
+    snapshots must not follow the slot to the next person (they used to).
+    A cancellation is never "restored": enforce_cancelled_lock keeps a
+    cancelled position cancelled, so there is no allowance for it here."""
     if pos.get("crewId") != prev_crew:
         return True
     if pos.get("status") == "open":
         return True
-    if prev_status == "cancelled" and pos.get("status") in ("confirmed", "open") \
-            and pos.get("work") is None and pos.get("cancel") is None:
-        return True
     return False
+
+
+# ── The cancelled lock ───────────────────────────────────────────────────────
+# A cancellation is a record, and a record does not move (the cancellation
+# section of components/domain-crew.js). Once a stored position is
+# ``cancelled`` it stays so: its status, crew member, role, full-margin flag
+# and the record's who/when/reference/call (``cancel.at/by/byId/ref/shift``)
+# are pinned to what is stored, for EVERY caller — admins included, unlike
+# the pay-snapshot guard — because the point is not money but the schedule
+# itself: a crew member who was told a call is off must never find it moved
+# to another day. Only the two shares, the reason and the frozen pay (which
+# enforce_pay_snapshot still checks for a non-admin) may change, and a
+# cancelled position may be removed outright (the app confirms that).
+#
+# The row a cancelled position sits on may be rescheduled for the people
+# still on it. The app leaves the cancelled positions behind on a row of
+# their own (LTP_updateShiftRow); when a client did not, this does the same:
+# a cancelled position found on a row whose date or times differ from its
+# frozen call is moved onto a new row built from that call (one per
+# original row and call), so the schedule, payouts and the crew portal keep
+# saying what was called off.
+
+# What the lock pins on the position itself and on its record.
+_CANCEL_PINNED_FIELDS = ("status", "crewId", "serviceId", "role", "fullMargin", "slot")
+_CANCEL_PINNED_RECORD = ("at", "by", "byId", "ref", "shift")
+_CALL_FIELDS = ("date", "endDate", "time", "endTime")
+
+
+def _call_of(shift: dict) -> dict:
+    return {"title": shift.get("title") or "", "date": shift.get("date") or "",
+            "endDate": shift.get("endDate") or shift.get("date") or "",
+            "time": shift.get("time") or "", "endTime": shift.get("endTime") or ""}
+
+
+def _call_moved(call: dict, shift: dict) -> bool:
+    return any((call.get(k) or "") != (shift.get(k) or "") for k in ("date", "time", "endTime"))
+
+
+def _pin_cancelled(pos: dict, stored_pos: dict) -> bool:
+    """Pin ``pos`` to the stored cancelled position. Returns True when
+    anything had to be put back."""
+    changed = False
+
+    def pin(target: dict, source: dict, keys) -> bool:
+        # Each pinned key is held to exactly what is stored — a value that was
+        # never stored is removed, so nothing can be smuggled in beside it.
+        hit = False
+        for k in keys:
+            if k in source:
+                if target.get(k) != source[k]:
+                    target[k] = source[k]
+                    hit = True
+            elif k in target:
+                del target[k]
+                hit = True
+        return hit
+
+    changed = pin(pos, stored_pos, _CANCEL_PINNED_FIELDS) or changed
+    if pos.get("status") != "cancelled":
+        pos["status"] = "cancelled"
+        changed = True
+    stored_rec = stored_pos.get("cancel") if isinstance(stored_pos.get("cancel"), dict) else None
+    rec = pos.get("cancel")
+    if stored_rec is not None:
+        if not isinstance(rec, dict):
+            pos["cancel"] = dict(stored_rec)
+            return True
+        changed = pin(rec, stored_rec, _CANCEL_PINNED_RECORD) or changed
+    return changed
+
+
+def enforce_cancelled_lock(stored_schedule, incoming_schedule, new_row_id=None) -> int:
+    """Keep every stored cancelled position cancelled, as it was, where it
+    was. Mutates ``incoming_schedule`` in place; returns the number of
+    positions that had to be pinned or moved. Pure function of the two JSON
+    blobs. ``new_row_id`` makes the ids of rows this creates (tests pass a
+    counter); the default is a uuid-based "sch-…" id."""
+    stored = {}
+    stored_row = {}
+    for shift in (stored_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        for pos in (shift.get("positions") or []):
+            if isinstance(pos, dict) and pos.get("id") is not None and pos.get("status") == "cancelled":
+                stored[pos["id"]] = pos
+                stored_row[pos["id"]] = shift
+    if not stored:
+        return 0
+    fixed = 0
+    detached = []   # (index after which to insert, new row)
+    for idx, shift in enumerate(incoming_schedule or []):
+        if not isinstance(shift, dict):
+            continue
+        keep = []
+        moved_here = {}   # call key → new row
+        for pos in (shift.get("positions") or []):
+            prev = stored.get(pos.get("id")) if isinstance(pos, dict) else None
+            if prev is None:
+                keep.append(pos)
+                continue
+            if _pin_cancelled(pos, prev):
+                fixed += 1
+            rec = pos.get("cancel") if isinstance(pos.get("cancel"), dict) else None
+            call = rec.get("shift") if rec and isinstance(rec.get("shift"), dict) else None
+            if call is None:
+                # A record from before the call was frozen: the row it was
+                # stored on is the call. Freeze it now so it can be held to.
+                call = _call_of(stored_row[pos["id"]])
+                if rec is not None:
+                    rec["shift"] = call
+            if not _call_moved(call, shift):
+                keep.append(pos)
+                continue
+            # The row moved out from under the record: leave the record on a
+            # row of its own, built from the call.
+            key = (call.get("date"), call.get("time"), call.get("endTime"), call.get("title"))
+            row = moved_here.get(key)
+            if row is None:
+                row = dict(shift)
+                row.update(call)
+                row["id"] = new_row_id() if new_row_id else "sch-" + uuid.uuid4().hex[:12]
+                row["positions"] = []
+                row["breaks"] = [dict(b) for b in (shift.get("breaks") or []) if isinstance(b, dict)]
+                moved_here[key] = row
+                detached.append((idx, row))
+            row["positions"].append(pos)
+            fixed += 1
+        if len(keep) != len(shift.get("positions") or []):
+            shift["positions"] = keep
+    # Insert the detached rows just before the row they came from, latest
+    # first so earlier indexes stay valid.
+    for idx, row in sorted(detached, key=lambda t: -t[0]):
+        incoming_schedule.insert(idx, row)
+    return fixed
+
+
+_CANCEL_PINNED_FIXED = _CANCEL_PINNED_FIELDS + ("fee", "bill")
+
+
+def enforce_cancelled_lock_fixed(stored_fixed, incoming_fixed) -> int:
+    """``enforce_cancelled_lock`` for the flat-rate list: a stored cancelled
+    flat-rate position keeps its status, person, role, fee and bill and its
+    record's who/when/reference. No row to move. Mutates in place; returns
+    the number pinned."""
+    stored = {p["id"]: p for p in (stored_fixed or [])
+              if isinstance(p, dict) and p.get("id") is not None and p.get("status") == "cancelled"}
+    if not stored:
+        return 0
+    fixed = 0
+    for pos in (incoming_fixed or []):
+        prev = stored.get(pos.get("id")) if isinstance(pos, dict) else None
+        if prev is None:
+            continue
+        changed = _pin_cancelled(pos, prev)
+        for k in ("fee", "bill"):
+            if k in prev and pos.get(k) != prev[k]:
+                pos[k] = prev[k]
+                changed = True
+        if changed:
+            fixed += 1
+    return fixed
 
 
 def _fixed_positions(project) -> list:
@@ -426,8 +584,9 @@ def enforce_pay_snapshot(stored_schedule, incoming_schedule) -> int:
     Two allowances (docs/LABOR_SYNC_PLAN.md, decision 11): a non-admin MAY
     write the frozen pay of a cancellation that lines up with its record
     (``_cancel_write_allowed``), and MAY drop ``work``/``adj`` when the position
-    changes hands, reopens or is restored from a cancellation
-    (``_snapshot_drop_allowed``). Every other change is reverted as before."""
+    changes hands or reopens (``_snapshot_drop_allowed``). Every other change
+    is reverted as before. (A cancelled position never changes hands or
+    reopens: enforce_cancelled_lock runs first and pins it.)"""
     stored = {}
     for shift in (stored_schedule or []):
         if not isinstance(shift, dict):

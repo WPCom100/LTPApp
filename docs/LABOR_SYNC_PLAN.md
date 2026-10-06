@@ -68,7 +68,7 @@ existing sync, payout and QuickBooks paths instead of around them.
     so payouts, vendor bills, the paid-day guard and the crew portal pick it up
     through the paths they already have. `adj` still works on top.
 11. **Cancellation is not admin-gated.** Any producer can cancel with bill and
-    pay shares, edit the shares later, or restore. The paid-day check (a day
+    pay shares, or edit the shares later. The paid-day check (a day
     whose vendor bill is already paid) still applies to everyone. Because the
     server today reverts any non-admin change to `work`, this needs a narrow
     server-side allowance — see B2 and *Risks*. (Owner: do not gate.)
@@ -86,6 +86,22 @@ existing sync, payout and QuickBooks paths instead of around them.
 14. **Bulk cancellation stops at the shift.** "Cancel this shift…" applies one
     share pair to every position on a day; there is no project-wide action.
     (Owner: no extra needed.)
+14a. **A cancellation is a locked record, and there is no restore.** (Owner,
+    2026-10-06: once cancelled, a call is remade and re-confirmed by crew
+    email if it is needed again; no undo or reinstate.) The record freezes
+    the call it was cancelled from (`cancel.shift`: title, date, times); the
+    position's status, crew member, role and record never change again, only
+    the two shares and the reason. A row left with nothing live on it is a
+    **cancelled call** — read-only in the schedule editor (no date, time,
+    title, break or position edits; × with a confirm is the one way off the
+    schedule). Rescheduling a row that still has people on it leaves its
+    cancelled positions behind on a row of their own, on the original call
+    (`LTP_updateShiftRow`), so the crew portal, payouts, the weekly schedule
+    and the document's "Cancelled Jun 5" line keep naming what was called
+    off. "Refill" on a cancelled call opens the role on a new row beside it.
+    The server pins every stored cancelled position to its record and call on
+    every project write, admins included
+    (`crew_integrity.enforce_cancelled_lock`).
 15. **Sent invoices: recall first, or bill the difference on a new invoice.**
     A sent invoice's banner offers **Recall to sync** (the existing recall,
     which refuses when a payment is recorded), **New invoice with changes** (a
@@ -528,11 +544,11 @@ work: { state: "cancelled", signedAt, signedBy,
 - Positions cancel from any status; `pay`/`work` are only written when a crew
   member is attached. `cancelled` is reachable only through the cancel dialog,
   never through the status dropdown.
-- **Restore** (any producer, only while the day is neither on a pushed vendor
-  bill nor on a sent document): back to `confirmed`, `cancel` and `work`
-  removed, `pay` re-stamped. **Refill role**: adds a new `open` position with
+- **No restore** (decision 14a). `cancelled` is terminal: the position, its
+  crew member, role and record are locked, and `cancel.shift` freezes the call
+  it was cancelled from. **Refill role**: adds a new `open` position with
   the same role/service on the shift (a new slot, so OT tracking stays per
-  person).
+  person) — on a new row beside it when the shift is a cancelled call.
 
 ### B2. Payout side
 
@@ -623,9 +639,10 @@ open ──send──▶ requested ──accept──▶ accepted ──confirm�
                                                                  │
                                         **cancel… (dialog)**  ◀──┘  from any status;
                                                  │                  keeps crewId + pay,
-                                                 ▼                  writes cancel + work
-                                            **cancelled** ── **restore** (any producer, unbilled & unpaid) ──▶ confirmed
+                                                 ▼                  writes cancel + work (+ cancel.shift)
+                                            **cancelled**  (terminal — locked; no restore, decision 14a)
                                                  └── **refill role** ──▶ new open position on the same shift
+                                                                        (a new row when the shift is a cancelled call)
 ```
 
 ---
@@ -827,8 +844,9 @@ differently from it.
   across them in proportion to what each would bill alone, to the cent, so
   every line's "50% charged" still reads true. "Cancel day…" prices the
   whole day the same way.
-- **Restore sits in the edit dialog**, not on the row: every cancelled row
-  has "Edit…" (re-share or Restore) and "Refill".
+- **No Restore** (decision 14a, 2026-10-06): every cancelled row has
+  "Charge/pay…" (re-share only) and "Refill". The edit dialog says the
+  cancellation stands.
 - **"Reopen slot instead"** is B4's "Release quietly". It runs the old
   reset-to-open path, which still parks a `crewCancelled` notice, so
   "quietly" would have misled.

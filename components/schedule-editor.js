@@ -127,18 +127,21 @@
       onChange(schedule.concat([{ id: genId("sch"), title: "", date: date, time: newTime, endDate: date, endTime: newEnd, showOnCalendar: true, positions: [], breaks: [] }]));
     }
     function updateItem(id, field, val) {
-      onChange(schedule.map(function(s) {
-        if (s.id !== id) return s;
-        var upd = Object.assign({}, s);
-        upd[field] = val;
-        // endDate has no input in this editor, so it must follow the date for
-        // single-day rows — empty, tracking the old date, or now before the
-        // new date all snap to the new date. Only a deliberate multi-day span
-        // (endDate after the new date) is preserved. Leaving it behind made
-        // the project form reject saves against a date the user can't see.
-        if (field === "date" && (!s.endDate || s.endDate === s.date || s.endDate < val)) upd.endDate = val;
-        return upd;
-      }));
+      var s = schedule.find(function(x) { return x.id === id; });
+      if (!s) return;
+      var patch = {};
+      patch[field] = val;
+      // endDate has no input in this editor, so it must follow the date for
+      // single-day rows — empty, tracking the old date, or now before the
+      // new date all snap to the new date. Only a deliberate multi-day span
+      // (endDate after the new date) is preserved. Leaving it behind made
+      // the project form reject saves against a date the user can't see.
+      if (field === "date" && (!s.endDate || s.endDate === s.date || s.endDate < val)) patch.endDate = val;
+      // A cancelled call never moves, and a rescheduled row leaves its
+      // cancelled positions behind on a row of their own
+      // (LTP_updateShiftRow, components/domain-crew.js).
+      var next = window.LTP_updateShiftRow(schedule, id, patch, genId);
+      if (next !== schedule) onChange(next);
     }
     function removeItem(id) {
       var item = schedule.find(function(s) { return s.id === id; });
@@ -148,15 +151,17 @@
         return p.crewId && (p.status === "requested" || p.status === "accepted" || p.status === "confirmed");
       });
       var held = (item.positions || []).filter(holdsMoney);
-      if (activeCrew.length > 0 || held.length > 0) {
+      var record = window.LTP_isCancelledCall(item);
+      if (activeCrew.length > 0 || held.length > 0 || record) {
         var msg = [];
         if (activeCrew.length) msg.push("This day has " + activeCrew.length + " active crew assignment" + (activeCrew.length > 1 ? "s" : "") +
           ". The shifts will be removed — the crew are added to the notify tray when you save, where you can email them or decline.");
+        if (record) msg.push("This is the record of a cancelled call. Removing it takes the cancellation off the schedule, the documents and payouts.");
         if (held.length) msg.push(cancelNote(held));
         setDeletionDlg({
-          title: "Delete \"" + (item.title || "Untitled") + "\"",
+          title: record ? "Remove cancelled call" : "Delete \"" + (item.title || "Untitled") + "\"",
           message: msg.join(" "),
-          confirmLabel: "Delete Day",
+          confirmLabel: record ? "Remove" : "Delete Day",
           onConfirm: function() { doRemove(); setDeletionDlg(null); },
         });
         return;
@@ -300,7 +305,12 @@
     // ── Cancelled labor (components/cancel-labor.js) ────────────────────────
     // A position, a shift or a whole day (B6) is cancelled into the draft like
     // any edit; the save logs it and parks each person's notice
-    // (LTP_diffRemovedCrew). `svcs` is this project's client card.
+    // (LTP_diffRemovedCrew). `svcs` is this project's client card. Once
+    // cancelled, a position is a locked record: the call it was cancelled
+    // from is frozen on it (cancel.shift), a row left with nothing live is a
+    // read-only "cancelled call" (cancelledCallRow), and rescheduling a row
+    // that still has people on it leaves its cancelled positions where they
+    // were (updateItem → LTP_updateShiftRow). There is no restore.
     function cancelMoney(list) {
       var m = { bill: 0, pay: 0 };
       (list || []).forEach(function(p) {
@@ -431,24 +441,69 @@
       : null;
 
     // A shift's cancelled positions: folded under one line by default, each
-    // struck through with what it bills and pays — Edit… re-shares or
-    // restores it, Refill opens the role again for someone else.
+    // struck through with what it bills and pays. The record is locked —
+    // Charge/pay… only re-shares it within its reference; Refill opens the
+    // role again for someone else (a new call, confirmed afresh); × removes
+    // the record. Nothing restores it.
     function cancelledRow(s, pos) {
       var svc = pos.serviceId ? svcs.find(function(sv) { return sv.id === pos.serviceId; }) : null;
       var m = cancelMoney([pos]);
       var who = crewLabel(pos.crewId);
+      var cx = pos.cancel || {};
+      var call = window.LTP_cancelledCall(pos, s) || {};
+      // A record from before the call was frozen, on a row that has since
+      // moved: say when the call really was.
+      var movedNote = window.LTP_cancelledCallMoved(pos, s)
+        ? "was " + [call.date ? fmt(call.date) : "", call.time ? ft(call.time) + (call.endTime ? " – " + ft(call.endTime) : "") : ""].filter(Boolean).join(" ")
+        : "";
       var ctl = { flexShrink: 0, background: "transparent", border: "1px solid " + B.border, color: B.textSec, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap",
                   height: M ? 30 : undefined, padding: M ? "0 10px" : "2px 7px", borderRadius: M ? "7px" : "3px", fontSize: M ? "11px" : "9px" };
       return h("div", { key: pos.id, style: { background: B.surface, border: "1px dashed " + B.border, borderRadius: M ? "10px" : "3px", padding: M ? "8px" : "4px 8px", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
         h("span", { style: { fontSize: M ? "13px" : "10px", fontWeight: 600, color: B.textMut, textDecoration: "line-through" } },
-          svc ? svc.role + (svc.description ? " \u2014 " + svc.description : "") : (pos.role || "Role")),
+          svc ? svc.role + (svc.description ? " — " + svc.description : "") : (pos.role || "Role")),
         h("span", { style: { fontSize: M ? "12px" : "10px", color: B.textSec } }, who || "Nobody booked"),
+        movedNote && h("span", { style: { fontSize: M ? "11px" : "9px", color: B.warn, fontWeight: 600, whiteSpace: "nowrap" } }, movedNote),
+        cx.reason && h("span", { title: "Reason", style: { fontSize: M ? "11px" : "9px", color: B.textMut, fontStyle: "italic", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 220 } }, "“" + cx.reason + "”"),
         h("span", { style: { marginLeft: "auto", fontSize: M ? "11px" : "9px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
-          "bill $" + window.LTP_money(m.bill) + (pos.work ? " \u00b7 pay $" + window.LTP_money(m.pay) : "")),
-        h("button", { onClick: function() { openCancel([pos.id], "position", [who, svc ? svc.role : (pos.role || ""), s.date ? fmt(s.date) : ""].filter(Boolean).join(" \u00b7 ")); }, style: ctl }, "Edit\u2026"),
-        h("button", { onClick: function() { var r = window.LTP_refillPosition(schedule, s.id, pos.id, genId); if (r.positionId) onChange(r.schedule); }, style: ctl }, "Refill"),
+          "bill $" + window.LTP_money(m.bill) + (pos.work ? " · pay $" + window.LTP_money(m.pay) : "")),
+        h("button", { onClick: function() { openCancel([pos.id], "position", [who, svc ? svc.role : (pos.role || ""), call.date ? fmt(call.date) : ""].filter(Boolean).join(" · ")); },
+          title: "Change what the client is charged and the crew member is paid for this cancellation. The cancellation itself stands.", style: ctl }, "Charge/pay…"),
+        h("button", { onClick: function() { var r = window.LTP_refillPosition(schedule, s.id, pos.id, genId); if (r.positionId) onChange(r.schedule); },
+          title: "Open this role again as a new position — requested and confirmed afresh with whoever takes it.", style: ctl }, "Refill"),
         h("button", { onClick: function() { removePosition(s.id, pos.id); }, "aria-label": "Remove position",
-          style: M ? glyphBtn(B.danger, "22px") : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "\u00d7"));
+          style: M ? glyphBtn(B.danger, "22px") : { flexShrink: 0, background: "transparent", border: "none", color: B.textMut, cursor: "pointer", fontSize: "12px", padding: 0 } }, "×"));
+    }
+    // A CANCELLED CALL: a row with nothing live left on it. It is a record —
+    // the call's name, date and times read as text (no inputs, no breaks, no
+    // "+ Position", no calendar flag), with who cancelled it and when, and
+    // each cancelled position beneath. Only × (with its confirm) removes it;
+    // Refill on a position opens the role on a NEW row beside it.
+    function cancelledCallRow(s) {
+      var gone = (s.positions || []).filter(function(p) { return p.status === "cancelled"; });
+      var lead = gone[0] || {}, cx = lead.cancel || {};
+      var call = window.LTP_cancelledCall(lead, s) || s;
+      var m = cancelMoney(gone);
+      var when = [call.date ? (M ? fmtShort(call.date) : fmt(call.date)) : "No date",
+                  call.time ? ft(call.time) + (call.endTime ? " → " + ft(call.endTime) : "") : ""].filter(Boolean).join(" · ");
+      var stamp = cx.at ? String(cx.at).slice(0, 10) : "";
+      var byLine = ["Cancelled", cx.by ? "by " + cx.by : "", stamp ? "on " + fmt(stamp) : ""].filter(Boolean).join(" ");
+      var badge = h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: B.danger,
+                                       background: B.danger + "18", border: "1px solid " + B.danger + "44", borderRadius: M ? "6px" : "3px", padding: M ? "3px 8px" : "2px 6px", whiteSpace: "nowrap" } }, "Cancelled call");
+      var delBtn = h("button", { onClick: function() { removeItem(s.id); }, "aria-label": "Remove cancelled call", title: "Remove this cancelled call from the record",
+        style: M ? glyphBtn(B.danger, "22px") : { background: "none", border: "none", color: B.danger, cursor: "pointer", fontSize: "13px", padding: "2px 4px" } }, "×");
+      return h("div", { key: s.id, "data-cancelled-call": "1", style: M
+          ? { background: B.surface, borderRadius: "10px", border: "1px dashed " + B.danger + "66", padding: "10px", marginBottom: 8, opacity: 0.92 }
+          : { background: B.surface, borderRadius: "6px", border: "1px dashed " + B.danger + "66", padding: "8px 10px", marginBottom: 6, opacity: 0.92 } },
+        h("div", { style: { display: "flex", gap: M ? 8 : 10, alignItems: "center", flexWrap: "wrap", marginBottom: 4 } },
+          badge,
+          h("span", { style: { fontSize: M ? "14px" : "12px", fontWeight: 700, color: B.textMut, textDecoration: "line-through", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" } }, call.title || s.title || "Untitled"),
+          h("span", { style: { fontSize: M ? "12px" : "10px", color: B.textSec, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" } }, when),
+          h("span", { style: { marginLeft: "auto", fontSize: M ? "11px" : "9px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
+            gone.length + " cancelled · bill $" + window.LTP_money(m.bill) + " · pay $" + window.LTP_money(m.pay)),
+          delBtn),
+        h("div", { style: { fontSize: M ? "11px" : "9px", color: B.textMut, marginBottom: 6, lineHeight: 1.5 } },
+          byLine + ". The call is locked: to run it again, refill the role and confirm the crew afresh."),
+        h("div", { style: { display: "flex", flexDirection: "column", gap: M ? 6 : 3 } }, gone.map(function(pos) { return cancelledRow(s, pos); })));
     }
     function cancelledBlock(s, list) {
       var gone = (list || []).filter(function(p) { return p.status === "cancelled"; });
@@ -628,6 +683,8 @@
             h("div", { style: { padding: "8px" } },
               dayItems.map(function(di) {
                 var s = di.item, i = di.index;
+                // A cancelled call is a record, not an editable row.
+                if (window.LTP_isCancelledCall(s)) return cancelledCallRow(s);
                 var itemBreaks = s.breaks || [];
                 var itemPositions = s.positions || [];
                 // Person-slot per position on this shift (drives the # selector).
@@ -996,7 +1053,6 @@
         reason: cancelDlg.booking.reason, edit: cancelDlg.booking.cancelled, notify: null,
         confirmLabel: cancelDlg.scope === "day" ? "Cancel day" : "Cancel shift",
         onClose: function() { setCancelDlg(null); },
-        onRestore: cancelDlg.booking.cancelled && !cancelDlg.booking.signedDay ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
         onConfirm: function(shares, reason) { applyCancel(cancelDlg.booking.cancelled ? "edit" : "cancel", shares, reason); } }),
 
       // Assign crew to all days modal

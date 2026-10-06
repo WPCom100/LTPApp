@@ -295,7 +295,10 @@ window.LTP_scheduleLaborSections = function(schedule, svcs, crewMins, grouping, 
     ((s && s.positions) || []).forEach(function(p) {
       if (!p || p.status !== "cancelled" || !p.cancel || !p.serviceId) return;
       var svc = svcById[p.serviceId];
-      if (svc) cancelLine(p, svc, s.date || "");
+      // The day named is the one the call was cancelled from (the record),
+      // not wherever the row has been moved to since.
+      var call = window.LTP_cancelledCall(p, s);
+      if (svc) cancelLine(p, svc, (call && call.date) || "");
     });
   });
   (fixedPositions || []).forEach(function(p) {
@@ -697,9 +700,26 @@ window.LTP_unsignDay = function(schedule, crewId, date) {
 // that ceiling: backend/crew_integrity.py::enforce_pay_snapshot).
 //
 //   cancel  { at, by, byId, reason, ref: { bill, pay },
+//             shift: { title, date, endDate, time, endTime },   the call as it was
 //             bill: { mode: "percent"|"amount"|"none", value, total },
 //             pay:  { mode, value, total },
 //             updatedAt?, updatedBy? }            (set when the shares are edited)
+//
+// A CANCELLATION IS A RECORD, AND A RECORD DOES NOT MOVE. Once cancelled, the
+// position is locked: its crew member, role and the call it was cancelled
+// from (`cancel.shift`) never change, and there is no way back to a live
+// status — a call that is needed again is remade as a new position and
+// re-confirmed with the crew member by email (LTP_refillPosition opens that
+// slot). Only the two shares and the reason stay editable, within the fixed
+// reference. The schedule row a cancelled position sits on can still be
+// rescheduled for the people who remain on it: LTP_updateShiftRow then splits
+// the cancelled positions off onto their own row, which keeps the original
+// date and times — so the crew portal, payouts, the weekly schedule and the
+// document's "Cancelled Jun 5" line all keep saying what was called off. A row
+// holding nothing but cancelled positions is a CANCELLED CALL
+// (LTP_isCancelledCall): the editor renders it read-only, and the server pins
+// every cancelled position to its record on every write
+// (backend/crew_integrity.py::enforce_cancelled_lock).
 //
 // The pay side is frozen the way a sign-off is — `work` = { state:
 // "cancelled", pay: { total, tier: "cancel", units: [one unit for the role] },
@@ -796,12 +816,12 @@ window.LTP_cancelActivityDetail = function(crewName, cancel) {
 };
 
 // What a save did to one position's cancellation, for the schedule builder's
-// activity log: { what: "Cancelled" | "Cancellation Edited" | "Restored",
+// activity log: { what: "Cancelled" | "Cancellation Edited" } — there is no
+// "Restored": a cancellation never comes back to life. The entry is
 // detail } — or null when its cancellation didn't change.
 window.LTP_cancelChange = function(before, after, crewName) {
   var was = !!before && before.status === "cancelled", is = !!after && after.status === "cancelled";
   if (!was && is) return { what: "Cancelled", detail: window.LTP_cancelActivityDetail(crewName, after.cancel) };
-  if (was && after && !is) return { what: "Restored", detail: (crewName || "Unassigned") + " \u00b7 back to " + after.status };
   if (was && is) {
     var a = before.cancel || {}, b = after.cancel || {};
     if (JSON.stringify([a.bill, a.pay]) !== JSON.stringify([b.bill, b.pay])) {
@@ -830,10 +850,34 @@ window.LTP_cancelDefaults = function(settings) {
            pay:  { mode: "percent", value: pct(s.cancellationDefaultPayPct, 50) } };
 };
 
+// The call a position was cancelled from — the row's name, date and times as
+// they stood at that moment. Stored on the record (`cancel.shift`) so the
+// cancellation keeps saying what was called off whatever happens to the row.
+function _callSnapshot(shift) {
+  if (!shift) return null;
+  return { title: shift.title || "", date: shift.date || "", endDate: shift.endDate || shift.date || "",
+           time: shift.time || "", endTime: shift.endTime || "" };
+}
+// The call a cancelled position belongs to: its frozen snapshot, or — for a
+// record written before the snapshot existed — the row it sits on now.
+window.LTP_cancelledCall = function(position, shift) {
+  var cx = position && position.cancel;
+  if (cx && cx.shift && (cx.shift.date || cx.shift.time)) return cx.shift;
+  return _callSnapshot(shift);
+};
+// Whether a cancelled position's record and the row it sits on disagree
+// about when the call was (a legacy record on a row that has since moved).
+window.LTP_cancelledCallMoved = function(position, shift) {
+  var cx = position && position.cancel;
+  if (!shift || !cx || !cx.shift) return false;
+  return ["date", "time", "endTime"].some(function(k) { return (cx.shift[k] || "") !== (shift[k] || ""); });
+};
+
 // Build the cancelled position from the shares chosen. `ref` is the fixed
 // reference; a position already cancelled keeps its original at/by/byId and
-// records the edit alongside.
-function _cancelledPosition(position, ref, shares, meta) {
+// the call it was cancelled from, and records the edit alongside. `shift` is
+// the row the position sits on (only read on the first cancellation).
+function _cancelledPosition(position, ref, shares, meta, shift) {
   shares = shares || {}; meta = meta || {};
   var hasCrew = _cancelPaysCrew(position);
   var bill = shares.bill || { mode: "percent", value: 0 };
@@ -845,6 +889,7 @@ function _cancelledPosition(position, ref, shares, meta) {
     ? Object.assign({}, prior, { updatedAt: meta.at || "", updatedBy: meta.by || "",
                                  reason: meta.reason != null ? meta.reason : (prior.reason || "") })
     : { at: meta.at || "", by: meta.by || "", byId: meta.byId != null ? meta.byId : null, reason: meta.reason || "" };
+  if (!cancel.shift && shift) cancel.shift = _callSnapshot(shift);
   cancel.ref = { bill: ref.bill, pay: ref.pay };
   cancel.bill = { mode: bill.mode || "percent", value: Number(bill.value) || 0, total: billTotal };
   cancel.pay = { mode: pay.mode || "percent", value: Number(pay.value) || 0, total: payTotal };
@@ -866,11 +911,52 @@ window.LTP_cancelPosition = function(schedule, shiftId, posId, shares, services,
       if (!p || p.id !== posId) return p;
       hit = true;
       var ref = (p.cancel && p.cancel.ref) ? p.cancel.ref : window.LTP_cancelReference(s, p, services, crewMins);
-      return _cancelledPosition(p, ref, shares, meta);
+      return _cancelledPosition(p, ref, shares, meta, s);
     });
     return Object.assign({}, s, { positions: positions });
   });
   return hit ? out : schedule;
+};
+
+// A row holding nothing but cancelled positions: a cancelled call. It is a
+// record — the editor shows it read-only, nothing on it moves. An empty row
+// is not one.
+window.LTP_isCancelledCall = function(row) {
+  var ps = (row && row.positions) || [];
+  return ps.length > 0 && ps.every(function(p) { return p && p.status === "cancelled"; });
+};
+
+// Which of a row's fields place the call in time. A change to any of these on
+// a row carrying cancelled positions splits them off (LTP_updateShiftRow).
+var _CALL_FIELDS = ["date", "endDate", "time", "endTime"];
+
+// Apply `patch` to the row `rowId`. A cancelled call never changes (the row
+// comes back as it is). A row that is rescheduled — any of _CALL_FIELDS
+// changing — while it still carries cancelled positions keeps those where
+// they were: they move onto a NEW row (a copy of the row as it stood, before
+// the live one in the list), while the live positions follow the edit under
+// the original row id, so crew requests, the activity diff and the
+// re-notify diff keep seeing the row they knew. A record written before
+// `cancel.shift` existed is stamped with the row as it was. Any other edit
+// (a title, the calendar flag, breaks) applies in place. Returns a new
+// schedule, or the input when nothing changed.
+window.LTP_updateShiftRow = function(schedule, rowId, patch, genId) {
+  var gen = genId || window.LTP_genId;
+  var list = schedule || [];
+  var idx = -1;
+  list.forEach(function(s, i) { if (s && s.id === rowId) idx = i; });
+  if (idx < 0) return schedule;
+  var row = list[idx];
+  if (window.LTP_isCancelledCall(row)) return schedule;
+  var upd = Object.assign({}, row, patch || {});
+  var moved = _CALL_FIELDS.some(function(k) { return (row[k] || "") !== (upd[k] || ""); });
+  var gone = (row.positions || []).filter(function(p) { return p && p.status === "cancelled"; });
+  if (!moved || !gone.length) return list.slice(0, idx).concat([upd], list.slice(idx + 1));
+  var frozen = Object.assign({}, row, { id: gen("sch"), positions: gone.map(function(p) {
+    return (p.cancel && p.cancel.shift) ? p : Object.assign({}, p, { cancel: Object.assign({}, p.cancel || {}, { shift: _callSnapshot(row) }) });
+  }) });
+  var live = Object.assign({}, upd, { positions: (row.positions || []).filter(function(p) { return !p || p.status !== "cancelled"; }) });
+  return list.slice(0, idx).concat([frozen, live], list.slice(idx + 1));
 };
 
 // Edit the shares of a position already cancelled. Its reference never moves.
@@ -881,32 +967,15 @@ window.LTP_setCancellationShares = function(schedule, shiftId, posId, shares, me
     var positions = (s.positions || []).map(function(p) {
       if (!p || p.id !== posId || p.status !== "cancelled" || !p.cancel || !p.cancel.ref) return p;
       hit = true;
-      return _cancelledPosition(p, p.cancel.ref, shares, meta);
+      return _cancelledPosition(p, p.cancel.ref, shares, meta, s);
     });
     return Object.assign({}, s, { positions: positions });
   });
   return hit ? out : schedule;
 };
 
-// Undo a cancellation: back to confirmed (or open when nobody holds it), the
-// record and the frozen pay gone, and the person's pay for that day re-locked
-// at today's rates. Returns a new schedule (the input when nothing changed).
-window.LTP_restorePosition = function(schedule, shiftId, posId, services, crewMins, lockedAt) {
-  var crewId = null, date = "", hit = false;
-  var out = (schedule || []).map(function(s) {
-    if (!s || s.id !== shiftId) return s;
-    var positions = (s.positions || []).map(function(p) {
-      if (!p || p.id !== posId || p.status !== "cancelled") return p;
-      hit = true; crewId = p.crewId != null ? p.crewId : null; date = s.date || "";
-      var copy = Object.assign({}, p, { status: crewId != null ? "confirmed" : "open" });
-      delete copy.cancel; delete copy.work;
-      return copy;
-    });
-    return Object.assign({}, s, { positions: positions });
-  });
-  if (!hit) return schedule;
-  return (crewId != null && date) ? window.LTP_stampPay(out, crewId, services, crewMins, lockedAt, [date]) : out;
-};
+// There is no restore. A cancellation is final: the call is remade as a new
+// position (LTP_refillPosition) and re-confirmed with the crew member.
 
 // The flat-rate mirrors. The reference is the typed amounts: `bill` and `fee`
 // ($0 pay for a full-margin position).
@@ -930,18 +999,6 @@ window.LTP_setFixedCancellationShares = function(fixedPositions, posId, shares, 
     return _cancelledPosition(p, p.cancel.ref, shares, meta);
   });
   return hit ? out : fixedPositions;
-};
-window.LTP_restoreFixedPosition = function(fixedPositions, posId, lockedAt) {
-  var crewId = null, hit = false;
-  var out = (fixedPositions || []).map(function(p) {
-    if (!p || p.id !== posId || p.status !== "cancelled") return p;
-    hit = true; crewId = p.crewId != null ? p.crewId : null;
-    var copy = Object.assign({}, p, { status: crewId != null ? "confirmed" : "open" });
-    delete copy.cancel; delete copy.work;
-    return copy;
-  });
-  if (!hit) return fixedPositions;
-  return crewId != null ? window.LTP_stampFixedPay(out, crewId, lockedAt, [posId]) : out;
 };
 
 // ── Bookings: several positions cancelled as one ─────────────────────────────
@@ -1036,7 +1093,7 @@ function _applyParts(schedule, parts, shares, meta, write) {
     return Object.assign({}, s, { positions: s.positions.map(function(p) {
       var part = p && byId[p.id];
       if (!part) return p;
-      var next = write(p, part);
+      var next = write(p, part, s);
       if (next !== p) hit = true;
       return next;
     }) });
@@ -1051,8 +1108,8 @@ function _applyParts(schedule, parts, shares, meta, write) {
 window.LTP_cancelBooking = function(schedule, positionIds, shares, services, crewMins, meta) {
   var ref = window.LTP_bookingCancelReference(schedule, positionIds, services, crewMins);
   if (!ref.parts.length) return schedule;
-  return _applyParts(schedule, ref.parts, shares, meta, function(p, part) {
-    return p.status === "cancelled" ? p : _cancelledPosition(p, part.ref, part.shares, meta);
+  return _applyParts(schedule, ref.parts, shares, meta, function(p, part, s) {
+    return p.status === "cancelled" ? p : _cancelledPosition(p, part.ref, part.shares, meta, s);
   });
 };
 
@@ -1085,25 +1142,20 @@ window.LTP_setBookingCancellationShares = function(schedule, positionIds, shares
   var picks = _pickPositions(schedule, positionIds).filter(function(pk) { return pk.pos.status === "cancelled" && pk.pos.cancel && pk.pos.cancel.ref; });
   if (!picks.length) return schedule;
   var parts = picks.map(function(pk) { return { id: pk.pos.id, bill: Number(pk.pos.cancel.ref.bill) || 0, pay: Number(pk.pos.cancel.ref.pay) || 0 }; });
-  return _applyParts(schedule, parts, shares, meta, function(p, part) {
-    return _cancelledPosition(p, part.ref, part.shares, meta);
+  return _applyParts(schedule, parts, shares, meta, function(p, part, s) {
+    return _cancelledPosition(p, part.ref, part.shares, meta, s);
   });
-};
-
-// Restore every cancelled position of a booking (LTP_restorePosition each).
-window.LTP_restoreBooking = function(schedule, positionIds, services, crewMins, lockedAt) {
-  var out = schedule;
-  _pickPositions(schedule, positionIds).forEach(function(pk) {
-    if (pk.pos.status === "cancelled") out = window.LTP_restorePosition(out, pk.shift.id, pk.pos.id, services, crewMins, lockedAt);
-  });
-  return out;
 };
 
 // "Refill role": the call still needs someone. A new OPEN position for the same
 // role on the same shift, with the next free person-slot so it is a different
-// person, not the cancelled one's day. Returns { schedule, positionId }.
+// person, not the cancelled one's day. When the shift is a cancelled call
+// (nothing live left on it), the record stays as it is and the new position
+// opens on a NEW row — the same name, date, times and breaks, right after it
+// — so the remade call is its own, editable, row. Returns { schedule,
+// positionId, shiftId }: the row the new position landed on.
 window.LTP_refillPosition = function(schedule, shiftId, posId, genId) {
-  var gen = genId || window.LTP_genId, newId = null;
+  var gen = genId || window.LTP_genId, newId = null, landed = null, remade = null;
   var out = (schedule || []).map(function(s) {
     if (!s || s.id !== shiftId) return s;
     var src = (s.positions || []).filter(function(p) { return p && p.id === posId; })[0];
@@ -1114,10 +1166,23 @@ window.LTP_refillPosition = function(schedule, shiftId, posId, genId) {
     var slot = 1; while (used[slot]) slot++;
     newId = gen("pos");
     var fresh = { id: newId, role: src.role || "", serviceId: src.serviceId || null, crewId: null, status: "open", fullMargin: false };
+    if (window.LTP_isCancelledCall(s)) {
+      // A new row for the remade call; the person-slot starts over on it.
+      if (src.serviceId) fresh.slot = 1;
+      landed = gen("sch");
+      remade = Object.assign({}, s, { id: landed, positions: [fresh],
+        breaks: (s.breaks || []).map(function(b) { return Object.assign({}, b, { id: gen("brk") }); }) });
+      return s;
+    }
     if (src.serviceId) fresh.slot = slot;
+    landed = s.id;
     return Object.assign({}, s, { positions: (s.positions || []).concat([fresh]) });
   });
-  return { schedule: newId ? out : schedule, positionId: newId };
+  if (newId && remade) {
+    var at = -1; out.forEach(function(s, i) { if (s && s.id === shiftId) at = i; });
+    out = out.slice(0, at + 1).concat([remade], out.slice(at + 1));
+  }
+  return { schedule: newId ? out : schedule, positionId: newId, shiftId: newId ? landed : null };
 };
 // The flat-rate mirror: the same role, fee and bill, open, nobody on it.
 window.LTP_refillFixedPosition = function(fixedPositions, posId, genId) {
@@ -1194,9 +1259,9 @@ window.LTP_projectBooking = function(project, positionIds, services, crewMins) {
 };
 
 // Write one of the dialog's decisions onto the project row. action: "cancel" |
-// "edit" | "restore" | "refill"; meta = { at, by, byId, reason } (restore
-// re-locks pay at meta.at). Returns { project, positionIds }: the new row (the
-// input when nothing changed) and, for "refill", the new open positions' ids.
+// "edit" | "refill"; meta = { at, by, byId, reason }. Returns { project,
+// positionIds }: the new row (the input when nothing changed) and, for
+// "refill", the new open positions' ids. There is no "restore".
 window.LTP_projectBookingWrite = function(project, booking, action, shares, services, crewMins, meta, genId) {
   meta = meta || {};
   if (!project || !booking) return { project: project, positionIds: [] };
@@ -1205,7 +1270,6 @@ window.LTP_projectBookingWrite = function(project, booking, action, shares, serv
     var fixed = project.fixedPositions || [], nextFixed = fixed;
     if (action === "cancel") nextFixed = window.LTP_cancelFixedPosition(fixed, ids[0], shares, meta);
     else if (action === "edit") nextFixed = window.LTP_setFixedCancellationShares(fixed, ids[0], shares, meta);
-    else if (action === "restore") nextFixed = window.LTP_restoreFixedPosition(fixed, ids[0], meta.at);
     else if (action === "refill") {
       var rf = window.LTP_refillFixedPosition(fixed, ids[0], genId);
       nextFixed = rf.fixedPositions;
@@ -1216,7 +1280,6 @@ window.LTP_projectBookingWrite = function(project, booking, action, shares, serv
   var sched = project.schedule || [], next = sched;
   if (action === "cancel") next = window.LTP_cancelBooking(sched, ids, shares, services, crewMins, meta);
   else if (action === "edit") next = window.LTP_setBookingCancellationShares(sched, ids, shares, meta);
-  else if (action === "restore") next = window.LTP_restoreBooking(sched, ids, services, crewMins, meta.at);
   else if (action === "refill") {
     _pickPositions(sched, ids).forEach(function(pk) {
       var rs = window.LTP_refillPosition(next, pk.shift.id, pk.pos.id, genId);
@@ -1305,11 +1368,13 @@ window.LTP_crewNotify = function(contactId, projectId, template, opts) {
     var roleLabel = svc
       ? ((svc.role || "") + (svc.description ? " — " + svc.description : "")).replace(/^\s*—\s*|\s*—\s*$/g, "").trim()
       : (pos.role || "");
+    // A cancelled position is noticed for the call it was cancelled from.
+    var call = pos.status === "cancelled" ? (window.LTP_cancelledCall(pos, shift) || shift) : shift;
     return {
       positionId: pos.id, roleLabel: roleLabel || "Crew",
       department: svc ? (svc.department || "") : "", status: pos.status,
-      shiftTitle: shift.title || "", date: shift.date || "",
-      startTime: shift.time || "", endTime: shift.endTime || "",
+      shiftTitle: call.title || "", date: call.date || "",
+      startTime: call.time || "", endTime: call.endTime || "",
     };
   }
 

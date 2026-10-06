@@ -23,7 +23,10 @@
 //   onConfirm(shares, reason, notify), onClose
 //   onReopen          optional: the old reset-to-open path, for a person who
 //                     is off the call while the call itself goes ahead
-//   onRestore         optional (edit): undo the cancellation
+//
+// A cancellation is final: there is no restore or undo. Editing (`edit`) only
+// moves the two shares and the reason within the fixed reference; a call that
+// is needed again is remade (Refill) and confirmed afresh by crew email.
 //
 // The pay share is held at or under the reference: paying more than the call
 // was worth is an adjustment ($±), not a cancellation — and the server holds a
@@ -94,7 +97,6 @@
     }
 
     var footer = h("div", { style: { display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" } },
-      p.onRestore && h(window.Btn, { variant: "ghost", onClick: p.onRestore, style: Object.assign({}, btnStyle, { marginRight: "auto" }) }, "Restore"),
       h(window.Btn, { variant: "ghost", onClick: p.onClose, style: btnStyle }, "Back"),
       p.onReopen && h(window.Btn, { variant: "ghost", onClick: p.onReopen, style: btnStyle }, "Reopen slot instead"),
       h(window.Btn, { variant: p.edit ? "primary" : "danger", onClick: confirm, style: Object.assign({}, btnStyle, isMobile ? { flex: 1 } : null) },
@@ -102,6 +104,8 @@
 
     return h(window.LTPModal, { title: p.title, onClose: p.onClose, footer: footer },
       p.subtitle && h("div", { style: { fontSize: "11px", color: B.textSec, marginBottom: 6 } }, p.subtitle),
+      p.edit && h("div", { style: { fontSize: "11px", color: B.textMut, marginBottom: 6, lineHeight: 1.5 } },
+        "The cancellation stands — only the charge, the pay and the reason can change. To run the call again, refill the role and confirm the crew afresh."),
       h(ShareRow, { label: "Charge client", refTotal: p.refBill, side: bill, onChange: billState[1], color: B.accent }),
       h(ShareRow, { label: "Pay crew", refTotal: p.refPay, side: payClamped, onChange: payState[1], color: B.text,
         locked: !p.hasCrew ? "none" : (p.fullMargin ? "full margin · $0" : null) }),
@@ -119,8 +123,8 @@
   };
 
   // ── The Labor tab's flow: dialog + write + notice + activity ───────────────
-  // The Assignments and Payouts tabs cancel, re-share, restore and refill
-  // whole project rows; this does it for both, so the two can't drift. The
+  // The Assignments and Payouts tabs cancel, re-share and refill whole
+  // project rows; this does it for both, so the two can't drift. The
   // schedule editor writes its own draft instead (components/schedule-editor.js)
   // and its save logs the change.
   //
@@ -179,10 +183,9 @@
         ? { bill: Object.assign({}, after.shares.bill, { total: after.billTotal }), pay: Object.assign({}, after.shares.pay, { total: after.payTotal }) }
         : null;
       var WORDS = { cancel: ["Shift cancelled", "Cancelled"], edit: ["Cancellation edited", "Cancellation Edited"],
-                    restore: ["Cancellation restored", "Restored"], refill: ["Role refilled", "Refilled"] }[action];
+                    refill: ["Role refilled", "Refilled"] }[action];
       var detail = cancelNow ? window.LTP_cancelActivityDetail(nm.crew, cancelNow)
-        : action === "refill" ? (preview.positionIds.length + " open position" + (preview.positionIds.length === 1 ? "" : "s") + " added")
-        : (nm.crew || "Unassigned") + " · back to " + (booking.crewId != null ? "confirmed" : "open");
+        : (preview.positionIds.length + " open position" + (preview.positionIds.length === 1 ? "" : "s") + " added");
       var entry = { id: window.LTP_genId("act"), date: window.LTP_todayISO(), time: now.toTimeString().substring(0, 5),
         type: "saved", user: meta.by,
         message: WORDS[0] + ": " + (nm.crew || "Unassigned") + " as " + nm.role + (fmtDay ? " · " + fmtDay : ""),
@@ -224,7 +227,6 @@
       confirmLabel: booking.flat ? "Cancel position" : "Cancel shift",
       onClose: p.onClose,
       onReopen: !booking.cancelled && p.onReopen ? function() { p.onClose(); p.onReopen(); } : null,
-      onRestore: booking.cancelled && !booking.signedDay ? function() { commit("restore", null, booking.reason, false); } : null,
       onConfirm: function(shares, reason, notify) { commit(booking.cancelled ? "edit" : "cancel", shares, reason, notify); },
     });
   };
@@ -257,7 +259,7 @@
   // (backend/routes/api.py → the "ltp-paid-day-conflict" event). The Payouts
   // tab and the schedule builder prompt for it; this is the same prompt for a
   // tab that has neither — Assignments, where a cancellation can now be
-  // re-shared or restored after its day was paid. Confirming arms the
+  // re-shared after its day was paid. Confirming arms the
   // override header and re-issues the pending write. Returns the modal (or null).
   window.LTP_usePaidDayConflict = function(setProjects, contacts) {
     var pair = useState(null), conflict = pair[0], setConflict = pair[1];

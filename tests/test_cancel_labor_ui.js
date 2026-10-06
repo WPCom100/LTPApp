@@ -5,7 +5,7 @@
 //   * LTPCancelFlow   — what the Assignments and Payouts tabs write: the
 //     cancellation on the live row, its schedule-activity line, the notice
 //     parked in the tray (the pay template when a share is paid), the edit
-//     dialog with Restore, the paid-day guard wrapping the write
+//     dialog (re-share only — no Restore), the paid-day guard wrapping the write
 //   * LTP_refillBooking — a new open slot, logged
 // The engine underneath (components/domain-crew.js) has its own suite
 // (tests/test_cancelled_labor.js).
@@ -109,7 +109,8 @@ const posOf = (proj, id) => { let hit = null; proj.schedule.forEach((s) => s.pos
   ok("D3 nobody to pay → no pay side", walk(none).some((n) => n.props && n.props.label === "Pay crew" && n.props.locked === "none"));
   ok("D4 no notify choice without crew", textOf(none).indexOf("Add to notify tray") < 0);
   const edit = mount(window.LTPCancelDialog)(Object.assign({}, props, { edit: true, onRestore: function () {} }));
-  ok("D5 editing: Save and Restore", !!button(edit.props.footer, "Save") && !!button(edit.props.footer, "Restore"));
+  ok("D5 editing: Save, and never a Restore", !!button(edit.props.footer, "Save") && !button(edit.props.footer, "Restore"));
+  ok("D6 editing says the cancellation stands", textOf(edit).indexOf("The cancellation stands") >= 0);
 }
 
 // ── The flow: cancel a booking from the Labor tab ────────────────────────────
@@ -135,20 +136,16 @@ const posOf = (proj, id) => { let hit = null; proj.schedule.forEach((s) => s.pos
      [1, "crewCancelledWithPay", [75, 75]]);
   eq("F7 toast", toasts[toasts.length - 1], ["Shift cancelled", "Charged $300.00 · paid $150.00 · notice in the tray"]);
 
-  // Edit it: the same reference, the current shares, Restore on offer.
+  // Edit it: the same reference, the current shares, and no way back.
   const edit = mount(window.LTPCancelFlow)({ project: pr, positionIds: ["l1", "s1"], services: SVCS, clientRates: [], contacts: CONTACTS,
     settings: {}, setProjects: st.setProjects, onClose: function () {} });
-  eq("F8 edit dialog", [edit.props.title, edit.props.edit, edit.props.refBill, edit.props.refPay, edit.props.initial, edit.props.notify, typeof edit.props.onRestore],
-     ["Cancellation", true, 600, 300, { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, null, "function"]);
+  eq("F8 edit dialog", [edit.props.title, edit.props.edit, edit.props.refBill, edit.props.refPay, edit.props.initial, edit.props.notify, "onRestore" in edit.props],
+     ["Cancellation", true, 600, 300, { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, null, false]);
   edit.props.onConfirm({ bill: { mode: "amount", value: 450 }, pay: { mode: "none", value: 0 } }, "", false);
   const pr2 = st.projects[0];
   eq("F9 re-shared, no second notice", [posOf(pr2, "l1").cancel.bill.total + posOf(pr2, "s1").cancel.bill.total, posOf(pr2, "s1").cancel.pay.total, parked.length], [450, 0, 1]);
   eq("F10 logged as an edit", pr2.scheduleActivity[pr2.scheduleActivity.length - 1].changes[0].cat, "August 10th, 2026 — A1 Cancellation Edited");
-  mount(window.LTPCancelFlow)({ project: pr2, positionIds: ["l1", "s1"], services: SVCS, clientRates: [], contacts: CONTACTS,
-    settings: {}, setProjects: st.setProjects, onClose: function () {} }).props.onRestore();
-  const pr3 = st.projects[0];
-  eq("F11 restored, pay re-locked", [posOf(pr3, "l1").status, "cancel" in posOf(pr3, "l1"), !!(posOf(pr3, "l1").pay && posOf(pr3, "l1").pay.lockedAt)], ["confirmed", false, true]);
-  eq("F12 logged as a restore", pr3.scheduleActivity[pr3.scheduleActivity.length - 1].changes[0], { cat: "August 10th, 2026 — A1 Restored", detail: "Jane Doe · back to confirmed" });
+  eq("F11 the record still stands, the call frozen on it", [posOf(pr2, "l1").status, posOf(pr2, "l1").cancel.shift.date, posOf(pr2, "s1").cancel.shift.time], ["cancelled", "2026-08-10", "13:00"]);
 }
 
 // ── An unpaid cancellation parks the plain notice; Reopen passes through ─────
@@ -182,7 +179,7 @@ const posOf = (proj, id) => { let hit = null; proj.schedule.forEach((s) => s.pos
   eq("RF1 logged", pr.scheduleActivity[pr.scheduleActivity.length - 1].changes[0], { cat: "August 10th, 2026 — A1 Refilled", detail: "1 open position added" });
 }
 
-// ── A signed-off day blocks cancel and restore ──────────────────────────────
+// ── A signed-off day blocks cancel ──────────────────────────────────────────
 {
   const signed = Object.assign({}, PROJ, { schedule: window.LTP_signOffDay(PROJ.schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
   const st = store([signed]);
@@ -193,13 +190,13 @@ const posOf = (proj, id) => { let hit = null; proj.schedule.forEach((s) => s.pos
   whole.props.onConfirm({ bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, "", false);
   const pr = st.projects[0];
   eq("G2 both frozen figures replaced by the shares", [posOf(pr, "l1").work.state, posOf(pr, "s1").work.state], ["cancelled", "cancelled"]);
-  // A cancellation riding on a signed day can be re-shared, not restored.
+  // A cancellation riding on a signed day can still be re-shared.
   const one = store([PROJ]);
   mount(window.LTPCancelFlow)({ project: PROJ, positionIds: ["s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: one.setProjects, onClose: function () {} })
     .props.onConfirm({ bill: { mode: "percent", value: 50 }, pay: { mode: "percent", value: 50 } }, "", false);
   const later = Object.assign({}, one.projects[0], { schedule: window.LTP_signOffDay(one.projects[0].schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
   const edit = mount(window.LTPCancelFlow)({ project: later, positionIds: ["s1"], services: SVCS, clientRates: [], contacts: CONTACTS, settings: {}, setProjects: one.setProjects, onClose: function () {} });
-  eq("G3 edit stays, Restore goes", [edit.type === window.LTPCancelDialog, edit.props.edit, edit.props.onRestore], [true, true, null]);
+  eq("G3 edit stays", [edit.type === window.LTPCancelDialog, edit.props.edit], [true, true]);
 }
 
 console.log("cancel-labor UI suite — PASS: " + pass + "   FAIL: " + fail);
