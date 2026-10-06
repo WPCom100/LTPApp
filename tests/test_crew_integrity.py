@@ -513,8 +513,8 @@ def test_frozen_snapshots_never_follow_a_crew_change():
            fixed >= 1 and "work" not in pos and "cancel" not in pos and pos["crewId"] == 6, str(pos))
 
 
-def test_snapshot_drops_on_reassign_reopen_restore():
-    print("test_snapshot_drops_on_reassign_reopen_restore")
+def test_snapshot_drops_on_reassign_reopen():
+    print("test_snapshot_drops_on_reassign_reopen")
     stored = _sched([{"id": "p1", "crewId": 5, "status": "confirmed",
                       "work": {"state": "worked", "pay": {"total": 600.0}}, "adj": [{"label": "gear", "amount": 20.0}]}])
     incoming = _sched([{"id": "p1", "crewId": 6, "status": "open"}])
@@ -527,12 +527,126 @@ def test_snapshot_drops_on_reassign_reopen_restore():
     fixed = ci.enforce_pay_snapshot(stored, incoming)
     _check("un-signing while still holding the slot is reverted",
            fixed == 2 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 600.0, f"fixed={fixed}")
+    # There is no restore: a cancellation's frozen pay stays unless the
+    # position is dropped from the schedule altogether.
     stored = _sched([_cancelled("p1", pay_total=150.0)])
     incoming = _sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
-    _check("restoring a cancellation drops its frozen pay",
-           ci.enforce_pay_snapshot(stored, incoming) == 0 and "work" not in incoming[0]["positions"][0])
+    _check("a cancellation brought back to confirmed keeps its frozen pay",
+           ci.enforce_pay_snapshot(stored, incoming) == 1 and incoming[0]["positions"][0]["work"]["pay"]["total"] == 150.0)
     incoming = _sched([{"id": "p1", "crewId": 5, "status": "confirmed", "cancel": {"at": "t"}}])
     _check("a lingering record is not a restore → freeze kept", ci.enforce_pay_snapshot(stored, incoming) == 1)
+
+
+# ── enforce_cancelled_lock: a cancellation is a record, and a record does not move ──
+# Every caller, admins included. The position stays cancelled, with its
+# person, role and record; a row rescheduled out from under it leaves it
+# behind on a row of its own, on the call it was cancelled from.
+
+def _call_sched(positions, *, sid="day-0", date="2026-07-01", time="08:00", end="17:00", title="Load-in"):
+    return [{"id": sid, "date": date, "endDate": date, "time": time, "endTime": end, "title": title,
+             "breaks": [{"id": "b1", "startTime": "12:00", "endTime": "13:00", "type": "unpaid"}],
+             "positions": [dict(p) for p in positions]}]
+
+
+def _frozen(pid, **kw):
+    pos = _cancelled(pid, pay_total=150.0, **kw)
+    pos.update({"serviceId": 1, "role": "A1", "fullMargin": False})
+    pos["cancel"]["shift"] = {"title": "Load-in", "date": "2026-07-01", "endDate": "2026-07-01", "time": "08:00", "endTime": "17:00"}
+    return pos
+
+
+def test_cancelled_lock_pins_the_record():
+    print("test_cancelled_lock_pins_the_record")
+    stored = _call_sched([_frozen("p1")])
+    # Brought back to life, handed to someone else, a different role, the
+    # record's who/when/reference rewritten: every one of these is put back.
+    pos = _frozen("p1")
+    pos.update({"status": "confirmed", "crewId": 9, "serviceId": 2, "role": "LX", "fullMargin": True})
+    pos["cancel"].update({"at": "later", "by": "Mallory", "byId": 99, "ref": {"bill": 9000.0, "pay": 9000.0}})
+    pos["cancel"]["shift"]["date"] = "2026-08-01"
+    pos["cancel"]["bill"] = {"mode": "percent", "value": 100, "total": 600.0}
+    pos["cancel"]["reason"] = "agreed with the client"
+    incoming = _call_sched([pos])
+    fixed = ci.enforce_cancelled_lock(stored, incoming)
+    got = incoming[0]["positions"][0]
+    _check("one position pinned", fixed == 1, f"fixed={fixed}")
+    _check("status back to cancelled", got["status"] == "cancelled")
+    _check("person, role, margin back", (got["crewId"], got["serviceId"], got["role"], got["fullMargin"]) == (5, 1, "A1", False), str(got))
+    _check("record's who/when/reference back (a byId never stored is gone)",
+           (got["cancel"]["at"], got["cancel"]["by"], got["cancel"].get("byId"), got["cancel"]["ref"]) == ("t", "Sam", None, {"bill": 600.0, "pay": 300.0}), str(got["cancel"]))
+    _check("the frozen call back", got["cancel"]["shift"]["date"] == "2026-07-01")
+    _check("the shares and the reason may change", got["cancel"]["bill"]["total"] == 600.0 and got["cancel"]["reason"] == "agreed with the client")
+    _check("the row itself is untouched", len(incoming) == 1 and incoming[0]["date"] == "2026-07-01")
+    # The record dropped entirely → put back whole.
+    pos = _frozen("p1")
+    del pos["cancel"]
+    incoming = _call_sched([pos])
+    _check("a dropped record is put back", ci.enforce_cancelled_lock(stored, incoming) == 1 and incoming[0]["positions"][0]["cancel"]["ref"] == {"bill": 600.0, "pay": 300.0})
+    # Unchanged, removed, or never cancelled: nothing to do.
+    incoming = _call_sched([_frozen("p1")])
+    _check("an unchanged write is a no-op", ci.enforce_cancelled_lock(stored, incoming) == 0)
+    incoming = _call_sched([])
+    _check("removing the cancelled position is allowed", ci.enforce_cancelled_lock(stored, incoming) == 0 and incoming[0]["positions"] == [])
+    live = _call_sched([{"id": "p1", "crewId": 5, "status": "confirmed"}])
+    incoming = _call_sched([{"id": "p1", "crewId": 6, "status": "open"}])
+    _check("a live position is not the lock's business", ci.enforce_cancelled_lock(live, incoming) == 0 and incoming[0]["positions"][0]["crewId"] == 6)
+    incoming = _call_sched([_frozen("p1")])
+    _check("a NEW cancellation passes", ci.enforce_cancelled_lock(live, incoming) == 0 and incoming[0]["positions"][0]["status"] == "cancelled")
+
+
+def test_cancelled_lock_keeps_the_call_where_it_was():
+    print("test_cancelled_lock_keeps_the_call_where_it_was")
+    live = {"id": "p2", "crewId": 6, "status": "confirmed", "serviceId": 2, "role": "LX"}
+    stored = _call_sched([_frozen("p1"), live])
+    # The producer moved the day (cancelled position still on it).
+    ids = iter(["sch-new-1", "sch-new-2"])
+    incoming = _call_sched([_frozen("p1"), live], date="2026-07-08")
+    fixed = ci.enforce_cancelled_lock(stored, incoming, new_row_id=lambda: next(ids))
+    _check("the cancelled position was moved off the rescheduled row", fixed == 1, f"fixed={fixed}")
+    _check("two rows now: the record first, the live row after", [r["id"] for r in incoming] == ["sch-new-1", "day-0"], str([r["id"] for r in incoming]))
+    rec = incoming[0]
+    _check("the record row is on the original call", (rec["date"], rec["endDate"], rec["time"], rec["endTime"], rec["title"]) == ("2026-07-01", "2026-07-01", "08:00", "17:00", "Load-in"), str(rec))
+    _check("…holding only the cancelled position, breaks copied", [p["id"] for p in rec["positions"]] == ["p1"] and rec["breaks"][0]["startTime"] == "12:00")
+    _check("the live row moved with its live position", incoming[1]["date"] == "2026-07-08" and [p["id"] for p in incoming[1]["positions"]] == ["p2"])
+    # A time change does it too; a title change alone does not.
+    incoming = _call_sched([_frozen("p1"), live], end="18:00")
+    _check("a time change detaches it", ci.enforce_cancelled_lock(stored, incoming) == 1 and len(incoming) == 2)
+    incoming = _call_sched([_frozen("p1"), live], title="Load-in (moved)")
+    _check("a rename alone leaves it", ci.enforce_cancelled_lock(stored, incoming) == 0 and len(incoming) == 1)
+    # A record from before the call was frozen is held to the row it was
+    # stored on, and gains the snapshot.
+    old = _frozen("p1")
+    del old["cancel"]["shift"]
+    stored_old = _call_sched([old, live])
+    incoming = _call_sched([dict(old), live], date="2026-07-09")
+    fixed = ci.enforce_cancelled_lock(stored_old, incoming)
+    _check("a legacy record is held to its stored row", fixed == 1 and incoming[0]["date"] == "2026-07-01"
+           and incoming[0]["positions"][0]["cancel"]["shift"]["date"] == "2026-07-01", str(incoming))
+    # Two cancelled positions from the same call land on ONE record row.
+    stored2 = _call_sched([_frozen("p1"), _frozen("p3", crew=7), live])
+    incoming = _call_sched([_frozen("p1"), _frozen("p3", crew=7), live], date="2026-07-10")
+    _check("one record row for both", ci.enforce_cancelled_lock(stored2, incoming) == 2 and len(incoming) == 2
+           and [p["id"] for p in incoming[0]["positions"]] == ["p1", "p3"])
+    # A cancelled call (nothing live) moved wholesale: the row is held.
+    stored3 = _call_sched([_frozen("p1")])
+    incoming = _call_sched([_frozen("p1")], date="2026-07-11", time="09:00")
+    fixed = ci.enforce_cancelled_lock(stored3, incoming)
+    _check("a moved cancelled call comes back as a record on its own call", fixed == 1 and len(incoming) == 2
+           and incoming[0]["date"] == "2026-07-01" and incoming[1]["positions"] == [], str(incoming))
+
+
+def test_cancelled_lock_fixed_positions():
+    print("test_cancelled_lock_fixed_positions")
+    stored = [dict(_cancelled("f1", pay_total=500.0, ref_pay=1000.0, ref_bill=2000.0), serviceId=2, fee=1000, bill=2000)]
+    pos = dict(stored[0]); pos["cancel"] = dict(pos["cancel"])
+    pos.update({"status": "confirmed", "crewId": 9, "fee": 5000, "bill": 1})
+    pos["cancel"]["ref"] = {"bill": 1.0, "pay": 5000.0}
+    incoming = [pos]
+    fixed = ci.enforce_cancelled_lock_fixed(stored, incoming)
+    _check("a flat-rate cancellation is pinned", fixed == 1 and incoming[0]["status"] == "cancelled" and incoming[0]["crewId"] == 5
+           and incoming[0]["fee"] == 1000 and incoming[0]["bill"] == 2000 and incoming[0]["cancel"]["ref"] == {"bill": 2000.0, "pay": 1000.0}, str(incoming[0]))
+    _check("unchanged → no-op", ci.enforce_cancelled_lock_fixed(stored, [dict(stored[0])]) == 0)
+    _check("removed → allowed", ci.enforce_cancelled_lock_fixed(stored, []) == 0)
 
 
 def test_cancel_allowance_fixed_positions():
@@ -689,7 +803,9 @@ def main():
         test_floor_ignores_new_unknown_and_unassigned,
         test_cancel_allowance_accepts_matching_cancellation, test_cancel_allowance_caps_at_the_reference,
         test_cancel_allowance_needs_a_consistent_record, test_cancel_allowance_reference_is_fixed,
-        test_snapshot_drops_on_reassign_reopen_restore, test_cancel_allowance_fixed_positions,
+        test_snapshot_drops_on_reassign_reopen, test_cancel_allowance_fixed_positions,
+        test_cancelled_lock_pins_the_record, test_cancelled_lock_keeps_the_call_where_it_was,
+        test_cancelled_lock_fixed_positions,
     ]
     async_tests = [
         test_reconcile_project_trims_and_withdraws, test_reconcile_project_deleted_withdraws,

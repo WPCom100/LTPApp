@@ -4,7 +4,9 @@
 //   * LTP_cancelReference      — this shift's own full rate / cost, from one engine
 //   * LTP_cancelShare          — percent / amount / none
 //   * LTP_cancelWork           — the frozen pay, in a sign-off's shape
-//   * LTP_cancelPosition / LTP_setCancellationShares / LTP_restorePosition
+//   * LTP_cancelPosition / LTP_setCancellationShares — and no restore: a
+//     cancellation is a locked record (cancel.shift freezes the call;
+//     LTP_isCancelledCall / LTP_updateShiftRow keep it where it was)
 //   * the flat-rate mirrors
 //   * LTP_reassignPatch / LTP_SNAPSHOT_CLEAR — a slot changing hands takes no
 //     snapshots with it (the next person used to inherit the last one's sign-off)
@@ -29,12 +31,15 @@ function ok(n, c, d) { if (c) pass++; else { fail++; fails.push(n + (d ? "  [" +
 function eq(n, got, want) { ok(n, JSON.stringify(got) === JSON.stringify(want), "got " + JSON.stringify(got) + " exp " + JSON.stringify(want)); }
 
 const REF = window.LTP_cancelReference, SHARE = window.LTP_cancelShare, DEFAULTS = window.LTP_cancelDefaults;
-const CANCEL = window.LTP_cancelPosition, SETSHARES = window.LTP_setCancellationShares, RESTORE = window.LTP_restorePosition;
-const CANCEL_FIXED = window.LTP_cancelFixedPosition, SETSHARES_FIXED = window.LTP_setFixedCancellationShares, RESTORE_FIXED = window.LTP_restoreFixedPosition;
+const CANCEL = window.LTP_cancelPosition, SETSHARES = window.LTP_setCancellationShares;
+const CANCEL_FIXED = window.LTP_cancelFixedPosition, SETSHARES_FIXED = window.LTP_setFixedCancellationShares;
 const PATCH = window.LTP_reassignPatch;
 ["LTP_cancelReference", "LTP_cancelShare", "LTP_cancelWork", "LTP_cancelDefaults", "LTP_cancelPosition", "LTP_setCancellationShares",
- "LTP_restorePosition", "LTP_cancelFixedPosition", "LTP_setFixedCancellationShares", "LTP_restoreFixedPosition", "LTP_reassignPatch"]
+ "LTP_cancelFixedPosition", "LTP_setFixedCancellationShares", "LTP_reassignPatch",
+ "LTP_isCancelledCall", "LTP_updateShiftRow", "LTP_cancelledCall", "LTP_cancelledCallMoved"]
   .forEach((k) => ok(k + " is exported", typeof window[k] === "function"));
+["LTP_restorePosition", "LTP_restoreBooking", "LTP_restoreFixedPosition"]
+  .forEach((k) => ok(k + " no longer exists (a cancellation is final)", window[k] === undefined));
 
 const SVCS = [
   { id: 1, role: "A1", description: "Audio Lead",    department: "Audio",    dayRate: 600, dayCost: 300 },
@@ -92,7 +97,8 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   const out = CANCEL(sched, "d1", "p1", HALF, SVCS, {}, META);
   const c = out[0].positions[0];
   eq("C0 status", c.status, "cancelled");
-  eq("C1 the record", c.cancel, { at: META.at, by: "Jamie", byId: 4, reason: "Client moved the load-in",
+  eq("C1 the record, the call it was cancelled from frozen on it", c.cancel, { at: META.at, by: "Jamie", byId: 4, reason: "Client moved the load-in",
+     shift: { title: "", date: "2026-08-10", endDate: "2026-08-10", time: "08:00", endTime: "16:00" },
      ref: { bill: 600, pay: 300 }, bill: { mode: "percent", value: 50, total: 300 }, pay: { mode: "percent", value: 50, total: 150 } });
   eq("C2 the frozen pay, in a sign-off's shape", c.work, { state: "cancelled", signedAt: META.at, signedBy: "Jamie",
      pay: { total: 150, paidHours: 0, otHours: 0, mealPenaltyHours: 0, tier: "cancel",
@@ -140,20 +146,63 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   ok("E5 setting shares on a live position is a no-op", SETSHARES(sched, "d1", "p1", HALF, META) === sched);
 }
 
-// ── Restore ──────────────────────────────────────────────────────────────────
+// ── A cancellation is a locked record: the call stays where it was ──────────
 {
-  const sched = [shift("d1", "2026-08-10", [P("p1", 1, { adj: [{ id: "a", amount: 20, label: "parking" }] }), P("p2", 2, { crewId: 6 })])];
+  let k = 0; const g = (p) => p + "-x" + (++k);
+  const UPD = window.LTP_updateShiftRow, LOCKED = window.LTP_isCancelledCall;
+  const sched = [shift("d1", "2026-08-10", [P("p1", 1), P("p2", 2, { crewId: 6 })], { title: "Load-in" }),
+                 shift("d2", "2026-08-11", [P("p3", 1)])];
   const cancelled = CANCEL(sched, "d1", "p1", HALF, SVCS, {}, META);
-  const back = RESTORE(cancelled, "d1", "p1", SVCS, {}, "t1");
-  const r = back[0].positions[0];
-  eq("T0 back to confirmed, record and frozen pay gone, crew kept", [r.status, "cancel" in r, "work" in r, r.crewId], ["confirmed", false, false, 5]);
-  eq("T1 pay re-locked for the day at today's rates", r.pay, Object.assign({ lockedAt: "t1" }, window.LTP_crewDayPay(back, 5, SVCS, {})));
-  eq("T2 adjustments survive a restore", r.adj, [{ id: "a", amount: 20, label: "parking" }]);
-  ok("T3 the other person's position is untouched", back[0].positions[1] === sched[0].positions[1]);
-  ok("T4 restoring a live position is a no-op", RESTORE(sched, "d1", "p1", SVCS, {}, "t1") === sched);
-  const nobody = RESTORE(CANCEL([shift("d1", "2026-08-10", [P("p1", 1, { crewId: null, status: "open" })])], "d1", "p1", HALF, SVCS, {}, META),
-                         "d1", "p1", SVCS, {}, "t1")[0].positions[0];
-  eq("T5 an unfilled cancellation restores to open with no pay", [nobody.status, "pay" in nobody, "cancel" in nobody], ["open", false, false]);
+  eq("T0 a row with someone still on it is not a cancelled call", [LOCKED(cancelled[0]), LOCKED(cancelled[1]), LOCKED({ positions: [] }), LOCKED(null)], [false, false, false, false]);
+  // Rename, calendar flag, breaks: the row changes in place.
+  const renamed = UPD(cancelled, "d1", { title: "Load-in (moved)" }, g);
+  eq("T1 a rename applies in place", [renamed.length, renamed[0].id, renamed[0].title, renamed[0].positions.length], [2, "d1", "Load-in (moved)", 2]);
+  // Rescheduling the day leaves the cancelled position behind on its own row.
+  const moved = UPD(cancelled, "d1", { date: "2026-08-17", endDate: "2026-08-17" }, g);
+  eq("T2 the row splits: the record first, the live row after, the other day untouched", moved.map((s) => s.id), ["sch-x1", "d1", "d2"]);
+  eq("T3 the record row is the call as it was", [moved[0].title, moved[0].date, moved[0].time, moved[0].endTime, moved[0].breaks, moved[0].positions.map((p) => p.id)],
+     ["Load-in", "2026-08-10", "08:00", "16:00", MEAL, ["p1"]]);
+  eq("T4 …and IS a cancelled call", LOCKED(moved[0]), true);
+  eq("T5 the live row moved with the live position, under its own id", [moved[1].date, moved[1].endDate, moved[1].positions.map((p) => p.id)], ["2026-08-17", "2026-08-17", ["p2"]]);
+  ok("T6 the record position itself is the same object", moved[0].positions[0] === cancelled[0].positions[0]);
+  ok("T7 the input was not mutated", cancelled.length === 2 && cancelled[0].positions.length === 2);
+  const retimed = UPD(cancelled, "d1", { endTime: "18:00" }, g);
+  eq("T8 a time change splits too", [retimed.length, retimed[0].positions[0].id, retimed[1].endTime], [3, "p1", "18:00"]);
+  // A cancelled call never changes.
+  const record = moved[0];
+  ok("T9 a cancelled call ignores every edit", UPD(moved, record.id, { date: "2026-09-01", title: "zzz" }, g) === moved);
+  ok("T10 an unknown row → the same schedule", UPD(moved, "nope", { date: "2026-09-01" }, g) === moved);
+  const unmoved = UPD(cancelled, "d1", { date: "2026-08-10" }, g);
+  eq("T11 the same date is not a move", [unmoved.length, unmoved[0].positions.length], [2, 2]);
+  // A record from before the call was frozen is stamped with the row as it was.
+  const legacy = cancelled.map((s) => Object.assign({}, s, { positions: s.positions.map((p) => {
+    if (p.id !== "p1") return p;
+    const c = Object.assign({}, p.cancel); delete c.shift; return Object.assign({}, p, { cancel: c });
+  }) }));
+  eq("T12 a legacy record reads the row it sits on", window.LTP_cancelledCall(legacy[0].positions[0], legacy[0]), { title: "Load-in", date: "2026-08-10", endDate: "2026-08-10", time: "08:00", endTime: "16:00" });
+  const legacyMoved = UPD(legacy, "d1", { date: "2026-08-17" }, g);
+  eq("T13 …and is frozen when its row first moves", legacyMoved[0].positions[0].cancel.shift, { title: "Load-in", date: "2026-08-10", endDate: "2026-08-10", time: "08:00", endTime: "16:00" });
+  const drifted = Object.assign({}, legacy[0], { date: "2026-08-20", positions: [legacy[0].positions[0]] });
+  eq("T14 a frozen record on a row that moved says so; a legacy one cannot",
+     [window.LTP_cancelledCallMoved(cancelled[0].positions[0], Object.assign({}, cancelled[0], { date: "2026-08-20" })), window.LTP_cancelledCallMoved(drifted.positions[0], drifted)], [true, false]);
+  // Refill on a cancelled call opens the role on a NEW row beside it.
+  const rf = window.LTP_refillPosition(moved, record.id, "p1", g);
+  eq("T15 the record row is untouched and a new row follows it", [rf.schedule.map((s) => s.id), rf.schedule[0] === record], [["sch-x1", "sch-x5", "d1", "d2"], true]);
+  eq("T16 the new row is the same call, open, nobody on it", [rf.shiftId, rf.schedule[1].date, rf.schedule[1].time, rf.schedule[1].title, rf.schedule[1].positions.map((p) => [p.id, p.status, p.crewId, p.slot])],
+     ["sch-x5", "2026-08-10", "08:00", "Load-in", [["pos-x4", "open", null, 1]]]);
+  ok("T17 its breaks are copies", rf.schedule[1].breaks[0].id !== record.breaks[0].id && rf.schedule[1].breaks[0].startTime === "12:00");
+  const rfLive = window.LTP_refillPosition(cancelled, "d1", "p1", g);
+  eq("T18 refill on a row with people still on it stays on that row", [rfLive.shiftId, rfLive.schedule.length, rfLive.schedule[0].positions.length], ["d1", 2, 3]);
+  // The document's cancellation line names the call, wherever the row went.
+  const cancelLineOf = (sections) => sections.reduce((all, sec) => all.concat(sec.items), []).find((it) => it.rateType === "cancel");
+  const cx = cancelLineOf(window.LTP_scheduleLaborSections(moved, SVCS, {}, "one", (d) => d, g));
+  eq("T19 the cancellation line is dated by the record", cx.notes, "Cancelled Aug 10 · 50% charged");
+  const legacyLine = cancelLineOf(window.LTP_scheduleLaborSections([drifted], SVCS, {}, "one", (d) => d, g));
+  eq("T20 a legacy record falls back to its row", legacyLine.notes, "Cancelled Aug 20 · 50% charged");
+  // The notify-tray snapshot names the call too.
+  const snapOn = Object.assign({}, cancelled[0], { date: "2026-08-20", time: "10:00" });
+  eq("T21 a cancelled position is noticed for the call it was cancelled from", window.LTP_shiftSnapshots([snapOn], ["p1", "p2"], SVCS).map((s) => [s.positionId, s.date, s.startTime]),
+     [["p1", "2026-08-10", "08:00"], ["p2", "2026-08-20", "10:00"]]);
 }
 
 // ── Flat-rate mirrors ────────────────────────────────────────────────────────
@@ -172,11 +221,8 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   eq("F5 edited shares keep the fixed reference", [edited[0].cancel.ref, edited[0].cancel.bill.total, edited[0].work.pay.total, edited[0].cancel.updatedBy],
      [{ bill: 2000, pay: 1000 }, 1500, 250, "Sam"]);
   ok("F6 setting shares on a live flat position is a no-op", SETSHARES_FIXED(flats, "f1", HALF, META) === flats);
-  const back = RESTORE_FIXED(out, "f1", "t1");
-  eq("F7 restore re-locks the fee", [back[0].status, "cancel" in back[0], "work" in back[0], back[0].pay],
-     ["confirmed", false, false, Object.assign({ lockedAt: "t1" }, window.LTP_fixedPositionPay(flats[0]))]);
+  eq("F7 a flat-rate record carries no call (it has no shift)", "shift" in out[0].cancel, false);
   ok("F8 unknown id → same list", CANCEL_FIXED(flats, "zz", HALF, META) === flats);
-  ok("F9 restoring a live flat position is a no-op", RESTORE_FIXED(flats, "f1", "t1") === flats);
 }
 
 // ── A slot changing hands takes no snapshots with it ─────────────────────────
@@ -200,7 +246,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
 // that day priced together — not two day rates — split across the positions.
 {
   const B = window.LTP_bookingCancelReference, CB = window.LTP_cancelBooking, BC = window.LTP_bookingCancellation;
-  const SB = window.LTP_setBookingCancellationShares, RB = window.LTP_restoreBooking;
+  const SB = window.LTP_setBookingCancellationShares;
   const sched = [
     shift("a", "2026-08-10", [P("a1", 1)], { time: "06:00", endTime: "12:00", breaks: [] }),
     shift("b", "2026-08-10", [P("b1", 1), P("b2", 2, { crewId: 6 })], { time: "12:00", endTime: "20:00", breaks: [{ startTime: "15:00", endTime: "15:30", type: "unpaid" }] }),
@@ -221,6 +267,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   const ca = half[0].positions[0], cb = half[1].positions[0];
   eq("K6 both positions cancelled, the other person untouched", [ca.status, cb.status, half[1].positions[1].status], ["cancelled", "cancelled", "confirmed"]);
   eq("K7 each carries its part of the reference", [ca.cancel.ref, cb.cancel.ref], both.parts.map((p) => ({ bill: p.bill, pay: p.pay })));
+  eq("K7b and its own call", [ca.cancel.shift.time, cb.cancel.shift.time, cb.cancel.shift.date], ["06:00", "12:00", "2026-08-10"]);
   eq("K8 a percentage applies to each part", [ca.cancel.bill.value, cb.cancel.bill.value, ca.cancel.pay.mode], [50, 50, "percent"]);
   ok("K9 together they charge half the day, to the cent",
      Math.abs(ca.cancel.bill.total + cb.cancel.bill.total - both.bill / 2) <= 0.011, (ca.cancel.bill.total + cb.cancel.bill.total) + " vs " + both.bill / 2);
@@ -245,10 +292,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   eq("K19 and moves the totals", [Math.round((re[0].positions[0].cancel.bill.total + re[1].positions[0].cancel.bill.total) * 100) / 100,
                                    Math.round((re[0].positions[0].cancel.pay.total + re[1].positions[0].cancel.pay.total) * 100) / 100], [both.bill, 90]);
   ok("K20 re-sharing a live booking is a no-op", SB(sched, ["a1"], HALF, META) === sched);
-  const back = RB(half, ["a1", "b1"], SVCS, {}, "t9");
-  eq("K21 restore brings the whole booking back", [back[0].positions[0].status, back[1].positions[0].status, "cancel" in back[1].positions[0]],
-     ["confirmed", "confirmed", false]);
-  ok("K22 with the day's pay re-locked", !!(back[0].positions[0].pay && back[0].positions[0].pay.lockedAt === "t9"));
+  eq("K21 re-sharing keeps the call frozen on each", [re[0].positions[0].cancel.shift, re[1].positions[0].cancel.shift], [ca.cancel.shift, cb.cancel.shift]);
 }
 
 // ── Refill the role ──────────────────────────────────────────────────────────
@@ -260,7 +304,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   eq("RF0 a new open position for the same role", [r.positionId, fresh.id, fresh.serviceId, fresh.status, fresh.crewId, fresh.fullMargin], ["pos-n1", "pos-n1", 1, "open", null, false]);
   eq("RF1 on the next free person-slot", fresh.slot, 3);
   eq("RF2 the cancelled one is untouched", r.schedule[0].positions[0], sched[0].positions[0]);
-  eq("RF3 unknown position → nothing", window.LTP_refillPosition(sched, "a", "zz", g), { schedule: sched, positionId: null });
+  eq("RF3 unknown position → nothing", window.LTP_refillPosition(sched, "a", "zz", g), { schedule: sched, positionId: null, shiftId: null });
   const fx = window.LTP_refillFixedPosition([{ id: "f1", serviceId: 2, role: "LX", crewId: 5, status: "cancelled", fee: 500, bill: 800, fullMargin: true, note: "Rig", cancel: {} }], "f1", g);
   eq("RF4 a flat-rate refill keeps the terms, drops the person", fx.fixedPositions[1],
      { id: "pos-n2", serviceId: 2, role: "LX", crewId: null, status: "open", fee: 500, bill: 800, fullMargin: false, note: "Rig" });
@@ -342,7 +386,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   eq("AC2 cancelled", window.LTP_cancelChange(was, cx, "Jane Doe").what, "Cancelled");
   const edited = SETSHARES([shift("d", "2026-08-10", [cx])], "d", "p1", { bill: { mode: "percent", value: 100 }, pay: { mode: "none", value: 0 } }, META)[0].positions[0];
   eq("AC3 re-shared", window.LTP_cancelChange(cx, edited, "Jane Doe"), { what: "Cancellation Edited", detail: "Jane Doe · bill 100% $600.00 · pay none" });
-  eq("AC4 restored", window.LTP_cancelChange(cx, Object.assign({}, was), "Jane Doe"), { what: "Restored", detail: "Jane Doe · back to confirmed" });
+  eq("AC4 there is no \"Restored\" (a cancellation never comes back)", window.LTP_cancelChange(cx, Object.assign({}, was), "Jane Doe"), null);
   eq("AC5 nothing about it changed", window.LTP_cancelChange(cx, cx, "Jane Doe"), null);
 }
 
@@ -365,9 +409,13 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   const edited = window.LTP_projectBookingWrite(w.project, again, "edit", { bill: { mode: "amount", value: 450 }, pay: { mode: "percent", value: 100 } }, SVCS, {}, META, g);
   eq("PB4 an edit re-shares within the reference", [pos(edited.project, "l1").cancel.bill.total + pos(edited.project, "s1").cancel.bill.total, pos(edited.project, "s1").cancel.pay.total], [450, 150]);
   const back = window.LTP_projectBookingWrite(edited.project, again, "restore", null, SVCS, {}, { at: "t9" }, g);
-  eq("PB5 restore brings the whole booking back", [pos(back.project, "l1").status, pos(back.project, "s1").status, "cancel" in pos(back.project, "s1")], ["confirmed", "confirmed", false]);
+  ok("PB5 \"restore\" is not an action any more — the row comes back as it is", back.project === edited.project && pos(back.project, "l1").status === "cancelled");
   const re = window.LTP_projectBookingWrite(w.project, again, "refill", null, SVCS, {}, META, g);
   eq("PB6 refill opens one slot per cancelled shift", [re.positionIds.length, pos(re.project, re.positionIds[0]).status, pos(re.project, re.positionIds[1]).serviceId], [2, "open", 1]);
+  // The show row had only the one person: cancelled, it is a cancelled call,
+  // so its refill lands on a new row beside it; the load-in row still has
+  // someone on it, so its refill lands on it.
+  eq("PB6b a cancelled call's refill is a new row, a live row's stays put", [re.project.schedule.length, re.project.schedule.map((s) => s.positions.length)], [3, [3, 1, 1]]);
   eq("PB7 a booking that is not on the row → null", window.LTP_projectBooking(proj, ["zz"], SVCS, {}), null);
   eq("PB8 nothing to do → the same row", window.LTP_projectBookingWrite(proj, bk, "edit", HALF, SVCS, {}, META, g).project === proj, true);
 
@@ -386,7 +434,7 @@ const HALF = { bill: { mode: "percent", value: 50 }, pay: { mode: "percent", val
   eq("PB15 an unsigned day is not", window.LTP_projectBooking(proj, ["s1"], SVCS, {}).signedDay, false);
   eq("PB16 nor a flat-rate position", window.LTP_projectBooking(proj, ["f1"], SVCS, {}).signedDay, false);
   const cxSigned = Object.assign({}, w.project, { schedule: window.LTP_signOffDay(w.project.schedule, 5, "2026-08-10", {}, SVCS, {}, "t1", "Jamie") });
-  eq("PB17 restoring under a signed sibling is blocked too", [window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).cancelled, window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).signedDay], [true, false]);
+  eq("PB17 a cancellation under a signed sibling still reads back (re-share only)", [window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).cancelled, window.LTP_projectBooking(cxSigned, ["s1"], SVCS, {}).signedDay], [true, false]);
 }
 
 console.log("cancelled-labor suite — PASS: " + pass + "   FAIL: " + fail);

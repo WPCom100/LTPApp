@@ -611,6 +611,15 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             if floored:
                 print(f"[LTP] crew-integrity: project {item_id} save carried "
                       f"{floored} stale position-status downgrade(s) — restored", flush=True)
+            # A cancellation is a locked record (every caller, admins too): a
+            # cancelled position stays cancelled, with its person, role and
+            # record, on the call it was cancelled from — a row moved out from
+            # under it leaves it behind on a row of its own
+            # (backend/crew_integrity.py::enforce_cancelled_lock).
+            locked = crew_integrity.enforce_cancelled_lock(row.schedule, mapped["schedule"])
+            if locked:
+                print(f"[LTP] crew-integrity: project {item_id} save by user id={user.id} "
+                      f"({user.email}) moved or altered {locked} cancelled position(s) — held", flush=True)
             # Payroll integrity: the payout export bills `work.pay` verbatim, so a
             # non-admin must not create or alter a day's frozen pay snapshot/adjust-
             # ments (they'd be billed on an admin's later push). Restore them from
@@ -629,6 +638,10 @@ def _crud_routes(router, path, model_cls, has_activity: bool):
             if floored:
                 print(f"[LTP] crew-integrity: project {item_id} save carried "
                       f"{floored} stale flat-position status downgrade(s) — restored", flush=True)
+            locked = crew_integrity.enforce_cancelled_lock_fixed(row.fixed_positions, mapped["fixed_positions"])
+            if locked:
+                print(f"[LTP] crew-integrity: project {item_id} save by user id={user.id} "
+                      f"({user.email}) altered {locked} cancelled flat-rate position(s) — held", flush=True)
             if user.role != "admin":
                 reverted = crew_integrity.enforce_pay_snapshot_fixed(row.fixed_positions, mapped["fixed_positions"])
                 if reverted:

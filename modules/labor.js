@@ -332,6 +332,7 @@
           if (s.id !== schedItemId) return s;
           return Object.assign({}, s, { positions: (s.positions || []).map(function(pos) {
             if (!(applyToDay || pos.id === posId)) return pos;
+            if (pos.status === "cancelled" && pos.id !== posId) return pos;   // a cancelled record is locked
             return Object.assign({}, pos, { note: note });
           })});
         })});
@@ -1384,8 +1385,12 @@
           var formIds = {};
           (form.days || []).forEach(function(d) { if (d.id) formIds[d.id] = true; });
           var template = (live[0] || {}).positions || [];
-          var next = (form.days || []).map(function(d) {
+          var next = [];
+          (form.days || []).forEach(function(d) {
             var base = d.id ? liveById[d.id] : null;
+            // A cancelled call (nothing live left on the day) is a locked
+            // record: it keeps its name, date and times whatever the form says.
+            if (base && window.LTP_isCancelledCall(base)) { next.push(base); return; }
             var baseBreakIds = {};
             ((base && base.breaks) || []).forEach(function(b) { if (b && b.id) baseBreakIds[b.id] = true; });
             // The day the breaks were read from keeps their ids; any other day
@@ -1394,19 +1399,27 @@
               return { id: (b.id && baseBreakIds[b.id]) ? b.id : genId("brk"), startTime: b.startTime, endTime: b.endTime, type: b.type === "paid" ? "paid" : "unpaid" };
             });
             if (base) {
-              return Object.assign({}, base, { title: form.title, date: d.date, time: d.startTime, endDate: d.date, endTime: d.endTime, breaks: dayBreaks });
+              // A day moved while it still carries cancelled positions leaves
+              // them behind on a row of their own (LTP_updateShiftRow) — the
+              // cancellation keeps saying what was called off.
+              var moved = window.LTP_updateShiftRow([base], base.id, { date: d.date, time: d.startTime, endDate: d.date, endTime: d.endTime }, genId);
+              moved.forEach(function(row) {
+                next.push(row.id === base.id ? Object.assign({}, row, { title: form.title, breaks: dayBreaks }) : row);
+              });
+              return;
             }
-            return {
+            next.push({
               id: genId("sch"), title: form.title, date: d.date, time: d.startTime, endDate: d.date, endTime: d.endTime,
               showOnCalendar: true, breaks: dayBreaks,
               positions: template.map(function(tp) {
                 return { id: genId("pos"), role: tp.role || "", serviceId: tp.serviceId, crewId: tp.crewId || null, status: "open", fullMargin: false };
               }),
-            };
+            });
           });
           live.forEach(function(sh) {
             if (formIds[sh.id]) return;
-            if (committed(sh)) { beforeRef.kept++; next.push(Object.assign({}, sh, { title: form.title })); }
+            // A cancelled call keeps its own name too — it is a record.
+            if (committed(sh)) { beforeRef.kept++; next.push(window.LTP_isCancelledCall(sh) ? sh : Object.assign({}, sh, { title: form.title })); }
           });
           next.sort(byShiftDate);
           var dated = next.map(function(sh) { return sh.date; }).filter(Boolean).sort();
@@ -1556,6 +1569,9 @@
           if (p.id !== pos.projectId) return p;
           var changeCount = 0;
           function cascade(ps) {
+            // A cancelled position is a locked record: no status change
+            // reaches it, least of all the legacy whole-day sweep.
+            if (ps.status === "cancelled") return ps;
             var hit = affectIds ? affectIds[ps.id] : (ps.crewId === pos.crewId);
             if (hit) {
               changeCount++;
@@ -1911,7 +1927,8 @@
     var sectionIds = shownGroups.map(function(pg) { return pg.projectId; });
 
     // A cancelled booking: what was decided, and the two things left to do
-    // with it — re-share or restore it (the dialog), or refill the role.
+    // with it — re-share it (the dialog; the cancellation itself stands), or
+    // refill the role as a new position. There is no restore.
     function renderCancelled(booking, bi) {
       var pos = booking.pos;
       var ids = (booking.allPosIds || []).map(function(bp) { return bp.posId; });
@@ -1930,8 +1947,10 @@
         h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginLeft: isMobile ? 0 : "auto", flexWrap: "wrap" } },
           h("span", { style: { fontSize: isMobile ? "11px" : "10px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
             "bill $" + window.LTP_money(bill) + (paid ? " \u00b7 pay $" + window.LTP_money(pay) : "")),
-          h("button", { onClick: function() { setCancelDlg({ projectId: pos.projectId, positionIds: ids }); }, style: ctl }, "Edit\u2026"),
-          proj && h("button", { onClick: function() { window.LTP_refillBooking(proj, ids, setProjects, services, contacts); }, style: ctl }, "Refill")));
+          h("button", { onClick: function() { setCancelDlg({ projectId: pos.projectId, positionIds: ids }); }, style: ctl,
+            title: "Change what the client is charged and the crew member is paid for this cancellation. The cancellation itself stands." }, "Charge/pay\u2026"),
+          proj && h("button", { onClick: function() { window.LTP_refillBooking(proj, ids, setProjects, services, contacts); }, style: ctl,
+            title: "Open this role again as a new position \u2014 requested and confirmed afresh with whoever takes it." }, "Refill")));
     }
 
     // One booking row: role + chips on the left, the crew picker and status
@@ -3438,7 +3457,7 @@
                         ? h(React.Fragment, null,
                             chip(stateChip.c, stateChip.t,
                               (r.signed.state === "cancelled" ? "Cancelled " : "Signed off ") + String(r.signed.signedAt || "").slice(0, 10) + (r.signed.signedBy ? " by " + r.signed.signedBy : "")),
-                            // A cancellation is undone by Restore, in its dialog.
+                            // A cancellation is final — nothing undoes it.
                             r.signed.state !== "cancelled" && sBtn("undo", function() { guardPaid(r, function() { undoSign(r); }); }, null, isFlat ? "Undo — the position returns to pending." : "Undo the sign-off — the day returns to pending."))
                         : h(React.Fragment, null,
                             !r.locked && chip(B.warn, "not locked", isFlat ? "Confirmed without a locked fee — the figure shown is the fee as typed today." : "Confirmed before pay locking existed — the figure shown is computed from today's rates."),
@@ -3547,8 +3566,8 @@
       // QuickBooks payout export (review + push)
       exportDlg && h(PayoutExportModal, { range: range, onClose: function() { setExportDlg(null); } }),
 
-      // Cancel / re-share / restore (components/cancel-labor.js), behind the
-      // paid-day check only.
+      // Cancel / re-share (components/cancel-labor.js), behind the paid-day
+      // check only.
       cancelDlg && h(window.LTPCancelFlow, { key: cancelDlg.positionIds.join(","),
         project: projects.find(function(p) { return p.id === cancelDlg.row.projectId; }),
         positionIds: cancelDlg.positionIds, services: services, clientRates: clientRates, contacts: contacts, settings: settings,

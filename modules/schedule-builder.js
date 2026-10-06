@@ -107,8 +107,8 @@
         var svc = p.serviceId ? svcs.find(function(sv) { return sv.id === p.serviceId; }) : null;
         var pc = POS_COLORS[p.status] || B.textMut;
         // A cancelled flat-rate position: its terms are fixed by the
-        // cancellation, so it reads as a record — struck through, what it
-        // bills and pays, Edit… (re-share / restore), Refill.
+        // cancellation, so it reads as a locked record — struck through, what
+        // it bills and pays, Charge/pay… (re-share only), Refill. No restore.
         if (p.status === "cancelled") {
           var cx = p.cancel || {};
           var cxm = { bill: Number(cx.bill && cx.bill.total) || 0, pay: Number(cx.pay && cx.pay.total) || 0 };
@@ -122,7 +122,8 @@
             h("span", { style: { flexShrink: 0, fontSize: "9px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: B.textMut } }, "cancelled"),
             h("span", { style: { marginLeft: "auto", fontSize: M ? "11px" : "9px", color: B.textMut, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" } },
               "bill $" + money(cxm.bill) + (p.work ? " \u00b7 pay $" + money(cxm.pay) : "")),
-            h("button", { onClick: function() { openCancel(p); }, style: cctl }, "Edit\u2026"),
+            h("button", { onClick: function() { openCancel(p); }, style: cctl,
+              title: "Change what the client is charged and the crew member is paid for this cancellation. The cancellation itself stands." }, "Charge/pay\u2026"),
             h("button", { onClick: function() { var r = window.LTP_refillFixedPosition(rows, p.id, genId); if (r.positionId) onChange(r.fixedPositions); }, style: cctl }, "Refill"),
             h("button", { onClick: function() { onRemove(p); }, "aria-label": "Remove flat-rate position",
               style: M ? { flexShrink: 0, width: CTL, height: CTL, display: "inline-flex", alignItems: "center", justifyContent: "center", background: "transparent", border: "none", borderRadius: "8px", color: B.danger, cursor: "pointer", fontSize: "22px", lineHeight: 1, padding: 0, fontFamily: "inherit" }
@@ -245,7 +246,6 @@
         initial: cancelDlg.booking.cancelled ? cancelDlg.booking.shares : window.LTP_cancelDefaults(settings),
         reason: cancelDlg.booking.reason, edit: cancelDlg.booking.cancelled, notify: null, confirmLabel: "Cancel position",
         onClose: function() { setCancelDlg(null); },
-        onRestore: cancelDlg.booking.cancelled ? function() { applyCancel("restore", null, cancelDlg.booking.reason); } : null,
         onConfirm: function(shares, reason) { applyCancel(cancelDlg.booking.cancelled ? "edit" : "cancel", shares, reason); } }));
   }
 
@@ -516,9 +516,26 @@
       var bs = before.schedule || [], as = after.schedule || [];
       if (bs.length !== as.length) changes.push({ cat: "Schedule Days", detail: bs.length + " \u2192 " + as.length });
       var bMap = {}; bs.forEach(function(s) { bMap[s.id] = s; });
+      // Every position that was there before, and where each sits now \u2014 so a
+      // cancelled position left behind on its own row when its day moved
+      // (LTP_updateShiftRow) reads as the record it is, not as a day added
+      // and a position removed.
+      var bPos = {}, bPosRow = {}; bs.forEach(function(s) { (s.positions || []).forEach(function(p) { bPos[p.id] = p; bPosRow[p.id] = s.id; }); });
+      var aPos = {}; as.forEach(function(s) { (s.positions || []).forEach(function(p) { aPos[p.id] = p; }); });
       as.forEach(function(s) {
         var dayLabel = (s.title || "Untitled") + (s.date ? " (" + fmt(s.date) + ")" : "");
-        if (!bMap[s.id]) { changes.push({ cat: "Day Added", detail: dayLabel }); return; }
+        if (!bMap[s.id]) {
+          var kept = window.LTP_isCancelledCall(s) && (s.positions || []).every(function(p) { return bPosRow[p.id] && bPosRow[p.id] !== s.id; });
+          if (!kept) { changes.push({ cat: "Day Added", detail: dayLabel }); return; }
+          // A position cancelled in this same save, then left behind when
+          // its day moved, is still logged as the cancellation it is.
+          (s.positions || []).forEach(function(p) {
+            var kcx = window.LTP_cancelChange(bPos[p.id], p, crewNameOf(p.crewId));
+            if (kcx) changes.push({ cat: dayLabel + " — " + (p.role || "?") + " " + kcx.what, detail: kcx.detail });
+          });
+          changes.push({ cat: "Cancelled Call Kept", detail: dayLabel + " stays on record as it was" });
+          return;
+        }
         var b = bMap[s.id];
         if (b.title !== s.title) changes.push({ cat: dayLabel + " Renamed", detail: "\"" + (b.title || "?") + "\" \u2192 \"" + (s.title || "?") + "\"" });
         if (b.date !== s.date) changes.push({ cat: dayLabel + " Date", detail: (fmt(b.date) || "Not set") + " \u2192 " + (fmt(s.date) || "Not set") });
@@ -546,7 +563,9 @@
           else if (bp.status !== p.status) changes.push({ cat: dayLabel + " \u2014 " + (p.role || "?") + " Status", detail: bp.status + " \u2192 " + p.status });
         });
         (b.positions || []).forEach(function(p) {
-          if (!(s.positions || []).find(function(sp) { return sp.id === p.id; })) changes.push({ cat: dayLabel + " \u2014 Position Removed", detail: p.role || "?" });
+          if ((s.positions || []).find(function(sp) { return sp.id === p.id; })) return;
+          if (aPos[p.id] && aPos[p.id].status === "cancelled") return;   // kept on its own row (above)
+          changes.push({ cat: dayLabel + " \u2014 Position Removed", detail: p.role || "?" });
         });
       });
       bs.forEach(function(s) { if (!as.find(function(a) { return a.id === s.id; })) changes.push({ cat: "Day Removed", detail: (s.title || "?") + (s.date ? " (" + fmt(s.date) + ")" : "") }); });
