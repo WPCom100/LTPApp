@@ -420,7 +420,12 @@
 // under {{location}} for templates without it), the call sheet's acceptance
 // box and calendar events, and the crew portal's shift rows and calendar
 // events. crew-view.js, crew-portal.js, data/settings.js.
-var CACHE_VERSION = 'ltp-shell-v121';
+// v122: a cancelled shift is a locked record — the call it was cancelled from
+// is frozen on it, a rescheduled row leaves its cancelled positions behind on
+// their own row, a fully cancelled row reads read-only in the schedule editor,
+// and Restore is gone (only Charge/pay… remains). domain-crew.js,
+// cancel-labor.js, schedule-editor.js, labor.js, schedule-builder.js.
+var CACHE_VERSION = 'ltp-shell-v122';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
