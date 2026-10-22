@@ -41,6 +41,18 @@ from backend.env import env_flag, env_int
 SESSION_SWEEP_INTERVAL = env_int("LTP_SESSION_SWEEP_INTERVAL_SECONDS", 3600, minimum=60)
 
 
+def _describe_exc(e: BaseException) -> str:
+    """Render an exception for a one-line log entry. str(e) alone is empty for
+    several of the exceptions a dead database hands back (asyncio.TimeoutError,
+    ConnectionResetError, CancelledError from a pool shutdown), which left the
+    background-loop error lines reading "... error (will retry next interval):"
+    with nothing after the colon during a real outage. Always lead with the
+    type so the line is diagnosable even when the message is blank."""
+    msg = str(e).strip()
+    name = type(e).__name__
+    return f"{name}: {msg}" if msg else name
+
+
 async def _sweep_expired_sessions_once() -> int:
     """Delete every session whose expires_at is in the past. Returns the
     rowcount deleted (0 if none). Uses ORM-level delete() so rowcount works
@@ -84,7 +96,7 @@ async def _session_sweeper_loop():
         except asyncio.CancelledError:
             raise  # propagate shutdown signal
         except Exception as e:
-            print(f"[LTP] sweeper error (will retry next interval): {e}", flush=True)
+            print(f"[LTP] sweeper error (will retry next interval): {_describe_exc(e)}", flush=True)
         try:
             await asyncio.sleep(SESSION_SWEEP_INTERVAL)
         except asyncio.CancelledError:
@@ -115,7 +127,7 @@ async def _qbo_receipt_poll_loop():
         except asyncio.CancelledError:
             raise  # propagate shutdown signal
         except Exception as e:
-            print(f"[LTP] qbo-receipts error (will retry next interval): {e}", flush=True)
+            print(f"[LTP] qbo-receipts error (will retry next interval): {_describe_exc(e)}", flush=True)
         try:
             await asyncio.sleep(QBO_RECEIPT_POLL_INTERVAL)
         except asyncio.CancelledError:
@@ -155,7 +167,7 @@ async def _qbo_payout_poll_loop():
         except asyncio.CancelledError:
             raise  # propagate shutdown signal
         except Exception as e:
-            print(f"[LTP] qbo-bill-poll error (will retry next interval): {e}", flush=True)
+            print(f"[LTP] qbo-bill-poll error (will retry next interval): {_describe_exc(e)}", flush=True)
         try:
             await asyncio.sleep(QBO_PAYOUT_POLL_INTERVAL)
         except asyncio.CancelledError:
