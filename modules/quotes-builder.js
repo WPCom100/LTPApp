@@ -1531,6 +1531,10 @@
 
     function openQuoteSendModal() {
       // Validate before opening the modal
+      if (isDirty && quoteSendSnapshot(draft) !== quoteSendSnapshot(cleanRef.current)) {
+        showAlert("Save Quote Changes", "Save your quote changes before composing the email so its totals match the shared quote.");
+        return;
+      }
       var itemCount = draft.sections.reduce(function(n, s) { return n + s.items.filter(function(i) { return i.type !== "note"; }).length; }, 0);
       if (itemCount === 0) { showAlert("No Items", "Add at least one line item before sending."); return; }
       if (!draft.companyId && !draft.clientContactId) { showAlert("No Client", "Select a company or contact before sending."); return; }
@@ -1592,6 +1596,23 @@
       setShowSendModal(true);
     }
 
+    // Quotes may be sent before tax is final; invoices still require QuickBooks.
+    // This is a decision for this send only, never a stored tax exemption or a
+    // workspace preference. Keep the saved tax/total intact for the server PDF.
+    function confirmSendQuoteWithoutTax(reason) {
+      setDlg({
+        title: "Sales Tax Unavailable",
+        message: reason + " Sales tax on this quote may be missing or out of date. "
+          + "Sending will use the quote's current saved totals without recalculating tax. "
+          + "You can send this quote anyway; sales tax must be calculated before sending a taxable invoice.",
+        confirmLabel: "Send Quote Anyway",
+        onConfirm: function() {
+          setDlg(null);
+          sendQuoteEmail(draft);
+        },
+      });
+    }
+
     function executeSendQuote() {
       if (!(sendRecipients.to || []).length) { showAlert("No Recipient", "Add at least one To recipient."); return; }
       if (draft.id == null || !draft.shareToken) { showAlert("Save First", "Save the quote before sending so it has a stable share link."); return; }
@@ -1602,18 +1623,12 @@
       // Auto-calc QuickBooks sales tax before sending so the client's PDF +
       // email show an accurate tax-inclusive total, then send with the
       // freshened draft. Skipped when tax is already fresh or N/A.
-      // A taxable client's quote must not go out with a tax figure nobody can
-      // vouch for. The customer's copy is rendered server-side from the saved
-      // row, so sending on a failed or skipped calculation mails either a stale
-      // tax (computed against lines that have since changed) or none at all,
-      // while the app shows something else.
+      // If calculation is unavailable, require an explicit quote-only override
+      // before sending the saved totals. Cancellation leaves the composer open.
       if (customerTaxable && !(isAdmin && qbConnected)) {
-        showAlert("Sales Tax Unavailable",
-          (qbConnected
+        confirmSendQuoteWithoutTax(qbConnected
             ? "This quote is for a taxable client, and only an admin can calculate its sales tax in QuickBooks."
-            : "This quote is for a taxable client, and QuickBooks — which calculates the sales tax — is not connected.")
-          + "\n\nThe quote was NOT sent. "
-          + (qbConnected ? "Ask an admin to send it." : "Connect QuickBooks in Settings and try again."));
+            : "This quote is for a taxable client, and QuickBooks — which calculates the sales tax — is not connected.");
         return;
       }
       if (isAdmin && qbConnected && customerTaxable && !taxFresh) {
@@ -1621,11 +1636,9 @@
         calcQuoteTax().then(function(updated) {
           if (!updated) {
             setSending(false);
-            // calcQuoteTax already toasted the reason; make the consequence
-            // explicit rather than sending with the old number.
-            showAlert("Sales Tax Unavailable",
-              "The sales tax for this quote could not be calculated, so the quote was NOT sent.\n\n"
-              + "Try again, or untick the client's taxable flag if no tax applies.");
+            // calcQuoteTax already reported the failure. Sending with the old
+            // total is allowed for a quote only after this separate confirmation.
+            confirmSendQuoteWithoutTax("The sales tax for this quote could not be calculated.");
             return;
           }
           sendQuoteEmail(updated);
@@ -1635,10 +1648,39 @@
       sendQuoteEmail(draft);
     }
 
-    // Build + POST the quote email for `baseDraft` (the freshest draft, which
-    // may carry a just-calculated qbTaxTotal). Kept separate from
-    // executeSendQuote so the optional tax calc can resolve first.
+    // Verify the document actually reached the server before using its totals
+    // in the email. Save is debounced, and a failed/pending save or a remote
+    // edit must not let the email disagree with the shared quote/PDF. Recipient
+    // edits and activity are metadata, not changes to the quoted document.
+    function quoteSendSnapshot(q) {
+      var snapshot = cloneDraft(q);
+      delete snapshot.activity;
+      return JSON.stringify(snapshot);
+    }
+
     function sendQuoteEmail(baseDraft) {
+      setSending(true);
+      var snapshot = quoteSendSnapshot(baseDraft);
+      return fetch("/api/quotes/" + baseDraft.id, { credentials: "include", cache: "no-store" })
+        .then(function(r) {
+          if (!r.ok) throw new Error("Could not verify the saved quote. Check your connection and try again.");
+          return r.json();
+        })
+        .then(function(saved) {
+          if (quoteSendSnapshot(saved) !== snapshot) {
+            throw new Error("The saved quote differs from this email's quote. Close the email, save or reload the quote, wait for saving to finish, then compose it again.");
+          }
+          postQuoteEmail(baseDraft);
+        })
+        .catch(function(err) {
+          setSending(false);
+          showAlert("Quote Not Sent", err.message || "Could not verify the saved quote. Try again.");
+        });
+    }
+
+    // Build + POST only after the saved row matches baseDraft (which may carry
+    // just-calculated tax). Keep the existing send/error lifecycle unchanged.
+    function postQuoteEmail(baseDraft) {
       var isResend = baseDraft.status !== "draft";
       setSending(true);
       // Bake {{header}} HTML with a total that reflects baseDraft's (possibly
@@ -2781,14 +2823,13 @@
         });
       }(),
 
-      // Generic confirm / alert dialog
+      // Schedule labor review
       laborSync.review && h(window.LTPLaborSyncReview, { key: "ls-review-" + laborSync.review.projectId, drift: laborSync.review.drift,
         projectName: laborSync.nameOf(laborSync.review.projectId), mode: "edit", linking: laborSync.review.linking,
         onApply: function(keys) { laborSync.apply(laborSync.review.projectId, keys); },
         onKeep: function(keys) { laborSync.keep(laborSync.review.projectId, keys); },
         onClose: laborSync.closeReview,
         invoiceRef: function(id) { var inv = (invoices || []).find(function(x) { return x.id === id; }); return inv ? window.LTP_INVOICE_REF(inv) : "INV-" + id; } }),
-      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } }),
 
       // Activity detail popup
       // Shared with the sibling builder — components/doc-activity-detail.js.
@@ -2876,7 +2917,10 @@
               h("span", { style: { color: B.accent } }, "$" + window.LTP_money((window.LTP_QUOTE_TOTALS(draft) || {}).total || 0)))
           )
         )
-      )
+      ),
+      // Render after the composer so a send confirmation sits above it at the
+      // shared modal z-index. Cancel preserves the message and recipients.
+      dlg && h(window.LTPConfirmDialog, { dlg: dlg, onCancel: function() { setDlg(null); } })
     );
   };
 })();

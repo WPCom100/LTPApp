@@ -425,7 +425,8 @@
 // their own row, a fully cancelled row reads read-only in the schedule editor,
 // and Restore is gone (only Charge/pay… remains). domain-crew.js,
 // cancel-labor.js, schedule-editor.js, labor.js, schedule-builder.js.
-var CACHE_VERSION = 'ltp-shell-v122';
+// v123: per-send quote sales tax override and saved-document verification.
+var CACHE_VERSION = 'ltp-shell-v123';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
