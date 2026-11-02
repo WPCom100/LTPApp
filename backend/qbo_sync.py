@@ -58,6 +58,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from backend import crypto, models, quickbooks
 from backend.activity import append_activity
+from backend.payouts import js_round2
 from backend.quickbooks import (
     QboApiError,
     QboError,
@@ -1128,7 +1129,14 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
             if eff_price is None:
                 eff_price = item.get("unitPrice") or 0
             eff_price = float(eff_price or 0)
-            amount = round(eff_price * qty, 2)
+            # QuickBooks recomputes UnitPrice * Qty and rejects the line when
+            # our Amount differs by a cent ("Amount is not equal to UnitPrice *
+            # Qty"). It rounds half-up; Python's round() is banker's rounding,
+            # so 14.5 OT hours at $56.25 (815.625) came out as 815.62 here while
+            # QB — and the builder, which uses JS rounding — expected 815.63.
+            # js_round2 is the half-up rounding the frontend uses.
+            unit_price = js_round2(eff_price)
+            amount = js_round2(unit_price * qty)
             subtotal += amount
 
             item_id = await _resolve_line_item_id(
@@ -1151,7 +1159,7 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
                 "SalesItemLineDetail": {
                     "ItemRef": {"value": item_id},
                     "Qty": qty,
-                    "UnitPrice": round(eff_price, 2),
+                    "UnitPrice": unit_price,
                     "TaxCodeRef": {"value": tax_code if taxable else non_tax_code},
                 },
             })
@@ -1187,7 +1195,7 @@ async def _build_sales_lines(conn, db, entity, customer_taxable, tax_code, non_t
         if amount > 0:
             lines.append({
                 "DetailType": "DiscountLineDetail",
-                "Amount": round(amount, 2),
+                "Amount": js_round2(amount),
                 "DiscountLineDetail": {"PercentBased": False},
             })
     return lines, subtotal

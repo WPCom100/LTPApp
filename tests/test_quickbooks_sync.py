@@ -460,6 +460,30 @@ async def test_payload_lines_and_tax():
     _check("not recalled (status sent) → empty PrivateNote", payload["PrivateNote"] == "")
 
 
+async def test_payload_amount_rounds_half_up_like_quickbooks():
+    """QuickBooks recomputes UnitPrice * Qty, rounds half-up, and rejects the
+    line when our Amount is a cent off. 14.5 OT hours at $56.25 is 815.625:
+    Python's banker's round() gave 815.62, QB expected 815.63 and refused the
+    invoice ("Amount is not equal to UnitPrice * Qty. Supplied value:815.62").
+    The builder shows $815.63 (JS rounding), so the payload must agree."""
+    print("test_payload_amount_rounds_half_up_like_quickbooks")
+    inv = _fake_invoice(sections=[{"id": "s1", "items": [
+        {"type": "service", "name": "A1 — Lead Audio Engineer", "qty": 14.5,
+         "unitPrice": 56.25, "adjustedPrice": 56.25, "serviceId": 3},
+        {"type": "service", "name": "half-cent on list price", "qty": 1,
+         "unitPrice": 0.125, "adjustedPrice": None, "serviceId": 3},
+    ]}], global_discount={"type": "amount", "value": 10.125})
+    payload = await _build(inv)
+    sales = [l for l in payload["Line"] if l["DetailType"] == "SalesItemLineDetail"]
+    _check("OT line 14.5 × 56.25 rounds to 815.63, not 815.62", sales[0]["Amount"] == 815.63)
+    _check("OT unit price unchanged", sales[0]["SalesItemLineDetail"]["UnitPrice"] == 56.25)
+    _check("OT qty unchanged", sales[0]["SalesItemLineDetail"]["Qty"] == 14.5)
+    _check("unit price rounds half-up to 0.13", sales[1]["SalesItemLineDetail"]["UnitPrice"] == 0.13)
+    _check("amount is the rounded unit price × qty", sales[1]["Amount"] == 0.13)
+    disc = [l for l in payload["Line"] if l["DetailType"] == "DiscountLineDetail"]
+    _check("fixed discount rounds half-up", disc[0]["Amount"] == 10.13)
+
+
 async def test_payload_fee_line():
     print("test_payload_fee_line")
     # A custom fee (feeId None) and a catalog fee both bill as ordinary sales
@@ -1825,7 +1849,8 @@ def main():
     async_tests = [
         test_refresh_cached_when_fresh, test_refresh_basic_auth_and_rotation,
         test_refresh_invalid_grant_drops_connection, test_request_retries_on_401,
-        test_api_error_on_fault, test_payload_lines_and_tax, test_payload_recall_note,
+        test_api_error_on_fault, test_payload_lines_and_tax, test_payload_fee_line,
+        test_payload_amount_rounds_half_up_like_quickbooks, test_payload_recall_note,
         test_payload_discounts, test_payload_project_memo, test_payload_requires_billable_line,
         test_rentals_never_become_qb_products,
         test_delete_not_synced, test_delete_synced_calls_qb,
