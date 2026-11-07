@@ -481,8 +481,10 @@ window.LTP_eligibleInvoiceTargets = function(invoices, quote) {
 //
 // Returns the updated quote (a new object; the input is never mutated), or
 // null when the quote is not in a state that can be converted by hand:
-//   - only an ACCEPTED quote qualifies. A draft or sent quote has not been
-//     agreed to, a declined one is over, and a converted one is already there.
+//   - only a SENT or ACCEPTED quote qualifies: the quote has gone to the
+//     client. A draft was never promised to anyone, a declined one is over,
+//     and a converted one is already there. From "sent" the override also
+//     stands in for the acceptance the client gave outside the app.
 //   - the quote must be saved (an id), so the activity entry has a document
 //     to live on.
 //
@@ -499,7 +501,7 @@ window.LTP_eligibleInvoiceTargets = function(invoices, quote) {
 // defaults to the app's id generator.
 window.LTP_markQuoteConverted = function(quote, opts) {
   var o = opts || {};
-  if (!quote || quote.status !== "accepted" || quote.id == null) return null;
+  if (!quote || (quote.status !== "sent" && quote.status !== "accepted") || quote.id == null) return null;
   var gen = o.genId || window.LTP_genId;
   var stamped = [];
   var sections = (quote.sections || []).map(function(sec) {
@@ -517,7 +519,7 @@ window.LTP_markQuoteConverted = function(quote, opts) {
     });
     return Object.assign({}, sec, { items: items });
   });
-  var changes = [{ cat: "Status", detail: "accepted → converted (manual)" }];
+  var changes = [{ cat: "Status", detail: quote.status + " → converted (manual)" }];
   if (stamped.length) {
     changes.push({ cat: "Written off", detail: stamped.map(function(s) {
       var left = s.qty - s.invoiced;

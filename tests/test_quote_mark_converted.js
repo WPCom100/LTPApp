@@ -39,7 +39,7 @@ function quote(items, over) {
 
 // ── Refusals ────────────────────────────────────────────────────────────────
 ok("B1 null quote -> null", MARK(null, OPTS()) === null);
-for (const st of ["draft", "sent", "declined", "converted"]) {
+for (const st of ["draft", "declined", "converted"]) {
   ok("B2 " + st + " quote -> null", MARK(quote([line()], { status: st }), OPTS()) === null);
 }
 ok("B3 unsaved (no id) accepted quote -> null", MARK(quote([line()], { id: null }), OPTS()) === null);
@@ -70,6 +70,14 @@ ok("B3b undefined id -> null", MARK(quote([line()], { id: undefined }), OPTS()) 
   eq("C14 status change recorded, labelled manual", e.changes[0], { cat: "Status", detail: "accepted \u2192 converted (manual)" });
   ok("C15 write-off names the remainder per line, not the whole qty",
      e.changes[1].cat === "Written off" && e.changes[1].detail === "Console \u00d75, Cable \u00d78", JSON.stringify(e.changes[1]));
+}
+
+// ── From "sent": the client accepted outside the app ────────────────────────
+{
+  const r = MARK(quote([line()], { status: "sent" }), OPTS());
+  eq("B4 sent quote converts", r && r.status, "converted");
+  eq("B5 status change names the real starting status", r.activity[1].changes[0], { cat: "Status", detail: "sent \u2192 converted (manual)" });
+  eq("B6 lines stamped the same as from accepted", [r.sections[0].items[0].deliveredQty, r.sections[0].items[0].invoicedQty], [5, 5]);
 }
 
 // ── Nothing left to write off ───────────────────────────────────────────────

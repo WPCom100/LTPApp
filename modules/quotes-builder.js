@@ -1859,7 +1859,8 @@
 
     // ── Manual conversion ────────────────────────────────────────────────────
     // The override for a job billed outside LTP (an invoice raised straight in
-    // QuickBooks, a quote from before the app). Without it an accepted quote
+    // QuickBooks, a quote from before the app). Offered once the quote has gone
+    // to the client (sent or accepted). Without it an accepted quote
     // whose invoice never passes through here sits in "accepted" for good,
     // still flagged as owing an invoice. The data change is pure and tested
     // (components/domain-docs.js::LTP_markQuoteConverted); this is the
@@ -1867,7 +1868,7 @@
     // unpick, so Recall to Draft stays available on it — the override is
     // reversible until a real invoice is linked.
     var linkedInvoiceCount = draft.id != null ? (invoices || []).filter(function(inv) { return inv.quoteId === draft.id; }).length : 0;
-    var canMarkConverted = draft.status === "accepted" && draft.id != null;
+    var canMarkConverted = (draft.status === "sent" || draft.status === "accepted") && draft.id != null;
     var canRecallConverted = draft.status === "converted" && draft.id != null && linkedInvoiceCount === 0;
 
     function markConverted() {
@@ -1889,7 +1890,8 @@
       var held = window.LTP_RENTALS.quoteBookings(draft.id, allocations, invoices).filter(function(a) {
         return a.docType === "quote" && (a.state === "reserved" || a.state === "allocated");
       }).length;
-      var msg = "Close " + window.LTP_QUOTE_REF(draft) + " as converted without creating an invoice in LTP? Use this when the job was billed another way, such as an invoice raised directly in QuickBooks.";
+      var msg = "Close " + window.LTP_QUOTE_REF(draft) + " as converted without creating an invoice in LTP? Use this when the job was billed another way, such as an invoice raised directly in QuickBooks."
+        + (draft.status === "sent" ? " The quote has not been marked accepted; converting it records the client's acceptance as given outside LTP." : "");
       if (outstanding > 0) msg += " Its " + outstanding + " uninvoiced line" + (outstanding === 1 ? "" : "s") + " will be recorded as delivered and invoiced in full.";
       if (linkedInvoiceCount > 0) msg += " The " + linkedInvoiceCount + " invoice" + (linkedInvoiceCount === 1 ? "" : "s") + " already linked " + (linkedInvoiceCount === 1 ? "keeps" : "keep") + " what " + (linkedInvoiceCount === 1 ? "it" : "they") + " drew.";
       if (held > 0) msg += " " + held + " reserved gear booking" + (held === 1 ? "" : "s") + " on this quote will be released, since no invoice is taking " + (held === 1 ? "it" : "them") + " over; gear already checked out stays out until it is marked returned.";

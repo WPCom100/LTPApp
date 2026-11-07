@@ -629,6 +629,8 @@
         Recall to Draft
       <button onClick=fn style=8props>
         Resend
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=9props title="Close this quote as converted without creating an invoice in LTP">
+        Mark Converted
       <anon>
         <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
           Delete
@@ -2997,6 +2999,8 @@
         Recall to Draft
       <button onClick=fn style=8props>
         Resend
+      <button onClick=fn onMouseOut=fn onMouseOver=fn style=9props title="Close this quote as converted without creating an invoice in LTP">
+        Mark Converted
       <anon>
         <button className="ltp-btn-quiet" disabled=false onClick=fn style=10props>
           Delete
