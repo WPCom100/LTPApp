@@ -50,12 +50,24 @@ unavailable until it's confirmed")
   quote stays checked out); when it draws part, the invoice row is created in
   the quote row's state and the quote row shrinks to the remainder. Either
   save order (invoice first or quote first) lands on the same rows.
+- The two saves of a conversion run AT THE SAME TIME: the frontend fires the
+  quote's PUT (now converted, booking nothing) and the invoice's POST in one
+  tick, as two requests in two transactions. Every write that moves a row
+  between documents is therefore guarded by the row's CURRENT ownership, not
+  just its id: the invoice re-keys a quote row only ``WHERE doc_type='quote'
+  AND doc_id=… AND line_id=…`` and books the line itself when that matches
+  nothing (the quote already let go); the quote releases a row only ``WHERE
+  doc_type='quote' AND doc_id=…`` so a row the invoice has just adopted is left
+  alone. Plain ORM attribute writes flushed as ``UPDATE … WHERE id`` raised
+  StaleDataError — a 500 and no invoice — whenever the quote's release landed
+  between the invoice's read and its flush (seen on Postgres on roughly one
+  conversion in three).
 - ``doc_type == "manual"`` rows (entered by hand through the API) are never
   touched by anything here.
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend import models
@@ -200,6 +212,49 @@ def _source_map(invoice) -> dict:
     return out
 
 
+async def _quote_booking(db: AsyncSession, qid: int, src_line: str):
+    """The booking a quote holds for one of its lines, or None."""
+    return (await db.execute(
+        select(models.Allocation).where(
+            models.Allocation.doc_type == "quote",
+            models.Allocation.doc_id == qid,
+            models.Allocation.line_id == src_line,
+        )
+    )).scalars().first()
+
+
+async def _bookings_of(db: AsyncSession, doc_type: str, doc_id: int) -> list:
+    """Every booking currently keyed to this document."""
+    return list((await db.execute(
+        select(models.Allocation).where(
+            models.Allocation.doc_type == doc_type,
+            models.Allocation.doc_id == doc_id,
+        )
+    )).scalars().all())
+
+
+async def _release(db: AsyncSession, doc_type: str, doc_id: int, a) -> int:
+    """Drop a booking this document no longer needs. Returns rows deleted (0/1).
+
+    Guarded by the row's current ownership and state, not its id alone: the
+    invoice converting from this quote may have adopted the row (re-keyed it to
+    itself) since we read it — the frontend saves both documents in the same
+    tick — and a DELETE by id would then take the invoice's booking with it.
+    Same for a row someone checked out in the meantime. A 0-row match means the
+    row moved on; it is simply not ours to remove any more."""
+    res = await db.execute(
+        delete(models.Allocation).where(
+            models.Allocation.id == a.id,
+            models.Allocation.doc_type == doc_type,
+            models.Allocation.doc_id == doc_id,
+            models.Allocation.state.in_(_REMOVABLE),
+        ).execution_options(synchronize_session="fetch")
+    )
+    if not res.rowcount:
+        db.expire(a)   # what we read is no longer what is stored
+    return res.rowcount or 0
+
+
 async def _adopt_from_quotes(db: AsyncSession, invoice, wanted: dict, existing_line_ids: set):
     """For each invoice line drawn from a quote line that has no booking on
     this invoice yet, take over the quote's booking (see the module docstring).
@@ -213,15 +268,10 @@ async def _adopt_from_quotes(db: AsyncSession, invoice, wanted: dict, existing_l
         if line_id in existing_line_ids or line_id not in sources:
             continue
         qid, src_line = sources[line_id]
-        q_row = (await db.execute(
-            select(models.Allocation).where(
-                models.Allocation.doc_type == "quote",
-                models.Allocation.doc_id == qid,
-                models.Allocation.line_id == src_line,
-            )
-        )).scalars().first()
+        q_row = await _quote_booking(db, qid, src_line)
         if q_row is None:
             continue
+        q_state = q_row.state
         if qid not in quote_cache:
             quote = (await db.execute(select(models.Quote).where(models.Quote.id == qid))).scalar_one_or_none()
             q_wanted = {}
@@ -231,13 +281,30 @@ async def _adopt_from_quotes(db: AsyncSession, invoice, wanted: dict, existing_l
             quote_cache[qid] = q_wanted
         remainder = quote_cache[qid].get(src_line, {}).get("qty", 0)
         if remainder <= 0 or ln["qty"] >= remainder:
-            # The invoice takes the whole booking: same row, new owner.
-            q_row.doc_type, q_row.doc_id, q_row.line_id = "invoice", invoice.id, line_id
-            for col in ("equipment_id", "qty", "start_date", "end_date", "project_id"):
-                setattr(q_row, col, ln[col])
-            adopted[line_id] = q_row
+            # The invoice takes the whole booking: same row, new owner — but only
+            # if the quote STILL owns it. Its own save (converted → books nothing)
+            # is usually in flight right now and releases this very row; when that
+            # landed first the UPDATE matches nothing, and the invoice books the
+            # line itself below, in the state the quote's row had. Writing the
+            # attributes on q_row instead would flush as UPDATE … WHERE id and
+            # raise StaleDataError (a 500, and no invoice) in that case.
+            res = await db.execute(
+                update(models.Allocation).where(
+                    models.Allocation.id == q_row.id,
+                    models.Allocation.doc_type == "quote",
+                    models.Allocation.doc_id == qid,
+                    models.Allocation.line_id == src_line,
+                ).values(
+                    doc_type="invoice", doc_id=invoice.id, line_id=line_id,
+                    **{col: ln[col] for col in ("equipment_id", "qty", "start_date", "end_date", "project_id")},
+                ).execution_options(synchronize_session="fetch")
+            )
+            if res.rowcount:
+                adopted[line_id] = q_row
+            else:
+                inherited[line_id] = q_state
         else:
-            inherited[line_id] = q_row.state
+            inherited[line_id] = q_state
     return adopted, inherited
 
 
@@ -265,12 +332,7 @@ async def reconcile_doc(db: AsyncSession, doc_type: str, row, *, deleted: bool =
             if ln["project_id"] is not None and ln["project_id"] not in projects:
                 ln["project_id"] = None
 
-    existing = (await db.execute(
-        select(models.Allocation).where(
-            models.Allocation.doc_type == doc_type,
-            models.Allocation.doc_id == row.id,
-        )
-    )).scalars().all()
+    existing = await _bookings_of(db, doc_type, row.id)
 
     created = updated = removed = 0
     seen: set = set()
@@ -284,10 +346,9 @@ async def reconcile_doc(db: AsyncSession, doc_type: str, row, *, deleted: bool =
         ln = wanted.get(a.line_id)
         if ln is None or a.line_id in seen:
             # Line gone (or a duplicate row for the same line): drop it only
-            # while it is still just a reservation.
+            # while it is still just a reservation — and still ours (_release).
             if a.state in _REMOVABLE:
-                await db.delete(a)
-                removed += 1
+                removed += await _release(db, doc_type, row.id, a)
             continue
         seen.add(a.line_id)
         if a.state not in _UPDATABLE:

@@ -602,7 +602,12 @@ confirmed documents** (`backend/rental_bookings.py`):
   drawn from a quote line adopts the quote's booking: the same row is re-keyed
   to the invoice with its state intact, so gear checked out against the quote
   stays checked out. A partial conversion splits the quantity and the invoice's
-  part inherits the state. Either save order lands on the same rows.
+  part inherits the state. Either save order lands on the same rows — and the
+  two saves normally run at once (the builder writes the converted quote and
+  the new invoice in one tick), so every hand-over write is guarded by the
+  row's current owner: the invoice re-keys a row only while the quote still
+  holds it (otherwise it books the line itself), and the quote releases a row
+  only while it is still the quote's.
 - **Gear leaves and comes back from the quote.** An accepted (or converted)
   quote's header shows *Gear: 3 reserved · 2 out* with **Check Out Gear** and
   **Mark Returned** — one click moves every booking behind the quote's

@@ -25,6 +25,11 @@ unavailable until it's confirmed"):
     - deleting a document releases its reservations
     - the public accept link books, with no producer session
     - manual bookings are never touched; the rebuild endpoint is admin-only
+    - the conversion's two saves race (the frontend fires PUT quote and POST
+      invoice in the same tick): the quote releasing its booking between the
+      invoice's read and its write no longer 500s the invoice, and the invoice
+      adopting the row between the quote's read and its release no longer
+      loses the booking
 
 Runs both as pytest and as a plain script:
     python tests/test_rental_bookings.py
@@ -54,6 +59,7 @@ if os.path.exists(_db_path):
 
 from backend import models  # noqa: E402
 from backend.auth_deps import hash_session_token  # noqa: E402
+from backend import rental_bookings  # noqa: E402
 from backend.rental_bookings import booking_lines, doc_books  # noqa: E402
 
 _ADMIN_TOK = "bookings-admin-session-token-xyz"
@@ -478,6 +484,103 @@ def test_api_partial_conversion_inherits_state_and_splits_qty():
     _check("quote keeps the remainder, still checked out", len(q) == 1 and q[0]["qty"] == 3 and q[0]["state"] == "checked-out", str(q))
     _check("invoice row inherits checked-out for what it drew", len(i) == 1 and i[0]["qty"] == 2 and i[0]["state"] == "checked-out", str(i))
     _check("nothing double-counted", sum(a["qty"] for a in rows) == 5)
+
+
+# ── The conversion race ───────────────────────────────────────────────────────
+# modules/quotes-builder.js::executeSendToInvoice writes the converted quote
+# and the new invoice into state in one tick, so components/data-state.js sends
+# PUT /api/quotes/:id and POST /api/invoices at the same moment, in two
+# transactions. These tests replay the two interleavings that broke: the other
+# request's committed write is applied through the SAME session right after the
+# read it has to beat, which is exactly what that request's transaction sees —
+# the stored row has changed, the ORM object it read has not.
+
+def _patched(name, fn):
+    """Swap backend.rental_bookings.<name> for fn; returns the restore callable."""
+    orig = getattr(rental_bookings, name)
+    setattr(rental_bookings, name, fn)
+    return lambda: setattr(rental_bookings, name, orig)
+
+
+def test_api_race_quote_releases_booking_before_invoice_adopts_it():
+    """POST invoices/53 → 500 (StaleDataError). The converted quote's save
+    deleted its reserved row between the invoice reading that row and flushing
+    its re-key; the ORM UPDATE … WHERE id matched nothing. The invoice must
+    book the line itself instead."""
+    from sqlalchemy import delete
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8109, ids, "accepted", qty_a=3, qty_b=0))
+    _check("precondition: the quote books Mover A", len(_allocs(client, "quote", 8109)) == 1)
+
+    orig = rental_bookings._quote_booking
+
+    async def read_then_lose_it(db, qid, src_line):
+        row = await orig(db, qid, src_line)
+        if row is not None and qid == 8109:
+            # The quote's PUT (status converted → books nothing) commits its
+            # release right after our read: the row is gone from the table,
+            # while `row` (what we read) is still in hand.
+            await db.execute(delete(models.Allocation).where(models.Allocation.id == row.id)
+                             .execution_options(synchronize_session=False))
+        return row
+
+    restore = _patched("_quote_booking", read_then_lose_it)
+    try:
+        r = client.post("/api/invoices", json=_inv_body(8109, ids, 8109, "q8109-a", 3), cookies=_cookies())
+    finally:
+        restore()
+    _check("the invoice is created (200, not 500)", r.status_code == 200, r.text[:200])
+    rows = _rows_for(client, ids, 8109)
+    _check("exactly one booking remains", len(rows) == 1, str(rows))
+    _check("…owned by the invoice, for what it drew", rows[0]["docType"] == "invoice"
+           and rows[0]["lineId"] == "i8109-a" and rows[0]["qty"] == 3, str(rows))
+    _check("…in the state the quote's row had", rows[0]["state"] == "reserved", str(rows))
+    _check("saving the converted quote afterwards changes nothing",
+           _put(client, "/api/quotes/8109", dict(_quote_body(8109, ids, "converted", qty_a=3, qty_b=0)))
+           is not None and len(_rows_for(client, ids, 8109)) == 1)
+
+
+def test_api_race_invoice_adopts_booking_before_quote_releases_it():
+    """The mirror image: the invoice re-keyed the quote's row to itself between
+    the quote's save reading its rows and deleting the ones it no longer books.
+    A DELETE by id would take the invoice's booking with it."""
+    from sqlalchemy import update
+    client, _ = _setup()
+    ids = _fixtures(client)
+    _post(client, "/api/quotes", _quote_body(8110, ids, "accepted", qty_a=4, qty_b=0))
+    _gear(client, 8110, "checked-out")
+    q_row = _allocs(client, "quote", 8110)[0]
+
+    orig = rental_bookings._bookings_of
+
+    async def read_then_hand_over(db, doc_type, doc_id):
+        rows = await orig(db, doc_type, doc_id)
+        if doc_type == "quote" and doc_id == 8110:
+            # The invoice's POST commits its adoption right after our read.
+            await db.execute(update(models.Allocation).where(models.Allocation.id == q_row["id"])
+                             .values(doc_type="invoice", doc_id=8110, line_id="i8110-a")
+                             .execution_options(synchronize_session=False))
+        return rows
+
+    body = _quote_body(8110, ids, "converted", qty_a=4, qty_b=0)
+    body["sections"][0]["items"][0]["invoicedQty"] = 4
+    body["sections"][0]["items"][0]["deliveredQty"] = 4
+    restore = _patched("_bookings_of", read_then_hand_over)
+    try:
+        r = client.put("/api/quotes/8110", json=body, cookies=_cookies())
+    finally:
+        restore()
+    _check("the quote saves", r.status_code == 200, r.text[:200])
+    rows = _rows_for(client, ids, 8110)
+    _check("the booking the invoice adopted survives the quote's release", len(rows) == 1, str(rows))
+    _check("…still the invoice's, still checked out", rows[0]["docType"] == "invoice"
+           and rows[0]["lineId"] == "i8110-a" and rows[0]["state"] == "checked-out", str(rows))
+    # The invoice's own save then finds its row already in place.
+    _post(client, "/api/invoices", _inv_body(8110, ids, 8110, "q8110-a", 4))
+    rows = _rows_for(client, ids, 8110)
+    _check("the invoice keeps that one row, no duplicate", len(rows) == 1 and rows[0]["qty"] == 4
+           and rows[0]["state"] == "checked-out", str(rows))
 
 
 def _teardown():
