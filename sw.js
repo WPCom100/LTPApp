@@ -425,7 +425,10 @@
 // their own row, a fully cancelled row reads read-only in the schedule editor,
 // and Restore is gone (only Charge/pay… remains). domain-crew.js,
 // cancel-labor.js, schedule-editor.js, labor.js, schedule-builder.js.
-var CACHE_VERSION = 'ltp-shell-v122';
+// v123: Mark Converted — the override that closes a sent or accepted quote as
+// converted without an invoice in LTP (billed in QuickBooks, pre-app work);
+// Recall to Draft on a hand-converted quote. quotes-builder.js, domain-docs.js.
+var CACHE_VERSION = 'ltp-shell-v123';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

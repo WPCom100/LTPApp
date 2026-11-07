@@ -471,6 +471,78 @@ window.LTP_eligibleInvoiceTargets = function(invoices, quote) {
   }).slice().sort(function(a, b) { return (b.id || 0) - (a.id || 0); });
 };
 
+// ── Manual conversion ───────────────────────────────────────────────────────
+// "Converted" normally happens on its own: Send to Invoice flips the quote
+// once every line is invoiced (quotes-builder.js::executeSendToInvoice). This
+// is the override for the job that was billed some other way — an invoice
+// raised straight in QuickBooks, a quote from before the app, a client
+// settling off-system — where the quote would otherwise sit in "accepted"
+// forever, flagged as still owing an invoice.
+//
+// Returns the updated quote (a new object; the input is never mutated), or
+// null when the quote is not in a state that can be converted by hand:
+//   - only a SENT or ACCEPTED quote qualifies: the quote has gone to the
+//     client. A draft was never promised to anyone, a declined one is over,
+//     and a converted one is already there. From "sent" the override also
+//     stands in for the acceptance the client gave outside the app.
+//   - the quote must be saved (an id), so the activity entry has a document
+//     to live on.
+//
+// What it does to the lines: every quantity line is stamped delivered AND
+// invoiced in full, so the document reads the way a conversion through the
+// app leaves it — nothing outstanding — and Recall to Draft (which clears both
+// counters) undoes it cleanly. Note rows carry no quantities and are left
+// alone. Lines already partly invoiced through a real invoice keep that
+// invoice's draw; only the remainder is written off here.
+//
+// The activity entry says "manually" and names the user, so a reader of the
+// log can tell this closure from one that produced an invoice. `opts.user`,
+// `opts.date` and `opts.time` default to the current user and now; `opts.genId`
+// defaults to the app's id generator.
+window.LTP_markQuoteConverted = function(quote, opts) {
+  var o = opts || {};
+  if (!quote || (quote.status !== "sent" && quote.status !== "accepted") || quote.id == null) return null;
+  var gen = o.genId || window.LTP_genId;
+  var stamped = [];
+  var sections = (quote.sections || []).map(function(sec) {
+    var items = (sec.items || []).map(function(it) {
+      if (!it || it.type === "note") return it;
+      var qty = Number(it.qty) || 0;
+      var delivered = Number(it.deliveredQty) || 0;
+      var invoiced = Number(it.invoicedQty) || 0;
+      if (delivered >= qty && invoiced >= qty) return it;
+      stamped.push({ name: it.name || "", qty: qty, invoiced: invoiced });
+      return Object.assign({}, it, {
+        deliveredQty: Math.max(delivered, qty),
+        invoicedQty: Math.max(invoiced, qty),
+      });
+    });
+    return Object.assign({}, sec, { items: items });
+  });
+  var changes = [{ cat: "Status", detail: quote.status + " → converted (manual)" }];
+  if (stamped.length) {
+    changes.push({ cat: "Written off", detail: stamped.map(function(s) {
+      var left = s.qty - s.invoiced;
+      return s.name + " ×" + (left > 0 ? left : s.qty);
+    }).join(", ") });
+  }
+  var now = new Date();
+  var entry = {
+    id: gen("act"),
+    date: o.date || window.LTP_todayISO(),
+    time: o.time || now.toTimeString().substring(0, 5),
+    type: "status",
+    user: o.user || window.LTP_CURRENT_USER || "User",
+    message: "Quote marked converted manually" + (stamped.length ? " — remaining items recorded as delivered and invoiced outside LTP" : ""),
+    changes: changes,
+  };
+  return Object.assign({}, quote, {
+    status: "converted",
+    sections: sections,
+    activity: (quote.activity || []).concat([entry]),
+  });
+};
+
 // ── Section / line-item transforms ─────────────────────────────────────────
 // The pure half of the quote and invoice builders' draft mutators. Each takes
 // a sections array and returns a NEW one, or the SAME reference when nothing
