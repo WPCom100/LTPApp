@@ -1741,7 +1741,9 @@
       (draft.activity || []).forEach(function(a) {
         if (a.type === "sent" && a.changes) a.changes.forEach(function(ch) { if (ch.cat === "Sent To") sentTo = ch.detail; });
       });
-      var warningMsg = draft.status === "accepted"
+      var warningMsg = draft.status === "converted"
+        ? "This quote was marked converted by hand (no invoice is linked to it). Recalling will unlock it for editing and clear the delivered and invoiced quantities that override recorded." + crewWarning
+        : draft.status === "accepted"
         ? "This quote was accepted. Recalling will unlock it for editing, clear all delivered and invoiced quantities, and the client should be notified of changes." + crewWarning
         : "This quote was sent" + (sentTo ? " to " + sentTo : "") + ". Recalling will unlock it for editing. You will need to resend after making changes." + crewWarning;
       setDlg({
@@ -1751,7 +1753,7 @@
             ? draft.sections.map(function(sec) { return Object.assign({}, sec, { items: sec.items.map(function(it) { return it.type === "note" ? it : Object.assign({}, it, { deliveredQty: 0, invoicedQty: 0 }); }) }); })
             : draft.sections;
           var actEntry = { id: genId("act"), date: todayISO(), time: new Date().toTimeString().substring(0, 5),
-            type: "status", user: (window.LTP_CURRENT_USER || "User"), message: "Quote recalled to draft" + (draft.status === "accepted" ? " (delivery/invoiced quantities cleared)" : ""),
+            type: "status", user: (window.LTP_CURRENT_USER || "User"), message: "Quote recalled to draft" + (draft.status === "accepted" || draft.status === "converted" ? " (delivery/invoiced quantities cleared)" : ""),
  changes: [{ cat: "Status", detail: draft.status + " \u2192 draft" }] };
           var recallPatch = { status: "draft", sections: clearedSections, activity: (draft.activity || []).concat([actEntry]) };
           if (!draft.shareToken) recallPatch.shareToken = window.LTP_genShareToken();
@@ -1853,6 +1855,55 @@
         });
       });
       setIsDirty(true);
+    }
+
+    // ── Manual conversion ────────────────────────────────────────────────────
+    // The override for a job billed outside LTP (an invoice raised straight in
+    // QuickBooks, a quote from before the app). Without it an accepted quote
+    // whose invoice never passes through here sits in "accepted" for good,
+    // still flagged as owing an invoice. The data change is pure and tested
+    // (components/domain-docs.js::LTP_markQuoteConverted); this is the
+    // confirmation around it. A quote converted BY HAND has no invoice to
+    // unpick, so Recall to Draft stays available on it — the override is
+    // reversible until a real invoice is linked.
+    var linkedInvoiceCount = draft.id != null ? (invoices || []).filter(function(inv) { return inv.quoteId === draft.id; }).length : 0;
+    var canMarkConverted = draft.status === "accepted" && draft.id != null;
+    var canRecallConverted = draft.status === "converted" && draft.id != null && linkedInvoiceCount === 0;
+
+    function markConverted() {
+      if (!canMarkConverted) return;
+      var preview = window.LTP_markQuoteConverted(draft);
+      if (!preview) return;
+      // What the override writes off: lines not yet invoiced in full.
+      var outstanding = 0;
+      draft.sections.forEach(function(sec) {
+        sec.items.forEach(function(it) {
+          if (it.type === "note") return;
+          if ((Number(it.invoicedQty) || 0) < (Number(it.qty) || 0)) outstanding++;
+        });
+      });
+      // Gear the quote still holds. Converted quotes book nothing and no
+      // invoice is taking these over (backend/rental_bookings.py), so the
+      // server releases them on save. Checked-out gear is not touched — it
+      // keeps counting until someone marks it returned.
+      var held = window.LTP_RENTALS.quoteBookings(draft.id, allocations, invoices).filter(function(a) {
+        return a.docType === "quote" && (a.state === "reserved" || a.state === "allocated");
+      }).length;
+      var msg = "Close " + window.LTP_QUOTE_REF(draft) + " as converted without creating an invoice in LTP? Use this when the job was billed another way, such as an invoice raised directly in QuickBooks.";
+      if (outstanding > 0) msg += " Its " + outstanding + " uninvoiced line" + (outstanding === 1 ? "" : "s") + " will be recorded as delivered and invoiced in full.";
+      if (linkedInvoiceCount > 0) msg += " The " + linkedInvoiceCount + " invoice" + (linkedInvoiceCount === 1 ? "" : "s") + " already linked " + (linkedInvoiceCount === 1 ? "keeps" : "keep") + " what " + (linkedInvoiceCount === 1 ? "it" : "they") + " drew.";
+      if (held > 0) msg += " " + held + " reserved gear booking" + (held === 1 ? "" : "s") + " on this quote will be released, since no invoice is taking " + (held === 1 ? "it" : "them") + " over; gear already checked out stays out until it is marked returned.";
+      msg += linkedInvoiceCount > 0 ? " This cannot be recalled while invoices are linked." : " You can undo this with Recall to Draft while no invoice is linked.";
+      setDlg({
+        title: "Mark Quote Converted", message: msg, variant: "primary", confirmLabel: "Mark Converted",
+        onConfirm: function() {
+          var updated = window.LTP_markQuoteConverted(draft);
+          if (!updated) { setDlg(null); return; }
+          setQuotes(function(prev) { return prev.map(function(q) { return q.id === updated.id ? updated : q; }); });
+          setDraftRaw(updated); cleanRef.current = updated; setIsDirty(false); setDlg(null);
+          if (window.LTP_toast) window.LTP_toast("Quote marked converted", { variant: "success" });
+        }
+      });
     }
 
     function sendToInvoice() {
@@ -2233,7 +2284,8 @@
               (draft.id != null && draft.shareToken) && { label: "Preview", href: "#/view/quote/" + draft.shareToken + "?preview=1" },
               (draft.id != null && draft.shareToken) && { label: "Share", onClick: shareQuote },
               draft.status === "sent" && { label: "\u2715 Decline", onClick: declineQuote, variant: "danger" },
-              (draft.status === "sent" || draft.status === "accepted") && { label: "Recall to Draft", onClick: recallQuoteToDraft },
+              canMarkConverted && { label: "Mark Converted", onClick: markConverted },
+              (draft.status === "sent" || draft.status === "accepted" || canRecallConverted) && { label: "Recall to Draft", onClick: recallQuoteToDraft },
               (draft.status === "sent" || draft.status === "accepted") && { label: "Resend", onClick: openQuoteSendModal },
               hasUndelivered && { label: "\u2713 Mark All Delivered", onClick: markAllDelivered },
               draft.id != null && { label: "Delete Quote", onClick: deleteQuote, variant: "danger" },
@@ -2302,14 +2354,15 @@
           // Draft: Send Quote
           draft.status === "draft" && draft.id != null && h("button", { onClick: openQuoteSendModal,
             style: { background: B.success, border: "none", borderRadius: "6px", padding: "6px 16px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "Send Quote"),
-          // Sent: Accept / Decline / Recall / Resend
+          // Sent: Accept / Decline / Recall / Resend. Recall also shows on a
+          // quote converted BY HAND (no linked invoice) — the undo of the override.
           draft.status === "sent" && h("button", { onClick: acceptQuote,
             style: { background: B.info, border: "none", borderRadius: "6px", padding: "6px 14px", color: B.btnInk, fontSize: "11px", fontWeight: 700, fontFamily: "inherit", cursor: "pointer" } }, "\u2713 Mark Accepted"),
           draft.status === "sent" && h("button", { onClick: declineQuote,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.danger; e.currentTarget.style.color = B.danger; },
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "\u2715 Decline"),
-          (draft.status === "sent" || draft.status === "accepted") && h("button", { onClick: recallQuoteToDraft,
+          (draft.status === "sent" || draft.status === "accepted" || canRecallConverted) && h("button", { onClick: recallQuoteToDraft,
             style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer" },
             onMouseOver: function(e) { e.currentTarget.style.borderColor = B.warn; e.currentTarget.style.color = B.warn; },
             onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Recall to Draft"),
@@ -2328,6 +2381,11 @@
           hasUninvoiced && h("button", { onClick: sendToInvoice,
             style: { background: B.success, border: "none", borderRadius: "6px", color: B.btnInk, cursor: "pointer", fontSize: "11px", fontWeight: 700, padding: "4px 10px", letterSpacing: "0.02em" } },
             "\u2192 Send to Invoice"),
+          // Mark Converted — the override for a job billed outside LTP (confirmed).
+          canMarkConverted && h("button", { onClick: markConverted, title: "Close this quote as converted without creating an invoice in LTP",
+            style: { background: "transparent", border: "1px solid " + B.border, borderRadius: "6px", padding: "6px 12px", color: B.textMut, fontSize: "11px", fontFamily: "inherit", cursor: "pointer", whiteSpace: "nowrap" },
+            onMouseOver: function(e) { e.currentTarget.style.borderColor = B.success; e.currentTarget.style.color = B.success; },
+            onMouseOut: function(e) { e.currentTarget.style.borderColor = B.border; e.currentTarget.style.color = B.textMut; } }, "Mark Converted"),
           draft.id != null && h(window.Btn, { small: true, variant: "danger", onClick: deleteQuote }, "Delete"),
           isDirty && h(window.Btn, { small: true, variant: "ghost", onClick: discard }, "Discard"),
           isDirty && h(window.Btn, { small: true, onClick: save }, isNew || draft.id == null ? "Save Quote" : "Save Changes")

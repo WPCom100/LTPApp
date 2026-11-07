@@ -578,6 +578,35 @@ The helpers are pure and tested (`components/domain-docs.js`:
 `LTP_staleRentalSections`, `LTP_stampRentalWindows`, `LTP_rentalDriftNotice`;
 `tests/test_rental_drift.js`, `tests/test_quote_priced_window_migration.py`).
 
+## Marking a quote converted by hand
+
+A quote normally becomes **converted** on its own: *Send to Invoice* flips it
+the moment every line has been invoiced. The job billed some other way — an
+invoice raised straight in QuickBooks, a quote from before the app, a client
+settled off-system — would otherwise sit in *accepted* forever, still flagged
+as owing an invoice. **Mark Converted** on an accepted quote (desktop header;
+the ⋯ menu on a phone) is the override:
+
+- It asks for confirmation and spells out what it does: every line not yet
+  invoiced in full is recorded as delivered and invoiced, so the document reads
+  the way a real conversion leaves it. Lines a linked invoice already drew keep
+  that invoice's draw; only the remainder is written off.
+- The activity log entry says *marked converted manually* and names the user,
+  with the written-off quantities, so it can never be mistaken for a conversion
+  that produced an invoice.
+- Gear the quote still held is **released** on save (a converted quote books
+  nothing and no invoice is taking the bookings over — see Bookings below).
+  Gear already checked out is not touched and keeps counting until it is
+  marked returned. The confirmation says how many bookings are affected.
+- It is reversible: a quote converted by hand has no invoice to unpick, so
+  **Recall to Draft** stays available on it and clears the quantities the
+  override recorded. Once a real invoice is linked, recall is refused as for
+  any converted quote.
+
+The data change is pure and tested (`components/domain-docs.js`:
+`LTP_markQuoteConverted`; `tests/test_quote_mark_converted.js`). Only an
+accepted, saved quote qualifies — the helper returns `null` for anything else.
+
 ## Bookings (allocations)
 
 An **allocation** is the record that some units of an item are booked to a
