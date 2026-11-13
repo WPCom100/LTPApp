@@ -150,7 +150,18 @@ NO session — mirrors `view.py`):**
   no email on file can only be booked this way; the recipient list labels them.
   Every route to `confirmed` — here and the Crew Requests tab's Confirm — runs
   through the one `confirmPositionsLocal` helper, so none can skip the pay lock
-  the Payouts tab reads.
+  the Payouts tab reads. The send panel posts its groups **one project at a
+  time** (projects in parallel): each send rewrites that project's schedule
+  JSON server-side, so two at once raced and the later one put the earlier
+  booking back to `open`. The server locks the project row for the same reason
+  (`_load_project(for_update=True)` on send / accept / decline / withdraw).
+  Every returned row is installed before the pay stamp is written, so the
+  stamp lands on the newest row under the newest `_rev`.
+- **Direct-book floor**: a `silent` request's positions can only legitimately be
+  `confirmed`. Drift below that (a stale save, an older heal that stopped at
+  `accepted`) is healed back to `confirmed` by `crew_integrity._floor_for` on
+  every reconcile and by `reconcileFromRequests` in the Labor tab — never to
+  `accepted`, which a direct book has no Confirm button to leave.
 - **Track responses**: surface `crew_requests` status (pending / accepted /
   declined / withdrawn) next to the existing position statuses. When crew accept
   via the landing page, the position auto-appears in the producer's

@@ -85,10 +85,24 @@ async def _find_request_by_token(db: AsyncSession, token: str):
     return r.scalar_one_or_none()
 
 
-async def _load_project(db: AsyncSession, project_id):
+async def _load_project(db: AsyncSession, project_id, *, for_update: bool = False):
+    """Load a project row. ``for_update`` takes the row lock (SELECT … FOR
+    UPDATE) for the routes that rewrite its schedule JSON — send, accept/
+    decline, withdraw. Each of those reads the whole schedule, flips a few
+    positions in Python and writes the whole thing back, so two running at
+    once on one project (the Labor tab booking several crew members in one go,
+    a crew member answering while the producer sends) committed over each
+    other: the later write carried the earlier one's positions as it had read
+    them, and a booking the request row said was accepted sat at ``open`` in
+    the schedule. The lock serialises them on Postgres; SQLite (dev/tests)
+    renders no FOR UPDATE and serialises writers on its own. Read-only callers
+    (the public landing payload, notify) leave it off."""
     if project_id is None:
         return None
-    r = await db.execute(select(models.Project).where(models.Project.id == project_id))
+    q = select(models.Project).where(models.Project.id == project_id)
+    if for_update:
+        q = q.with_for_update()
+    r = await db.execute(q)
     return r.scalar_one_or_none()
 
 
@@ -959,7 +973,7 @@ async def _respond(token: str, body: dict, request: Request, db: AsyncSession, *
             detail={"status": req.status, "message": f"request is already {req.status}"},
         )
 
-    project = await _load_project(db, req.project_id)
+    project = await _load_project(db, req.project_id, for_update=True)
     # Stale guard: if the shifts were removed (or the project deleted) out from
     # under this request, refuse — the crew member sees the withdrawn screen on
     # reload (the GET heal / the project save+delete hooks persist the actual
@@ -1136,7 +1150,7 @@ async def send_crew_request(
         raise HTTPException(status_code=400, detail={"field": "contactId", "reason": "required integer"})
     silent = body.get("silent") is True
 
-    project = await _load_project(db, project_id)
+    project = await _load_project(db, project_id, for_update=True)
     if project is None:
         raise HTTPException(status_code=404, detail={"field": "projectId", "reason": "project not found"})
     r = await db.execute(select(models.Contact).where(models.Contact.id == contact_id))
@@ -1265,7 +1279,7 @@ async def withdraw_crew_request(
             status_code=409,
             detail={"status": req.status, "message": f"cannot withdraw a {req.status} request; use the Labor controls"},
         )
-    project = await _load_project(db, req.project_id)
+    project = await _load_project(db, req.project_id, for_update=True)
     if project is not None:
         # Reopen the shifts AND unassign the crew member — a withdrawn ask returns
         # the slot to an empty selection, not "still penciled in".

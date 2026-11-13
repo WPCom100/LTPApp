@@ -283,6 +283,32 @@ def test_heal_never_downgrades_or_overrides():
     _check("accepted status preserved", proj2.schedule[0]["positions"][0]["status"] == "accepted")
 
 
+def test_direct_book_heals_to_confirmed_not_accepted():
+    print("test_direct_book_heals_to_confirmed_not_accepted")
+    # A direct book (silent) was confirmed the moment it was recorded. Its
+    # positions knocked back to open/requested by a concurrent save — or left at
+    # accepted by the old floor — heal to CONFIRMED. Left at accepted they had
+    # nowhere to go: the Labor UI offers no Confirm on a direct book.
+    req = models.CrewRequest(id=25, token="tok-" + "m" * 20, project_id=1, contact_id=5,
+                             position_ids=["p1", "p2", "p3", "p4"], status="accepted", silent=True)
+    proj = _assigned_project([("p1", 5, "open"), ("p2", 5, "requested"),
+                              ("p3", 5, "accepted"), ("p4", 5, "confirmed")])
+    ch = ci.reconcile_one(req, proj)
+    _check("reports healed", ch and ch["action"] == "healed", str(ch))
+    _check("open, requested AND accepted advanced", ch and sorted(ch["healed"]) == ["p1", "p2", "p3"])
+    statuses = {p["id"]: p["status"] for p in proj.schedule[0]["positions"]}
+    _check("every position now confirmed", all(statuses[k] == "confirmed" for k in ("p1", "p2", "p3", "p4")), str(statuses))
+    _check("request stays accepted + silent", req.status == "accepted" and req.silent is True)
+    _check("a second pass is a no-op", ci.reconcile_one(req, proj) is None)
+    # The same drift under an EMAILED accepted request still heals only to
+    # accepted — the producer has yet to confirm it.
+    plain = models.CrewRequest(id=26, token="tok-" + "n" * 20, project_id=1, contact_id=5,
+                               position_ids=["p1"], status="accepted", silent=False)
+    proj2 = _assigned_project([("p1", 5, "open")])
+    ci.reconcile_one(plain, proj2)
+    _check("an emailed accept heals to accepted, not confirmed", proj2.schedule[0]["positions"][0]["status"] == "accepted")
+
+
 def test_heal_skips_undated_shift_positions():
     print("test_heal_skips_undated_shift_positions")
     # A drifted position on a day whose date was cleared is TRIMMED (it's no
@@ -798,7 +824,8 @@ def main():
         test_cleared_position_withdraws, test_held_position_untouched,
         test_cleared_date_trims_position, test_cleared_date_only_day_withdraws,
         test_accepted_request_heals_drifted_positions, test_pending_request_heals_open_to_requested,
-        test_heal_never_downgrades_or_overrides, test_heal_skips_undated_shift_positions,
+        test_heal_never_downgrades_or_overrides, test_direct_book_heals_to_confirmed_not_accepted,
+        test_heal_skips_undated_shift_positions,
         test_floor_blocks_same_crew_downgrades, test_floor_allows_deliberate_changes,
         test_floor_ignores_new_unknown_and_unassigned,
         test_cancel_allowance_accepts_matching_cancellation, test_cancel_allowance_caps_at_the_reference,

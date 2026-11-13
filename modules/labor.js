@@ -488,16 +488,25 @@
   // statuses, advancing positions still at "requested" — or at "open", which
   // under an answered request with the SAME crew member still assigned can only
   // be drift from a stale save that reverted the send (the backend heals the
-  // same way; see crew_integrity._STATUS_FLOOR). Producer settlements are never
+  // same way; see crew_integrity._floor_for). Producer settlements are never
   // disturbed: confirmed positions are above both statuses, and released /
   // reassigned slots fail the crewId match. The app doesn't poll `projects` for
   // inbound server changes, so this bridges a crew member's accept/decline
   // (written server-side to the position status) into the grouped view without
   // a full reload.
+  //
+  // A direct book (`silent`) was confirmed by the producer the moment it was
+  // recorded, so its floor is `confirmed`, and a position of its that reads
+  // `accepted` is drift from an older heal rather than an answer waiting on a
+  // confirm — the Crew Requests tab offers no Confirm on a direct book, so left
+  // at `accepted` it had nowhere to go. Status only: the pay lock stays with
+  // the explicit confirm paths (confirmPositionsLocal), because a stamp written
+  // here would differ from the row the server heals to and be refused as a
+  // stale write when the two met.
   function reconcileFromRequests(setProjects, reqs) {
     var byProject = {};
     (reqs || []).forEach(function(r) {
-      var target = r.status === "accepted" ? "accepted" : (r.status === "declined" ? "declined" : null);
+      var target = r.status === "accepted" ? (r.silent ? "confirmed" : "accepted") : (r.status === "declined" ? "declined" : null);
       if (!target) return;
       byProject[r.projectId] = byProject[r.projectId] || {};
       // Keep the request's crew member with the answer so we only apply it to a
@@ -513,7 +522,10 @@
         if (!map) return proj;
         function apply(pos) {
           var entry = map[pos.id];
-          if (entry && (pos.status === "requested" || pos.status === "open") && pos.crewId === entry.crewId) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
+          if (!entry || pos.crewId !== entry.crewId) return pos;
+          var below = pos.status === "requested" || pos.status === "open"
+            || (entry.target === "confirmed" && pos.status === "accepted");
+          if (below) { changed = true; return Object.assign({}, pos, { status: entry.target }); }
           return pos;
         }
         return Object.assign({}, proj, {
@@ -1858,7 +1870,19 @@
       if (!silent) mirrorGroups(setProjects, projects, groupList, "open", "requested");
 
       setShowSendPanel(false);
-      Promise.all(groupList.map(function(g) {
+
+      // One POST per group. Groups on the SAME project go out one after
+      // another, never together: each send rewrites that project's whole
+      // schedule JSON server-side (read it, flip the positions, write it back),
+      // so two in flight at once raced, and the later write put the earlier
+      // booking back to `open` — a direct book that read "✓ Confirmed" on screen
+      // while the server held an accepted request over a slot still open, which
+      // the next load then healed to "Accepted" with nothing to confirm it from.
+      // Sequencing also orders the response rows: the last for a project is the
+      // newest, so installing them in turn never lands a stale row over a
+      // fresher one. Different projects still run in parallel — their rows
+      // never touch.
+      function sendOne(g) {
         return fetch("/api/crew-requests/send", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
@@ -1867,24 +1891,44 @@
           return r.json().then(function(j) { return { ok: r.ok, body: j, group: g }; },
                                function() { return { ok: r.ok, body: {}, group: g }; });
         }).catch(function(e) { return { ok: false, body: { error: String(e) }, group: g }; });
-      })).then(function(results) {
+      }
+      var byProject = {}, projectOrder = [];
+      groupList.forEach(function(g) {
+        if (!byProject[g.projectId]) { byProject[g.projectId] = []; projectOrder.push(g.projectId); }
+        byProject[g.projectId].push(g);
+      });
+      Promise.all(projectOrder.map(function(pid) {
+        return byProject[pid].reduce(function(chain, g) {
+          return chain.then(function(acc) { return sendOne(g).then(function(res) { return acc.concat([res]); }); });
+        }, Promise.resolve([]));
+      })).then(function(perProject) {
+        var results = [].concat.apply([], perProject);
         var sent = 0, reconnect = false, errors = [];
+        // Install every row the server handed back FIRST, in send order, before
+        // any local write. Each response carries the project row as the server
+        // held it right after that send, with its _rev; installing it makes this
+        // window's copy AND its If-Match token the server's. The local writes
+        // below (a direct book's pay stamp) have to land on the NEWEST of those
+        // rows, under the newest token — written between two installs they
+        // rode a token one send old, drew a 409 from the project PUT and were
+        // thrown away when the server's unstamped row was adopted over them.
+        results.forEach(function(res) { if (res.ok) adoptProject(res.body && res.body.project); });
         results.forEach(function(res) {
           if (res.ok) {
             sent++;
-            // The response carries the project row the server just moved, with
-            // its _rev. Installing it makes this window's copy AND its If-Match
-            // token the server's, so the direct book's pay stamp below goes out
-            // under a token the server accepts — it used to go out under the
-            // pre-book one, get refused as a stale write, and be thrown away
-            // when the window adopted the server's unstamped row over it.
-            adoptProject(res.body && res.body.project);
             // Mirror the server's confirm locally now that it stuck — pay
-            // stamp and activity entry included (confirmPositionsLocal).
+            // stamp and activity entry included (confirmPositionsLocal). The
+            // installed row already reads `confirmed` for these positions, so
+            // that status is among the ones the write applies to: what it adds
+            // is the pay lock and the activity line, which the server never
+            // writes. (Without it the booking stood confirmed with no locked
+            // pay — "not locked" in Payouts — and no trace in the activity.)
+            // `open`/`declined` stay for a shell whose state layer predates
+            // adoptRow, where nothing was installed and the flip is still ours.
             if (silent) confirmPositionsLocal(setProjects, {
               projectId: res.group.projectId, contactId: res.group.contactId,
               posIds: (res.body && res.body.positionIds) || res.group.positionIds,
-              fromStatuses: ["open", "declined"], crewName: crewLabel(res.group.contactId),
+              fromStatuses: ["open", "declined", "confirmed"], crewName: crewLabel(res.group.contactId),
               message: "Crew booked directly (no email)", cat: "Crew Booked Directly",
               services: services, clientRates: clientRates, contacts: contacts,
             });
