@@ -434,7 +434,12 @@
 // a direct book used to show "✓ Confirmed" with no pay lock, and two bookings
 // on one project could leave one back at open / stuck "Accepted". A direct
 // book's positions now heal to confirmed, never accepted. labor.js.
-var CACHE_VERSION = 'ltp-shell-v124';
+// v125: Labor → Crew Requests: a request whose every shift has since been
+// cancelled reads "Cancelled" and ranks with the confirmed ones, so its project
+// leaves the Open queue once the rest of its crew are confirmed — it used to
+// read "Accepted" with nothing to confirm and hold the project card there for
+// good. A cancelled shift says so in the per-shift list. labor.js.
+var CACHE_VERSION = 'ltp-shell-v125';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

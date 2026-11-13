@@ -5,6 +5,10 @@
 //   * a request drops out of the queue once every shift in it is paid out;
 //     a project drops out whole — its declines too — once every ask on it
 //     is paid out or declined (the rules: tests/test_crew_request_pay.js)
+//   * a request whose every shift has since been cancelled reads "Cancelled"
+//     and ranks with the confirmed ones — done, not open — so a project whose
+//     other crew are all confirmed leaves the Open queue with it; a cancelled
+//     shift says so in the per-shift list
 //   * the status tiles count the rows on the screen and filter them
 //   * the project picker lists the queue's projects, then the paid-out ones
 //     under their own heading; picking one shows everything on it, paid
@@ -98,7 +102,23 @@ const PROJECTS = [
   { id: 3, name: "County Fair", companyId: 3, startDate: "2026-10-01", endDate: "2026-10-01", schedule: [
     { id: "f1", title: "Fair", date: "2026-10-01", time: "10:00", endTime: "18:00", positions: [P("fa", 6, "accepted")] },
   ], fixedPositions: [] },
+  // Cancellations, none paid yet: Jane confirmed; Sam confirmed and then his
+  // only shift was called off; Alex confirmed on day 1, called off on day 2;
+  // Kim booked directly, then called off. Only the CXL_REQUESTS below ask on
+  // this project, so the queue above never sees it.
+  { id: 4, name: "Harbor Fest", companyId: 3, startDate: "2026-10-15", endDate: "2026-10-16", schedule: [
+    { id: "h1", title: "Load In", date: "2026-10-15", time: "08:00", endTime: "16:00", positions: [P("ha", 5, "confirmed"), CX(P("hb", 6, "cancelled")), P("hc", 7, "confirmed")] },
+    { id: "h2", title: "Show", date: "2026-10-16", time: "09:00", endTime: "17:00", positions: [CX(P("hd", 7, "cancelled")), CX(P("he", 8, "cancelled"))] },
+  ], fixedPositions: [] },
 ];
+// A cancelled position as the cancel dialog leaves it: the record and the
+// frozen share (components/domain-crew.js::_cancelledPosition, LTP_cancelWork).
+function CX(p) {
+  return Object.assign(p, {
+    cancel: { at: "2026-10-10T10:00:00Z", by: "Pat", byId: 1, reason: "", ref: { bill: 600, pay: 350 },
+              bill: { mode: "percent", value: 50, total: 300 }, pay: { mode: "percent", value: 50, total: 175 } },
+    work: { state: "cancelled", signedAt: "2026-10-10T10:00:00Z", signedBy: "Pat", pay: { total: 175, tier: "cancel", units: [] } } });
+}
 const R = (id, projectId, contactId, positionIds, status, paidDates) => ({ id: id, token: "t" + id, projectId: projectId, contactId: contactId,
   positionIds: positionIds, status: status, silent: false, comment: "", sentAt: "2026-09-01T10:00:00Z",
   respondedAt: status === "pending" ? null : "2026-09-02T10:00:00Z", paidDates: paidDates || [] });
@@ -110,6 +130,12 @@ const REQUESTS = [
   R(5, 2, 8, ["e2b"], "pending"),
   R(6, 3, 6, ["fa"], "accepted"),
   R(7, 3, 8, [], "withdrawn"),
+];
+const CXL_REQUESTS = [
+  R(8, 4, 5, ["ha"], "accepted"),                                    // Jane: confirmed
+  R(9, 4, 6, ["hb"], "accepted"),                                    // Sam: his only shift cancelled
+  R(10, 4, 7, ["hc", "hd"], "accepted"),                             // Alex: one confirmed, one cancelled
+  Object.assign(R(11, 4, 8, ["he"], "accepted"), { silent: true }),  // Kim: booked directly, then cancelled
 ];
 
 // Render LaborView on the Crew Requests route, then the tab it hands its props
@@ -136,6 +162,14 @@ function who(tree) {
   return sections(tree).map((s) => s.title + ": " + CONTACTS.filter((c) => s.text.indexOf(c.firstName + " " + c.lastName) !== -1).map((c) => c.firstName).join(","));
 }
 function picker(tree) { return named(tree, "LTPSearchSelect")[0]; }
+// One request's ledger row (keyed by request id), its status badge, and the
+// labels of its action buttons.
+function row(tree, reqId) { return walk(tree).find((n) => n.type === "div" && n.props.key === reqId); }
+function badgeOf(r) { const b = walk(r).find((n) => n.type === "span" && n.props.style && n.props.style.textTransform === "uppercase"); return b ? textOf(b) : null; }
+function actionsOf(r) { return walk(r).filter((n) => n.type === "button" && n.props.key).map(textOf); }
+// The per-shift lines under a request — the leaf text nodes, not the box that
+// holds them (whose text is every line run together).
+function shiftLines(node) { return walk(node).filter((n) => n.type === "div" && n.children.length === 1 && typeof n.children[0] === "string" && /^[✓•] /.test(n.children[0])).map((n) => n.children[0]); }
 function clickTile(tree, key) { named(tree, "FilterTiles")[0].props.items.find((it) => it.key === key).onClick(); }
 
 // ── The queue (desktop) ───────────────────────────────────────────────────────
@@ -192,6 +226,35 @@ eq("E2 …with the paid-out project still in the picker", picker(tree).props.sec
 render = openTab([]);
 ok("E3 no requests at all keeps its own message", /No crew requests yet/.test(named(render(), "EmptyState")[0].props.text));
 
+// ── Cancelled shifts ─────────────────────────────────────────────────────────
+// A request whose every shift was cancelled used to read "Accepted" — nothing
+// accepted, nothing confirmed, so the badge fell through — and sit in the
+// Open queue with no button to clear it, holding its project card there after
+// everyone else on it was confirmed.
+render = openTab(CXL_REQUESTS);
+tree = render();
+eq("C1 the Open queue is empty: a cancelled ask needs nothing", who(tree), []);
+ok("C2 …and says so", /No open requests — everything is confirmed or answered/.test(named(tree, "EmptyState")[0].props.text));
+eq("C3 cancelled asks count as confirmed — done, not open",
+   tiles(tree), { all: "4", open: "0*", requested: "0", accepted: "0", confirmed: "4", declined: "0" });
+clickTile(tree, "confirmed");
+tree = render();
+eq("C4 the Confirmed tile shows the whole project", who(tree), ["Harbor Fest: Jane,Sam,Alex,Kim"]);
+eq("C5 an ask whose only shift was cancelled is badged Cancelled", badgeOf(row(tree, 9)), "Cancelled");
+eq("C6 …with nothing to confirm, resend or withdraw", actionsOf(row(tree, 9)), []);
+eq("C7 one shift confirmed and one cancelled still reads Confirmed", badgeOf(row(tree, 10)), "Confirmed");
+eq("C8 a direct book that was cancelled reads Cancelled, not Booked directly", badgeOf(row(tree, 11)), "Cancelled");
+eq("C9 Jane's plain confirm is untouched", [badgeOf(row(tree, 8)), actionsOf(row(tree, 8))], ["Confirmed", []]);
+eq("C10 the header chips count by badge", textOf(named(tree, "ProjectSection")[0].props.chips), "2 confirmed2 cancelled");
+// Expand Alex's shift list: the cancelled day says so, the confirmed one doesn't.
+walk(row(tree, 10)).find((n) => n.type === "button" && "aria-expanded" in n.props).props.onClick();
+tree = render();
+const alex = shiftLines(row(tree, 10));
+ok("C11 a cancelled shift says so in the shift list", alex.some((t) => /Oct 16/.test(t) && /cancelled$/.test(t)), alex.join(" | "));
+ok("C12 …a confirmed one doesn't", alex.some((t) => /^✓ .*Oct 15/.test(t)) && !alex.some((t) => /Oct 15/.test(t) && /cancelled/.test(t)), alex.join(" | "));
+eq("C13 nothing paid yet, so the project is still a queue project in the picker",
+   [picker(tree).props.options.map((o) => o.label), picker(tree).props.sections.length], [["All Projects", "Harbor Fest"], 0]);
+
 // ── On a phone ───────────────────────────────────────────────────────────────
 MOBILE = true;
 render = openTab(REQUESTS);
@@ -209,6 +272,15 @@ const lines = walk(sections(tree).length ? named(tree, "ProjectSection")[0].chil
   .map(textOf).filter((t) => /^[✓•] /.test(t));
 ok("M4 a paid shift says so", lines.some((t) => /Sep 20/.test(t) && /paid$/.test(t)), lines.join(" | "));
 ok("M5 …an unpaid one doesn't", lines.some((t) => /Sep 21/.test(t)) && !lines.some((t) => /Sep 21/.test(t) && /paid$/.test(t)), lines.join(" | "));
+render = openTab(CXL_REQUESTS);
+tree = render();
+eq("M6 the strip counts cancelled asks as confirmed", named(tree, "LTPStatStrip")[0].props.items.filter(Boolean).map((i) => i.label + " " + i.value),
+   ["Total 4", "Open 0", "Requested 0", "Accepted 0", "Confirmed 4"]);
+ok("M7 …and opens on an empty Open view", !!named(tree, "EmptyState")[0] && !sections(tree).length);
+walk(named(tree, "LTPScrollStrip")[0].children).find((n) => n.type === "button" && textOf(n) === "confirmed").props.onClick();
+tree = render();
+const cxl = shiftLines(named(tree, "ProjectSection")[0].children);
+ok("M8 a phone card's cancelled shift says so", cxl.some((t) => /Oct 16/.test(t) && /cancelled$/.test(t)) && cxl.some((t) => /^✓ .*Oct 15/.test(t)), cxl.join(" | "));
 
 console.log("crew-requests tab suite — PASS: " + pass + "   FAIL: " + fail);
 if (fail) { fails.forEach((f) => console.log("  ✗ " + f)); process.exit(1); }

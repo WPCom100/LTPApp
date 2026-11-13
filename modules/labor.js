@@ -3805,7 +3805,7 @@
       if (proj) (proj.fixedPositions || []).forEach(function(p) {
         if (ids[p.id]) positions.push({ posId: p.id, status: p.status, roleLabel: roleLabelFor(p), date: "", flat: true, fee: Number(p.fee) || 0, paid: !!pay.paid[p.id] });
       });
-      var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0 };
+      var counts = { open: 0, requested: 0, accepted: 0, confirmed: 0, declined: 0, cancelled: 0 };
       positions.forEach(function(p) { counts[p.status] = (counts[p.status] || 0) + 1; });
       return { proj: proj, known: !!proj, positions: positions, counts: counts, paidOut: pay.paidOut };
     }
@@ -3822,6 +3822,16 @@
       if (!info.known) return { label: "Syncing\u2026", color: B.textMut, pending: true };
       if (req.status === "pending") return { label: "Requested", color: B.warn, resend: true, withdraw: true };
       if (req.status === "declined") return { label: "Declined", color: B.danger };
+      // Every shift it asked for has since been cancelled — a confirmed
+      // booking called off on the Assignments tab or in the schedule editor.
+      // The ask is over: nothing to confirm, nothing to withdraw; a
+      // cancellation is a locked record (components/domain-crew.js) that is
+      // edited where it was made. Said before "Paid" and "Booked directly":
+      // a cancelled booking is not a booking, however it came about or was
+      // settled. Without this the request read "Accepted" (nothing accepted,
+      // nothing confirmed) and sat in the Open queue with no button to clear
+      // it, holding its project card there for good.
+      if (req.status === "accepted" && info.counts.cancelled > 0 && info.counts.accepted === 0 && info.counts.confirmed === 0) return { label: "Cancelled", color: B.textMut };
       // Every shift paid (reqInfo). Only reachable from the project picker —
       // the queue drops these — so the badge says why it is no longer there.
       // A direct book still says so on the row itself.
@@ -3867,13 +3877,21 @@
 
     // Bucket each request by where it stands: requested (waiting on the crew
     // member), accepted (answered, positions still to confirm), confirmed
-    // (all its work confirmed — a paid-out one too, when the picker shows
-    // it), declined. "Open" is the first two: the ones needing action.
+    // (all its work confirmed, or confirmed and since cancelled — a paid-out
+    // one too, when the picker shows it), declined. "Open" is the first two:
+    // the ones needing action.
     function categoryOf(req, info) {
       if (req.status === "declined") return "declined";
       if (req.status === "pending") return "requested";
       if (info.paidOut) return "confirmed";
-      if (req.status === "accepted" && info.counts.accepted === 0 && info.counts.confirmed > 0) return "confirmed";
+      // Nothing left to confirm, and something was: a confirmed position, or
+      // one confirmed and since cancelled. A cancellation is a locked record
+      // of a booking, not a slot waiting on anyone, so it ranks with
+      // confirmed here as it does everywhere else (crew_integrity's status
+      // rank, LTP_crewRequestPay). A request whose shifts were ALL cancelled
+      // used to fall through to "accepted" and hold its project in the Open
+      // queue after everyone else on it was confirmed.
+      if (req.status === "accepted" && info.counts.accepted === 0 && (info.counts.confirmed > 0 || info.counts.cancelled > 0)) return "confirmed";
       return "accepted";
     }
     function isOpenCat(cat) { return cat === "requested" || cat === "accepted"; }
@@ -3953,14 +3971,17 @@
       var list = info.positions.slice().sort(function(a, b) { return (a.date || "￿") < (b.date || "￿") ? -1 : 1; });
       var oneLine = isMobile ? null : { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
       return list.map(function(p, pi) {
-        var done = p.status === "confirmed";
+        var done = p.status === "confirmed", gone = p.status === "cancelled";
         var text = p.flat
           ? p.roleLabel + "  ·  flat rate $" + window.LTP_money(p.fee) + "  ·  whole project"
           : [p.date ? fmtShort(p.date) : "", p.title || "", p.time ? ftc(p.time) + (p.endTime ? "–" + ftc(p.endTime) : "") : "", p.roleLabel].filter(Boolean).join("  ·  ");
+        // A cancelled shift says so (muted), so a row badged Cancelled — or
+        // Confirmed with one of its calls called off — shows which it was.
+        if (gone) text += "  ·  cancelled";
         // Which of a request's shifts have been paid — so a request still
         // here with some of its days paid says which ones are left.
         if (p.paid) text += "  ·  paid";
-        return h("div", { key: pi, style: Object.assign({ fontSize: "10px", color: done ? B.info : B.textSec, lineHeight: 1.6 }, oneLine) }, (done ? "✓ " : "• ") + text);
+        return h("div", { key: pi, style: Object.assign({ fontSize: "10px", color: done ? B.info : (gone ? B.textMut : B.textSec), lineHeight: 1.6 }, oneLine) }, (done ? "✓ " : "• ") + text);
       });
     }
     // When it went out, and — once answered — when the answer came back. A
@@ -4060,7 +4081,7 @@
       open: "Still needs something — the crew member's answer, or your confirm",
       requested: "Sent, and waiting on the crew member's answer",
       accepted: "Accepted by the crew member, with positions still to confirm",
-      confirmed: "Every position confirmed" + (picked ? " — paid-out requests included" : ", not yet paid out"),
+      confirmed: "Every position confirmed or since cancelled" + (picked ? " — paid-out requests included" : ", not yet paid out"),
       declined: "Declined by the crew member",
     };
     var tileItems = [
