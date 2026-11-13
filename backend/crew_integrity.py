@@ -44,10 +44,11 @@ assigned and the request still reads pending/accepted. The producer then sees
 
   - ``reconcile_one`` also HEALS: positions a live request still covers are
     advanced back up to the request's status floor (pending → ``requested``,
-    accepted → ``accepted``). It never downgrades — ``confirmed`` and
-    ``declined`` positions, and anything already at/above the floor, are left
-    alone. Runs everywhere reconciliation already runs, so the first
-    producer-list load after a drift (or after this deploy) self-heals it.
+    accepted → ``accepted``, a direct book → ``confirmed``). It never
+    downgrades — ``confirmed`` and ``declined`` positions, and anything already
+    at/above the floor, are left alone. Runs everywhere reconciliation already
+    runs, so the first producer-list load after a drift (or after this deploy)
+    self-heals it.
   - ``enforce_status_floor`` blocks the stale write itself at the project PUT
     (routes/api.py): an incoming position keeping the SAME crew member but a
     lower-ranked status than the stored row is a stale echo, never a
@@ -89,6 +90,22 @@ _STATUS_FLOOR = {
     "pending":  ({"open"}, "requested"),
     "accepted": ({"open", "requested"}, "accepted"),
 }
+# A direct book (``silent``) is an ``accepted`` row the producer confirmed the
+# moment it was recorded: its positions went open → confirmed in the same write
+# (routes/crew.py send). Its floor is therefore ``confirmed``, and a position of
+# its that reads ``accepted`` is drift too — the old floor put it there when a
+# concurrent save had knocked the booking back to open, and from there it had
+# nowhere to go: the Labor UI offers no Confirm on a direct book, so it sat
+# "Accepted" with its crew member booked and the pay never locking.
+_SILENT_FLOOR = ({"open", "requested", "accepted"}, "confirmed")
+
+
+def _floor_for(req) -> tuple | None:
+    """(statuses to heal FROM, status to advance TO) for a live request, or
+    None when its positions have no floor (declined / withdrawn)."""
+    if req.status == "accepted" and getattr(req, "silent", False):
+        return _SILENT_FLOOR
+    return _STATUS_FLOOR.get(req.status)
 
 # Rank for the stale-write guard (enforce_status_floor). ``declined`` ranks
 # with ``accepted``: both are settled crew answers that a stale open/requested
@@ -380,13 +397,13 @@ def _assigned_position_ids(project, contact_id) -> set:
 
 def _heal_position_statuses(req: models.CrewRequest, project) -> list:
     """Advance positions the request still covers that sit BELOW its status
-    floor (see ``_STATUS_FLOOR``) — the schedule-side repair for drift where a
-    stale full-row project save reverted a requested/accepted position back to
-    ``open`` while the crew member stayed assigned. Only positions on a dated
+    floor (see ``_floor_for``) — the schedule-side repair for drift where a
+    stale full-row project save reverted a requested/accepted/confirmed position
+    back down while the crew member stayed assigned. Only positions on a dated
     shift, still held by the request's contact, are touched. Mutates the
     schedule in place and flag_modifies it when anything changed. Returns the
     list of position ids advanced."""
-    floor = _STATUS_FLOOR.get(req.status)
+    floor = _floor_for(req)
     if floor is None or project is None:
         return []
     heal_from, target = floor

@@ -428,7 +428,13 @@
 // v123: Mark Converted — the override that closes a sent or accepted quote as
 // converted without an invoice in LTP (billed in QuickBooks, pre-app work);
 // Recall to Draft on a hand-converted quote. quotes-builder.js, domain-docs.js.
-var CACHE_VERSION = 'ltp-shell-v123';
+// v124: booking several crew members directly (or sending them requests) in
+// one go sends them one project at a time, installs every returned row before
+// the pay stamp is written, and the stamp lands on the already-confirmed row —
+// a direct book used to show "✓ Confirmed" with no pay lock, and two bookings
+// on one project could leave one back at open / stuck "Accepted". A direct
+// book's positions now heal to confirmed, never accepted. labor.js.
+var CACHE_VERSION = 'ltp-shell-v124';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',

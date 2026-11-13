@@ -85,6 +85,7 @@ P_SILENT2   = 7028  # direct book for a crew member with NO email on file
 P_SILENT3   = 7029  # a direct book can't be resent or withdrawn
 P_PAIDOUT   = 7030  # list carries paidDates: this crew member's paid days here
 P_PAIDOUT2  = 7031  # …kept apart from the same person's paid days elsewhere
+P_SILENT4   = 7032  # a direct book knocked below confirmed → list heals to confirmed
 
 _ADMIN_TOK = "crew-admin-session"
 _client = None
@@ -250,6 +251,13 @@ def _setup():
                 ]))
                 db.add(models.Project(id=P_SILENT3, name="Gala Silent Locked", schedule=[
                     _shift("ssl", "Show", "2026-08-27", [_pos("psl_a", C1, service=S1)]),
+                ]))
+                # A direct book whose positions a concurrent save (or the old
+                # heal) left below confirmed — the producer-list sweep must put
+                # them back at confirmed, never accepted.
+                db.add(models.Project(id=P_SILENT4, name="Gala Silent Drift", schedule=[
+                    _shift("ssd", "Show", "2026-08-29",
+                           [_pos("psd_a", C1, service=S1), _pos("psd_b", C1, service=S1)]),
                 ]))
                 # Paid-out reading (Labor → Crew Requests): C1 on two days and
                 # a colleague on a third, plus a second project C1 was also
@@ -422,6 +430,34 @@ def test_silent_send_works_for_crew_without_an_email():
     assert r.status_code == 200, r.text
     assert r.json()["silent"] is True
     assert _pos_status(_project(client, tok, P_SILENT2), "psn_a") == "confirmed"
+
+
+def test_list_heals_drifted_direct_book_to_confirmed():
+    """The reported bug's residue: a direct book booked two crew members on one
+    project at once, the two sends raced on the schedule JSON, and one booking
+    came back at open — which the list then healed to ACCEPTED, where a direct
+    book has no Confirm to leave by. A silent request's floor is confirmed: the
+    sweep advances open AND accepted positions back to it."""
+    client, tok = _setup()
+    req = _send(client, tok, P_SILENT4, C1, silent=True).json()
+    assert req["silent"] is True and req["status"] == "accepted"
+    proj = _project(client, tok, P_SILENT4)
+    assert _pos_status(proj, "psd_a") == "confirmed" and _pos_status(proj, "psd_b") == "confirmed"
+
+    _force_position_status(P_SILENT4, "accepted")   # what the old heal left behind
+    listed = client.get("/api/crew-requests", cookies={"ltp_session": tok}).json()
+    mine = [r for r in listed if r["id"] == req["id"]]
+    assert mine and mine[0]["status"] == "accepted" and mine[0]["silent"] is True
+    proj = _project(client, tok, P_SILENT4)
+    assert _pos_status(proj, "psd_a") == "confirmed", _pos_status(proj, "psd_a")
+    assert _pos_status(proj, "psd_b") == "confirmed"
+    assert _pos_crew(proj, "psd_a") == C1
+
+    _force_position_status(P_SILENT4, "open")       # the raw drift itself
+    client.get("/api/crew-requests", cookies={"ltp_session": tok})
+    proj = _project(client, tok, P_SILENT4)
+    assert _pos_status(proj, "psd_a") == "confirmed"
+    assert _pos_status(proj, "psd_b") == "confirmed"
 
 
 def test_silent_book_cannot_be_resent_or_withdrawn():
