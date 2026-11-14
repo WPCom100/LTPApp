@@ -439,7 +439,13 @@
 // leaves the Open queue once the rest of its crew are confirmed — it used to
 // read "Accepted" with nothing to confirm and hold the project card there for
 // good. A cancelled shift says so in the per-shift list. labor.js.
-var CACHE_VERSION = 'ltp-shell-v125';
+// v126: Crew call sheet on a phone: one Accept / Decline pair, the bar fixed
+// to the bottom of the screen. The card under the shifts no longer carries a
+// second pair — tapped low on the screen it opened the note panel below the
+// fold while the bar vanished, and read as a dead button beside one that
+// worked. The bar's tap now aligns the card to the top so the open panel fits
+// on the screen. crew-view.js.
+var CACHE_VERSION = 'ltp-shell-v126';
 
 var SAME_ORIGIN_PRECACHE = [
   '/',
