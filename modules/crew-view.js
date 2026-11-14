@@ -15,6 +15,15 @@
 // orange-on-transparent masthead lockup as a left-aligned hero butting a 4px
 // brand-gradient rule, then a ruled "call sheet" — numbered call lines with a
 // tabular mono time column. Premium, flat, unmistakably LTP.
+//
+// Answering, by screen width. Above 600px the Accept / Decline pair sits in
+// the action card under the shifts, and picking one opens the note panel in
+// place. On a phone (600px and under) the pair lives ONLY in a bar fixed to
+// the bottom of the screen; the card keeps the question and the note panel,
+// and the bar scrolls the card into view when tapped. The card used to carry
+// a second pair on phones as well: tapped with the card low on the screen, it
+// opened the note panel below the fold while the bar vanished and the page
+// shifted under the thumb, which read as a dead button beside one that worked.
 (function() {
   var h = React.createElement;
   var useState = React.useState;
@@ -42,6 +51,12 @@
   var MONO = "'SFMono-Regular',ui-monospace,'Roboto Mono','DM Mono',Menlo,monospace";
   var FONT = "'DM Sans','Segoe UI',system-ui,sans-serif";
   var MASTHEAD_SRC = "/assets/logos/luminary-masthead.png";
+  // Phone breakpoint: the Accept / Decline pair moves from the action card to
+  // the fixed bottom bar, the shift rows stack, the map goes full width.
+  var MOBILE_MQ = "(max-width:600px)";
+  // How long the note panel takes to open (its max-height transition). The
+  // phone bar's follow-up scroll waits this out; keep the two in step.
+  var REVEAL_MS = 280;
   var FULL_LOGO_SRC = "/assets/logos/primary.png"; // full stacked lockup (mask + wordmark)
 
   // ── Date / time helpers (deterministic — no toLocaleString) ────────────────
@@ -384,8 +399,12 @@
     var cmState = useState(""); var comment = cmState[0], setComment = cmState[1];
     var subState = useState(false); var submitting = subState[0], setSubmitting = subState[1];
     var fErrState = useState(null); var formErr = fErrState[0], setFormErr = fErrState[1];
-    var mqState = useState(false); var isMobile = mqState[0], setIsMobile = mqState[1];
+    // Seeded from the media query, not false, so a phone never renders the
+    // desktop pair on any pass; the effect below only keeps it current.
+    var mqState = useState(function() { return !!(window.matchMedia && window.matchMedia(MOBILE_MQ).matches); });
+    var isMobile = mqState[0], setIsMobile = mqState[1];
     var actionRef = useRef(null);
+    var settleScroll = useRef(false);   // phone bar tapped: bring the open panel into view once it has grown
     // A crew member can leave this link open while the call time moves, a shift
     // is added or dropped, or the whole request is withdrawn. Turning up for a
     // time that changed is the failure this prevents. See LTP_useDocFreshness
@@ -420,12 +439,33 @@
     // Track the mobile breakpoint for the handful of responsive branches.
     useEffect(function() {
       if (!window.matchMedia) return undefined;
-      var mq = window.matchMedia("(max-width:600px)");
+      var mq = window.matchMedia(MOBILE_MQ);
       var apply = function() { setIsMobile(mq.matches); };
       apply();
       if (mq.addEventListener) { mq.addEventListener("change", apply); return function() { mq.removeEventListener("change", apply); }; }
       mq.addListener(apply); return function() { mq.removeListener(apply); };
     }, []);
+
+    function scrollCard(block) {
+      var el = actionRef.current;
+      if (!el || !el.scrollIntoView) return;
+      try { el.scrollIntoView({ behavior: "smooth", block: block }); } catch (e) { el.scrollIntoView(); }
+    }
+
+    // Second pass for the phone bar (openMode below), once the note panel has
+    // opened. The first scroll ran against the page as it was before the panel
+    // grew, and with the card near the foot of the page that was not far
+    // enough: the page cannot scroll past its own end, so the Confirm button
+    // still sat under the fold. "nearest" moves only as far as it must, and
+    // not at all when the open panel is already in view. Declared up here with
+    // the other hooks: the loading and error screens return early below, and
+    // a hook after those returns would run on some renders and not others.
+    useEffect(function() {
+      if (!respondMode || !settleScroll.current) return undefined;
+      settleScroll.current = false;
+      var t = setTimeout(function() { scrollCard("nearest"); }, REVEAL_MS + 40);
+      return function() { clearTimeout(t); };
+    }, [respondMode]);
 
     // ── Loading ──────────────────────────────────────────────────────────────
     if (!data && !loadErr) {
@@ -584,32 +624,39 @@
       setRespondMode(mode);
       // Only the mobile sticky bar needs to pull the in-flow action zone into
       // view; switching Accept↔Decline in place shouldn't jump the page.
-      if (fromSticky && actionRef.current && actionRef.current.scrollIntoView) {
-        try { actionRef.current.scrollIntoView({ behavior: "smooth", block: "center" }); } catch (e) { actionRef.current.scrollIntoView(); }
+      // Aligned to the card's TOP, not its centre: this runs before the note
+      // panel has grown, so centring the still-small card left the Confirm
+      // button under the fold. scrollMarginTop on the card keeps it off the
+      // screen edge. The effect below finishes the job once the panel is open.
+      if (fromSticky) {
+        scrollCard("start");
+        settleScroll.current = true;
       }
     }
 
-    function pendingChoiceButtons(stacked) {
-      // Both stay live so a crew member can switch their choice directly —
-      // no need to hit Back first. Only a submit-in-flight disables them; the
-      // un-chosen side just dims while the other's note panel is open.
-      return h("div", { style: { display: "flex", flexDirection: stacked ? "column" : "row", gap: 12 } },
+    function pendingChoiceButtons() {
+      // Desktop only: on a phone the pair is the fixed bottom bar (stickyBar
+      // below), never this card. Both stay live so a crew member can switch
+      // their choice directly — no need to hit Back first. Only a
+      // submit-in-flight disables them; the un-chosen side just dims while the
+      // other's note panel is open.
+      return h("div", { style: { display: "flex", flexDirection: "row", gap: 12 } },
         h("button", {
           type: "button", className: "ltp-accept-btn",
           disabled: submitting, onClick: function() { openMode("accept"); },
-          style: { flex: stacked ? "0 0 auto" : "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (respondMode === "decline") ? 0.45 : 1 },
+          style: { flex: "1.4 1 0", minHeight: 52, background: GRAD_BTN, color: BTN_INK, fontSize: "15px", fontWeight: 700, letterSpacing: "0.02em", border: "none", borderRadius: 10, padding: "16px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxShadow: "0 6px 20px rgba(239,88,34,0.28)", boxSizing: "border-box", opacity: (respondMode === "decline") ? 0.45 : 1 },
         }, flatOnly ? "Accept This Position" : (hasFlat ? "Accept" : "Accept These Calls")),
         h("button", {
           type: "button", className: "ltp-decline-btn",
           disabled: submitting, onClick: function() { openMode("decline"); },
-          style: { flex: stacked ? "0 0 auto" : "1 1 0", minHeight: 52, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, padding: "15px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxSizing: "border-box", opacity: (respondMode === "accept") ? 0.45 : 1 },
+          style: { flex: "1 1 0", minHeight: 52, background: "transparent", color: TEXT, fontSize: "15px", fontWeight: 600, border: "1.5px solid " + HAIR, borderRadius: 10, padding: "15px 24px", cursor: submitting ? "default" : "pointer", fontFamily: "inherit", boxSizing: "border-box", opacity: (respondMode === "accept") ? 0.45 : 1 },
         }, "I Can't Make It"));
     }
 
     function inlineReveal() {
       var open = respondMode !== null;
       var isAccept = respondMode === "accept";
-      return h("div", { style: { overflow: "hidden", transition: "max-height 280ms ease, opacity 220ms ease, margin-top 200ms ease", maxHeight: open ? 460 : 0, opacity: open ? 1 : 0, marginTop: open ? 16 : 0 } },
+      return h("div", { style: { overflow: "hidden", transition: "max-height " + REVEAL_MS + "ms ease, opacity 220ms ease, margin-top 200ms ease", maxHeight: open ? 460 : 0, opacity: open ? 1 : 0, marginTop: open ? 16 : 0 } },
         h("div", { style: { fontSize: "11px", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: isAccept ? SUCCESS : DECLINE } },
           isAccept ? "Confirming — leave a note (optional)" : "Letting us know — what's the conflict? (optional)"),
         h("textarea", {
@@ -650,9 +697,15 @@
     } else if (terminal) {
       actionZone = h("div", { style: { marginTop: 40 } }, bannerNode);
     } else {
-      actionZone = h("div", { ref: actionRef, style: { marginTop: 40, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
-        h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: 18 } }, "Can you take " + what + "?"),
-        pendingChoiceButtons(isMobile),
+      // The question, then the answer buttons on desktop, then the note panel.
+      // On a phone the buttons are the bottom bar, so until a choice is made
+      // the card points at the bar instead; the panel the bar opens is the
+      // same one, in the same place.
+      actionZone = h("div", { ref: actionRef, style: { marginTop: 40, scrollMarginTop: 16, background: INSET, border: "1px solid " + HAIR, borderRadius: 14, padding: 24 } },
+        h("div", { style: { fontSize: "14px", fontWeight: 600, color: WHITE, textAlign: "center", marginBottom: isMobile ? 0 : 18 } }, "Can you take " + what + "?"),
+        isMobile
+          ? (respondMode === null && h("div", { style: { fontSize: "12px", color: MUTE, textAlign: "center", lineHeight: 1.5, marginTop: 6 } }, "Answer with the buttons at the bottom of your screen."))
+          : pendingChoiceButtons(),
         inlineReveal());
     }
 
@@ -677,6 +730,9 @@
     }
 
     // ── Mobile sticky action bar (pending only, before a choice is made) ──────
+    // On a phone this IS the Accept / Decline pair (the card has none). It
+    // hides once a choice is made so the note panel has the screen; Back in
+    // the panel brings it straight back.
     var showSticky = isMobile && status === "pending" && respondMode === null && !allCancelled;
     var stickyBar = showSticky
       ? h("div", { style: { position: "fixed", left: 0, right: 0, bottom: 0, background: INSET, borderTop: "1px solid " + HAIR, zIndex: 3000 } },
